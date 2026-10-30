@@ -114,8 +114,8 @@ fn previewable(url: &str) -> Option<String> {
     } else {
         authority.find(':').unwrap_or(authority.len())
     };
-    let host = &authority[..host_end];
-    let port = authority[host_end..].strip_prefix(':');
+    let (host, port) = authority.split_at(host_end);
+    let port = port.strip_prefix(':');
     if host.is_empty() || host.trim_matches(['[', ']']).is_empty() {
         return None;
     }
@@ -195,8 +195,8 @@ fn charset_of(content_type: &str) -> Option<String> {
 /// The charset a page names in a `<meta charset>` or `<meta http-equiv content="...; charset=...">`.
 fn meta_charset(start: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(start).to_ascii_lowercase();
-    let at = text.find("charset=")? + "charset=".len();
-    let value: String = text[at..]
+    let (_, after) = text.split_once("charset=")?;
+    let value: String = after
         .trim_start_matches(['"', '\''])
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
@@ -467,6 +467,19 @@ mod tests {
         assert!(previewable("https://example.com:99999/").is_none());
         assert!(previewable("https://:443/").is_none());
         assert_eq!(url_hash("https://example.com/").len(), 64);
+    }
+
+    #[test]
+    fn a_meta_charset_is_read_after_its_first_charset_equals() {
+        let charset = |head: &str| meta_charset(head.as_bytes());
+        assert_eq!(charset(r#"<meta charset="UTF-8">"#).as_deref(), Some("utf-8"));
+        assert_eq!(
+            charset(r#"<title>é</title><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">"#)
+                .as_deref(),
+            Some("iso-8859-1")
+        );
+        assert_eq!(charset(r#"<meta charset="">"#), None);
+        assert_eq!(charset("<title>no charset</title>"), None);
     }
 
     #[test]

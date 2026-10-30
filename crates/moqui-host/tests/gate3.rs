@@ -48,6 +48,9 @@ use common::{
 
 #[test]
 fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("modes");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -185,6 +188,9 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
 
 #[test]
 fn artifact_group_detail_renders_as_html_with_the_shared_client() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("html");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -293,6 +299,9 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
 /// and the response is the redirect of the transition to the screen, which then shows the new value. Without the token it is refused.
 #[test]
 fn a_form_post_runs_the_transition_and_returns_its_response() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("post");
     let address = gate.server.address();
     let cookie = sign_in(address, "john.doe", "moqui");
@@ -384,6 +393,9 @@ fn a_form_post_runs_the_transition_and_returns_its_response() {
 /// elements need the alias lookup) and the default themes of webroot are rows after a load that names no location.
 #[test]
 fn the_seed_load_reads_the_data_directory_of_each_component() {
+    if !crate::common::own_process() {
+        return;
+    }
     use moqui_lib::object::Value;
 
     let gate = start("data");
@@ -455,6 +467,9 @@ fn the_seed_load_reads_the_data_directory_of_each_component() {
 
 #[test]
 fn the_login_page_and_the_root_render_as_html_and_a_failed_login_comes_back_with_its_message() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("login");
     let address = gate.server.address();
     let get = |path: &str, cookie: &str| {
@@ -576,6 +591,9 @@ fn the_login_page_and_the_root_render_as_html_and_a_failed_login_comes_back_with
 
 #[test]
 fn static_files_are_served_with_validators_compression_and_no_way_out() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("static");
     let address = gate.server.address();
     let get = |path: &str, headers: &[(&str, &str)]| exchange(address, &http_request("GET", path, headers, ""));
@@ -678,6 +696,9 @@ fn vue_compiler() -> String {
 
 #[test]
 fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("qvt");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -827,6 +848,9 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
 /// The server-static pair of Gate 3: the template holds no row data, and `/actions` returns the JSON package.
 #[test]
 fn artifact_group_detail_static_qvt_is_a_data_free_template_with_its_data_on_actions() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with("static", true);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -963,6 +987,9 @@ fn artifact_group_detail_static_qvt_is_a_data_free_template_with_its_data_on_act
 
 #[test]
 fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("qapps");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -1125,6 +1152,9 @@ fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
 /// `/tk/<token>/files` a transition below it; a bad or revoked token gets the short page and nothing of the screen runs.
 #[test]
 fn a_token_route_renders_its_screen_in_the_public_shell_after_the_token_check() {
+    if !crate::common::own_process() {
+        return;
+    }
     use common::{LINK_TOKEN, REVOKED_TOKEN};
     let gate = common::start_token_route("tokenroute");
     let address = gate.server.address();

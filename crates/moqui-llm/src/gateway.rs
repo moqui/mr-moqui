@@ -63,7 +63,7 @@ use super::provider::{self, pump, sse, CancelToken, ErrorClass, ProviderError, P
 use super::registry::{Registry, Target};
 use super::usage::{self, CallRecord, CallSource, Reserve, Usage};
 use super::{decimal_of, flag_of, int_of, text_of};
-use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{Authz, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use moqui_core::entity::EntityFacade;
 use moqui_core::llm_hooks::RustServiceFn;
 use moqui_core::rust_service;
@@ -1155,7 +1155,7 @@ fn admit(
 pub fn count_gateway_hit(alias: &str) -> Result<(), Error> {
     let name = format!("gateway:{alias}");
     ExecutionContext::with_current(|ec| -> Result<(), Error> {
-        ec.push_checked("AT_LLM", &name, "view", false, true, None)?;
+        ec.push_checked("AT_LLM", &name, "view", Authz::NotRequired, Tarpit::Count, None)?;
         let _ = ec.pop();
         Ok(())
     })

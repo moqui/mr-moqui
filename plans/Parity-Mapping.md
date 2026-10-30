@@ -72,10 +72,11 @@ Other Native modules are marked in their own sections.
 
 | Rust file | Why no basis |
 |---|---|
-| `moqui-core/src/entity/share.rs` | `Send`/`Sync` wrapper around the model. |
-| `moqui-core/src/entity/params.rs` | Driver value binding. `moqui-db` binds the SQL values. |
-| `moqui-core/src/entity/exec.rs` | Statement execution, timing, and the span. |
-| `moqui-core/src/entity/mod.rs`, `service/mod.rs` | Module spines and re-exports. |
+| `moqui-entity/src/entity/share.rs` | `Send`/`Sync` wrapper around the model. |
+| `moqui-entity/src/entity/params.rs` | Driver value binding. `moqui-db` binds the SQL values. |
+| `moqui-entity/src/entity/exec.rs` | Statement execution, timing, and the span. |
+| `moqui-entity/src/entity/mod.rs`, `moqui-core/src/entity/mod.rs`, `service/mod.rs` | Module spines and re-exports. |
+| `moqui-entity/src/hooks.rs`, `moqui-core/src/entity_hooks.rs` | The entity facade's calls into the execution context, a hook table since the entity facade is a crate below core (plans/Crate-Split.md); Java's entity facade calls `ec` directly. |
 | `moqui-core/src/service/util.rs` | Shared helpers. Java scatters the same bits. |
 | `moqui-core/src/service/coverage.rs` | `moqui test --coverage`. No Java equivalent. |
 | `moqui-core/src/service/rust_services.rs` | `type="rust"` function registry. New with the port. |
@@ -138,11 +139,11 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-core/src/context/component.rs` | Component directories and one-pass `depends-on`, from the factory's component load. | Port |
 | `moqui-core/src/context/locate.rs` | `component://`, `file:`, and `classpath://` as an alias for framework `service/`, `entity/`, `data/`, `screen/`, `template/`. `ClasspathResourceReference`. | Partial |
 | `moqui-core/src/context/resource.rs` | `ResourceFacadeImpl` and `reference/{Base,Component,Wrapper,Db}ResourceReference`, with the `ResourceReference` version methods for `dbresource` and providers. Schemes: `file`, `runtime`, `component`, `dbresource`, `http`, and `git` (`resource/git`). | Port |
-| `moqui-core/src/entity/dbresource.rs` | `DbResourceReference` record operations (versions, the `DbResource` entities), with past text versions as reverse deltas (Java's TODO), and files over 64 KiB as content blobs (no Java basis). The scheme router is `context/resource.rs`. | Port |
-| `moqui-core/src/resource/blob.rs`, `resource/source.rs`, `service/content.rs` | No Java basis: content blobs (`ContentBlob` by SHA-256 in chunks, `gc#ContentBlobs`), and content read a window at a time for streamed responses and ranges. | Native |
-| `moqui-core/src/resource/textdiff.rs` | No Java basis: line diffs of versions (unified text, strict apply, the `moqui-diff` HTML table). Java's compare screens used jsdiff in the browser. | Native |
-| `moqui-core/src/resource/git/` | No Java basis: the `git://` scheme over gitoxide (`fs.rs`) or the `GitObject`/`GitRef` entities (`db.rs`: zlib and delta rows, large objects as content blobs), with paths, commits and history in `ops.rs`, the commit walk (`revwalk.rs`), commit diffs (`diff.rs`), reading any revision (`browse.rs`), the GitUpdate events of gitECA rules (`events.rs`), the path index of a branch (`index.rs`: last changes, history across a move, the log under a path), our git delta codec (`delta.rs`), the collection and repack of `db` repositories (`gc.rs`), and LFS files through `git://` (`attributes.rs`, `lfs_files.rs`). `service/git.rs` is `org.moqui.impl.GitServices`. | Native |
-| `moqui-core/src/resource/git/server/` | No Java basis: the git server ([Git-Hosting](../docs/interfaces/Git-Hosting.md)): pkt-lines, upload-pack v0/v1 and v2 with shallow fetches, receive-pack into quarantine (keeping the pushed deltas), pack writing from stored rows or over gix-pack, and Git LFS (`lfs.rs`). | Native |
+| `moqui-entity/src/entity/dbresource.rs` | `DbResourceReference` record operations (versions, the `DbResource` entities), with past text versions as reverse deltas (Java's TODO), and files over 64 KiB as content blobs (no Java basis). The scheme router is `context/resource.rs`. | Port |
+| `moqui-entity/src/resource/blob.rs`, `resource/source.rs`, `moqui-core/src/service/content.rs` | No Java basis: content blobs (`ContentBlob` by SHA-256 in chunks, `gc#ContentBlobs`), and content read a window at a time for streamed responses and ranges. | Native |
+| `moqui-entity/src/resource/textdiff.rs` | No Java basis: line diffs of versions (unified text, strict apply, the `moqui-diff` HTML table). Java's compare screens used jsdiff in the browser. | Native |
+| `moqui-git/src/` | No Java basis: the `git://` scheme over gitoxide (`fs.rs`) or the `GitObject`/`GitRef` entities (`db.rs`: zlib and delta rows, large objects as content blobs), with paths, commits and history in `ops.rs`, the commit walk (`revwalk.rs`), commit diffs (`diff.rs`), reading any revision (`browse.rs`), the GitUpdate events of gitECA rules (`events.rs`), the path index of a branch (`index.rs`: last changes, history across a move, the log under a path), our git delta codec (`delta.rs`), the collection and repack of `db` repositories (`gc.rs`), and LFS files through `git://` (`attributes.rs`, `lfs_files.rs`). `service/git.rs` is `org.moqui.impl.GitServices`. | Native |
+| `moqui-git/src/server/` | No Java basis: the git server ([Git-Hosting](../docs/interfaces/Git-Hosting.md)): pkt-lines, upload-pack v0/v1 and v2 with shallow fetches, receive-pack into quarantine (keeping the pushed deltas), pack writing from stored rows or over gix-pack, and Git LFS (`lfs.rs`). | Native |
 | `moqui-core/src/service/git_eca.rs` | No Java basis: gitECA rules (`*.gitecas.xml`), loaded by `eca_rules.rs` beside SECA and email ECA. | Native |
 | `moqui-core/src/service/user_keys.rs` | No Java basis: `org.moqui.impl.UserServices` `create#UserSshKey`, `delete#UserSshKey`, `create#UserAccessToken`, `revoke#UserAccessToken`. | Native |
 | `moqui-host/src/git_http.rs`, `git_bridge.rs`, `ssh/git.rs` | No Java basis: `/git` smart HTTP, Git LFS, and the SSH `git-upload-pack`/`git-receive-pack`/`git-lfs-authenticate` exec, streamed to the git pool. | Native |
@@ -153,7 +154,7 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-core/src/context/message.rs` | `MessageFacadeImpl`, `MessageFacade`, `MessageFacadeException`. | Port |
 | `moqui-core/src/l10n.rs` | `L10nFacadeImpl`, `L10nFacade`. Formatters are `moqui-lib`. | Port |
 | `moqui-core/src/context/status.rs` | `ExecutionContextFactoryImpl.getStatusMap` and `getComponentInfoList`. JVM management beans are process stats (`/proc/self/status`). Disk is not reported. | Partial |
-| `moqui-core/src/context/error.rs` | `BaseException`, `BaseArtifactException`, and the artifact, auth, and web exceptions (`ArtifactAuthorizationException`, `ArtifactTarpitException`, `AuthenticationRequiredException`, `TransactionException`, `EntityException`, `ServiceException`, and the not-found types). | Port |
+| `moqui-entity/src/error.rs` | `BaseException`, `BaseArtifactException`, and the artifact, auth, and web exceptions (`ArtifactAuthorizationException`, `ArtifactTarpitException`, `AuthenticationRequiredException`, `TransactionException`, `EntityException`, `ServiceException`, and the not-found types). | Port |
 | `moqui-core/src/context/confcache.rs` | User and authz conf parsed once per factory. | Native |
 | `moqui-core/src/context/mod.rs` | Module spine. | Native |
 
@@ -168,7 +169,7 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 | `moqui-core/src/user/policy.rs` | `user-facade/password` policy (length, digits, history, change interval, max failures, disable minutes). | Port |
 | `moqui-core/src/user/factor.rs` | Second factor in `UserFacadeImpl`: TOTP (HMAC-SHA1, 6 digits, 30 seconds) and single-use codes. `SecondFactorRequiredException`. | Port |
 | `moqui-core/src/user/preference.rs` | `UserFacadeImpl` preferences, group membership, and permissions. | Port |
-| `moqui-core/src/user/period.rs` | `UserFacadeImpl.getPeriodRange`. | Port |
+| `moqui-entity/src/period.rs` | `UserFacadeImpl.getPeriodRange`. | Port |
 | `moqui-core/src/user/visit.rs` | `UserFacadeImpl` visit and visitor rows. | Port |
 | `moqui-core/src/user/filter.rs` | `ArtifactExecutionFacadeImpl.filterFindForUser`, `ArtifactAuthzFilter`, `EntityFilter`. | Port |
 | `moqui-core/src/user/authz.rs` | `ArtifactExecutionFacadeImpl.isPermitted`. | Port |
@@ -181,22 +182,22 @@ Entity model and SQL text. No `ExecutionContext` and no driver. The entity secti
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `moqui-core/src/transaction/manager.rs` | `TransactionFacadeImpl`. `TransactionInternalBitronix` is the behavior reference (local one-phase commit, suspend, synchronizations). It is not linked. No JTA and no XA. | Port |
-| `moqui-core/src/transaction/pool.rs` | The pool Bitronix provided: min, max, idle, acquire timeout, reserve tier. One implementation. | Port |
-| `moqui-core/src/transaction/mod.rs` | Module spine. `TransactionFacade` and `TransactionInternal` are this module. | Native |
-| `moqui-core/src/driver.rs` | `EntityDatasourceFactory` as a trait. No Postgres or MySQL types in core. | Port |
-| `moqui-core/src/entity/datasource.rs` | `EntityDatasourceFactoryImpl`. Registers the host driver. | Port |
-| `moqui-core/src/entity/cache.rs` | `EntityCache`, `EntityTxCache`, `TransactionCache`, and the in-memory half of `TransactionCacheDb` (per-frame cache, sim sequence banks, production-entity list). | Port |
-| `moqui-host/src/db/postgres.rs` | The PostgreSQL JDBC driver, as the sync `postgres` client. | Port |
-| `moqui-host/src/db/mysql.rs` | MySQL Connector/J, as the sync `mysql` crate. | Port |
-| `moqui-host/src/db/embedded.rs` | H2 embedded lifecycle, replaced by `postgresql_embedded`. [EmbeddedPostgres](archive/EmbeddedPostgres.md). | Redesign |
-| `moqui-host/src/db/sim.rs` | `TransactionCacheDb` overlay cluster: one schema per sim on a second postmaster. | Port |
-| `moqui-host/src/db/jdbc_extract.rs` | `impl/util/JdbcExtractor.java`. | Port |
-| `moqui-host/src/db/entity_db.rs` | Which conf datasource is embedded Postgres, external Postgres, or MySQL. | Native |
-| `moqui-host/src/db/entity_facade.rs` | Installs the host driver on the core facade. | Native |
-| `moqui-host/src/db/statement_lru.rs` | Prepared-statement cache, cap 100. Java cached these inside the JDBC driver. | Native |
-| `moqui-host/src/db/mod.rs` | Module spine. | Native |
-| `moqui-core/src/testing.rs` | In-memory SQL for unit tests. Not H2. | Native |
+| `moqui-entity/src/transaction/manager.rs` | `TransactionFacadeImpl`. `TransactionInternalBitronix` is the behavior reference (local one-phase commit, suspend, synchronizations). It is not linked. No JTA and no XA. | Port |
+| `moqui-entity/src/transaction/pool.rs` | The pool Bitronix provided: min, max, idle, acquire timeout, reserve tier. One implementation. | Port |
+| `moqui-entity/src/transaction/mod.rs` | Module spine. `TransactionFacade` and `TransactionInternal` are this module. | Native |
+| `moqui-entity/src/driver.rs` | `EntityDatasourceFactory` as a trait. No Postgres or MySQL types in core. | Port |
+| `moqui-entity/src/entity/datasource.rs` | `EntityDatasourceFactoryImpl`. Registers the host driver. | Port |
+| `moqui-entity/src/entity/cache.rs` | `EntityCache`, `EntityTxCache`, `TransactionCache`, and the in-memory half of `TransactionCacheDb` (per-frame cache, sim sequence banks, production-entity list). | Port |
+| `moqui-drivers/src/postgres.rs` | The PostgreSQL JDBC driver, as the sync `postgres` client. | Port |
+| `moqui-drivers/src/mysql.rs` | MySQL Connector/J, as the sync `mysql` crate. | Port |
+| `moqui-drivers/src/embedded.rs` | H2 embedded lifecycle, replaced by `postgresql_embedded`. [EmbeddedPostgres](archive/EmbeddedPostgres.md). | Redesign |
+| `moqui-drivers/src/sim.rs` | `TransactionCacheDb` overlay cluster: one schema per sim on a second postmaster. | Port |
+| `moqui-drivers/src/jdbc_extract.rs` | `impl/util/JdbcExtractor.java`. | Port |
+| `moqui-drivers/src/entity_db.rs` | Which conf datasource is embedded Postgres, external Postgres, or MySQL. | Native |
+| `moqui-drivers/src/entity_facade.rs` | Installs the host driver on the core facade. | Native |
+| `moqui-drivers/src/statement_lru.rs` | Prepared-statement cache, cap 100. Java cached these inside the JDBC driver. | Native |
+| `moqui-drivers/src/lib.rs` | Crate root: the conf driver. | Native |
+| `moqui-entity/src/testing.rs` | In-memory SQL for unit tests. Not H2. | Native |
 
 `impl/context/SimFence.java` and `SimTerminatedException.java` are the sim fence on `entity/cache.rs` and the outbound-HTTP denial in `moqui-lib/src/http.rs`.
 
@@ -253,9 +254,9 @@ The same phase numbers. Component Groovy that this table used to call missing is
 | `service/rest.rs` | `RestApi.groovy` request path, `impl/ServiceServices.xml`. JSON-RPC, Swagger, and RAML excluded. | 8a |
 | `service/remote.rs` | `RemoteRestServiceRunner.groovy`. `RemoteJsonRpcServiceRunner` excluded. | 8a |
 | `service/tools.rs` | `PrintServices.xml` (moqui-cups), `impl/EntityServices.xml` encrypted-field rewrite, data-document notification | 8a |
-| `service/mail/implementation.rs`, `service/mail/mod.rs` | `EmailServices.xml` (both), `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | 8b |
+| `moqui-mail/src/implementation.rs`, `moqui-mail/src/lib.rs` | `EmailServices.xml` (both), `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | 8b |
 | `service/sso.rs` | `moqui-sso` `AuthServices.xml`, `AuthenticationFlow.groovy`, `MoquiSecurityGrantedAccessAdapter.groovy` | 8c |
-| `service/elfinder.rs` | `ElFinderServices.xml`, `ElFinderConnector.groovy` | 8c |
+| `moqui-dav/src/elfinder.rs` | `ElFinderServices.xml`, `ElFinderConnector.groovy` | 8c |
 | `service/system_sync/mod.rs`, `service/system_sync/entity_sync.rs` | `EntitySyncServices.xml` | 8c |
 | `service/system_sync/message.rs` | `SystemMessageServices.xml`, `WebFacadeImpl.handleSystemMessage` | 8c |
 | `service/system_sync/sftp.rs` | `moqui-sftp` `SftpMessageServices.xml` | 8c |
@@ -402,8 +403,8 @@ README redesigns 1 and 3. The design is [SearchFacade](archive/SearchFacade.md).
 | `search/feed.rs` | After-commit assembly and the receive service. Registration of the pending row stays `entity/load_feed/feed.rs`. | Redesign |
 | `search/fresh.rs` | Read-your-writes for a search that asks. No Java counterpart. | Native |
 | `search/telemetry.rs` | The telemetry index mappings (`otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations`) on both backends. Replaces the `moqui_logs` and `moqui_http_log` fields. | Native |
-| `report/`, `report_schedule.rs` | No Java basis: datasets, report queries, frames and transformations, saved definitions, alerts and annotations for the Dashboards and Monitor apps; dashboard reports on `ScreenScheduled` (PDF, PNG, CSV, xlsx) with owner checks and leases. | Native |
-| `monitor.rs`, `moqui-host/src/monitor.rs` | No Java basis: ingest keys and source status (core), and the OTLP/HTTP receiver `/v1/{traces,logs,metrics,annotations}` (host). | Native |
+| `moqui-report/src/` (`schedule.rs` the scheduled reports), `search/time.rs` | No Java basis: datasets, report queries, frames and transformations, saved definitions, alerts and annotations for the Dashboards and Monitor apps; dashboard reports on `ScreenScheduled` (PDF, PNG, CSV, xlsx) with owner checks and leases. | Native |
+| `moqui-report/src/monitor.rs`, `moqui-host/src/monitor.rs` | No Java basis: ingest keys and source status (moqui-report), and the OTLP/HTTP receiver `/v1/{traces,logs,metrics,annotations}` (host). | Native |
 | `search/opensearch.rs` | `ElasticFacadeImpl.ElasticClientImpl` HTTP client. | Partial |
 | `moqui-host/src/search.rs` | Where the store lives, and `MoquiStart` launching a local OpenSearch install under `runtime/opensearch`. | Partial |
 | `search/postgres/mod.rs`, `search/postgres/compile.rs`, `search/postgres/agg.rs` | Postgres full-text and JSON backend. | Native |
@@ -427,7 +428,7 @@ The service section names the Rust service bodies. This section is where the add
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `service/mail/` | The three Groovy mail scripts and both `EmailServices.xml`. | Port |
+| `moqui-mail/src/` | The three Groovy mail scripts and both `EmailServices.xml`. | Port |
 | `print.rs` | `moqui-cups` `PrintServices.xml` as a `PrintClient` the host installs. | Port |
 | `moqui-host/src/ipp.rs` | CUPS4J calls (CUPS-Get-Printers, Print-Job, Hold, Release, Cancel, Get-Job-Attributes). | Port |
 | `service/images.rs` | `moqui-image` service XML. ImageIO is the `image` crate. | Port |
@@ -447,9 +448,9 @@ The service section names the Rust service bodies. This section is where the add
 |---|---|---|
 | `moqui-host/src/lib.rs`, `usage.rs` | `MoquiStart` commands that exist: run, load, save-db, load-save, and the help text. WAR packaging, the executable-WAR classpath, and H2 are not ported. | Partial |
 | `moqui/src/main.rs` | Process entry that calls the host. | Native |
-| `testkit/mod.rs`, `testkit/run.rs`, `testkit/rewrite.rs` | Spock, reimplemented as JavaScript specs. [TestHarness](archive/TestHarness.md). | Native |
+| `moqui-devkit/src/testkit/mod.rs`, `testkit/run.rs`, `testkit/rewrite.rs` | Spock, reimplemented as JavaScript specs. [TestHarness](archive/TestHarness.md). | Native |
 | `moqui-host/src/test_cmd/mod.rs`, `test_cmd/fixture.rs`, `test_cmd/report.rs`, `test_cmd/coverage.rs` | `moqui test` driver, database fixture, JUnit XML, coverage. | Native |
-| `typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
+| `moqui-devkit/src/typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
 | `moqui-host/src/types.rs` | `moqui types`. | Native |
 | `moqui-host/src/qvt_report.rs` | `moqui lint --screens --qvt-static`. The report is `screen/statics/report.rs`. | Native |
 | `moqui-host/src/tui.rs`, `tui_remote.rs`, `tui_cmd.rs`, `crates/moqui-tui` | `moqui tui`: the in-process and HTTP screen links and the terminal client on Revue. Not in Java. [Screen-TUI-Impl](archive/Screen-TUI-Impl.md), [TUI](../docs/ui/TUI.md). | Native |
@@ -538,7 +539,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `context/CacheFacadeImpl.groovy` | `context/cache.rs` | Port |
 | `context/ElasticFacadeImpl.groovy` | `search/` | Redesign |
 | `context/EntityTxCache.groovy`, `TransactionCache.groovy` | `entity/cache.rs` | Port |
-| `context/TransactionCacheDb.java` | `entity/cache.rs`, `moqui-host/src/db/sim.rs` | Port |
+| `context/TransactionCacheDb.java` | `entity/cache.rs`, `moqui-drivers/src/sim.rs` | Port |
 | `context/TransactionFacadeImpl.groovy` | `transaction/manager.rs` | Port |
 | `context/TransactionInternalBitronix.groovy` | `transaction/` as a behavior reference | Partial |
 | `context/L10nFacadeImpl.java` | `l10n.rs`, `moqui-lib/src/format.rs` | Port |
@@ -598,8 +599,8 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `tools/H2ServerToolFactory.groovy`, `JackrabbitRunToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
 | `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](Monitoring.md)) | Redesign |
-| `util/ElFinderConnector.groovy` | `service/elfinder.rs` | Port |
-| `util/JdbcExtractor.java` | `moqui-host/src/db/jdbc_extract.rs` | Port |
+| `util/ElFinderConnector.groovy` | `moqui-dav/src/elfinder.rs` | Port |
+| `util/JdbcExtractor.java` | `moqui-drivers/src/jdbc_extract.rs` | Port |
 | `util/RestSchemaUtil.groovy` | `entity/schema.rs`, `screen/schema.rs` | Partial |
 | `util/SimpleSigner.java` | `moqui-lib/src/signer.rs` | Port |
 | `util/UserSecurityChecks.groovy` | `service/security_checks.rs` | Port |
@@ -620,7 +621,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | Source | Where | Status |
 |---|---|---|
 | `src/start/java/MoquiStart.java` | `moqui-host/src/lib.rs`, `search.rs` (local OpenSearch). WAR and H2 paths are not ported. | Partial |
-| `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | `service/mail/` | Port |
+| `pollEmailServer.groovy`, `sendEmailMessage.groovy`, `sendEmailTemplate.groovy` | `moqui-mail/src/` | Port |
 | `MoquiDefaultConf.xml` | `context/conf.rs`. Servlet and proxy entries also `http.rs` and `search_proxy.rs`. | Port |
 | `log4j2.xml` | `moqui-host/src/logging.rs` (file names and levels, not Log4j) | Partial |
 | `shiro.ini`, `web.xml`, `cache.ccf`, `bitronix-default-config.properties` | — | Excluded |

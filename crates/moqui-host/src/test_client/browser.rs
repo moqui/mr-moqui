@@ -27,15 +27,17 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 
 use super::cdp::{self, truthy};
 use super::http::{magic, Server};
 use super::load::file_part;
+use super::video;
 use super::{field, text_field};
 
 const LOCATE: &str = include_str!("locate.js");
-const ASSERT_JS: &str = include_str!("../../../moqui-core/src/testkit/assert.js");
+const ASSERT_JS: &str = include_str!("../../../moqui-devkit/src/testkit/assert.js");
 const PAGE_HARNESS: &str = include_str!("page_harness.js");
 
 /// The viewport of a page that names none.
@@ -80,6 +82,8 @@ pub(crate) struct SpecBrowser {
     /// The cookies of each user's first sign-in (by user and password), given to the user's later pages so they share
     /// its server session instead of signing in through `/Login` each time.
     signed_in: HashMap<(String, String), Vec<Value>>,
+    /// `--video`: the spec's recording, which each page is screencast to.
+    video: Option<video::Shared>,
 }
 
 /// A page call's target: the browser and the page.
@@ -642,8 +646,8 @@ impl At<'_> {
 
 /// The path of a URL, with its query: `/Login?x=1` of `http://host:8080/Login?x=1`.
 fn url_path(url: &str) -> &str {
-    match url.find("://") {
-        Some(at) => url[at + 3..].find('/').map_or("/", |slash| &url[at + 3 + slash..]),
+    match url.split_once("://") {
+        Some((_, rest)) => rest.find('/').and_then(|slash| rest.get(slash..)).unwrap_or("/"),
         None => url,
     }
 }
@@ -715,7 +719,41 @@ impl SpecBrowser {
             driver,
             pages: BTreeMap::new(),
             signed_in: HashMap::new(),
+            video: None,
         })
+    }
+
+    /// Screencast each page opened from now into `shared`'s recording (`--video`).
+    pub(crate) fn record_to(&mut self, shared: video::Shared) {
+        self.video = Some(shared);
+    }
+
+    /// Move the screencast frames read so far into the recording.
+    fn feed_video(&mut self) {
+        let frames = self.driver.take_frames();
+        if frames.is_empty() {
+            return;
+        }
+        if let Some(shared) = &self.video {
+            if let Some(recorder) = lock(shared).as_mut() {
+                for frame in frames {
+                    recorder.frame(frame);
+                }
+            }
+        }
+    }
+
+    /// The end of the spec's recording: the frames still on their way, then each screencast stopped.
+    pub(crate) fn stop_video(&mut self) {
+        if self.video.is_none() {
+            return;
+        }
+        let _ = self.driver.pump(Duration::from_millis(150));
+        self.feed_video();
+        for session in self.driver.screencasting() {
+            self.driver.stop_screencast(&session);
+        }
+        self.feed_video();
     }
 
     /// Later pages fulfill `https://moqui.test` from `roots`. Call this before the first page.
@@ -749,6 +787,16 @@ impl SpecBrowser {
                 return Err(err);
             }
         };
+        if let Some(shared) = &self.video {
+            match self.driver.start_screencast(&session) {
+                Ok(()) => {
+                    if let Some(recorder) = lock(shared).as_mut() {
+                        recorder.page_opened(&session);
+                    }
+                }
+                Err(err) => tracing::error!("--video: the screencast of page {id}: {err}"),
+            }
+        }
         let problems = field(args, "problems");
         let page = Page {
             session,
@@ -766,6 +814,7 @@ impl SpecBrowser {
         if opened.is_err() {
             self.close(id);
         }
+        self.feed_video();
         opened
     }
 
@@ -831,7 +880,13 @@ impl SpecBrowser {
 
     fn close(&mut self, id: u64) {
         if let Some(page) = self.pages.remove(&id) {
+            self.feed_video();
             self.driver.close_page(&page.session, page.context.as_deref());
+            if let Some(shared) = &self.video {
+                if let Some(recorder) = lock(shared).as_mut() {
+                    recorder.page_closed(&page.session);
+                }
+            }
         }
     }
 
@@ -925,8 +980,14 @@ impl SpecBrowser {
         Ok(json!({ "cases": cases }))
     }
 
-    /// One `page.*` or `locator.*` call.
+    /// One `page.*` or `locator.*` call; the frames it brought go to the recording.
     pub(crate) fn call(&mut self, name: &str, args: &Value, server: &Server, out_dir: &Path) -> Result<Value, String> {
+        let answer = self.call_page(name, args, server, out_dir);
+        self.feed_video();
+        answer
+    }
+
+    fn call_page(&mut self, name: &str, args: &Value, server: &Server, out_dir: &Path) -> Result<Value, String> {
         if name == "page.close" {
             let id = field(args, "page").as_u64().unwrap_or(0);
             self.close(id);
@@ -1059,6 +1120,7 @@ impl SpecBrowser {
         for id in closing {
             self.close(id);
         }
+        self.feed_video();
         (problems, attachments)
     }
 }
@@ -1103,6 +1165,14 @@ fn failure_files(at: &mut At<'_>, feature: &str, number: usize, problems: &[Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_path_of_a_url_keeps_its_query() {
+        assert_eq!(url_path("http://host:8080/Login?x=1"), "/Login?x=1");
+        assert_eq!(url_path("http://host:8080"), "/");
+        assert_eq!(url_path("/apps/x"), "/apps/x");
+        assert_eq!(url_path(""), "");
+    }
 
     #[test]
     fn a_js_pattern_carries_its_flags() {

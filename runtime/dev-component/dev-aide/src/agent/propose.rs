@@ -23,8 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use moqui_core::devtools::index::{self, extract};
-use moqui_core::devtools::{Problem, Severity};
+use moqui_devkit::index::{self, extract};
+use moqui_devkit::{Problem, Severity};
 use moqui_lib::node::MNode;
 use moqui_llm::approval::{
     self, ApprovalRequest, ChangeRow, HandoffTarget, PreviewMode, Requested, Resumed, TargetKind,
@@ -212,7 +212,7 @@ pub(crate) struct Prepared<'a> {
     /// file is no longer at, or a new file that is there now. Operations and replacements apply to the file now.
     pub stale: Option<String>,
     pub new_text: String,
-    pub kind: moqui_core::devtools::ArtifactKind,
+    pub kind: moqui_devkit::ArtifactKind,
     pub location: String,
 }
 
@@ -229,7 +229,7 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
         let located = index::locate(&context.factory, &named.path);
         let kind = located
             .as_ref()
-            .map_or(moqui_core::devtools::ArtifactKind::Other, |found| found.kind);
+            .map_or(moqui_devkit::ArtifactKind::Other, |found| found.kind);
         let location = located.map_or_else(|| named.shown.clone(), |found| found.location);
         prepared.push(Prepared {
             named,
@@ -244,8 +244,8 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
     Ok(prepared)
 }
 
-fn order_of(kind: moqui_core::devtools::ArtifactKind) -> u8 {
-    use moqui_core::devtools::ArtifactKind as Kind;
+fn order_of(kind: moqui_devkit::ArtifactKind) -> u8 {
+    use moqui_devkit::ArtifactKind as Kind;
     match kind {
         Kind::Entity => 0,
         Kind::Data => 1,
@@ -257,7 +257,7 @@ fn order_of(kind: moqui_core::devtools::ArtifactKind) -> u8 {
 }
 
 fn propose(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError> {
-    let mut set: ChangeSet = serde_json::from_value(args.clone()).map_err(|err| {
+    let mut set = ChangeSet::deserialize(args).map_err(|err| {
         ToolError::new("bad_arguments", format!("The change set does not read: {err}"))
             .hint("files is a list of {file, ops | edits | text}.")
     })?;
@@ -358,7 +358,7 @@ fn propose(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolEr
 /// Accept: each file still at its base, or the change still applying to it now, is written through the save pipeline;
 /// nothing is written when one does not.
 fn write(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOutcome {
-    let set: ChangeSet = match serde_json::from_value(args.clone()) {
+    let set = match ChangeSet::deserialize(args) {
         Ok(set) => set,
         Err(err) => return ToolOutcome::Failed(format!("the approved change set does not read: {err}")),
     };
@@ -484,8 +484,8 @@ pub(crate) fn change_card(prepared: &[Prepared<'_>]) -> Json {
             values.push(json!({"file": position, "label": "Title", "attribute": "title", "value": title}));
         }
         match file.kind {
-            moqui_core::devtools::ArtifactKind::Screen => preview.push(json!({"location": file.location})),
-            moqui_core::devtools::ArtifactKind::ScreenExtend => {
+            moqui_devkit::ArtifactKind::Screen => preview.push(json!({"location": file.location})),
+            moqui_devkit::ArtifactKind::ScreenExtend => {
                 preview.push(json!({"location": extract::extended_location(&file.location)}));
             }
             _ => {}
@@ -521,18 +521,21 @@ fn describe(file: &Prepared<'_>) -> Vec<Json> {
     };
     let shown = file.named.shown.as_str();
     let mut rows = Vec::new();
-    if file.kind == moqui_core::devtools::ArtifactKind::ScreenExtend {
+    if file.kind == moqui_devkit::ArtifactKind::ScreenExtend {
         let base = extract::extended_location(&file.location);
         let screen = short_file(&base).trim_end_matches(".xml").to_string();
         let before = form_fields(file.current.as_deref().unwrap_or(""));
-        for (form, name, after, title) in form_fields(&file.new_text) {
-            if before
-                .iter()
-                .any(|(old_form, old_name, _, _)| *old_form == form && *old_name == name)
-            {
+        for FormField {
+            form,
+            name,
+            after,
+            title,
+        } in form_fields(&file.new_text)
+        {
+            if before.iter().any(|old| old.form == form && old.name == name) {
                 continue;
             }
-            let label = if title.is_empty() { name.clone() } else { title };
+            let label = if title.is_empty() { name } else { title };
             let place = if after.is_empty() {
                 String::new()
             } else {
@@ -592,8 +595,19 @@ fn describe(file: &Prepared<'_>) -> Vec<Json> {
     rows
 }
 
-/// The fields of the forms of a screen or screen-extend text: (form, field, after, title).
-fn form_fields(text: &str) -> Vec<(String, String, String, String)> {
+/// A field of a form in a screen or screen-extend text.
+#[derive(Debug, PartialEq)]
+struct FormField {
+    form: String,
+    name: String,
+    /// The `after` attribute: the field it is placed after, or empty.
+    after: String,
+    /// Its title, or its default-field's.
+    title: String,
+}
+
+/// The fields of the forms of a screen or screen-extend text.
+fn form_fields(text: &str) -> Vec<FormField> {
     let Ok(root) = MNode::parse_text("change", text) else {
         return Vec::new();
     };
@@ -611,12 +625,12 @@ fn form_fields(text: &str) -> Vec<(String, String, String, String)> {
                             .and_then(|default| default.attribute("title"))
                     })
                     .unwrap_or_default();
-                found.push((
-                    form.clone(),
-                    field.attribute("name").unwrap_or_default(),
-                    field.attribute("after").unwrap_or_default(),
+                found.push(FormField {
+                    form: form.clone(),
+                    name: field.attribute("name").unwrap_or_default(),
+                    after: field.attribute("after").unwrap_or_default(),
                     title,
-                ));
+                });
             }
         }
         stack.extend(node.child_iter());
@@ -630,7 +644,7 @@ fn new_titles(old: &str, new: &str) -> Vec<String> {
         text.match_indices("title=\"")
             .filter_map(|(at, found)| {
                 let rest = &text[at + found.len()..];
-                rest.find('"').map(|end| rest[..end].to_string())
+                rest.split_once('"').map(|(title, _)| title.to_string())
             })
             .collect()
     };
@@ -733,12 +747,12 @@ mod tests {
         assert_eq!(new_titles(old, new), ["Due Date"]);
         assert_eq!(
             form_fields(new),
-            [(
-                "F".to_string(),
-                "dueDate".to_string(),
-                "exampleEndDate".to_string(),
-                "Due Date".to_string()
-            )]
+            [FormField {
+                form: "F".to_string(),
+                name: "dueDate".to_string(),
+                after: "exampleEndDate".to_string(),
+                title: "Due Date".to_string()
+            }]
         );
     }
 }

@@ -19,12 +19,13 @@
 //! stopped server alive, and its calls then answer that the server is stopping.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use moqui_core::context::{Error, ErrorKind, ExecutionContextFactory};
 use moqui_core::screen::{RenderOptions, RenderOrigin, RenderOutput};
 use moqui_core::user::CodeLogin;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use moqui_tui::{
     counts_of, query_parameters, Choice, CodeAsk, LinkError, MenuItem, Messages, Push, PushSink, RawBody, ScreenLink,
     ScreenModel, Sendable, ShellAction, ShellInfo, Subscription, TransitionOutcome, ValidationError,
@@ -137,7 +138,7 @@ impl<T: Transport> Link<T> {
     }
 
     fn absolute(&self, url: &str) -> String {
-        let base = self.last_path.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let base = lock(&self.last_path).clone();
         resolve_url(&base, url)
     }
 
@@ -223,11 +224,7 @@ impl HostLink {
     /// The write the transition gate held on the last request, if it held one: the 409 body, `heldWrite` with its
     /// `argsHash`, and `approvalMismatch` when an approval did not match. Taken once.
     pub fn take_held(&self) -> Option<serde_json::Value> {
-        self.transport
-            .held
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
+        lock(&self.transport.held).take()
     }
 
     /// The link with these render options from now on.
@@ -254,21 +251,17 @@ impl HostLink {
 
     /// The render options of the next calls: an agent's screen session sets the gate for each command.
     pub fn set_render_options(&self, options: RenderOptions) {
-        *self.transport.options.lock().unwrap_or_else(PoisonError::into_inner) = options;
+        *lock(&self.transport.options) = options;
     }
 
     pub fn render_options(&self) -> RenderOptions {
-        self.transport
-            .options
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        lock(&self.transport.options).clone()
     }
 
     /// The address the dialog's login is checked against (`ipAllowed`).
     #[must_use]
     pub fn from_address(self, client_ip: impl Into<String>) -> Self {
-        *self.transport.client_ip.lock().unwrap_or_else(PoisonError::into_inner) = client_ip.into();
+        *lock(&self.transport.client_ip) = client_ip.into();
         self
     }
 
@@ -280,7 +273,7 @@ impl HostLink {
     /// [`Self::as_user`] over a factory held weakly: an SSH session, logged in by the SSH server.
     pub fn weak_as_user(factory: Weak<ExecutionContextFactory>, username: impl Into<String>) -> Self {
         let link = Self::weak(factory);
-        *link.transport.user.lock().unwrap_or_else(PoisonError::into_inner) = Some(username.into());
+        *lock(&link.transport.user) = Some(username.into());
         link
     }
 }
@@ -300,7 +293,7 @@ impl InProcess {
         F: FnOnce() -> Result<R, Error> + Send + 'static,
     {
         let factory = self.factory()?;
-        let client_ip = self.client_ip.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let client_ip = lock(&self.client_ip).clone();
         let rx = factory
             .request_pool()
             .try_submit(Arc::clone(&factory), move || {
@@ -331,7 +324,7 @@ impl InProcess {
             .try_submit(Arc::clone(&factory), move || {
                 moqui_core::user::internal_login_user(&username)?;
                 let id = moqui_core::user::current_user_id()?;
-                *user_id.lock().unwrap_or_else(PoisonError::into_inner) = id;
+                *lock(&user_id) = id;
                 work()
             })
             .map_err(link_error)?;
@@ -347,11 +340,11 @@ impl Transport for InProcess {
     fn send(&self, ask: Ask) -> Result<RenderOutput, LinkError> {
         let factory = self.factory()?;
         let values = value_map(&ask.parameters);
-        let options = self.options.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let options = lock(&self.options).clone();
         let gated = options.gate != moqui_core::screen::TransitionGate::Open;
         let attributes = Arc::clone(&self.attributes);
         let output = self.on_pool(move || {
-            let kept = attributes.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            let kept = lock(&attributes).clone();
             for (name, value) in &kept {
                 moqui_core::user::set_session_attribute_json(name, Some(value.clone()));
             }
@@ -371,7 +364,7 @@ impl Transport for InProcess {
                 .into_iter()
                 .filter(|(name, _)| !name.starts_with("moqui."))
                 .collect();
-            let mut shared = attributes.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut shared = lock(&attributes);
             for name in kept.keys().filter(|name| !after.contains_key(*name)) {
                 shared.remove(name);
             }
@@ -386,7 +379,7 @@ impl Transport for InProcess {
         if gated && output.status == 409 {
             if let Ok(body) = serde_json::from_str::<serde_json::Value>(&output.body_text()) {
                 if body.get("heldWrite").is_some() {
-                    *self.held.lock().unwrap_or_else(PoisonError::into_inner) = Some(body);
+                    *lock(&self.held) = Some(body);
                 }
             }
         }
@@ -400,7 +393,7 @@ impl Transport for InProcess {
         let answer = self.on_pool_anonymous(move || moqui_core::user::login_with_code(&name, &secret, &code))?;
         match answer {
             CodeLogin::LoggedIn => {
-                *self.user.lock().unwrap_or_else(PoisonError::into_inner) = Some(username.to_string());
+                *lock(&self.user) = Some(username.to_string());
                 Ok(())
             }
             CodeLogin::CodeNeeded { text, sendable } => Err(LinkError::Code(CodeAsk {
@@ -423,14 +416,14 @@ impl Transport for InProcess {
     }
 
     fn user(&self) -> Option<String> {
-        self.user.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.user).clone()
     }
 
     /// The notification topic of this process, filtered to the link's user as `/notws` filters a socket's.
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         let user_id = Arc::clone(&self.user_id);
         let listener = move |message: &moqui_core::notify::TopicMessage| {
-            let Some(me) = user_id.lock().unwrap_or_else(PoisonError::into_inner).clone() else {
+            let Some(me) = lock(&user_id).clone() else {
                 return;
             };
             let routed = message
@@ -478,7 +471,7 @@ impl<T: Transport> ScreenLink for Link<T> {
             let mut model = model_from(&output)?;
             carry(&mut carried, std::mem::take(&mut model.messages));
             model.messages = carried;
-            *self.last_path.lock().unwrap_or_else(PoisonError::into_inner) = model.screen.path.clone();
+            *lock(&self.last_path) = model.screen.path.clone();
             return Ok(model);
         }
         Err(LinkError::Remote(format!("{path} redirected too many times")))
@@ -931,10 +924,10 @@ fn app_menu(menu: Vec<MenuItem>, path: &str) -> Vec<MenuItem> {
         .split('/')
         .filter(|n| !n.is_empty())
         .collect();
-    if names.len() < 2 {
+    let [first, second, ..] = names.as_slice() else {
         return menu;
-    }
-    let app = format!("/{}/{}", names[0], names[1]);
+    };
+    let app = format!("/{first}/{second}");
     let found: Vec<MenuItem> = menu
         .iter()
         .filter(|item| item.url.split('?').next() == Some(app.as_str()))
@@ -1077,8 +1070,8 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
 fn local_path(location: &str) -> String {
     match location.split_once("://") {
         Some((_, rest)) => rest
-            .find('/')
-            .map_or_else(|| "/".to_string(), |at| rest[at..].to_string()),
+            .split_once('/')
+            .map_or_else(|| "/".to_string(), |(_, path)| format!("/{path}")),
         None => location.to_string(),
     }
 }
@@ -1172,6 +1165,16 @@ fn split_segments(path: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_redirect_location_keeps_what_follows_its_host() {
+        assert_eq!(
+            local_path("https://erp.example.com/qapps/Order?id=1"),
+            "/qapps/Order?id=1"
+        );
+        assert_eq!(local_path("https://erp.example.com"), "/");
+        assert_eq!(local_path("/qapps/Order"), "/qapps/Order");
+    }
 
     #[test]
     fn a_relative_url_drops_the_last_segment_before_dot_dot() {

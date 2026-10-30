@@ -20,11 +20,12 @@ use std::sync::Arc;
 use moqui_db::model::{EntityDefinition, KeyMap};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, Value};
+use moqui_lib::sync::{lock, read, write};
 
 use super::define::{Authenticate, ServiceDef, ServiceKind};
 use super::util::has_error;
 use super::validate;
-use crate::context::{Error, ExecutionContext};
+use crate::context::{Authz, Error, ExecutionContext, Tarpit};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
 
@@ -339,8 +340,8 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
             "AT_SERVICE",
             &def.name,
             verb_action(&def.verb),
-            def.authenticate == Authenticate::Required,
-            true,
+            Authz::required_if(def.authenticate == Authenticate::Required),
+            Tarpit::Count,
             None,
         )?;
         ctx.untrack_hit();
@@ -562,11 +563,7 @@ fn record_failure(service: &str, err: &LibError) -> bool {
         // a tool this package leaves out (git, imap): its callers are told each time, the log once per service
         static TOLD: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
             std::sync::OnceLock::new();
-        let first = TOLD
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(service.to_string());
+        let first = lock(TOLD.get_or_init(Default::default)).insert(service.to_string());
         if first {
             tracing::info!(service, "Service {service} is not available: {err}");
         }
@@ -622,14 +619,14 @@ impl ServiceFrame {
                 anonymous: false,
             });
         }
-        let requires_authz = def.authenticate == Authenticate::Required;
+        let authz = Authz::required_if(def.authenticate == Authenticate::Required);
         let outcome = crate::context::ExecutionContext::with_current(|ctx| {
             ctx.push_checked(
                 "AT_SERVICE",
                 &def.name,
                 auth_action(def),
-                requires_authz,
-                true,
+                authz,
+                Tarpit::Count,
                 Some(parameters),
             )?;
             let remembered = (!def.no_remember_parameters && !no_remember).then_some(parameters);
@@ -816,21 +813,11 @@ fn callbacks() -> &'static Callbacks {
 
 /// Java's `ServiceFacade.registerCallback`: `callback` hears of every later call of `name`.
 pub fn register_callback(name: &str, callback: Arc<dyn ServiceCallback>) {
-    callbacks()
-        .write()
-        .unwrap_or_else(|err| err.into_inner())
-        .entry(canonical(name))
-        .or_default()
-        .push(callback);
+    write(callbacks()).entry(canonical(name)).or_default().push(callback);
 }
 
 fn call_callbacks(name: &str, context: &BTreeMap<String, Value>, outcome: Result<&BTreeMap<String, Value>, &LibError>) {
-    let list = callbacks()
-        .read()
-        .unwrap_or_else(|err| err.into_inner())
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
+    let list = read(callbacks()).get(name).cloned().unwrap_or_default();
     for callback in list.iter().filter(|callback| callback.is_enabled()) {
         match outcome {
             Ok(result) => callback.receive_result(context, result),
@@ -1666,12 +1653,15 @@ fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], fields: &[FieldSn
     if key_map.is_empty() && one {
         return pks.into_iter().map(|pk| (pk.clone(), pk)).collect();
     }
-    if key_map.len() == 1 {
-        let map = &key_map[0];
-        let related = match map.related.as_deref().filter(|value| !value.is_empty()) {
-            Some(related) => related.to_string(),
-            None if one && pks.len() == 1 => pks[0].clone(),
-            None => map.field_name.clone(),
+    let single_pk = match pks.as_slice() {
+        [pk] if one => Some(pk),
+        _ => None,
+    };
+    if let [map] = key_map {
+        let related = match (map.related.as_deref().filter(|value| !value.is_empty()), single_pk) {
+            (Some(related), _) => related.to_string(),
+            (None, Some(pk)) => pk.clone(),
+            (None, None) => map.field_name.clone(),
         };
         return vec![(map.field_name.clone(), related)];
     }
@@ -1684,8 +1674,8 @@ fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], fields: &[FieldSn
                 .clone()
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| map.field_name.clone());
-            if one && pks.len() == 1 && !names.contains(related.as_str()) {
-                related = pks[0].clone();
+            if let Some(pk) = single_pk.filter(|_| !names.contains(related.as_str())) {
+                related = pk.clone();
             }
             (map.field_name.clone(), related)
         })

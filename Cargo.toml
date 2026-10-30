@@ -6,7 +6,7 @@
 # postgresql_embedded 0.21 / sqlx 0.9 require Rust 1.94. mysql_common 0.37
 # pulls uuid 1.28, which requires Rust 1.89. This file does not set
 # rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
-# `cargo check -p moqui` needs Rust 1.94. A full workspace check also builds
+# `cargo check -p moqui` needs Rust 1.95 (if-let guards in match arms). A full workspace check also builds
 # `moqui-tui`, and Revue 3.x requires Rust 1.95.
 
 [workspace]
@@ -14,8 +14,16 @@ resolver = "2"
 members = [
     "crates/moqui-lib",
     "crates/moqui-db",
+    "crates/moqui-entity",
     "crates/moqui-core",
     "crates/moqui-llm",
+    "crates/moqui-git",
+    "crates/moqui-mail",
+    "crates/moqui-report",
+    "crates/moqui-collab",
+    "crates/moqui-dav",
+    "crates/moqui-devkit",
+    "crates/moqui-drivers",
     "crates/moqui-host",
     "crates/moqui-browser",
     "crates/moqui",
@@ -51,10 +59,32 @@ unexpected_cfgs = { level = "deny", priority = -1 }
 [workspace.dependencies]
 moqui-lib = { path = "crates/moqui-lib" }
 moqui-db = { path = "crates/moqui-db" }
+# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/Crate-Split.md).
+moqui-entity = { path = "crates/moqui-entity" }
 # default-features off so moqui-browser can leave out mail, http, and cluster-tls; moqui-host names them.
 moqui-core = { path = "crates/moqui-core", default-features = false }
 # The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.
 moqui-llm = { path = "crates/moqui-llm" }
+# git:// locations, the git services and the git server, on moqui-core (plans/Crate-Split.md); the host links it under
+# its git feature.
+moqui-git = { path = "crates/moqui-git" }
+# The email services, on moqui-core (plans/Crate-Split.md); the host links it under its smtp feature, and turns on its
+# imap feature under its own. default-features off so a host without imap leaves it out.
+moqui-mail = { path = "crates/moqui-mail", default-features = false }
+# Reports, dashboards, alerts, report schedules and monitoring keys, on moqui-core (plans/Crate-Split.md); the host and
+# the browser link it in every build. default-features off so the browser leaves out xlsx.
+moqui-report = { path = "crates/moqui-report", default-features = false }
+# Co-edited documents and the collab services, on moqui-core (plans/Crate-Split.md); the host links it in every build.
+moqui-collab = { path = "crates/moqui-collab" }
+# The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
+# host links it in every build.
+moqui-dav = { path = "crates/moqui-dav" }
+# The development kit (reload, the file watcher, check, the artifact index, typegen, the spec runner), on moqui-core
+# (plans/Crate-Split.md); the host links it in every build, and its watch feature under devtools.
+moqui-devkit = { path = "crates/moqui-devkit" }
+# The database drivers, out of moqui-host (plans/Crate-Split.md); the host links it and forwards postgres, mysql and
+# embedded-postgres.
+moqui-drivers = { path = "crates/moqui-drivers" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
 # The framework's dev component crates, kept in runtime/dev-component, linked by crates/moqui under devtools.
@@ -114,6 +144,7 @@ des = "0.9"
 pbkdf2 = "0.12"
 md-5 = "0.10"
 
+# Mail (moqui-mail): lettre, imap, mail-parser; rustls and webpki-roots are the host's too.
 # Do not enable the feature named rustls-tls: on this crate it selects ring.
 # hostname is an optional dependency feature. tokio1 stays off, so SMTP is not async.
 lettre = { version = "0.11", default-features = false, features = [
@@ -193,9 +224,9 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 # Line diffs for DbResource version history (stored reverse deltas) and the version compare view. Apache-2.0, no
 # required dependencies; `inline` is the word-level highlight of a changed line.
 similar = { version = "3.2", default-features = false, features = ["text", "inline"] }
-# The Yjs CRDT, wire-compatible with the Yjs of the browser editor (m-coedit): co-edited documents (moqui-core collab).
+# The Yjs CRDT, wire-compatible with the Yjs of the browser editor (m-coedit): co-edited documents (moqui-collab).
 yrs = { version = "0.28", default-features = false }
-# Git resource locations (git://, crates/moqui-core/src/resource/git). gitoxide is pure Rust; libgit2 (git2) fails the
+# Git resource locations (git://, crates/moqui-git). gitoxide is pure Rust; libgit2 (git2) fails the
 # license gate and links OpenSSL. Defaults stay off; HTTPS fetch goes through the workspace reqwest 0.13 on rustls
 # (aws-lc). No push upstream yet, SSH remotes run the system ssh binary.
 gix = { version = "0.90", default-features = false, features = [
@@ -209,14 +240,14 @@ gix = { version = "0.90", default-features = false, features = [
 # ReadDirectoryChangesW behind one API. CC0-1.0.
 notify = { version = "8.2" }
 # The pack writer (data::output, the `generate` feature) and a delta-base cache for the git server
-# (crates/moqui-core/src/resource/git/server): gix reaches gix-pack without either. The version moves with gix's.
+# (crates/moqui-git/src/server): gix reaches gix-pack without either. The version moves with gix's.
 gix-pack = { version = "0.77", default-features = false, features = ["generate", "pack-cache-lru-dynamic"] }
 # gzip request bodies of the git server (git compresses an upload-pack request over 1 KB). Already in the graph
 # through russh and zip; the miniz_oxide backend.
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 # --- moqui-host ---
-# rt-multi-thread is for axum. Each Postgres connection builds its own current_thread runtime.
+# rt-multi-thread is for axum. The database clients are blocking and use no runtime (crates/moqui-host/src/db).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util"] }
 # Defaults are tls-native-tls and theseus. No feature downloads or bundles the archive: crates/moqui-host/build.rs
 # stages it and db/embedded.rs unpacks it, so the crate's build script links no TLS stack.

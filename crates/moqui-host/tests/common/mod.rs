@@ -135,13 +135,114 @@ const STATIC_LIST: &str = r#"<screen require-authentication="false" server-stati
 /// The component of a deployment that marks the fixture screen server-static for qvt without editing the screen: a `screen-extend` file.
 const STATIC_EXTEND: &str = r#"<screen-extend server-static="qvt"/>"#;
 
-/// The tests set process-wide properties while they start a server, so those take the write lock, and one runs at a time. A test
-/// that only boots a factory to load data, and sets no property, takes the read lock with the others like it: [`shared`].
+/// A server's boot writes process-wide properties (the conf's default properties, generated secrets) and a test sets its own,
+/// so a test that starts a server runs in a process of its own ([`own_process`]), where it takes the write lock
+/// uncontended; in the test binary's process, a test that only boots a factory to load data, and sets no property,
+/// takes the read lock with the others like it: [`shared`].
 static SERIAL: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
-/// The lock of the tests that start a server or set process properties, alone. Hold it for the whole test.
+/// The lock of the tests that start a server or set process properties, alone in their process. Hold it for the whole
+/// test, which runs in a process of its own ([`own_process`]).
 pub fn serial() -> std::sync::RwLockWriteGuard<'static, ()> {
+    assert_own_process();
     SERIAL.write().unwrap_or_else(|err| err.into_inner())
+}
+
+/// The variable that names the test a child process of [`own_process`] runs.
+const OWN_PROCESS: &str = "MOQUI_TEST_OWN_PROCESS";
+
+/// Run the calling test in a process of its own: a test that starts a server or sets process properties begins with
+///
+/// ```ignore
+/// if !crate::common::own_process() {
+///     return;
+/// }
+/// ```
+///
+/// In the test binary's process this runs the binary again for this test alone (`--exact`, by the name libtest gives
+/// the test's thread), shows the child's output, fails when the child failed, and answers false: the test is done. In
+/// the child it answers true and the test runs, with the process's properties to itself, so tests that start servers
+/// run in parallel instead of one at a time. At most half the CPUs' worth of children run at once
+/// (`MOQUI_TEST_PROCESSES` sets another number).
+pub fn own_process() -> bool {
+    let test = std::thread::current()
+        .name()
+        .expect("libtest names a test's thread for the test")
+        .to_string();
+    if std::env::var(OWN_PROCESS).is_ok_and(|name| name == test) {
+        return true;
+    }
+    let _slot = ProcessSlot::take();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            test.as_str(),
+            "--exact",
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(OWN_PROCESS, &test)
+        .output()
+        .expect("run the test in a process of its own");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // libtest shows it when the test fails, or with --nocapture
+    print!("{text}");
+    assert!(output.status.success(), "{test} failed in its own process");
+    assert!(
+        text.contains("1 passed"),
+        "{test} did not run in its own process (is it named for its test?)"
+    );
+    false
+}
+
+/// Whether this is the child process of [`own_process`].
+pub fn in_own_process() -> bool {
+    std::env::var_os(OWN_PROCESS).is_some()
+}
+
+/// A test that starts a server or sets process properties runs in a process of its own.
+fn assert_own_process() {
+    assert!(
+        in_own_process(),
+        "a test that starts a server or sets process properties runs in a process of its own: begin it with \
+         `if !crate::common::own_process() {{ return; }}`"
+    );
+}
+
+/// One of the child processes [`own_process`] may run at once.
+struct ProcessSlot;
+
+static PROCESS_SLOTS: (std::sync::Mutex<usize>, std::sync::Condvar) =
+    (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+impl ProcessSlot {
+    fn take() -> Self {
+        let limit = std::env::var("MOQUI_TEST_PROCESSES")
+            .ok()
+            .and_then(|text| text.parse::<usize>().ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |cpus| (cpus.get() / 2).max(1)));
+        let (running, freed) = &PROCESS_SLOTS;
+        let mut count = running.lock().unwrap_or_else(|err| err.into_inner());
+        while *count >= limit {
+            count = freed.wait(count).unwrap_or_else(|err| err.into_inner());
+        }
+        *count += 1;
+        Self
+    }
+}
+
+impl Drop for ProcessSlot {
+    fn drop(&mut self) {
+        let (running, freed) = &PROCESS_SLOTS;
+        *running.lock().unwrap_or_else(|err| err.into_inner()) -= 1;
+        freed.notify_one();
+    }
 }
 
 /// The lock of a test that loads data or runs a cluster without a server or a process property. It runs beside the others of its
@@ -242,7 +343,7 @@ pub fn start_token_route(label: &str) -> Gate {
 }
 
 /// [`start`] with more conf in the runtime's `MoquiDevConf.xml`, such as a response header of this server only, and process properties
-/// that hold while the gate does. They are set once the gate has the one-server lock, and cleared when it drops.
+/// that hold while the gate does, in the test's own process ([`own_process`]). They are cleared when it drops.
 pub fn start_with_conf(label: &str, extra_conf: &str, properties: &[(&str, &str)]) -> Gate {
     let mut gate = start_seeded(label, false, None, extra_conf, &[], &[], &[]);
     for (name, value) in properties {
@@ -252,9 +353,8 @@ pub fn start_with_conf(label: &str, extra_conf: &str, properties: &[(&str, &str)
     gate
 }
 
-/// [`start_with_data`] with process properties the server reads while it starts, such as the cluster transport. They are set once the
-/// gate has the one-server lock, before the load, and cleared when the gate drops. Setting them before the lock would change
-/// the properties of a server another test still runs.
+/// [`start_with_data`] with process properties the server reads while it starts, such as the cluster transport. They are set
+/// before the load, in the test's own process ([`own_process`]), and cleared when the gate drops.
 pub fn start_with_properties(label: &str, data: Option<&str>, properties: &[(&str, &str)]) -> Gate {
     start_seeded(label, false, data.map(|text| (text, None)), "", properties, &[], &[])
 }
@@ -496,9 +596,12 @@ fn build_template() -> Template {
         static_list: fixtures.join("GateStaticList.xml"),
         cluster: done.join("cluster"),
     };
-    std::fs::write(&template.companion, COMPANION).unwrap();
-    std::fs::write(&template.widgets, WIDGETS).unwrap();
-    std::fs::write(&template.static_list, STATIC_LIST).unwrap();
+    write_fixture(&template.companion, COMPANION);
+    write_fixture(&template.widgets, WIDGETS);
+    write_fixture(&template.static_list, STATIC_LIST);
+    // One process builds a missing template; the others (the child processes of own_process) wait for it.
+    let lock = std::fs::File::create(cache.join(format!("{key}.lock"))).unwrap();
+    lock.lock().unwrap();
     if !done.is_dir() {
         let building = cache.join(format!("{key}.building-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&building);
@@ -527,6 +630,17 @@ fn build_template() -> Template {
         }
     }
     template
+}
+
+/// Write a fixture screen unless it already has `text`: a temporary file renamed into place, so a server another process
+/// boots never reads it half written.
+fn write_fixture(path: &Path, text: &str) {
+    if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
+        return;
+    }
+    let part = path.with_extension(format!("part-{}", std::process::id()));
+    std::fs::write(&part, text).unwrap();
+    std::fs::rename(&part, path).unwrap();
 }
 
 /// Write the conf and the links of a runtime directory. The Postgres install is shared ([`temp_dir`]), so the gate does
@@ -656,6 +770,7 @@ fn start_seeded_under(
     files: &[(&str, &str)],
     links: &[(&str, &str)],
 ) -> Gate {
+    assert_own_process();
     let reset = PropertyReset::of(&properties.iter().map(|(name, _)| *name).collect::<Vec<_>>());
     for (name, value) in properties {
         moqui_lib::env::set_property(name, (*value).to_string());

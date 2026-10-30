@@ -32,7 +32,7 @@ use moqui_db::sql::{
 use moqui_lib::codec::hex_encode;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait};
 use serde_json::Value as Json;
 use sha2::Sha256;
 
@@ -47,8 +47,8 @@ use crate::entity::{cache, EntityFacade, EntityValue};
 pub(crate) struct AuthzCache {
     pub(crate) generation: u64,
     pub(crate) groups: Option<Arc<std::collections::HashSet<String>>>,
-    pub(crate) checks: Option<Arc<Vec<Arc<AuthzCheck>>>>,
-    pub(crate) tarpit: BTreeMap<String, Arc<Vec<TarpitCheck>>>,
+    pub(crate) checks: Option<Arc<[Arc<AuthzCheck>]>>,
+    pub(crate) tarpit: BTreeMap<String, Arc<[TarpitCheck]>>,
 }
 
 /// One tarpit rule for an artifact type, for the user's groups.
@@ -869,21 +869,29 @@ pub fn current_log_actor() -> Option<(Option<String>, Option<String>)> {
     })
 }
 
-/// Session id, visitor id, and username of the bound session, for HTTP telemetry. All three are
-/// absent when no context is entered or no session is bound. The username is absent when nobody is logged in.
-pub fn http_log_identity() -> (Option<String>, Option<String>, Option<String>) {
+/// Who an HTTP log line is for. All three are absent when no context is entered or no session is bound. The username is
+/// absent when nobody is logged in.
+#[derive(Clone, Debug, Default)]
+pub struct HttpLogIdentity {
+    pub session_id: Option<String>,
+    pub visitor_id: Option<String>,
+    pub username: Option<String>,
+}
+
+/// The session id, visitor id, and username of the bound session, for HTTP telemetry.
+pub fn http_log_identity() -> HttpLogIdentity {
     ExecutionContext::with_current(|ec| {
         let session = ec.session();
         if session.bound_id.is_none() {
-            return (None, None, None);
+            return HttpLogIdentity::default();
         }
-        (
-            session.bound_id.clone(),
-            session.visitor_id.clone(),
-            session.username.clone(),
-        )
+        HttpLogIdentity {
+            session_id: session.bound_id.clone(),
+            visitor_id: session.visitor_id.clone(),
+            username: session.username.clone(),
+        }
     })
-    .unwrap_or((None, None, None))
+    .unwrap_or_default()
 }
 
 /// The user and visitor [`current_log_actor`] reads. The username stored with the user id is the same text.
@@ -1127,7 +1135,7 @@ pub(crate) fn set_visit(visit_id: &str, visitor_id: &str) {
 
 /// Clears the user and the anonymous flag. Visit ids and screen state stay. The CSRF token and
 /// cached authorization data go, so a later login cannot reuse them.
-pub(crate) fn clear_login() {
+pub fn clear_login() {
     with_session(|session| {
         session.user_id = None;
         session.username = None;
@@ -1139,7 +1147,7 @@ pub(crate) fn clear_login() {
 }
 
 /// Who is logged in on this context, with what a login changes beside the user, for [`restore_identity`].
-pub(crate) struct Identity {
+pub struct Identity {
     user_id: Option<String>,
     username: Option<String>,
     anonymous: bool,
@@ -1151,7 +1159,7 @@ pub(crate) struct Identity {
     factor_required: Option<Json>,
 }
 
-pub(crate) fn identity() -> Identity {
+pub fn identity() -> Identity {
     with_session(|session| Identity {
         user_id: session.user_id.clone(),
         username: session.username.clone(),
@@ -1166,7 +1174,7 @@ pub(crate) fn identity() -> Identity {
 }
 
 /// Put back an [`identity`], as Java's `logoutLocal` pops the user. The session id and visit stay as they are.
-pub(crate) fn restore_identity(identity: &Identity) {
+pub fn restore_identity(identity: &Identity) {
     with_session(|session| {
         session.user_id.clone_from(&identity.user_id);
         session.username.clone_from(&identity.username);
@@ -1236,7 +1244,7 @@ fn presented_id(session_cookie: Option<&str>) -> Result<Option<String>, Error> {
     }
 }
 
-fn resolve_id(factory: &Arc<ExecutionContextFactory>, presented: Option<&str>) -> Result<(String, bool), Error> {
+fn resolve_id(factory: &ExecutionContextFactory, presented: Option<&str>) -> Result<(String, bool), Error> {
     if let Some(id) = presented {
         if adopt_presented(factory, id)? {
             return Ok((id.to_string(), false));
@@ -1551,7 +1559,7 @@ fn refresh_from_account() -> Result<(), Error> {
     Ok(())
 }
 
-fn ensure_visit(factory: &Arc<ExecutionContextFactory>, visitor_cookie: Option<&str>) -> Result<(), Error> {
+fn ensure_visit(factory: &ExecutionContextFactory, visitor_cookie: Option<&str>) -> Result<(), Error> {
     if NO_VISIT.with(std::cell::Cell::get) || visit_id()?.is_some() {
         return Ok(());
     }
@@ -1885,7 +1893,7 @@ impl<'a> FlushClaim<'a> {
         let mut table = lock_sessions(factory);
         let flushed = Arc::clone(&table.flushed);
         while table.flushing.contains(id) {
-            table = flushed.wait(table).unwrap_or_else(|err| err.into_inner());
+            table = wait(&flushed, table);
         }
         table.flushing.insert(id.to_string());
         Self {

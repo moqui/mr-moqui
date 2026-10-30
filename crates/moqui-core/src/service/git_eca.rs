@@ -15,16 +15,15 @@
 //! gitECA rules: `<giteca>` elements of the `*.gitecas.xml` files in a component's `service/` directory, run on the
 //! events of a git repository as email ECA rules run on a received message. No Java counterpart. A rule names its
 //! `event` and is narrowed by `source`, `repository-pattern`, `ref-pattern`, `ref-type` and `default-branch-only`;
-//! its condition and actions are xml-actions, with the event's values in the context (`resource::git::events`). The
+//! its condition and actions are xml-actions, with the event's values in the context (moqui-git's `events`). The
 //! pre events (`pre-receive`, `pre-ref-update`) run in a push before it is accepted: an error a rule leaves in the
 //! message facade refuses the push, or that ref. The post events (`ref-update`, `commit`, `tag`, `post-receive`) run
 //! after refs changed, each rule in a transaction of its own; one that fails is logged and recorded on the
 //! `GitUpdate`, and the others still run. Rules run with authorization off: they are a component's own code, and the
 //! repository was checked when it was reached. Schema: `framework/xsd/git-eca-3.xsd`; guide: `docs/interfaces/Git-Hosting.md`.
 //!
-//! A build without the `git` feature still reads and checks the rules, so a component's files load the same; nothing
-//! runs them, since there are no git events.
-#![cfg_attr(not(feature = "git"), allow(dead_code))]
+//! The git events are moqui-git's. A build without it still reads and checks the rules, so a component's files load
+//! the same; nothing runs them, since there are no git events.
 
 use std::collections::BTreeMap;
 
@@ -36,7 +35,7 @@ use crate::context::{Error, ExecutionContext};
 
 /// The events a rule runs on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum GitEvent {
+pub enum GitEvent {
     /// Once per push, before any ref changes: an error refuses the whole push.
     PreReceive,
     /// Once per ref of a push, before it changes: an error refuses that ref (all of them in an atomic push).
@@ -64,7 +63,7 @@ impl GitEvent {
         })
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::PreReceive => "pre-receive",
             Self::PreRefUpdate => "pre-ref-update",
@@ -79,7 +78,7 @@ impl GitEvent {
 /// The sources a rule without `source` runs for: a write through `git://` (a wiki save, say) is opted into.
 const DEFAULT_SOURCES: [&str; 3] = ["push", "fetch", "import"];
 
-pub(crate) struct GitRule {
+pub struct GitRule {
     pub(crate) id: Option<String>,
     pub(crate) name: String,
     pub(crate) priority: i64,
@@ -151,7 +150,7 @@ pub(super) fn git_rule_from(node: &MNode) -> Result<GitRule, Error> {
 
 /// What an event is matched against.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct GitEventKey<'a> {
+pub struct GitEventKey<'a> {
     pub event: GitEvent,
     pub source: &'a str,
     pub repository_id: &'a str,
@@ -202,7 +201,7 @@ impl GitRule {
 
 /// Whether any rule of the entered context's factory runs on `event` from `source`, so the caller can skip working
 /// out the values of an event no rule reads.
-pub(crate) fn listening(event: GitEvent, source: &str) -> bool {
+pub fn listening(event: GitEvent, source: &str) -> bool {
     eca_rules::current().is_some_and(|rules| {
         rules
             .git
@@ -212,7 +211,7 @@ pub(crate) fn listening(event: GitEvent, source: &str) -> bool {
 }
 
 /// Whether any rule runs on a post event (ref-update, commit, tag, post-receive) from `source`.
-pub(crate) fn listening_after(source: &str) -> bool {
+pub fn listening_after(source: &str) -> bool {
     [
         GitEvent::RefUpdate,
         GitEvent::Commit,
@@ -225,7 +224,7 @@ pub(crate) fn listening_after(source: &str) -> bool {
 
 /// What the rules of one event said: the errors (which refuse a pre event) and the other messages.
 #[derive(Debug, Default)]
-pub(crate) struct RuleOutcome {
+pub struct RuleOutcome {
     pub errors: Vec<String>,
     pub messages: Vec<String>,
 }
@@ -242,7 +241,7 @@ fn take_messages(outcome: &mut RuleOutcome) {
 
 /// Run the rules that match `key`, each with `fields` in its context, with authorization off; with `transactions` each
 /// in a transaction of its own that an error rolls back. A rule that fails is logged and the others still run.
-pub(crate) fn run_git_rules(
+pub fn run_git_rules(
     key: &GitEventKey<'_>,
     fields: &BTreeMap<String, Value>,
     transactions: Option<&crate::transaction::TransactionManager>,
@@ -291,7 +290,8 @@ pub(crate) fn run_git_rules(
 }
 
 /// Install rules from XML on a factory, for tests.
-#[cfg(test)]
-pub(crate) fn install(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>, xml: &str) {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn install(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>, xml: &str) {
     eca_rules::install(factory, eca_rules::from_xml("", "").with_git(xml));
 }

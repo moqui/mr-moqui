@@ -30,7 +30,7 @@ use moqui_lib::env;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::{lock, read, write};
 
-use super::artifact::{ArtifactStack, AuthzGuard};
+use super::artifact::{ArtifactStack, Authz, AuthzGuard, Tarpit};
 
 thread_local! {
     /// The entered contexts, innermost last, one entry per live guard. Each entry is a handle that
@@ -41,11 +41,11 @@ use super::cache::CacheFacade;
 use super::component::{self, ComponentInfo};
 use super::conf;
 use super::confcache::ConfCache;
-use super::error::Error;
 use super::message::MessageFacade;
 use super::resource::ResourceFacade;
+use super::Error;
 use crate::entity::EntityFacade;
-use crate::user::AuthInfo;
+use crate::user::{AuthInfo, StackAuthz};
 
 const ENV_HEADER: &str = "# This file holds secrets and must be kept with the instance backup.\n";
 /// The `response-header` entries of the shipped `MoquiDefaultConf.xml` webapp, `(type, name, value, add)`, for a conf
@@ -340,8 +340,8 @@ impl ExecutionContextFactory {
             native_tools: crate::native::ToolSet::default(),
         });
         factory.native.configure(&factory, &conf_node)?;
-        if let Err(error) = crate::report::load_shipped(&factory) {
-            tracing::error!(%error, "could not load component report definitions");
+        for extension in crate::extension::linked() {
+            (extension.after_boot)(&factory);
         }
         set_by_boot.keep();
         factory.pools.attach(&factory);
@@ -468,8 +468,11 @@ impl ExecutionContextFactory {
     /// Stop request/service workers before closing tools. The host calls this after its listeners stop.
     pub fn shutdown(&self) {
         self.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
-        // the mail IDLE workers first: each holds the factory and a connection while it waits
-        crate::service::stop_mail_idle(self);
+        // the framework crates' steps first, such as moqui-mail's IDLE workers: each holds the factory and a connection
+        // while it waits
+        for extension in crate::extension::linked() {
+            (extension.before_shutdown)(self);
+        }
         self.requests.shutdown();
         self.pools.shutdown();
         crate::telemetry::for_factory(self).shutdown();
@@ -894,9 +897,8 @@ impl ExecutionContext {
 
     /// Decide an artifact against the frame below it, then push it. A denied artifact is not pushed.
     ///
-    /// `requires_authz` false pushes the frame whatever the records say, so that it can still
-    /// inherit. `count_tarpit` counts the hit against the tarpits (Java's `pushInternal` argument), unless
-    /// [`Self::disable_tarpit`] is in force. `parameters` feed the `filterMap` of an authorization record.
+    /// `authz` and `tarpit` say whether the frame needs an authorization record and counts against the tarpits.
+    /// `parameters` feed the `filterMap` of an authorization record.
     ///
     /// # Errors
     ///
@@ -906,11 +908,15 @@ impl ExecutionContext {
         artifact_type: &str,
         name: &str,
         action: &str,
-        requires_authz: bool,
-        count_tarpit: bool,
+        authz: Authz,
+        tarpit: Tarpit,
         parameters: Option<&std::collections::BTreeMap<String, moqui_lib::object::Value>>,
     ) -> Result<(), Error> {
-        let (last, ancestor_deny, authz_disabled) = self.stack_authz_state();
+        let StackAuthz {
+            last,
+            ancestor_deny,
+            authz_disabled,
+        } = self.stack_authz_state();
         // A frame of an isolated check asks whether the user may (a menu item, a link), it is not a use: Java's isAccess.
         let is_access = !self.state.artifacts.borrow().in_isolated_check();
         // The decision reads entities, which push their own frames, so no borrow is held here.
@@ -919,9 +925,9 @@ impl ExecutionContext {
             name,
             action,
             &crate::user::Permit {
-                requires_authz,
+                requires_authz: authz == Authz::Required,
                 authz_disabled,
-                count_tarpit: count_tarpit && !self.tarpit_disabled(),
+                count_tarpit: tarpit == Tarpit::Count && !self.tarpit_disabled(),
                 is_access,
                 parameters,
             },
@@ -945,10 +951,14 @@ impl ExecutionContext {
     }
 
     /// The frame below, any deny on the stack, and whether authorization is disabled.
-    pub(crate) fn stack_authz_state(&self) -> (Option<AuthInfo>, bool, bool) {
+    pub(crate) fn stack_authz_state(&self) -> StackAuthz {
         let artifacts = self.state.artifacts.borrow();
-        let (last, deny) = artifacts.authz_state();
-        (last, deny, artifacts.authz_disabled())
+        let (last, ancestor_deny) = artifacts.authz_state();
+        StackAuthz {
+            last,
+            ancestor_deny,
+            authz_disabled: artifacts.authz_disabled(),
+        }
     }
 
     /// Start an isolated check: the frames pushed from here on are decided against a fresh stack, neither inheriting from

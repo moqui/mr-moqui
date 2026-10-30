@@ -41,7 +41,7 @@ use crate::web::{self, WebRequest};
 pub(crate) const UNIT_MODE: &str = "qvt-static";
 pub(crate) const STATIC_MODULE: &str = "framework/template/screen/ScreenQvtStatic.js";
 /// The module of server-merged qvt. A screen with another macro module for qvt is not transcribed.
-pub(crate) const MERGED_MODULE: &str = "framework/template/screen/ScreenQvt.js";
+pub const MERGED_MODULE: &str = "framework/template/screen/ScreenQvt.js";
 /// The conf's `Cache-Control` of a server-static response, `response-header` `screen-server-static`.
 pub fn server_static_cache_control() -> String {
     web::conf_header("screen-server-static", "Cache-Control").unwrap_or_else(|| "private, no-store".to_string())
@@ -50,7 +50,7 @@ const COMPILER_LOCATION: &str = "component://webroot/screen/webroot/libs/vue/com
 const STATIC_MODULE_SOURCE: &str =
     include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvtStatic.js");
 /// The keys the renderer sets for a paginated list, after the list name.
-pub(crate) const PAGE_SUFFIXES: [&str; 6] = [
+pub const PAGE_SUFFIXES: [&str; 6] = [
     "Count",
     "PageIndex",
     "PageSize",
@@ -182,10 +182,10 @@ fn structure_reasons(
 }
 
 /// The eligibility of `def` for static qvt. `force` answers as if the screen were marked, which the compatibility report asks.
-pub(crate) fn eligibility_of(
+pub fn eligibility_of(
     facade: &super::ScreenFacade,
     factory: &ExecutionContextFactory,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     macro_location: &str,
     force: bool,
 ) -> Arc<Eligibility> {
@@ -241,11 +241,11 @@ struct CompilerText(Mutex<Option<Arc<str>>>);
 
 pub fn compiler_source(factory: &ExecutionContextFactory) -> Result<Arc<str>, Error> {
     let kept = factory.extension(|_| CompilerText(Mutex::new(None)));
-    if let Some(text) = kept.0.lock().unwrap_or_else(|err| err.into_inner()).as_ref() {
+    if let Some(text) = moqui_lib::sync::lock(&kept.0).as_ref() {
         return Ok(Arc::clone(text));
     }
     let text: Arc<str> = read_compiler_source(factory)?.into();
-    *kept.0.lock().unwrap_or_else(|err| err.into_inner()) = Some(Arc::clone(&text));
+    *moqui_lib::sync::lock(&kept.0) = Some(Arc::clone(&text));
     Ok(text)
 }
 
@@ -558,7 +558,7 @@ fn unwrap_map(map: &IndexMap<String, Value>) -> serde_json::Value {
 }
 
 /// The names of the forms that are lists, with the list each shows.
-fn list_forms(state: &RenderState, def: &Arc<ScreenDef>) -> Vec<(String, Arc<form::FormInstance>)> {
+fn list_forms(state: &RenderState, def: &ScreenDef) -> Vec<(String, Arc<form::FormInstance>)> {
     let mut out = Vec::new();
     for (name, definition) in &def.forms {
         if !definition.list || definition.dynamic {
@@ -574,7 +574,7 @@ fn list_forms(state: &RenderState, def: &Arc<ScreenDef>) -> Vec<(String, Arc<for
 
 /// Run the data preparation of a screen as the render does, without writing anything: the root actions, then the actions of
 /// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
-fn prepare_screen(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error> {
+fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
     if let Some(actions) = &def.root.actions {
         script::run_actions(&actions.xml)?;
     }
@@ -586,7 +586,7 @@ fn prepare_screen(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error
 
 const MAX_WALK_DEPTH: usize = 12;
 
-fn walk_widgets(state: &RenderState, owner: &Arc<ScreenDef>, node: &MNode, depth: usize) -> Result<(), Error> {
+fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usize) -> Result<(), Error> {
     if depth > MAX_WALK_DEPTH {
         return Err(Error::new(format!(
             "sections of {} are nested too deeply",
@@ -647,12 +647,7 @@ fn walk_widgets(state: &RenderState, owner: &Arc<ScreenDef>, node: &MNode, depth
     Ok(())
 }
 
-fn prepare_section(
-    state: &RenderState,
-    owner: &Arc<ScreenDef>,
-    section: &SectionDef,
-    depth: usize,
-) -> Result<(), Error> {
+fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef, depth: usize) -> Result<(), Error> {
     if let SectionKind::Iterate {
         list,
         entry,
@@ -728,7 +723,7 @@ fn is_name(text: &str) -> bool {
 
 /// The key under which the options of a widget are kept, which `ScreenQvtStatic.js` reads: the form, the field, the place of the
 /// field's sub-node among its children and the place of the widget in the sub-node.
-pub(crate) fn option_key(form: &str, field: &str, sub_index: usize, widget_index: usize) -> String {
+pub fn option_key(form: &str, field: &str, sub_index: usize, widget_index: usize) -> String {
     format!("mqOpt_{form}_{field}_{sub_index}_{widget_index}")
 }
 
@@ -762,7 +757,7 @@ fn editable_options(state: &RenderState, widget: &MNode) -> Option<(String, serd
     }
 }
 
-pub(crate) fn is_lookup(widget: &MNode) -> bool {
+pub fn is_lookup(widget: &MNode) -> bool {
     let dynamic = widget
         .first_named("dynamic-options")
         .is_some_and(|node| !node.attribute_is("server-search", "true"));
@@ -782,7 +777,7 @@ fn lookup_options(state: &RenderState, widget: &MNode) -> Result<serde_json::Val
     ))
 }
 
-pub(crate) fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
+pub fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
     field
         .children()
         .into_iter()
@@ -794,7 +789,7 @@ pub(crate) fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
 /// its drop-downs from lookups, and the fields its `set` elements make. They are kept under `mqExtra_{form}`.
 fn single_form_extras(
     state: &RenderState,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     name: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>, Error> {
     let instance = form::assemble(&state.facade, &state.factory, def, name)?;
@@ -905,7 +900,7 @@ fn collect_widget(
 }
 
 /// `GET {screen}/actions`.
-fn screen_package(state: &RenderState, def: &Arc<ScreenDef>) -> Result<(), Error> {
+fn screen_package(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
     prepare_screen(state, def)?;
     let mut package = unwrap_context();
     for (name, definition) in &def.forms {
@@ -968,11 +963,11 @@ const PAGE_HEADERS: [&str; 6] = [
 ];
 
 /// The names a header field of a form-list reads from the request: its value and the find parameters that go with it.
-pub(crate) const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thru", "_poffset", "_period"];
+pub const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thru", "_poffset", "_period"];
 
 /// Whether the template has a form or a link with `pass-through-parameters="true"`, including an inlined include-screen.
 /// A screen that does not use the attribute does not get the package key. A failed lookup is logged and skipped.
-fn wants_pass_through(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
+fn wants_pass_through(state: &RenderState, def: &ScreenDef) -> bool {
     let mut seen = BTreeSet::new();
     match screen_wants_pass_through(state, def, 0, &mut seen) {
         Ok(found) => found,
@@ -985,7 +980,7 @@ fn wants_pass_through(state: &RenderState, def: &Arc<ScreenDef>) -> bool {
 
 fn screen_wants_pass_through(
     state: &RenderState,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     depth: usize,
     seen: &mut BTreeSet<String>,
 ) -> Result<bool, Error> {
@@ -1060,7 +1055,7 @@ fn node_wants_pass_through(
 }
 
 /// `GET {screen}/actions/{formName}`.
-fn form_package(state: &RenderState, def: &Arc<ScreenDef>, name: &str) -> Result<(), Error> {
+fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), Error> {
     let Some(definition) = def.forms.get(name) else {
         if let Some(tree) = def.trees.get(name) {
             let nodes = super::tree::sub_node_json(state, tree, &def.location)?;

@@ -601,7 +601,7 @@ pub fn public_reply(body: String, content_type: &str) -> Reply {
         headers: vec![
             ("content-type".to_string(), content_type.to_string()),
             ("cache-control".to_string(), "public, max-age=3600".to_string()),
-            ("etag".to_string(), format!("\"{}\"", &tag[..tag.len().min(32)])),
+            ("etag".to_string(), format!("\"{}\"", tag.get(..32).unwrap_or(&tag))),
             ("access-control-allow-origin".to_string(), "*".to_string()),
             ("access-control-allow-methods".to_string(), "GET".to_string()),
             (

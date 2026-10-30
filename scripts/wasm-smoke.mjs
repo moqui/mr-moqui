@@ -5,7 +5,7 @@
 // Boots the factory from the preloaded conf, creates the framework tables (a render reads
 // ArtifactAuthz), renders a text screen, loads seed data, calls a service, does entity CRUD on
 // SQLite in the WasmFS memory backend, and runs a remote-rest service through fetch against a local
-// server. OPFS is browser-only: cargo test -p moqui-host --test wasm_browser.
+// server. OPFS is browser-only: cargo test -p moqui-host --test it -- wasm_browser.
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';

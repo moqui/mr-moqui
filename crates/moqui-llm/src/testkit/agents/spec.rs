@@ -22,7 +22,7 @@ use moqui_lib::object::to_plain_string;
 use serde::Deserialize;
 use serde_json::Value as Json;
 
-use moqui_core::testkit::SpecFile;
+use moqui_devkit::testkit::SpecFile;
 
 const PRELUDE: &str = include_str!("prelude.js");
 const PRELUDE_NAME: &str = "moqui-agent-prelude.js";
@@ -97,7 +97,7 @@ pub struct ScriptedApproval {
 /// Evaluate the spec file in the entered context's engine and read its plan. `Err` is why it did not load.
 pub fn load(spec: &SpecFile) -> Result<Plan, String> {
     moqui_core::script::clear_context_stack();
-    moqui_core::testkit::run::install_prelude().map_err(|err| format!("the test prelude did not load: {err}"))?;
+    moqui_devkit::testkit::run::install_prelude().map_err(|err| format!("the test prelude did not load: {err}"))?;
     eval(PRELUDE, PRELUDE_NAME).map_err(|err| format!("the agent prelude did not load: {err}"))?;
     let file = serde_json::to_string(&spec.display).unwrap_or_default();
     eval(&format!("__agentEval.reset({file})"), PRELUDE_NAME)?;

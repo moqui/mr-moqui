@@ -32,6 +32,9 @@ use moqui_lib::object::Value;
 
 #[test]
 fn an_external_postgres_from_the_conf_is_loaded_and_no_postmaster_starts() {
+    if !crate::common::own_process() {
+        return;
+    }
     let _serial = crate::common::serial();
     // The properties name this test's server, and no other test may start on it.
     let _properties = crate::common::PropertyReset::of(&[

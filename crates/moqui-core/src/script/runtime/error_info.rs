@@ -60,7 +60,7 @@ impl HostErrorInfo {
     /// The denied artifact as `{name, actionDescription, typeDescription}` with the Java accessors, or null.
     fn get_artifact_info<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
-            let Some(info) = self.inner.artifact.clone() else {
+            let Some(info) = self.inner.artifact.as_ref() else {
                 return Null.into_js(&ctx);
             };
             let object = Object::new(ctx.clone())?;

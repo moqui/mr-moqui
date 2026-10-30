@@ -441,7 +441,7 @@ fn page_keys(list: &str) -> Vec<String> {
 fn scan_definition(
     state_facade: &crate::screen::ScreenFacade,
     factory: &ExecutionContextFactory,
-    def: &Arc<ScreenDef>,
+    def: &ScreenDef,
     pre_actions: bool,
 ) {
     if let Some(actions) = &def.always_actions {

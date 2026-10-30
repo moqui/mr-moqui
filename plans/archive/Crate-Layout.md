@@ -8,6 +8,14 @@ This follows `plans/archive/Architecture-Proposal.md`. It replaces the Gradle so
 
 Six crates, one workspace, and two data directories.
 
+2026-10-29: [Crate-Split](../Crate-Split.md) takes this further: the tool subsystems that only register services (git,
+mail, reports, collaboration, DAV, the dev kit) into crates above core, the entity facade with the transaction manager
+and `DbDriver` into a crate below it (EECA rules are matched there and run in core through a hook), and the host's
+database drivers and test client into their own crates. Where this document says otherwise ("What this does not add",
+the per-facade crates and the tool-component crates, the moqui-core features section, "Drivers stay in `moqui-host`"),
+Crate-Split is current. The Postgres client is no longer `postgres::Client` on a `current_thread` runtime: it is the
+host's own blocking client on `postgres-protocol` (`crates/moqui-host/src/db/pgwire.rs`), with no Tokio.
+
 2026-10-28: a seventh, `crates/moqui-llm`. The agent runtime (`moqui_core::llm`, 79,000 lines) moved out of `moqui-core` onto it, so an edit there no longer rebuilds the framework. Core reaches it only through `moqui_core::llm_hooks`, and `moqui-host` links it under its `llm` feature.
 
 ```

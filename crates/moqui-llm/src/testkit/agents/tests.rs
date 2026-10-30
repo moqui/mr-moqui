@@ -27,7 +27,7 @@ use super::transcript::{drift, normalize, reply_of, Recording};
 use crate::conf::{EndpointConf, ProtocolId};
 use crate::provider::fake::Step;
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::testkit::SpecFile;
+use moqui_devkit::testkit::SpecFile;
 
 const SPEC: &str = r#"
 agentSpec({

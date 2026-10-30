@@ -23,10 +23,11 @@ use indexmap::IndexMap;
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
+use moqui_lib::sync::{lock, read, write};
 
 use super::call;
 use super::define::{ParamDef, Required};
-use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use crate::entity::{sensitive, EntityFacade};
 
 /// The REST resources of a factory, read once from its components' `service/*.rest.xml` files.
@@ -46,24 +47,24 @@ type Shared = RwLock<Arc<Roots>>;
 ///
 /// Returns an error when the path or method is not served, or the operation fails.
 pub fn run(path: &[&str], method: &str, parameters: &BTreeMap<String, Value>) -> Result<Value, Error> {
-    if path.is_empty() {
+    let [root_name, ..] = path else {
         return Err(Error::of_kind(
             ErrorKind::NotFound,
             "Cannot run REST service with no path",
         ));
-    }
+    };
     let method = method.trim().to_ascii_lowercase();
     let mut params = parameters.clone();
     let mut roots = current_roots()?;
     // As Java's `getRootResourceNode`: a root not loaded reads the REST files again, for one added since. Here at
     // most once in ten seconds, so requests for unknown roots do not read the files each time.
-    if !roots.resources.contains_key(path[0]) && miss_reload_due() {
+    if !roots.resources.contains_key(*root_name) && miss_reload_due() {
         roots = reload_current_roots()?;
     }
-    let root = roots.resources.get(path[0]).ok_or_else(|| {
+    let root = roots.resources.get(*root_name).ok_or_else(|| {
         Error::of_kind(
             ErrorKind::NotFound,
-            format!("Service REST API root resource not found with name {}", path[0]),
+            format!("Service REST API root resource not found with name {root_name}"),
         )
     })?;
     root.visit(path, 0, &method, &mut params)
@@ -92,12 +93,11 @@ pub fn resolve_service(path: &str, method: &str) -> Result<Value, Error> {
         .filter(|part| !part.is_empty())
         .collect();
     let roots = current_roots()?;
-    let mut node = parts
-        .first()
-        .and_then(|root| roots.resources.get(*root))
-        .ok_or_else(|| Error::new("REST root resource not found"))?;
+    let not_found = || Error::new("REST root resource not found");
+    let (root, below) = parts.split_first().ok_or_else(not_found)?;
+    let mut node = roots.resources.get(*root).ok_or_else(not_found)?;
     let mut path_parameters = Vec::new();
-    for part in &parts[1..] {
+    for part in below {
         node = node
             .resources
             .get(*part)
@@ -185,7 +185,7 @@ fn current_roots() -> Result<Arc<Roots>, Error> {
 /// True at most once in ten seconds, process wide.
 fn miss_reload_due() -> bool {
     static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|err| err.into_inner());
+    let mut last = lock(&LAST);
     let due = last.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(10));
     if due {
         *last = Some(std::time::Instant::now());
@@ -209,13 +209,13 @@ fn reload_current_roots() -> Result<Arc<Roots>, Error> {
         .ok_or_else(|| Error::new("no execution context is entered"))?;
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
     let fresh = Arc::new(load(&factory));
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::clone(&fresh);
+    *write(&shared) = Arc::clone(&fresh);
     Ok(fresh)
 }
 
-fn roots_of(factory: &Arc<ExecutionContextFactory>) -> Arc<Roots> {
+fn roots_of(factory: &ExecutionContextFactory) -> Arc<Roots> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
-    let guard = shared.read().unwrap_or_else(|err| err.into_inner());
+    let guard = read(&shared);
     Arc::clone(&guard)
 }
 
@@ -270,8 +270,8 @@ fn insert_file(roots: &mut BTreeMap<String, Node>, path: &Path) -> Result<(), Er
 }
 
 /// Replace a factory's resources with those in `paths`, for tests that bring their own files.
-#[cfg(test)]
-pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) {
+#[cfg(any(test, feature = "test-support"))]
+pub fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) {
     let mut resources = BTreeMap::new();
     for path in paths {
         insert_file(&mut resources, path).expect("rest file");
@@ -281,7 +281,7 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf])
             resources: BTreeMap::new(),
         }))
     });
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::new(Roots { resources });
+    *write(&shared) = Arc::new(Roots { resources });
 }
 
 struct Node {
@@ -461,7 +461,11 @@ impl Node {
         // The frame for this path, checked only when it is the last and requires authentication, as Java
         // `visitChildOrRun`. It is popped, and an anonymous login undone, when the guard drops.
         let mut frame = PathFrame::default();
-        frame.push(self, method, !more && auth_required(&self.require_authentication))?;
+        frame.push(
+            self,
+            method,
+            Authz::required_if(!more && auth_required(&self.require_authentication)),
+        )?;
         frame.apply_anonymous(&self.require_authentication)?;
         if more {
             let segment = path[next];
@@ -541,14 +545,14 @@ struct PathFrame {
 impl PathFrame {
     /// Push the frame, not counted as an artifact hit. A denied push is an authentication error when no one is
     /// logged in, so the client is asked to log in: the Java sent 403 there.
-    fn push(&mut self, node: &Node, method: &str, requires_authz: bool) -> Result<(), Error> {
+    fn push(&mut self, node: &Node, method: &str, authz: Authz) -> Result<(), Error> {
         let outcome = ExecutionContext::with_current(|ec| {
             ec.push_checked(
                 "AT_REST_PATH",
                 &node.full_path,
                 action_from_method(method),
-                requires_authz,
-                true,
+                authz,
+                Tarpit::Count,
                 None,
             )?;
             ec.untrack_hit();
@@ -801,17 +805,17 @@ fn unwrap_frame(frame: moqui_lib::context_stack::Frame) -> Value {
 ///
 /// Returns an error when the root name is missing or that root is not loaded.
 pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
-    if segments.is_empty() {
+    let [root_name, below @ ..] = segments else {
         return Err(Error::of_kind(
             ErrorKind::BadRequest,
             "No root resource name specified in path",
         ));
-    }
+    };
     let roots = current_roots()?;
-    let root = roots.resources.get(&segments[0]).ok_or_else(|| {
+    let root = roots.resources.get(root_name).ok_or_else(|| {
         Error::of_kind(
             ErrorKind::NotFound,
-            format!("Service REST API root resource not found with name {}", segments[0]),
+            format!("Service REST API root resource not found with name {root_name}"),
         )
     })?;
     let facade = current_facade().ok();
@@ -820,9 +824,9 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
         enums: facade.as_ref().map(crate::entity::FieldEnums::new),
     };
     let mut paths = IndexMap::new();
-    collect_paths(root, "", &segments[1..], &[], &mut schemas, &mut paths);
+    collect_paths(root, "", below, &[], &mut schemas, &mut paths);
     let mut info = IndexMap::new();
-    info.insert("title".to_string(), Value::string(&segments[0]));
+    info.insert("title".to_string(), Value::string(root_name));
     info.insert("version".to_string(), Value::string("1.0"));
     let mut server = IndexMap::new();
     server.insert("url".to_string(), Value::string("/rest/s1"));

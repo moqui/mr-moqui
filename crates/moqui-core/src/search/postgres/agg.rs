@@ -786,17 +786,14 @@ fn histogram_buckets(
         by_key.push((at, content));
     }
     by_key.sort_by_key(|(at, _)| *at);
-    if histogram.min_doc_count == 0 && (by_key.len() > 1 || histogram.extended_bounds.is_some()) {
-        let first = histogram
-            .extended_bounds
-            .map(|b| b.0)
-            .or_else(|| by_key.first().map(|b| b.0))
-            .unwrap();
-        let last = histogram
-            .extended_bounds
-            .map(|b| b.1)
-            .or_else(|| by_key.last().map(|b| b.0))
-            .unwrap();
+    // With min_doc_count 0, the range to fill: the extended bounds when given, else from the first bucket to the
+    // last when there are at least two.
+    let fill = match (histogram.min_doc_count, histogram.extended_bounds, by_key.as_slice()) {
+        (0, Some(bounds), _) => Some(bounds),
+        (0, None, [(first, _), .., (last, _)]) => Some((*first, *last)),
+        _ => None,
+    };
+    if let Some((first, last)) = fill {
         let mut filled = Vec::new();
         let mut existing = by_key.into_iter().peekable();
         // Normalize, in case the database bucket and the Rust bucket disagree at a zone edge.

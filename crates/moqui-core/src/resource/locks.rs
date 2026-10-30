@@ -45,7 +45,7 @@ fn table() -> &'static Mutex<HashMap<String, Lock>> {
 
 /// The table with expired locks dropped.
 fn live() -> std::sync::MutexGuard<'static, HashMap<String, Lock>> {
-    let mut table = table().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut table = moqui_lib::sync::lock(table());
     if !table.is_empty() {
         let now = std::time::Instant::now();
         table.retain(|_, lock| lock.expires > now);
@@ -55,8 +55,8 @@ fn live() -> std::sync::MutexGuard<'static, HashMap<String, Lock>> {
 
 /// The lock key of a location: no `#version`, no trailing slash.
 pub fn key(location: &str) -> String {
-    let location = match location.find('#') {
-        Some(index) if index > 0 => &location[..index],
+    let location = match location.split_once('#') {
+        Some((path, _)) if !path.is_empty() => path,
         _ => location,
     };
     location.trim_end_matches('/').to_string()
@@ -104,11 +104,7 @@ pub fn check(location: &str, user_id: Option<&str>, tree: bool) -> Result<(), St
 
 /// [`check`] for the current user.
 pub fn check_current(location: &str, tree: bool) -> Result<(), String> {
-    if table()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_empty()
-    {
+    if moqui_lib::sync::lock(table()).is_empty() {
         return Ok(());
     }
     let user_id = crate::user::current_user_id().ok().flatten();
@@ -204,5 +200,13 @@ mod tests {
         put(location, expired);
         assert!(check(location, Some("bob"), false).is_ok());
         assert!(get(location).is_none());
+    }
+
+    #[test]
+    fn a_key_drops_the_version_and_trailing_slashes() {
+        assert_eq!(key("dbresource://é/a.txt#v2#v3"), "dbresource://é/a.txt");
+        assert_eq!(key("dbresource://docs//"), "dbresource://docs");
+        assert_eq!(key("#v2/"), "#v2");
+        assert_eq!(key("dbresource://a.txt"), "dbresource://a.txt");
     }
 }

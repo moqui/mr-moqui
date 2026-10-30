@@ -244,7 +244,7 @@ fn the_help_lists_the_screen_documents_and_opens_one() {
     assert_eq!(doc.title, "How to");
     assert!(matches!(&doc.c[0], moqui_tui::Node::Html { blocks, .. } if blocks[0].text == "Do this."));
     // The saved finds of the screen are in the drawer.
-    let drawer: Vec<String> = session.drawer_rows().into_iter().map(|row| row.0).collect();
+    let drawer: Vec<String> = session.drawer_rows().into_iter().map(|row| row.title).collect();
     assert!(
         drawer.contains(&"Saved finds".to_string()) && drawer.contains(&"Open things".to_string()),
         "{drawer:?}"

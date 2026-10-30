@@ -25,10 +25,10 @@
 use std::collections::BTreeMap;
 use std::sync::Weak;
 
-use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{Authz, Error, ExecutionContext, ExecutionContextFactory, Tarpit};
 use moqui_lib::object::Value;
 
-use super::on_pool;
+use crate::worker::on_pool;
 
 /// Up to this many rows from `entity`.
 const ENTITY_LIMIT: i64 = 100;
@@ -116,8 +116,17 @@ pub(super) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str,
 /// entities a command calls inherit the user's authorization for that screen (`TOOLS_APP`, granted to ADMIN in the seed
 /// data), and a user without it is refused.
 fn in_tools_app<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
-    ExecutionContext::with_current(|ec| ec.push_checked("AT_XML_SCREEN", TOOLS_SCREEN, "view", true, false, None))
-        .ok_or_else(|| Error::new("no execution context is entered"))??;
+    ExecutionContext::with_current(|ec| {
+        ec.push_checked(
+            "AT_XML_SCREEN",
+            TOOLS_SCREEN,
+            "view",
+            Authz::Required,
+            Tarpit::Skip,
+            None,
+        )
+    })
+    .ok_or_else(|| Error::new("no execution context is entered"))??;
     let frame = ToolsFrame { pushed: true };
     let result = body();
     let popped = frame.pop();

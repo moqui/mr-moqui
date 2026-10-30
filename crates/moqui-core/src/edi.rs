@@ -711,8 +711,10 @@ impl EdiHandler {
         let mut next = index + 1;
         // A segment with children recurses. The body root switches from the envelope to the body.
         let mut level = def.level.as_slice();
-        if level.is_empty() && !body.is_empty() && self.body_root_id.as_deref() == Some(def.id.as_str()) {
-            level = body[0].level.as_slice();
+        if level.is_empty() && self.body_root_id.as_deref() == Some(def.id.as_str()) {
+            if let Some(first) = body.first() {
+                level = first.level.as_slice();
+            }
         }
         if !level.is_empty() {
             next = self.parse_segments(segments, next, &mut new_segment, level, body)?;
@@ -728,8 +730,8 @@ impl EdiHandler {
 
     fn segment_id(&self, segment_text: &str) -> Option<String> {
         let separator = self.element_separator?;
-        match segment_text.find(separator) {
-            Some(index) if index > 0 => Some(segment_text[..index].to_string()),
+        match segment_text.split_once(separator) {
+            Some((id, _)) if !id.is_empty() => Some(id.to_string()),
             _ if segment_text.encode_utf16().count() <= 3 => Some(segment_text.to_string()),
             _ => None,
         }
@@ -745,8 +747,8 @@ impl EdiHandler {
             let original = java_trim(&original);
             if original.encode_utf16().count() >= 3 && original.contains(delimiter) {
                 let components = java_split(original, delimiter, self.escape_character);
-                if components.len() == 1 {
-                    elements.push(Value::String(self.unescape(&components[0])?));
+                if let [only] = components.as_slice() {
+                    elements.push(Value::String(self.unescape(only)?));
                 } else {
                     let mut list = Vec::with_capacity(components.len());
                     for component in &components {

@@ -163,8 +163,10 @@ pub(super) fn send_rest(
     let mut out = BTreeMap::new();
     if let Ok(Value::Map(reply)) = super::super::parse_json(&response.body) {
         match reply.get("systemMessageIdList") {
-            Some(Value::List(ids)) if !ids.is_empty() => {
-                out.insert("remoteMessageId".to_string(), ids[0].clone());
+            Some(Value::List(ids)) => {
+                if let Some(id) = ids.first() {
+                    out.insert("remoteMessageId".to_string(), id.clone());
+                }
             }
             Some(Value::String(id)) => {
                 out.insert("remoteMessageId".to_string(), Value::string(id));
@@ -180,13 +182,12 @@ pub(super) fn send_rest(
 /// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, or SmatHmacSha256Timestamp
 /// with a five minute window and a replay cache), or nothing (SmatNone). The reply is `{systemMessageIdList: [...]}`.
 pub(crate) fn receive_rest_message(request: &WebRequest, extra: &[String]) -> Result<bool, Error> {
-    if extra.len() < 2 {
+    let [type_id, remote_id, more @ ..] = extra else {
         web::send_json_error(400, "No message type or remote system specified");
         return Ok(true);
-    }
-    let type_id = extra[0].as_str();
-    let remote_id = extra[1].as_str();
-    let remote_message_id = extra.get(2).map(String::as_str);
+    };
+    let (type_id, remote_id) = (type_id.as_str(), remote_id.as_str());
+    let remote_message_id = more.first().map(String::as_str);
     // serve_at moves the body into the web state for web scripts; a direct call keeps it on the request
     let body = if request.body.is_empty() {
         web::request_body()

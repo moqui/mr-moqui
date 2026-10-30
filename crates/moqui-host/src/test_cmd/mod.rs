@@ -43,9 +43,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::testkit::{
-    run_spec, spec_database_free, spec_depends_on, spec_missing_features, suite_order, CaseResult, Outcome, RunOptions,
-    SpecFile, SpecResult,
+use moqui_devkit::testkit::{
+    run_spec, spec_database_free, spec_depends_on, spec_missing_features, spec_slow, suite_order, CaseResult, Outcome,
+    RunOptions, SpecFile, SpecResult, SLOW_REASON,
 };
 use moqui_lib::error::Error;
 
@@ -92,6 +92,9 @@ pub struct TestArgs {
     pub components: Vec<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
+    /// `--slow`: run the specs and features marked `slow: true` too; without it they are listed as ignored, also when
+    /// named.
+    pub slow: bool,
     pub db: DbMode,
     /// The user passed `--db`. When they did not, a run whose every spec sets `database: false` uses [`DbMode::None`].
     pub db_explicit: bool,
@@ -129,6 +132,7 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
         components: Vec::new(),
         specs: Vec::new(),
         feature: None,
+        slow: false,
         db: DbMode::Fresh,
         db_explicit: false,
         junit: None,
@@ -162,6 +166,7 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
                     .map(str::to_string),
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
+            "--slow" => parsed.slow = true,
             "--db" => {
                 parsed.db = DbMode::parse(&value("--db")?)?;
                 parsed.db_explicit = true;
@@ -632,7 +637,7 @@ fn run_without_database(
     }
     order_by_load(components, &factory);
     let mut results = Vec::new();
-    run_component_specs(&factory, components, args.feature.as_deref(), &mut results);
+    run_component_specs(&factory, components, args, &mut results);
     finish_report(args, log_dir, &results, started, false)
 }
 
@@ -666,7 +671,7 @@ fn run_with_database(
     if args.coverage {
         moqui_core::service::coverage::enable();
     }
-    run_component_specs(&fixture.factory, components, args.feature.as_deref(), &mut results);
+    run_component_specs(&fixture.factory, components, args, &mut results);
     if args.coverage {
         print_coverage(components, args, &moqui_core::service::coverage::finish())?;
     }
@@ -689,18 +694,25 @@ fn not_loaded(name: &str) -> Error {
 fn run_component_specs(
     factory: &Arc<ExecutionContextFactory>,
     components: &[TestComponent],
-    feature: Option<&str>,
+    args: &TestArgs,
     results: &mut Vec<report::ComponentSpec>,
 ) {
     let options = RunOptions {
-        feature_filter: feature.map(str::to_string),
+        feature_filter: args.feature.clone(),
+        slow: args.slow,
         ..RunOptions::default()
     };
     for component in components {
         for spec in &component.specs {
             let missing = spec_missing_features(&spec.source);
-            if !missing.is_empty() {
-                let result = skipped_spec(spec, &missing);
+            let not_run = if !args.slow && spec_slow(&spec.source) {
+                Some(slow_spec(spec))
+            } else if !missing.is_empty() {
+                Some(skipped_spec(spec, &missing))
+            } else {
+                None
+            };
+            if let Some(result) = not_run {
                 for case in &result.cases {
                     println!("{}", report::case_line(&spec.name, case));
                 }
@@ -758,15 +770,28 @@ fn finish_report(
 
 /// A spec that `requires` features this build leaves out: one skipped case that names them.
 pub(crate) fn skipped_spec(spec: &SpecFile, missing: &[String]) -> SpecResult {
+    spec_not_run(
+        spec,
+        Outcome::Skipped(format!(
+            "requires {}, not built into this binary (moqui version)",
+            missing.join(", ")
+        )),
+    )
+}
+
+/// A spec marked `slow: true` in a run without `--slow`, listed as ignored without loading it.
+pub(crate) fn slow_spec(spec: &SpecFile) -> SpecResult {
+    spec_not_run(spec, Outcome::Ignored(SLOW_REASON.to_string()))
+}
+
+/// A spec that does not run, as one "(every feature)" case with `outcome`.
+fn spec_not_run(spec: &SpecFile, outcome: Outcome) -> SpecResult {
     SpecResult {
         name: spec.name.clone(),
         display: spec.display.clone(),
         cases: vec![CaseResult {
             name: "(every feature)".to_string(),
-            outcome: Outcome::Skipped(format!(
-                "requires {}, not built into this binary (moqui version)",
-                missing.join(", ")
-            )),
+            outcome,
             duration: std::time::Duration::ZERO,
             output: String::new(),
         }],

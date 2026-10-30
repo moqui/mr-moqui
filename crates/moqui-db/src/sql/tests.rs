@@ -154,6 +154,11 @@ fn order_by_writes_nulls_last_unless_never_nulls_and_parses_java_options() {
     assert_eq!(parsed.field.name, "enumCode");
     assert!(OrderBy::parse("  ").is_none());
     assert!(OrderBy::parse("-").is_none());
+    // The prefix marks read one char at a time, and the last of `-` and `+` wins.
+    let parsed = OrderBy::parse("- +^éclair").unwrap();
+    assert!(!parsed.descending);
+    assert_eq!(parsed.case, Some(true));
+    assert_eq!(parsed.field.name, "éclair");
 
     let order = [
         OrderBy::parse("-^description").unwrap(),

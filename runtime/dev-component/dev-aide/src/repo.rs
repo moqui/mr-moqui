@@ -242,8 +242,17 @@ fn discard_hunks(
 
 const REF_FORMAT: &str = "--format=%(refname)%1f%(refname:short)%1f%(upstream:short)%1f%(upstream:track)%1f%(HEAD)%1f%(committerdate:iso-strict)%1f%(contents:subject)";
 
+/// A branch against its upstream.
+#[derive(Debug, PartialEq)]
+struct Tracking {
+    ahead: u32,
+    behind: u32,
+    /// The upstream branch is gone.
+    gone: bool,
+}
+
 /// `[ahead 2, behind 1]` as its two counts, and whether the upstream is gone.
-fn track(text: &str) -> (u32, u32, bool) {
+fn track(text: &str) -> Tracking {
     let count = |word: &str| {
         text.split(word)
             .nth(1)
@@ -251,7 +260,11 @@ fn track(text: &str) -> (u32, u32, bool) {
             .and_then(|digits| digits.parse().ok())
             .unwrap_or(0)
     };
-    (count("ahead"), count("behind"), text.contains("gone"))
+    Tracking {
+        ahead: count("ahead"),
+        behind: count("behind"),
+        gone: text.contains("gone"),
+    }
 }
 
 /// `get#Branches`: the local branches with their upstream, ahead and behind and last commit, and the remote ones.
@@ -272,7 +285,7 @@ fn get_branches(
         if fields.len() < 7 {
             continue;
         }
-        let (ahead, behind, gone) = track(fields[3]);
+        let Tracking { ahead, behind, gone } = track(fields[3]);
         let row = json!({
             "name": fields[1], "upstream": fields[2], "ahead": ahead, "behind": behind, "gone": gone,
             "current": fields[4] == "*", "date": fields[5], "subject": fields[6],
@@ -386,7 +399,7 @@ fn name_status(out: &str) -> Vec<Json> {
     let mut parts = out.split('\0').filter(|part| !part.is_empty());
     let mut files = Vec::new();
     while let Some(status) = parts.next() {
-        let letter = &status[..1];
+        let letter = status.get(..1).unwrap_or(status);
         let mut path = parts.next().unwrap_or("");
         if matches!(letter, "R" | "C") {
             path = parts.next().unwrap_or(path);
@@ -421,7 +434,7 @@ fn get_tags(
             let fields: Vec<&str> = line.split('\u{1f}').collect();
             (fields.len() >= 5).then(|| {
                 // an annotated tag's own object then its commit; a lightweight one's commit only
-                let commit = if fields[1] == "tag" { &fields[2][..fields[2].len().min(40)] } else { fields[2] };
+                let commit = if fields[1] == "tag" { fields[2].get(..40).unwrap_or(fields[2]) } else { fields[2] };
                 json!({ "name": fields[0], "annotated": fields[1] == "tag", "commit": commit, "date": fields[3], "subject": fields[4] })
             })
         })
@@ -1005,10 +1018,11 @@ mod tests {
 
     #[test]
     fn tracking_counts() {
-        assert_eq!(track("[ahead 2, behind 13]"), (2, 13, false));
-        assert_eq!(track("[behind 1]"), (0, 1, false));
-        assert_eq!(track("[gone]"), (0, 0, true));
-        assert_eq!(track(""), (0, 0, false));
+        let tracking = |ahead, behind, gone| Tracking { ahead, behind, gone };
+        assert_eq!(track("[ahead 2, behind 13]"), tracking(2, 13, false));
+        assert_eq!(track("[behind 1]"), tracking(0, 1, false));
+        assert_eq!(track("[gone]"), tracking(0, 0, true));
+        assert_eq!(track(""), tracking(0, 0, false));
     }
 
     #[test]

@@ -357,7 +357,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="merge" noun="MergeRequest" type="rust" location="moqui_core::service::git_hosting::merge_merge_request"
+    <service verb="merge" noun="MergeRequest" type="rust" location="moqui_git::service::hosting::merge_merge_request"
             transaction="ignore">
         <description>Merge an open merge request by its method (the one given, else its own, else the repository's
             default) once the target's branch rules are met: the approvals required (of the current head when the rule
@@ -379,7 +379,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="get" noun="MergeRequestApprovals" type="rust" location="moqui_core::service::git_hosting::get_merge_request_approvals">
+    <service verb="get" noun="MergeRequestApprovals" type="rust" location="moqui_git::service::hosting::get_merge_request_approvals">
         <description>For a viewer of the repository, the approvals of a merge request that count toward the target's
             branch rules: approved (of the current head when the rules dismiss stale approvals) by a user who may push
             to the repository now, decided as that user. merge#MergeRequest counts the same way.</description>

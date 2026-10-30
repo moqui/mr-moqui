@@ -22,7 +22,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
-use crate::resource::blob::BlobStore;
+use crate::resource::blob::{BlobGc, BlobStore};
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -84,12 +84,12 @@ fn gc_content_blobs(
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or(0);
     match BlobStore::new(facade.clone()).collect(now - days * 24 * 60 * 60 * 1000, dry_run) {
-        Ok((deleted, bytes, abandoned)) => {
-            tracing::info!("gc#ContentBlobs: deleted {deleted} blobs ({bytes} bytes), {abandoned} abandoned uploads");
+        Ok(BlobGc { blobs, bytes, uploads }) => {
+            tracing::info!("gc#ContentBlobs: deleted {blobs} blobs ({bytes} bytes), {uploads} abandoned uploads");
             Ok([
-                ("deletedCount".to_string(), number(deleted)),
+                ("deletedCount".to_string(), number(blobs)),
                 ("deletedBytes".to_string(), number(bytes)),
-                ("abandonedCount".to_string(), number(abandoned)),
+                ("abandonedCount".to_string(), number(uploads)),
             ]
             .into_iter()
             .collect())

@@ -35,6 +35,18 @@ fn a_parameter_in_the_url_cannot_change_the_host_or_the_path() {
 }
 
 #[test]
+fn each_parameter_expands_in_place_and_an_unclosed_one_stays() {
+    let parameters = BTreeMap::from([
+        ("a".to_string(), Value::string("1")),
+        ("b".to_string(), Value::string("é")),
+    ]);
+    let expand = |location: &str| super::expand_location(location, &parameters).unwrap();
+    assert_eq!(expand("http://é.test/${a}/x${b}y?q=ü"), "http://é.test/1/x%C3%A9y?q=ü");
+    assert_eq!(expand("http://example.test/${a}/${a"), "http://example.test/1/${a");
+    assert_eq!(expand("http://example.test/${}"), "http://example.test/${}");
+}
+
+#[test]
 fn json_responses_keep_non_ascii_text_and_exact_decimals() {
     let map = super::response_map(r#"{"name":"Zoë 🐘","price":12.50,"count":3}"#).unwrap();
     assert_eq!(map.get("name").and_then(Value::as_str), Some("Zoë 🐘"));

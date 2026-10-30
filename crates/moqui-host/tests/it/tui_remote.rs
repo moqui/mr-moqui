@@ -27,6 +27,9 @@ const USERS: &str = "/apps/system/Security/UserAccount/UserAccountList";
 
 #[test]
 fn the_remote_link_logs_in_with_a_key_and_reads_screens() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start("tui_remote");
     let server = format!("http://{}", gate.server.address());
     let key_file = gate.runtime.join("tui-key.toml");

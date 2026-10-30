@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use moqui_lib::object::Value;
 
 use super::super::session;
-use crate::context::{ExecutionContext, ExecutionContextFactory};
+use crate::context::{Authz, ExecutionContext, ExecutionContextFactory, Tarpit};
 use crate::entity::{EntityFacade, EntityValue};
 
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -324,7 +324,14 @@ fn a_deny_whose_filter_map_fails_denies_despite_an_allow() {
     let parameters = filter_parameters();
     world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
+        .push_checked(
+            "AT_SERVICE",
+            service,
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            Some(&parameters),
+        )
         .expect("allowed before the deny");
     world.context.pop().unwrap();
     grant_member(
@@ -338,7 +345,14 @@ fn a_deny_whose_filter_map_fails_denies_despite_an_allow() {
     session::set_user("nobody", "nobody");
     let err = world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
+        .push_checked(
+            "AT_SERVICE",
+            service,
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            Some(&parameters),
+        )
         .expect_err("the unevaluable deny applies");
     assert!(err.to_string().contains("deny record"), "{err}");
 }
@@ -360,7 +374,7 @@ fn a_deny_whose_name_pattern_is_invalid_denies() {
     );
     let err = world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, false, None)
+        .push_checked("AT_SERVICE", service, "all", Authz::Required, Tarpit::Skip, None)
         .expect_err("the invalid deny pattern applies");
     assert!(err.to_string().contains("deny record"), "{err}");
 }
@@ -382,7 +396,14 @@ fn an_allow_whose_filter_map_fails_does_not_allow() {
     let parameters = filter_parameters();
     let err = world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
+        .push_checked(
+            "AT_SERVICE",
+            service,
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            Some(&parameters),
+        )
         .expect_err("the unevaluable allow does not apply");
     assert!(err.to_string().contains("not authorized"), "{err}");
     grant_member(
@@ -396,7 +417,14 @@ fn an_allow_whose_filter_map_fails_does_not_allow() {
     session::set_user("nobody", "nobody");
     world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, false, Some(&parameters))
+        .push_checked(
+            "AT_SERVICE",
+            service,
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            Some(&parameters),
+        )
         .expect("a matching filterMap allows");
     world.context.pop().unwrap();
 }
@@ -411,7 +439,14 @@ fn an_inheritable_service_allow_covers_the_entity_operations_it_makes() {
     assert!(test_row(&world.facade).create(&world.facade).is_err());
     world
         .context
-        .push_checked("AT_SERVICE", "test.Make#Row", "all", true, false, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Make#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            None,
+        )
         .expect("the service is allowed");
     test_row(&world.facade)
         .create(&world.facade)
@@ -432,7 +467,14 @@ fn an_inheritable_service_allow_covers_the_entity_operations_it_makes() {
     session::set_user("nobody", "nobody");
     world
         .context
-        .push_checked("AT_SERVICE", "test.Other#Row", "all", true, false, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Other#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            None,
+        )
         .expect("the service is allowed");
     assert!(world.facade.find(ENTITY).unwrap().list().is_err());
     world.context.pop().unwrap();
@@ -448,13 +490,27 @@ fn a_deny_on_the_stack_stops_a_plain_allow_above_it() {
     // A denied frame is not pushed, so the deny is seen as the explicit-deny error.
     let err = world
         .context
-        .push_checked("AT_SERVICE", "test.Denied#Row", "all", true, false, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Denied#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            None,
+        )
         .expect_err("denied");
     assert!(err.to_string().contains("deny record"), "{err}");
     // Not requiring authz pushes it anyway, carrying the deny.
     world
         .context
-        .push_checked("AT_SERVICE", "test.Denied#Row", "all", false, false, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Denied#Row",
+            "all",
+            Authz::NotRequired,
+            Tarpit::Skip,
+            None,
+        )
         .expect("pushed without needing authz");
     grant(&world, "ENT_ALLOW", "AT_ENTITY", ENTITY, "AUTHZT_ALLOW", "N");
     session::set_user("nobody", "nobody");
@@ -493,7 +549,14 @@ fn authorization_checks_stay_cached_until_the_user_changes_as_in_java() {
     session::set_user("other", "other");
     let err = world
         .context
-        .push_checked("AT_SERVICE", "test.Cached#Row", "all", true, false, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Cached#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Skip,
+            None,
+        )
         .expect_err("a new user loads and enforces the deny");
     assert!(err.to_string().contains("deny record"), "{err}");
 }
@@ -559,18 +622,37 @@ fn a_service_over_its_hit_limit_is_locked() {
     for _ in 0..2 {
         world
             .context
-            .push_checked("AT_SERVICE", "test.Busy#Row", "all", true, true, None)
+            .push_checked(
+                "AT_SERVICE",
+                "test.Busy#Row",
+                "all",
+                Authz::Required,
+                Tarpit::Count,
+                None,
+            )
             .expect("under the limit");
         world.context.pop().unwrap();
     }
-    let err = world
-        .context
-        .push_checked("AT_SERVICE", "test.Busy#Row", "all", true, true, None);
+    let err = world.context.push_checked(
+        "AT_SERVICE",
+        "test.Busy#Row",
+        "all",
+        Authz::Required,
+        Tarpit::Count,
+        None,
+    );
     assert!(err.is_ok(), "the third hit exceeds the limit and sets the lock");
     world.context.pop().unwrap();
     let err = world
         .context
-        .push_checked("AT_SERVICE", "test.Busy#Row", "all", true, true, None)
+        .push_checked(
+            "AT_SERVICE",
+            "test.Busy#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Count,
+            None,
+        )
         .expect_err("locked");
     assert_eq!(err.kind(), crate::context::ErrorKind::Tarpit, "{err}");
     // The seconds go to the response as Retry-After, as Java's ArtifactTarpitException carries them.
@@ -604,7 +686,7 @@ fn a_hit_older_than_max_hits_duration_does_not_count() {
     world.context.factory().record_tarpit_hit(&key, stale, 60_000);
     world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, true, None)
+        .push_checked("AT_SERVICE", service, "all", Authz::Required, Tarpit::Count, None)
         .expect("the stale hit is outside the window");
     world.context.pop().unwrap();
     {
@@ -620,7 +702,7 @@ fn a_hit_older_than_max_hits_duration_does_not_count() {
     }
     world
         .context
-        .push_checked("AT_SERVICE", service, "all", true, true, None)
+        .push_checked("AT_SERVICE", service, "all", Authz::Required, Tarpit::Count, None)
         .expect("the next call inside the window still succeeds");
     world.context.pop().unwrap();
 }

@@ -1,0 +1,41 @@
+# The development kit, on top of moqui-core (plans/Crate-Split.md): reload and the file watcher, moqui check, the
+# artifact index, the Groovy converter, typegen (moqui types), the spec runner (moqui test) and
+# org.moqui.impl.DevToolsServices. Its own crate so an edit here does not rebuild the framework, and notify stays out of
+# core. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry; moqui-host
+# links it in every build, moqui-llm and the dev-aide component use it.
+
+[package]
+name = "moqui-devkit"
+description = "Development tools: reload, check, the artifact index, typegen and the spec runner."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+moqui-db = { workspace = true }
+notify = { workspace = true, optional = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
+regex = { workspace = true }
+rquickjs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+# The file watcher that reloads changed artifacts on a dev instance; the host's devtools feature (the Dev and Debug
+# packages) turns it on.
+watch = ["dep:notify"]
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

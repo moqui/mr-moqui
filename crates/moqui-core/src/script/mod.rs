@@ -15,12 +15,9 @@
 //! Script facade: server expressions and XML actions on QuickJS.
 
 mod actions;
-pub(crate) mod bounded;
-pub mod groovy_convert;
-mod lint_hazards;
-mod parse;
+pub mod bounded;
+pub mod parse;
 mod runtime;
-pub mod screen_lint;
 pub mod template;
 pub(crate) mod walker;
 
@@ -29,7 +26,7 @@ pub use actions::{check_actions, eval_condition_element, eval_condition_group, g
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;
 pub use parse::parse_js;
-pub(crate) use runtime::forget_scripts;
+pub use runtime::forget_scripts;
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
 pub(crate) use runtime::with_ctx as walker_context;
@@ -39,10 +36,11 @@ pub use runtime::{
     top_context_entries,
 };
 pub(crate) use runtime::{
-    context_combined, invoke_web_handler, mark_request_thread, put_context_all, text_upload_to_js, value_entity_name,
-    value_field, with_ctx, with_screen_runner, WidgetWrap,
+    context_combined, invoke_web_handler, mark_request_thread, put_context_all, value_entity_name, value_field,
+    with_screen_runner, WidgetWrap,
 };
 pub use runtime::{eval_condition, expand_localized, ContextFrame, DeadlineGuard, EngineMemory, IsolatedContext};
+pub use runtime::{text_upload_to_js, with_ctx};
 // for host callbacks outside this crate: moqui-llm's ec.llm
 pub use runtime::{eval_named_value, value_items, value_map};
 pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
@@ -58,5 +56,22 @@ mod tests {
         assert!(parse_js("def x = 1").is_err());
         assert!(parse_js("a b").is_err());
         run_actions("<actions/>").unwrap();
+    }
+
+    #[test]
+    fn groovy_hints_find_closure_calls_and_arrows() {
+        use super::parse::{has_closure_call, has_groovy_arrow};
+        assert!(has_closure_call("list.each { it }"));
+        assert!(has_closure_call("each{"));
+        assert!(has_closure_call("x.findAll{ a } + list.sort {"));
+        assert!(!has_closure_call("list.forEach(x => x)"));
+        assert!(!has_closure_call("eachItem { }"));
+        assert!(!has_closure_call("preeach { }"));
+        assert!(!has_closure_call("\u{e9}each(1)"));
+        assert!(has_closure_call("\u{e9} each {"));
+        assert!(has_groovy_arrow("{ a -> a }"));
+        assert!(has_groovy_arrow("->"));
+        assert!(!has_groovy_arrow("a => a"));
+        assert!(!has_groovy_arrow("a =-> b"));
     }
 }

@@ -29,6 +29,9 @@ const HOST_SEED: [u8; 32] = [11; 32];
 
 #[test]
 fn the_backup_service_mirrors_a_rotated_dump() {
+    if !crate::common::own_process() {
+        return;
+    }
     let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
     let gate = crate::common::start_with_properties("backup", None, &[("ssh_port", "0"), ("ssh_host_key", &seed)]);
     let address = gate.server.ssh_address().expect("the SSH server listens");

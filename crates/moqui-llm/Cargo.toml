@@ -1,7 +1,7 @@
 # The agent runtime and the model providers (plans/LLM-A2A-Assist.md), on top of moqui-core: provider calls over the
 # blocking HTTP client, rust_decimal for costs. Its own crate so an edit here does not rebuild the framework, and it
-# builds beside moqui-host (plans/Rust-Practices-Review.md). Core reaches it only through moqui_core::llm_hooks, which
-# this crate fills with an inventory entry; moqui-host links it under its llm feature.
+# builds beside moqui-host (plans/archive/Rust-Practices-Review.md). Core reaches it only through
+# moqui_core::llm_hooks, which this crate fills with an inventory entry; moqui-host links it under its llm feature.
 
 [package]
 name = "moqui-llm"
@@ -13,6 +13,8 @@ publish.workspace = true
 
 [dependencies]
 moqui-core = { workspace = true, features = ["http"] }
+# The spec runner (agent specs on moqui test) and the screen checks of the screen drafts (plans/Crate-Split.md).
+moqui-devkit = { workspace = true }
 moqui-db = { workspace = true }
 moqui-lib = { workspace = true, features = ["http"] }
 base64 = { workspace = true }

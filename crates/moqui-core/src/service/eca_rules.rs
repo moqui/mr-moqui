@@ -19,6 +19,7 @@ use indexmap::IndexMap;
 use std::sync::{Arc, RwLock};
 
 use moqui_lib::node::MNode;
+use moqui_lib::sync::{read, write};
 
 use super::email_eca::{email_rule_from, EmailRule};
 use super::git_eca::{git_rule_from, GitRule};
@@ -33,8 +34,7 @@ pub(super) struct EcaRules {
     pub(super) seca_index: SecaIndex,
     pub(super) email: Vec<Arc<EmailRule>>,
     /// gitECA rules in priority order, a later rule with the same id having replaced an earlier one. Read only by the
-    /// git events, so unread without the `git` feature.
-    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    /// git events (moqui-git).
     pub(super) git: Vec<Arc<GitRule>>,
 }
 
@@ -49,7 +49,7 @@ impl EcaRules {
     }
 
     /// The same rules with gitECA rules from XML text, for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn with_git(mut self, git_xml: &str) -> Self {
         let root = MNode::parse_text("gitecas", git_xml).expect("gitecas xml");
         self.git = git_rules(root.children_named("giteca").iter(), &mut 0);
@@ -91,26 +91,38 @@ pub(super) fn current() -> Option<Arc<EcaRules>> {
     ExecutionContext::with_current(|ctx| rules_of(ctx.factory()))
 }
 
-fn rules_of(factory: &Arc<ExecutionContextFactory>) -> Arc<EcaRules> {
+fn rules_of(factory: &ExecutionContextFactory) -> Arc<EcaRules> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
-    let guard = shared.read().unwrap_or_else(|err| err.into_inner());
+    let guard = read(&shared);
     Arc::clone(&guard)
 }
 
 /// Read a factory's SECA, EmECA and gitECA rules again from their files and swap them in (plans/design-dev-aide.md
 /// 6.1, F4); a call in flight keeps the rules it has. A file that does not parse is logged and skipped, as at a boot.
-/// Answers how many SECA, EmECA and gitECA rules there are now.
-pub fn reload(factory: &Arc<ExecutionContextFactory>) -> (usize, usize, usize) {
+/// Answers how many rules of each kind there are now.
+pub fn reload(factory: &ExecutionContextFactory) -> EcaRuleCounts {
     let rules = load(factory);
-    let counts = (rules.seca.len(), rules.email.len(), rules.git.len());
+    let counts = EcaRuleCounts {
+        seca: rules.seca.len(),
+        email: rules.email.len(),
+        git: rules.git.len(),
+    };
     install(factory, rules);
     counts
 }
 
+/// How many SECA, EmECA and gitECA rules a factory has: [`reload`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EcaRuleCounts {
+    pub seca: usize,
+    pub email: usize,
+    pub git: usize,
+}
+
 /// Replace a factory's rules: tests that bring their own XML, and [`reload`].
-pub(super) fn install(factory: &Arc<ExecutionContextFactory>, rules: EcaRules) {
+pub(super) fn install(factory: &ExecutionContextFactory, rules: EcaRules) {
     let shared = factory.extension::<Shared>(|_| RwLock::new(Arc::new(EcaRules::default())));
-    *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::new(rules);
+    *write(&shared) = Arc::new(rules);
 }
 
 fn load(factory: &ExecutionContextFactory) -> EcaRules {
@@ -223,7 +235,7 @@ fn seca_in_load_order(loaded: Vec<(Option<String>, Arc<SecaRule>)>) -> Vec<Arc<S
 }
 
 /// Parse rules from XML text, for tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn from_xml(seca_xml: &str, email_xml: &str) -> EcaRules {
     let mut seca: Vec<Arc<SecaRule>> = Vec::new();
     let mut email = Vec::new();

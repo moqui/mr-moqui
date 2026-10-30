@@ -402,7 +402,7 @@ impl AgentTool for RunTool {
                 let rule = rule_for(ctx, &entry);
                 ctx.approvals.write_rule = rule;
                 ctx.approvals.mode = rule.mode;
-                run_add_on(tool.as_ref(), &entry, ctx, parameters, None)
+                run_add_on(tool.as_ref(), &entry, ctx, &parameters, None)
             }
             Target::Service(exposure) => {
                 let exposure = exposure.clone();
@@ -419,17 +419,15 @@ impl AgentTool for RunTool {
         };
         let name = args.get("name").and_then(Json::as_str).unwrap_or_default().to_string();
         let catalog = catalog_of(ctx, &facade);
-        if let Some(Entry {
-            target: Target::AddOn(tool),
-            ..
-        }) = catalog.get(&name)
-        {
-            let entry = catalog.get(&name).cloned().expect("found above");
-            let rule = rule_for(ctx, &entry);
-            ctx.approvals.write_rule = rule;
-            ctx.approvals.mode = rule.mode;
-            let parameters = args.get("parameters").cloned().unwrap_or_else(|| json!({}));
-            return run_add_on(tool.as_ref(), &entry, ctx, parameters, Some(input));
+        if let Some(entry) = catalog.get(&name) {
+            if let Target::AddOn(tool) = &entry.target {
+                let rule = rule_for(ctx, entry);
+                ctx.approvals.write_rule = rule;
+                ctx.approvals.mode = rule.mode;
+                let empty = json!({});
+                let parameters = args.get("parameters").unwrap_or(&empty);
+                return run_add_on(tool.as_ref(), entry, ctx, parameters, Some(input));
+            }
         }
         let view = match approval::for_call(ctx) {
             Ok(Some(view)) => view,
@@ -583,10 +581,10 @@ fn run_add_on(
     tool: &dyn AgentTool,
     entry: &Entry,
     ctx: &mut TurnContext<'_>,
-    parameters: Json,
+    parameters: &Json,
     input: Option<&ToolInput>,
 ) -> ToolOutcome {
-    let repaired = super::repair::repair(&parameters, &tool.spec().parameters);
+    let repaired = super::repair::repair(parameters, &tool.spec().parameters);
     if let Err(problem) = super::schema::check_arguments(&repaired.args, &tool.spec().parameters) {
         return ToolError::new(
             "arguments",

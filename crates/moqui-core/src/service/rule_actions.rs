@@ -34,16 +34,7 @@ pub(crate) fn publish_names(
     Ok(frame)
 }
 
-/// The `<condition>` of a rule element as Java's `EntityEcaRule` and `EmailEcaRule` read it: only its first child, "the
-/// script is effectively the first child of the condition element". Empty when there is none, so the rule always runs.
-/// It is kept as the condition group `<and>` holding that child, as a SECA keeps its check, so a check runs the
-/// generated script without parsing the XML again.
-pub(crate) fn first_condition(rule: &moqui_lib::node::MNode) -> String {
-    rule.first_named("condition")
-        .and_then(|condition| condition.first_child())
-        .map(|first| format!("<and>{}</and>", first.write_string()))
-        .unwrap_or_default()
-}
+pub(crate) use crate::entity::load_feed::first_condition;
 
 /// An empty condition passes. A [`first_condition`] group is evaluated as `<if>` evaluates its
 /// condition macros (`expression`, `compare`, `and`, `or`, `not`); any other child is an error, so

@@ -14,7 +14,7 @@
 
 //! `moqui lsp` (plans/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
 //! coding agents, answering from what `moqui check` and `moqui refs` use: diagnostics (the checks of
-//! `moqui_core::devtools::check`, on each open file's text as it changes), go to definition and references (the artifact
+//! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
 //! digest gives, and entity and service names from the index in their attributes), and document and workspace symbols.
@@ -28,8 +28,8 @@ use std::sync::Arc;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types as lsp;
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::index::{self, Direction, MemoryIndex};
-use moqui_core::devtools::{check, schema, Problem, Severity};
+use moqui_devkit::index::{self, Direction, MemoryIndex};
+use moqui_devkit::{check, schema, Problem, Severity};
 use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 
@@ -146,11 +146,10 @@ pub fn path_of(uri: &str) -> Option<PathBuf> {
         at += 1;
     }
     let path = String::from_utf8(out).ok()?;
-    // file:///C:/x on Windows
-    let path = if path.len() > 2 && path.as_bytes()[2] == b':' {
-        path[1..].to_string()
-    } else {
-        path
+    // file:///C:/x on Windows: the character before the drive letter dropped
+    let path = match path.split_at_checked(1) {
+        Some((_, drive)) if drive.as_bytes().get(1) == Some(&b':') => drive.to_string(),
+        _ => path,
     };
     Some(PathBuf::from(path))
 }
@@ -203,8 +202,26 @@ pub(crate) fn word_at(text: &str, line: u32, character: u32) -> String {
     chars[start..end].iter().collect()
 }
 
+/// The tag the cursor is in: its element's name, and where in the tag the cursor is.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TagContext {
+    pub(crate) element: String,
+    pub(crate) place: TagPlace,
+}
+
+/// Where in a tag the cursor is.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TagPlace {
+    /// In the element's name.
+    Name,
+    /// Among the attributes, outside a value.
+    Attributes,
+    /// In the value of this attribute.
+    Value(String),
+}
+
 /// Where the cursor is in a tag: the element's name, and the attribute whose value it is in, if any.
-pub(crate) fn tag_context(text: &str, line: u32, character: u32) -> Option<(String, Option<String>, bool)> {
+pub(crate) fn tag_context(text: &str, line: u32, character: u32) -> Option<TagContext> {
     let offset = text
         .split_inclusive('\n')
         .take(line as usize)
@@ -228,8 +245,8 @@ pub(crate) fn tag_context(text: &str, line: u32, character: u32) -> Option<(Stri
         return None;
     }
     let tag = &before[open + 1..];
-    let name: String = tag.chars().take_while(|ch| !ch.is_whitespace()).collect();
-    if name.starts_with('/') || name.starts_with('!') || name.starts_with('?') {
+    let element: String = tag.chars().take_while(|ch| !ch.is_whitespace()).collect();
+    if element.starts_with('/') || element.starts_with('!') || element.starts_with('?') {
         return None;
     }
     // inside a value: an odd number of quotes since the last `=`
@@ -242,10 +259,17 @@ pub(crate) fn tag_context(text: &str, line: u32, character: u32) -> Option<(Stri
             .next()
             .unwrap_or("")
             .to_string();
-        return Some((name, Some(attribute), true));
+        return Some(TagContext {
+            element,
+            place: TagPlace::Value(attribute),
+        });
     }
-    let naming = !tag.contains(char::is_whitespace);
-    Some((name, None, naming))
+    let place = if tag.contains(char::is_whitespace) {
+        TagPlace::Attributes
+    } else {
+        TagPlace::Name
+    };
+    Some(TagContext { element, place })
 }
 
 fn range(line: u32, column: u32, length: u32) -> lsp::Range {
@@ -304,6 +328,13 @@ fn names_kind(element: &str, attribute: &str) -> Option<&'static [&'static str]>
 pub struct Server {
     backend: Backend,
     documents: HashMap<String, String>,
+}
+
+/// A request's document and its 0-based line and UTF-16 character.
+struct TextPosition {
+    uri: String,
+    line: u32,
+    character: u32,
 }
 
 impl Server {
@@ -389,12 +420,12 @@ impl Server {
         }
     }
 
-    fn position(params: &Json) -> (String, u32, u32) {
-        (
-            params["textDocument"]["uri"].as_str().unwrap_or_default().to_string(),
-            u32::try_from(params["position"]["line"].as_u64().unwrap_or(0)).unwrap_or(0),
-            u32::try_from(params["position"]["character"].as_u64().unwrap_or(0)).unwrap_or(0),
-        )
+    fn position(params: &Json) -> TextPosition {
+        TextPosition {
+            uri: params["textDocument"]["uri"].as_str().unwrap_or_default().to_string(),
+            line: u32::try_from(params["position"]["line"].as_u64().unwrap_or(0)).unwrap_or(0),
+            character: u32::try_from(params["position"]["character"].as_u64().unwrap_or(0)).unwrap_or(0),
+        }
     }
 
     fn text_of(&self, uri_text: &str) -> String {
@@ -407,7 +438,11 @@ impl Server {
 
     /// The artifact at a position.
     fn target_at(&self, params: &Json) -> Option<Target> {
-        let (uri_text, line, character) = Self::position(params);
+        let TextPosition {
+            uri: uri_text,
+            line,
+            character,
+        } = Self::position(params);
         let text = self.text_of(&uri_text);
         let word = word_at(&text, line, character);
         self.backend.at(&path_of(&uri_text)?, line + 1, &word)
@@ -465,7 +500,11 @@ impl Server {
     }
 
     fn hover(&self, params: &Json) -> Json {
-        let (uri_text, line, character) = Self::position(params);
+        let TextPosition {
+            uri: uri_text,
+            line,
+            character,
+        } = Self::position(params);
         let text = self.text_of(&uri_text);
         let mut parts = Vec::new();
         if let Some(path) = path_of(&uri_text) {
@@ -485,7 +524,7 @@ impl Server {
                 ));
             }
         }
-        if let (Some(root), Some((element, attribute, _))) = (
+        if let (Some(root), Some(TagContext { element, place })) = (
             schema::root_of(&text),
             tag_context(&text, line, character.saturating_add(1)),
         ) {
@@ -494,7 +533,11 @@ impl Server {
                 .digest(root)
                 .and_then(|digest| digest.element(&element).cloned())
             {
-                let doc = match attribute.as_deref().and_then(|name| spec.attribute(name)) {
+                let attribute = match &place {
+                    TagPlace::Value(name) => spec.attribute(name),
+                    TagPlace::Name | TagPlace::Attributes => None,
+                };
+                let doc = match attribute {
                     Some(attribute) => format!("`{}` of `{}`: {}", attribute.name, spec.name, attribute.doc),
                     None => format!("`<{}>`: {}", spec.name, spec.doc),
                 };
@@ -510,7 +553,11 @@ impl Server {
     }
 
     fn completion(&self, params: &Json) -> Json {
-        let (uri_text, line, character) = Self::position(params);
+        let TextPosition {
+            uri: uri_text,
+            line,
+            character,
+        } = Self::position(params);
         let text = self.text_of(&uri_text);
         let Some(root) = schema::root_of(&text).or_else(|| {
             path_of(&uri_text)
@@ -521,12 +568,12 @@ impl Server {
         };
         let digest = self.backend.digest(root);
         let item = |label: &str, kind: lsp::CompletionItemKind, detail: &str| json!({ "label": label, "kind": kind, "detail": detail });
-        let Some((element, attribute, naming)) = tag_context(&text, line, character) else {
+        let Some(TagContext { element, place }) = tag_context(&text, line, character) else {
             return json!([]);
         };
-        let items: Vec<Json> = match (attribute, naming) {
+        let items: Vec<Json> = match place {
             // a value: the enumeration the XSD gives, or names from the index
-            (Some(attribute), _) => {
+            TagPlace::Value(attribute) => {
                 let word = word_at(&text, line, character);
                 let values = digest
                     .as_ref()
@@ -551,7 +598,7 @@ impl Server {
                 }
             }
             // a tag's name: every element of the file's kind
-            (None, true) => digest
+            TagPlace::Name => digest
                 .map(|digest| {
                     digest
                         .elements
@@ -561,7 +608,7 @@ impl Server {
                 })
                 .unwrap_or_default(),
             // an attribute's name: the element's attributes
-            (None, false) => digest
+            TagPlace::Attributes => digest
                 .and_then(|digest| digest.element(&element).cloned())
                 .map(|spec| {
                     spec.attributes
@@ -676,7 +723,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--server" => server_url = rest.next().cloned(),
-            other if other.starts_with("--server=") => server_url = Some(other["--server=".len()..].to_string()),
+            other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
             "--stdio" => {}
             _ => return Err(crate::usage::command_usage("lsp")),
         }
@@ -720,6 +767,8 @@ mod tests {
         assert_eq!(path_of(&uri_of(path)).unwrap(), path);
         assert_eq!(path_of("file:///C:/w/a.xml").unwrap(), PathBuf::from("C:/w/a.xml"));
         assert!(path_of("untitled:1").is_none());
+        // a first character of several bytes before a colon is no drive letter's slash, and is kept
+        assert_eq!(path_of("file://\u{e9}:/a.xml").unwrap(), PathBuf::from("\u{e9}:/a.xml"));
         // a % before a character of several bytes is taken as it is, not sliced
         assert_eq!(
             path_of("file:///w/%a\u{e9}.xml").unwrap(),
@@ -731,15 +780,18 @@ mod tests {
     fn the_word_and_the_tag_under_the_cursor() {
         let text = "<screen>\n    <service-call name=\"mantle.order.OrderServices.place#Order\" in-map=\"\"/>\n    <entity-find ";
         assert_eq!(word_at(text, 1, 30), "mantle.order.OrderServices.place#Order");
+        let context = |element: &str, place: TagPlace| {
+            Some(TagContext {
+                element: element.into(),
+                place,
+            })
+        };
         assert_eq!(
             tag_context(text, 1, 30),
-            Some(("service-call".into(), Some("name".into()), true))
+            context("service-call", TagPlace::Value("name".into()))
         );
-        assert_eq!(tag_context(text, 2, 17), Some(("entity-find".into(), None, false)));
-        assert_eq!(
-            tag_context("<screen>\n    <ent", 1, 8),
-            Some(("ent".into(), None, true))
-        );
+        assert_eq!(tag_context(text, 2, 17), context("entity-find", TagPlace::Attributes));
+        assert_eq!(tag_context("<screen>\n    <ent", 1, 8), context("ent", TagPlace::Name));
         assert_eq!(tag_context("<screen>text", 0, 10), None);
     }
 }

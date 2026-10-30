@@ -19,7 +19,6 @@ mod cache;
 mod component;
 mod conf;
 mod confcache;
-mod error;
 mod factory;
 pub(crate) mod identity;
 mod locate;
@@ -27,22 +26,21 @@ mod message;
 mod resource;
 pub mod status;
 
-pub use artifact::AuthzGuard;
+pub use artifact::{Authz, AuthzGuard, Tarpit};
 pub use cache::CacheFacade;
-pub use component::{component_entity_dirs, ComponentInfo};
+pub use component::{component_entity_dirs, discover_components, ComponentInfo};
 pub use conf::{load_merged_conf, merge_component_confs, merge_conf};
-pub use error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use factory::{
     default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,
     ExecutionContextFactory, Executor,
 };
-pub(crate) use identity::secret_parameter;
+pub use identity::secret_parameter;
 pub use locate::{framework_dir, locate};
 pub use message::{ErrorMark, MessageFacade, ValidationError};
-#[cfg(feature = "git")]
-pub(crate) use resource::millis_of;
+pub use moqui_entity::error::{client_text, DeniedArtifact, Error, ErrorKind};
+pub use resource::millis_of;
 pub(crate) use resource::split_version;
-pub(crate) use resource::version_author;
+pub use resource::version_author;
 pub(crate) use resource::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
 pub use resource::{
     with_version_author, ChangeLogEntry, ChangeSetOutcome, Opened, ResourceChange, ResourceChangeInfo, ResourceEntry,

@@ -41,6 +41,9 @@ fn run_client(args: &[&str]) -> (String, Result<(), String>) {
 
 #[test]
 fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("test-client");
     let server = format!("http://{}", gate.server.address());
     let out = temp_dir("moqui-test-client-out");

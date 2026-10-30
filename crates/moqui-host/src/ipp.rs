@@ -110,7 +110,8 @@ fn client() -> Result<&'static reqwest::Client, String> {
 /// The path of a printer URI (`ipp://host:631/printers/name` is `/printers/name`), where its requests are posted.
 fn uri_path(uri: &str) -> String {
     uri.split_once("://")
-        .and_then(|(_, rest)| rest.find('/').map(|index| rest[index..].to_string()))
+        .and_then(|(_, rest)| rest.split_once('/'))
+        .map(|(_, path)| format!("/{path}"))
         .unwrap_or_else(|| "/".to_string())
 }
 

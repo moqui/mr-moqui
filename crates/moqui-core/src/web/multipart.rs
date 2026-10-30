@@ -60,7 +60,7 @@ pub struct UploadedFile {
 
 #[derive(Clone, Debug)]
 enum Content {
-    Memory(Arc<Vec<u8>>),
+    Memory(Arc<[u8]>),
     Spooled(Arc<SpoolFile>),
 }
 
@@ -85,7 +85,7 @@ impl UploadedFile {
             size: bytes.len() as u64,
             head: bytes[..bytes.len().min(HEAD_BYTES)].to_vec(),
             sha256: None,
-            content: Content::Memory(Arc::new(bytes)),
+            content: Content::Memory(bytes.into()),
         }
     }
 
@@ -117,7 +117,7 @@ impl UploadedFile {
     /// Returns an error when the spool file cannot be read.
     pub fn read_bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
         match &self.content {
-            Content::Memory(bytes) => Ok(bytes.as_ref().clone()),
+            Content::Memory(bytes) => Ok(bytes.to_vec()),
             Content::Spooled(file) => std::fs::read(&file.0).map_err(|err| {
                 moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
             }),
@@ -131,7 +131,7 @@ impl UploadedFile {
     /// Returns an error when the spool file is gone.
     pub fn source(&self) -> Result<Arc<dyn ByteSource>, moqui_lib::error::Error> {
         Ok(match &self.content {
-            Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.as_ref().clone())),
+            Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.to_vec())),
             Content::Spooled(file) => Arc::new(SpooledSource {
                 file: FileSource::open(&file.0)?,
                 _keep: Arc::clone(file),
@@ -146,7 +146,7 @@ impl UploadedFile {
     /// Returns an error when the spool file cannot be opened.
     pub fn reader(&self) -> Result<Box<dyn Read + Send>, moqui_lib::error::Error> {
         Ok(match &self.content {
-            Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes).as_ref().clone())),
+            Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes))),
             Content::Spooled(file) => Box::new(SpooledReader {
                 file: std::fs::File::open(&file.0).map_err(|err| {
                     moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
@@ -584,7 +584,7 @@ impl MultipartReader {
                         file.flush().map_err(|err| MultipartError::Io(err.to_string()))?;
                         Content::Spooled(spooled)
                     }
-                    None => Content::Memory(Arc::new(part.memory)),
+                    None => Content::Memory(part.memory.into()),
                 };
                 self.parsed.files.push(UploadedFile {
                     field_name: part.name,
@@ -632,48 +632,47 @@ fn base_name(name: &str) -> String {
 
 /// `name="x"` or `name=x` in a `Content-Disposition` value. A quoted value may hold `\"` and `\\`.
 fn disposition_param(value: &str, wanted: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        // A parameter starts after a semicolon.
-        let semicolon = value[index..].find(';')?;
-        index += semicolon + 1;
-        let rest = value[index..].trim_start();
-        index = value.len() - rest.len();
-        let equals = rest.find('=')?;
-        let key = rest[..equals].trim();
-        let after = &rest[equals + 1..];
-        let (parsed, used) = if let Some(quoted) = after.strip_prefix('"') {
-            let mut out = String::new();
-            let mut chars = quoted.char_indices();
-            let mut end = quoted.len();
-            while let Some((at, ch)) = chars.next() {
-                match ch {
-                    '\\' => match quoted[at + 1..].chars().next() {
-                        Some(escaped @ ('"' | '\\')) => {
-                            chars.next();
-                            out.push(escaped);
-                        }
-                        _ => out.push('\\'),
-                    },
-                    '"' => {
-                        end = at + 1;
-                        break;
-                    }
-                    other => out.push(other),
-                }
+    // A parameter starts after a semicolon.
+    let (_, mut rest) = value.split_once(';')?;
+    loop {
+        let (key, after) = rest.trim_start().split_once('=')?;
+        let key = key.trim();
+        // what follows the value, where the next semicolon is looked for
+        let next = if let Some(quoted) = after.strip_prefix('"') {
+            let (parsed, after_quote) = unquote(quoted);
+            if key.eq_ignore_ascii_case(wanted) {
+                return Some(parsed);
             }
-            (out, 1 + end)
+            after_quote
         } else {
-            let end = after.find(';').unwrap_or(after.len());
-            (after[..end].trim().to_string(), end)
+            if key.eq_ignore_ascii_case(wanted) {
+                let parsed = after.split_once(';').map_or(after, |(parsed, _)| parsed);
+                return Some(parsed.trim().to_string());
+            }
+            after
         };
-        if key.eq_ignore_ascii_case(wanted) {
-            return Some(parsed);
-        }
-        index += equals + 1 + used;
+        (_, rest) = next.split_once(';')?;
     }
-    None
+}
+
+/// The text of a quoted value up to its closing quote (or the end), with `\"` and `\\` unescaped, and what follows it.
+fn unquote(quoted: &str) -> (String, &str) {
+    let mut out = String::new();
+    let mut chars = quoted.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.clone().next() {
+                Some(escaped @ ('"' | '\\')) => {
+                    chars.next();
+                    out.push(escaped);
+                }
+                _ => out.push('\\'),
+            },
+            '"' => break,
+            other => out.push(other),
+        }
+    }
+    (out, chars.as_str())
 }
 
 #[cfg(test)]

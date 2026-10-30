@@ -27,10 +27,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, PoisonError, Weak};
+use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
+use moqui_lib::sync::lock;
 use moqui_tui::{
     Choice, LinkError, PushSink, RawBody, ScreenLink, ScreenModel, SessionEvent, SessionOptions, ShellInfo,
     Subscription, Theme, TransitionOutcome,
@@ -125,7 +126,7 @@ impl Sessions {
 
     /// A place for one more session of `username` (empty for no user yet), or why there is none. Drop gives it back.
     pub fn take(self: &Arc<Self>, username: &str) -> Result<SessionSlot, String> {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.live);
         if live.values().sum::<usize>() >= self.max {
             return Err(format!(
                 "{} terminal sessions are open (terminal max-sessions)",
@@ -163,7 +164,7 @@ impl SessionSlot {
         if self.username == username {
             return Ok(());
         }
-        let mut live = self.sessions.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.sessions.live);
         self.sessions.full_for(&live, username)?;
         release(&mut live, &self.username);
         *live.entry(username.to_string()).or_default() += 1;
@@ -183,7 +184,7 @@ fn release(live: &mut HashMap<String, usize>, username: &str) {
 
 impl Drop for SessionSlot {
     fn drop(&mut self) {
-        let mut live = self.sessions.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.sessions.live);
         release(&mut live, &self.username);
     }
 }
@@ -358,10 +359,9 @@ impl ScreenLink for GatedLink {
 
     fn login(&self, username: &str, password: &str, code: &str) -> Result<(), LinkError> {
         let gate = &self.gate;
-        let lock = || gate.slot.lock().unwrap_or_else(PoisonError::into_inner);
         // The user's slot is taken before the password is checked, and given back when the login fails.
-        let before = lock().username.clone();
-        lock().assign(username).map_err(LinkError::Remote)?;
+        let before = lock(&gate.slot).username.clone();
+        lock(&gate.slot).assign(username).map_err(LinkError::Remote)?;
         match self.link.login(username, password, code) {
             Ok(()) => {
                 gate.logged_in.store(true, Ordering::Release);
@@ -377,7 +377,7 @@ impl ScreenLink for GatedLink {
                 Ok(())
             }
             Err(err) => {
-                if let Err(reason) = lock().assign(&before) {
+                if let Err(reason) = lock(&gate.slot).assign(&before) {
                     tracing::warn!(
                         "{}: the session slot did not go back to {before:?}: {reason}",
                         gate.label
@@ -390,8 +390,7 @@ impl ScreenLink for GatedLink {
                 let failures = gate.failures.fetch_add(1, Ordering::AcqRel) + 1;
                 tracing::warn!("{}: login of {username} refused ({failures}): {err}", gate.label);
                 if failures >= MAX_LOGIN_FAILURES {
-                    *gate.note.lock().unwrap_or_else(PoisonError::into_inner) =
-                        Some(format!("closed after {MAX_LOGIN_FAILURES} refused logins"));
+                    *lock(&gate.note) = Some(format!("closed after {MAX_LOGIN_FAILURES} refused logins"));
                     let _ = gate.events.send(SessionEvent::Close);
                 }
                 Err(err)
@@ -564,7 +563,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         }
     }
     let _ = stream.flush().await;
-    let note = note.or_else(|| gate.note.lock().unwrap_or_else(PoisonError::into_inner).take());
+    let note = note.or_else(|| lock(&gate.note).take());
     // The slot goes back with the gate, once the session's link has dropped it too.
     drop(gate);
     let status = match ended.await {

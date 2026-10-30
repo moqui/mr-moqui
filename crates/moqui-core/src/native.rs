@@ -58,7 +58,7 @@ pub(crate) type NativeBody =
 /// A service body as the definition holds it: a catalogue function, or a closure bound with
 /// [`ExecutionContextFactory::register_service`].
 #[derive(Clone)]
-pub(crate) struct NativeServiceFn(Arc<NativeBody>);
+pub struct NativeServiceFn(Arc<NativeBody>);
 
 impl NativeServiceFn {
     pub(crate) fn new(body: Arc<NativeBody>) -> Self {
@@ -304,15 +304,15 @@ impl NativeRegistry {
 
     pub(crate) fn discover(components: &[ComponentInfo], conf: &MNode) -> Result<Self, Error> {
         let mut registry = Self::default();
-        crate::report::register(&mut registry)?;
-        crate::monitor::register(&mut registry)?;
         crate::telemetry::register(&mut registry)?;
-        crate::report_schedule::register(&mut registry)?;
-        // the framework's own tool factories (VCard, ICalendar, MailCapture), which MoquiDefaultConf.xml selects
-        crate::pim::register(&mut registry)?;
+        // the framework's own tool factories (MailCapture; VCard and ICalendar are moqui-dav's), which
+        // MoquiDefaultConf.xml selects
         // and the mail and notification captures for specs (MailCapture, NotificationCapture)
         crate::service::mail_capture::register(&mut registry)?;
         crate::notify::capture::register(&mut registry)?;
+        for extension in crate::extension::linked() {
+            (extension.register_native)(&mut registry)?;
+        }
         for component in components {
             let mut entries = inventory::iter::<NativeComponent>
                 .into_iter()
@@ -343,6 +343,13 @@ impl NativeRegistry {
             }
         }
         Ok(registry)
+    }
+
+    /// The locations of the service functions, for the tests of the crates that register them.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn service_locations(&self) -> Vec<&str> {
+        self.services.keys().map(String::as_str).collect()
     }
 
     pub(crate) fn service_at(&self, location: &str) -> Option<NativeServiceFn> {
@@ -401,9 +408,7 @@ impl NativeRegistry {
                 if let Some(constructor) = self.resources.get(&class) {
                     factory.resource().install_provider(&scheme, constructor(factory)?)?;
                 } else if scheme == "git" && class == GIT_RESOURCE_CLASS {
-                    // Built in, behind the `git` cargo feature; without it the scheme stays unsupported.
-                    #[cfg(feature = "git")]
-                    factory.resource().install_git()?;
+                    // moqui-git registers it; a binary without that crate leaves the scheme unsupported.
                 } else if !builtin_resource(&scheme, &class) {
                     return Err(Error::new(format!(
                         "resource-reference {scheme}: implementation {class} is not linked"
@@ -424,8 +429,8 @@ impl NativeRegistry {
     }
 }
 
-/// The class `MoquiDefaultConf.xml` names for `git://` locations (crate::resource::git).
-pub(crate) const GIT_RESOURCE_CLASS: &str = "org.moqui.impl.context.reference.GitResourceReference";
+/// The class `MoquiDefaultConf.xml` names for `git://` locations (moqui-git).
+pub const GIT_RESOURCE_CLASS: &str = "org.moqui.impl.context.reference.GitResourceReference";
 
 fn builtin_resource(scheme: &str, class: &str) -> bool {
     matches!(

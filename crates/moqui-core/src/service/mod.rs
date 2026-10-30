@@ -22,36 +22,26 @@ mod chat;
 mod chat_link;
 #[cfg(test)]
 mod chat_tests;
-mod collab;
+mod contacts;
 mod content;
-mod external_agent;
 pub mod coverage;
-mod dav;
-pub(crate) mod define;
-mod devtools;
+pub mod define;
 mod eca;
 mod eca_rules;
-pub use eca_rules::reload as reload_eca_rules;
-mod elfinder;
+mod external_agent;
+pub use eca_rules::{reload as reload_eca_rules, EcaRuleCounts};
 mod email_eca;
 #[cfg(test)]
 mod fence_tests;
-#[cfg(all(test, feature = "git"))]
-mod files_tests;
-#[cfg(feature = "git")]
-mod git;
-pub(crate) mod git_eca;
-#[cfg(feature = "git")]
-mod git_hosting;
+pub mod git_eca;
 #[cfg(feature = "image")]
 mod images;
 pub mod info;
 #[cfg(test)]
 mod inline_tests;
 mod jobs;
-mod mail;
 pub mod mail_capture;
-mod pool;
+pub mod pool;
 mod remote;
 mod request_pool;
 mod rest;
@@ -62,17 +52,15 @@ mod script_ports_tests;
 mod seca;
 mod security_checks;
 pub(crate) mod semaphore;
-pub(crate) mod shell;
+pub mod shell;
 #[cfg(feature = "xlsx")]
 pub(crate) mod spreadsheet;
 mod sso;
 mod system_sync;
 mod tools;
 mod user_keys;
-pub(crate) mod util;
+pub mod util;
 mod validate;
-#[cfg(all(test, feature = "git"))]
-mod wiki_tests;
 
 pub use call::is_service_defined;
 pub use call::{
@@ -81,28 +69,25 @@ pub use call::{
 };
 pub use define::load_definitions;
 pub use define::{check, configured_service_files, lint, reload as reload_definitions, ServiceReload};
-pub(crate) use define::{input_hints, input_rules, merge_param, ClientRule};
+pub use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use email_eca::install_rules as install_eca_rules;
 pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
-#[cfg(all(test, feature = "git"))]
-pub(crate) use git_hosting::signature as git_hosting_signature;
-pub(crate) use jobs::job_time_zone;
+pub use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
 pub use jobs::{run_job_now, PassReport};
-/// Mail the host's SMTP listener (moqui-host `inbound-smtp`) received: the recipient lookup and the delivery.
-#[cfg(feature = "imap")]
-pub use mail::delivery as mail_inbound;
-#[cfg(all(test, feature = "smtp"))]
-pub(crate) use mail::{SharedSinkGuard, SinkGuard};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
 pub use request_pool::{caps, check_serve_caps, spare_connections, RequestPool};
 #[cfg(test)]
 pub(crate) use rest::install;
-#[cfg(test)]
-pub(crate) use rest::install as install_rest;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use rest::install as install_rest;
 pub(crate) use rest::openapi_document;
 pub use rest::reload_roots as reload_rest_roots;
 pub use rest::{resolve_service as resolve_rest_service, root_resource_infos, run};
@@ -114,18 +99,7 @@ pub(crate) use system_sync::receive_rest_message;
 pub use system_sync::{hmac_base64, timestamp_header};
 pub(crate) use validate::clean_safe_html;
 pub use validate::validate;
-pub(crate) use validate::{auto_entity_name, auto_fields};
-
-/// Start the mail client's IMAP IDLE workers (`email-client` `idle-enabled`, on the scheduler's tick). The host calls it once,
-/// after the entity facade is installed; a host built without mail does nothing.
-pub fn start_mail_idle(factory: &std::sync::Arc<crate::context::ExecutionContextFactory>) {
-    mail::start_idle(factory);
-}
-
-/// Stop the IMAP IDLE workers, for the factory's shutdown.
-pub(crate) fn stop_mail_idle(factory: &crate::context::ExecutionContextFactory) {
-    mail::stop_idle(factory);
-}
+pub use validate::{auto_entity_name, auto_fields};
 
 /// A JSON body as a [`moqui_lib::object::Value`].
 pub(crate) fn parse_json(text: &str) -> Result<moqui_lib::object::Value, crate::context::Error> {

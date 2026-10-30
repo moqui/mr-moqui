@@ -63,14 +63,21 @@ The framework features are in `crates/moqui-core`; the host features, and the pa
 `crates/moqui` (and the crate `./moq build` generates in `target/moqui-app` for add-on component crates) forwards the
 package features `dev`, `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
 one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
-through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in.
+through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
+framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
+way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
+`moqui_core::extension`; `moqui-report`, `moqui-collab`, `moqui-dav` and `moqui-devkit` are four more, linked in
+every host build (the host's `xlsx` turns on the report crate's own, for the xlsx format of a scheduled report, and its
+`devtools` the dev kit's `watch`, the file watcher), and the browser build links the reports and `moqui-dav` (the VCard
+and ICalendar tools, elFinder) but not co-editing or the dev kit. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
+build, with no features of its own.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|---|
 | `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes | yes |
-| `postgres` | host | The Postgres driver | yes | yes | yes | yes |
-| `embedded-postgres` | host | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
-| `mysql` | host | The MySQL driver | | | yes | yes |
+| `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes | yes |
+| `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
+| `mysql` | host (`moqui-drivers`) | The MySQL driver | | | yes | yes |
 | `pdf` | host | The DevTools client of the external Chromium that prints `html-print` to PDF | yes | yes | yes | yes |
 | `ssh` | host | The SFTP client, the built-in SSH server (SFTP, admin shell, git over SSH, and `apps` with `tui`), the SSH cluster channel | yes | | yes | yes |
 | `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | | yes | yes |
@@ -78,16 +85,16 @@ through `moqui_core::llm_hooks`, so in a binary without them their services repo
 | `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes | yes |
 | `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes | yes |
 | `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | | yes | yes |
-| `devtools` | host, core | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
-| `smtp` | core | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
-| `imap` | core | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
-| `git` | core | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
+| `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
+| `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
+| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
-| `xlsx` | core | The `xlsx` render mode and `org.moqui.impl.SpreadsheetServices` | | | yes | yes |
+| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.impl.SpreadsheetServices` and the xlsx format of a scheduled report | | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes | yes |
 
-`mail` is `smtp` and `imap` together. The browser build has none of the core features.
+`mail` is `smtp` and `imap` together. The browser build has none of the core features, and no framework crate.
 
 #### When a feature is left out
 
@@ -120,7 +127,10 @@ spec({
 The profiles are in `.cargo/config.toml`, so the generated `target/moqui-app` crate builds the same way. Each package
 has its own, so the artifacts of one never replace another's and switching packages does not rebuild.
 
-- `dev` (Debug): the workspace crates at opt-level 0 with debug info, the dependencies at opt-level 3.
+- `dev` (Debug, and every `cargo test`): the workspace crates at opt-level 0 with debug info, the dependencies at
+  opt-level 3 with line tables only (file and line in a backtrace). The debug info stays in the object files under
+  `target/debug` (`split-debuginfo = "unpacked"`), where debuggers read it, instead of being copied into each binary:
+  a host test binary was 1.5 GB, 83% of it debug info.
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.
@@ -133,7 +143,7 @@ has its own, so the artifacts of one never replace another's and switching packa
 The `embedded-postgres` feature embeds the theseus Postgres archive (the version `.cargo/config.toml` forces through
 `POSTGRESQL_VERSION`) and unpacks it once into `install/postgres/<version>` in the runtime directory (or under
 `MOQUI_INSTALL`), shared by the entity, search and sim clusters. An install an earlier build unpacked in
-`runtime/db/install` is moved there on the first start. `crates/moqui-host/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
+`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
 the file `MOQUI_PG_ARCHIVE` names, and downloads nothing. It refuses an archive that still holds `bin/psql` or a
 readline library (GPL, plans/archive/License-Review.md).
 
@@ -244,8 +254,8 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# pdf_chromium_path, or chromium on the PATH)
-cargo test -p moqui-host --test gate3 --test gate3_browser
+# pdf_chromium_path, or chromium on the PATH); gate3_browser is slow (below)
+cargo test -p moqui-host --test gate3
 ```
 
 `scripts/check-packages.sh` runs Clippy with warnings denied on each feature set a build uses: the workspace
@@ -255,8 +265,26 @@ runs the scripted TUI screens, which `cargo test` leaves out. A gate that only o
 there.
 
 `./moq test-all` runs every suite in turn and lists which passed: `cargo test`, the opt-in host tests (Gate 3, the
-browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component, the demo component's specs (it is
-off by default, so the suite turns it on), and the client specs. `./moq help test-all` lists them.
+client browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component,
+the demo component's specs (it is off by default, so the suite turns it on), and the client specs. `./moq help
+test-all` lists them. It runs no slow test; `./moq test-all --slow` adds them.
+
+### Slow tests
+
+A test over about 15 seconds is slow, and is only for a special case: a specific scenario that is checked when its
+result is needed, not code coverage or the quality of the code at the unit level. Write a test to run in well under
+15 seconds. One over 30 seconds is marked slow, and no command runs a marked test unless it is given `--slow`, also
+when the test is named:
+
+- a spec or feature: `slow: true` on `spec({...})` or `feature(name, {...})`. `moqui test` and `moqui test-client` list
+  it as ignored (`slow: run with --slow`) and run it only with `--slow`; `test-client --serve` passes `--slow` to the
+  server's own specs, and starts no server for a component whose specs are all slow;
+- a Rust test: `#[ignore = "slow: ..."]`, run by `cargo test-slow`;
+- an opt-in host test binary that is slow as a whole (`gate3_browser`), run by name.
+
+`./moq test-all --slow` runs all of them. An agent never runs a slow test without the user's permission (AGENTS.md).
+`mr-boss/test/client/ProductsShots.spec.js` keeps, commented out, the screenshot matrix that made this rule: 535
+cases and 9 minutes for checks that did not depend on the width or the theme.
 
 ## Component specs
 
@@ -293,8 +321,9 @@ binary.
 |---|---|
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
 | `--feature text` | Only the features whose names contain the text |
+| `--slow` | Also the specs and features marked `slow: true`, which a run lists as ignored without it, also when named ([Slow tests](#slow-tests)) |
 | `--db fresh` | The default: load every data type into a scratch runtime, removed at the end unless `--keep`. Needs `embedded-postgres` |
-| `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the entity and data files and the binary are unchanged |
+| `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the components the run loads (which the conf and the instance purpose decide: a dev component loads only on a dev instance), their entity and data files and the binary are unchanged |
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
 | `--db none` | Boot the factory and skip Postgres, so `ec.resource` works and the entity facade stays unset. A build without `embedded-postgres` can run this. Every selected spec must set `database: false`; one that does not is named and the run stops before boot. When every selected spec sets it, and the run is not `--serve`, `--agents`, `--skills`, or `--coverage`, this is the default |
 | `--junit dir` | `TEST-<component>.<Spec>.xml` per spec |
@@ -371,6 +400,8 @@ Once per file:
 - `tempSequences: { start, banks }`: sequenced ids from `start`, with the bank size for each entity, set before
   `setupSpec` and reset after `cleanupSpec`.
 - `allowMessageErrors`, and `timeout` in seconds per block.
+- `slow: true`: the spec runs over 30 seconds; a run lists its features as ignored and does not load it unless given
+  `--slow` ([Slow tests](#slow-tests)).
 - `setupSpec`, `cleanupSpec`, `setup` and `cleanup`, as in Spock. Cleanups always run. These get no `ctx`.
 
 #### `feature(name, {...})`
@@ -382,6 +413,7 @@ A statement at the top level of the file; features run in the order they are wri
 - `where`: an array of row objects, or a function that returns one. Each row is its own case, and `#field` in the name is
   the row's value.
 - `ignore: "reason"`, `timeout`, `allowMessageErrors`.
+- `slow: true`: the feature runs over 30 seconds; it is ignored unless the run is given `--slow`.
 - `requires: ["git"]`: build features the feature needs, as on `spec()`; in a binary without one it is reported as
   skipped. A `where` row may have its own `requires`, for a row that needs a feature the others do not.
 - A case that does not say `requires`, and fails only because the binary reports that a tool is not built in
@@ -412,7 +444,7 @@ priceMap.price == 16.99
 - A feature also fails when it leaves errors in `ec.message`, unless `allowMessageErrors` is set. Messages are cleared
   between features.
 
-The source is rewritten for this before it runs (`crates/moqui-core/src/testkit/rewrite.rs`), with no new lines, so error
+The source is rewritten for this before it runs (`crates/moqui-devkit/src/testkit/rewrite.rs`), with no new lines, so error
 line numbers are the file's. A `then` or `expect` the rewrite cannot see, such as a feature object built in a helper
 function, is refused when the file loads rather than run with conditions that cannot fail. Use `where` rows instead.
 

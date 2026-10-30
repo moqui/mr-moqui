@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use super::active_def;
-use crate::context::{Error, ExecutionContext};
+use crate::context::{Authz, Error, ExecutionContext, Tarpit};
 use crate::screen::definition::{ScreenDef, SubscreensItem};
 use crate::screen::render::RenderState;
 use crate::screen::url::ScreenUrlInfo;
@@ -151,7 +151,14 @@ pub(in crate::screen) fn screen_permitted(def: &ScreenDef) -> bool {
         return false;
     }
     ExecutionContext::with_current(|ec| {
-        match ec.push_checked("AT_XML_SCREEN", &def.location, "view", required, false, None) {
+        match ec.push_checked(
+            "AT_XML_SCREEN",
+            &def.location,
+            "view",
+            Authz::required_if(required),
+            Tarpit::Skip,
+            None,
+        ) {
             Ok(()) => {
                 // A check, not an access: Java's isPermitted, which is not counted as a hit.
                 ec.untrack_hit();

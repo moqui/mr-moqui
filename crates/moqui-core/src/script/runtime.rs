@@ -73,22 +73,35 @@ mod web_host;
 
 pub(crate) use compiled::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
-use conditions::*;
-use convert::*;
+use conditions::{
+    comparison, condition_js, condition_of, date_range_condition, join, make_action_condition, make_condition,
+    make_condition_date, make_condition_where, HostCondition,
+};
+use convert::{
+    collection_to_js, converts_with_script, enter_nested, host_ref_to_js, host_texts, i64_to_js, js_bytes, js_caught,
+    js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, optional_text, text_or_empty,
+    value_to_js,
+};
 pub use convert::{host_to_js, js_to_host};
-use decimal::*;
+use decimal::HostDecimal;
 pub use ec_extra::expand_localized;
-use entities::*;
-use error_info::*;
-pub(crate) use facades::forget_scripts;
+use entities::{
+    atom_name, entity_find, entity_make_value, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has,
+    prototype_member, wrap_find, EntityCell, HostEntity, HostFind, HostList, ScriptList,
+};
+use error_info::HostErrorInfo;
+pub use facades::forget_scripts;
 pub use facades::run_script_location;
-use facades::*;
-use helpers::*;
-use native_tools::*;
+use facades::{
+    cache_get_cache, logger_log, logger_warn, read_script, resource_expand, resource_script,
+    sri_send_redirect_and_stop_render, system_get_property, HostMessage, HostUser, HostWeb,
+};
+use helpers::{install_helpers, now_timestamp, timestamp_of};
+use native_tools::{tool_to_js, HostTool};
 pub(crate) use screen_host::with_screen_runner;
-use search::*;
-use services::*;
-use upload::*;
+use search::{entity_get_data_documents, search_object};
+use services::{service_async, service_job, service_sync};
+use upload::{HostStream, HostUpload, StreamBytes};
 pub use values::script_list_values;
 pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
 pub use values::{value_items, value_map};
@@ -719,9 +732,9 @@ pub fn expand(template: &str) -> Result<String, Error> {
 }
 
 /// See [`upload::text_upload_to_js`].
-pub(crate) use upload::text_upload_to_js;
+pub use upload::text_upload_to_js;
 
-pub(crate) fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+pub fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
     with_context(body)
 }
 
@@ -1771,12 +1784,12 @@ fn transaction_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
 
 fn default_transactions(ctx: &Ctx<'_>) -> rquickjs::Result<crate::transaction::TransactionManager> {
     let facade = facade_of(ctx)?;
-    let group = facade.inner.default_group.clone();
-    facade
-        .inner
-        .groups
-        .get(&group)
-        .map(|runtime| runtime.transactions.clone())
+    let group = facade.default_group();
+    let transactions = facade
+        .groups()
+        .find(|(name, _, _)| *name == group)
+        .map(|(_, _, transactions)| transactions.clone());
+    transactions
         .ok_or_else(|| Exception::throw_message(ctx, &format!("no transaction manager for entity group {group}")))
 }
 

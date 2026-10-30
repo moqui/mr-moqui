@@ -12,24 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework's development tools (plans/design-dev-aide.md 17): the reload of what a changed file defines, and
-//! restart from a running server. They serve the dev-aide component, the file watcher, `moqui check` and agents
-//! outside the server alike, so they are the framework's and not the dev-aide's.
+//! What the framework itself needs of the development tools (plans/design-dev-aide.md 17): whether this is a dev
+//! instance and who may use the tools there, restart from a running server, the log capture of a dev request, and the
+//! calls observed on the artifact stack ([`calls`], on the hot path of every push). The tools themselves (reload, the
+//! file watcher, `moqui check`, the artifact index, typegen and the spec runner) are moqui-devkit's
+//! (plans/Crate-Split.md).
 
-pub mod check;
-pub mod eca;
-pub mod index;
+pub mod calls;
 pub mod log_capture;
-pub mod refs;
-pub mod reload;
 pub mod restart;
-pub mod schema;
-#[cfg(feature = "devtools")]
-pub mod watch;
-
-pub use reload::{on_reload, recent_reports, reload_paths, ArtifactKind, FileReload, ReloadReport};
-
-use serde::Serialize;
 
 /// Whether this instance's purpose is `dev`, where the development tools run.
 #[must_use]
@@ -54,48 +45,3 @@ pub fn dev_aide_user(factory: &crate::context::ExecutionContextFactory, user_id:
             .iter()
             .any(|permission| crate::user::user_has_permission(user_id, permission).unwrap_or(false))
 }
-
-/// One problem a check or a reload found in a file, as the Problems panel, `moqui check` and the agents read it.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Problem {
-    pub path: String,
-    /// 1-based; 0 when the problem is the file's as a whole.
-    pub line: u32,
-    /// 1-based; 0 when not known.
-    pub column: u32,
-    pub severity: Severity,
-    /// The rule that found it, such as `reload.service` or `schema.unknown-attribute`.
-    pub rule: String,
-    pub message: String,
-    /// The skill section with the rule, as `file#heading`, when there is one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skill: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Error,
-    Warning,
-    Info,
-}
-
-impl Problem {
-    /// An error of the file as a whole.
-    #[must_use]
-    pub fn file_error(path: &str, rule: &str, message: impl Into<String>) -> Self {
-        Self {
-            path: path.to_string(),
-            line: 0,
-            column: 0,
-            severity: Severity::Error,
-            rule: rule.to_string(),
-            message: message.into(),
-            skill: None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests;

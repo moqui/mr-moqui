@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use super::runtime::js_error;
 
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use rquickjs::function::Opt;
 use rquickjs::{CatchResultExt, Context, Ctx, Exception, Function, Persistent, Runtime, Value as JsValue};
 
@@ -226,8 +227,7 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
         }
         prefix_number += 1;
     };
-    // (placeholder, original text, is a tag)
-    let mut held: Vec<(String, String, bool)> = Vec::new();
+    let mut held: Vec<Held> = Vec::new();
     let mut markdown = String::with_capacity(source.len());
     let mut index = 0;
     while index < source.len() {
@@ -253,7 +253,11 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
         if let Some((end, is_tag)) = span {
             let placeholder = format!("{prefix}{}x", held.len());
             markdown.push_str(&placeholder);
-            held.push((placeholder, source[index..end].to_string(), is_tag));
+            held.push(Held {
+                placeholder,
+                original: source[index..end].to_string(),
+                is_tag,
+            });
             index = end;
         } else {
             let ch = rest.chars().next().unwrap_or('\u{FFFD}');
@@ -270,7 +274,12 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
         None => moqui_lib::markdown::to_html(&markdown),
     };
     let mut html = lift_tag_rows(&markdown_html, &prefix, &held);
-    for (placeholder, original, is_tag) in &held {
+    for Held {
+        placeholder,
+        original,
+        is_tag,
+    } in &held
+    {
         if *is_tag {
             html = html.replace(&format!("<p>{placeholder}</p>"), original);
         }
@@ -279,10 +288,18 @@ pub fn markdown_fancy_source_with_base(source: &str, base: Option<&str>) -> Resu
     Ok(html)
 }
 
+/// A piece of the fancy source that markdown must not see, and the placeholder that stands for it.
+struct Held {
+    placeholder: String,
+    original: String,
+    /// A tag (or comment) rather than an expression: its line may become a table row or a paragraph to lift.
+    is_tag: bool,
+}
+
 /// The markdown HTML with each table row that markdown made of a tag line replaced by the line's
 /// placeholders: a row whose first cell is only tag placeholders and whose other cells are empty.
 /// pulldown-cmark writes each body row on a line of its own.
-fn lift_tag_rows(html: &str, prefix: &str, held: &[(String, String, bool)]) -> String {
+fn lift_tag_rows(html: &str, prefix: &str, held: &[Held]) -> String {
     let mut out = String::with_capacity(html.len());
     for line in html.split_inclusive('\n') {
         match tag_row_text(line.trim_end_matches('\n'), prefix, held) {
@@ -297,19 +314,18 @@ fn lift_tag_rows(html: &str, prefix: &str, held: &[(String, String, bool)]) -> S
 }
 
 /// The first cell's text when `row` is a table row of tag placeholders alone, else `None`.
-fn tag_row_text<'a>(row: &'a str, prefix: &str, held: &[(String, String, bool)]) -> Option<&'a str> {
+fn tag_row_text<'a>(row: &'a str, prefix: &str, held: &[Held]) -> Option<&'a str> {
     let mut cells = row.strip_prefix("<tr>")?.strip_suffix("</tr>")?;
     let mut first = None;
     while !cells.is_empty() {
-        let cell = cells.strip_prefix("<td")?;
-        let cell = &cell[cell.find('>')? + 1..];
-        let end = cell.find("</td>")?;
+        let (_, cell) = cells.strip_prefix("<td")?.split_once('>')?;
+        let (content, after) = cell.split_once("</td>")?;
         if first.is_none() {
-            first = Some(&cell[..end]);
-        } else if end > 0 {
+            first = Some(content);
+        } else if !content.is_empty() {
             return None;
         }
-        cells = &cell[end + "</td>".len()..];
+        cells = after;
     }
     let text = first?;
     let mut rest = text.trim();
@@ -318,12 +334,12 @@ fn tag_row_text<'a>(row: &'a str, prefix: &str, held: &[(String, String, bool)])
     }
     while !rest.is_empty() {
         let after = rest.strip_prefix(prefix)?;
-        let digits = after.find(|c: char| !c.is_ascii_digit())?;
-        let index: usize = after[..digits].parse().ok()?;
-        if !held.get(index)?.2 {
+        let (digits, after) = after.split_at_checked(after.find(|c: char| !c.is_ascii_digit())?)?;
+        let index: usize = digits.parse().ok()?;
+        if !held.get(index)?.is_tag {
             return None;
         }
-        rest = after[digits..].strip_prefix('x')?.trim_start();
+        rest = after.strip_prefix('x')?.trim_start();
     }
     Some(text)
 }
@@ -507,7 +523,7 @@ impl TemplateRegistry {
     /// Drop every kept file text: a dev reload of a changed template or text file, whose modified time a coarse file
     /// system may leave the same for two quick saves (plans/design-dev-aide.md 6.1, F6).
     pub fn forget_texts(&self) {
-        self.files.lock().unwrap_or_else(|err| err.into_inner()).clear();
+        lock(&self.files).clear();
     }
 
     /// The text of a file, kept by location and last-modified time as Java's `resource.text.location`.
@@ -553,10 +569,7 @@ impl TemplateRegistry {
                 (text_stamp(&source), Some(source))
             }
         };
-        let cached = self
-            .files
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        let cached = lock(&self.files)
             .get(key)
             .filter(|(kept, _)| *kept == stamp)
             .map(|(_, text)| text);
@@ -568,10 +581,7 @@ impl TemplateRegistry {
             None => resource.read_text()?,
         };
         let text: Arc<str> = prepare(&source)?.into();
-        self.files
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .insert(key.to_string(), (stamp, Arc::clone(&text)));
+        lock(&self.files).insert(key.to_string(), (stamp, Arc::clone(&text)));
         Ok(text)
     }
 }
@@ -597,14 +607,11 @@ fn cache() -> &'static CompiledCache {
 
 fn compiled(source: &str, escape: Escape, scope: Scope) -> Result<Arc<str>, Error> {
     let key = (escape, scope == Scope::Snapshot, source.to_string());
-    if let Some(found) = cache().lock().unwrap_or_else(|err| err.into_inner()).get(&key) {
+    if let Some(found) = lock(cache()).get(&key) {
         return Ok(found);
     }
     let made: Arc<str> = Arc::from(compile(source, escape, scope)?);
-    cache()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .insert(key, Arc::clone(&made));
+    lock(cache()).insert(key, Arc::clone(&made));
     Ok(made)
 }
 
@@ -845,9 +852,8 @@ fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
 
 /// `a.b as item` split at the last ` as ` word.
 fn split_last_word<'a>(text: &'a str, word: &str) -> Option<(&'a str, &'a str)> {
-    let needle = format!(" {word} ");
-    let at = text.rfind(&needle)?;
-    Some((text[..at].trim(), text[at + needle.len()..].trim()))
+    let (before, after) = text.rsplit_once(&format!(" {word} "))?;
+    Some((before.trim(), after.trim()))
 }
 
 fn is_identifier(name: &str) -> bool {
@@ -1109,7 +1115,7 @@ fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rqui
             // A date alone (`yyyy-MM-dd`) is a date, formatted with no time zone shift, as Java formats a Date.
             Some(pattern) if crate::l10n::is_date_pattern(pattern) => {
                 let trimmed = text.trim();
-                let date_only = trimmed.len() == 10 && trimmed.as_bytes()[4] == b'-' && trimmed.as_bytes()[7] == b'-';
+                let date_only = matches!(trimmed.as_bytes(), [_, _, _, _, b'-', _, _, b'-', _, _]);
                 date_only
                     .then(|| moqui_lib::object::parse_date(trimmed).map(Value::Date))
                     .flatten()

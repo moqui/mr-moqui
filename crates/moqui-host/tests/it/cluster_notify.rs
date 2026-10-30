@@ -29,6 +29,9 @@ const CHANNEL: &str = "moqui_cluster";
 
 #[test]
 fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_properties("notify", None, &[("cluster_transport", "notify")]);
     let factory = Arc::clone(gate.server.factory());
     let facade = factory.entity().unwrap();
@@ -97,6 +100,9 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
 
 #[test]
 fn a_notify_that_arrives_while_the_request_queue_is_full_is_applied_once_there_is_room() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_properties("notify-busy", None, &[("cluster_transport", "notify")]);
     let factory = Arc::clone(gate.server.factory());
 

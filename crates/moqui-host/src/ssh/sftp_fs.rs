@@ -15,7 +15,7 @@
 //! The SFTP subsystem of the built-in SSH server: for a user with `SSH_SFTP`, a view of one resource location
 //! (`ssh-server` `sftp-root`, a `runtime://`, `file:`, `component://` or `dbresource://` directory), never of the host
 //! disk outside it; for any other user (`dav-server` `sftp-drives`), the drives that user may open, one folder each,
-//! through the file services as that user (`moqui_core::dav::files::tree`: a write is an upload and a new version, a
+//! through the file services as that user (`moqui_dav::dav::files::tree`: a write is an upload and a new version, a
 //! removal goes to the trash). A client path is normalized against `/`; a `..` that would leave the root is refused.
 //! Each call runs on a request worker: on the root with authorization off, on the drives logged in as the user.
 //!
@@ -27,11 +27,11 @@ use std::collections::HashMap;
 use std::sync::Weak;
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory, ResourceStat};
-use moqui_core::dav::files::tree;
+use moqui_dav::dav::files::tree;
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use russh_sftp::server::StatusReply;
 
-use super::{on_pool, on_pool_without_authz};
+use crate::worker::{on_pool, on_pool_without_authz};
 
 /// Open file and directory handles on one channel.
 const MAX_HANDLES: usize = 64;

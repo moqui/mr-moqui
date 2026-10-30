@@ -696,7 +696,8 @@ pub fn call_tool(
     if result.get("resultType").and_then(Json::as_str) == Some("input_required") {
         let request_state = result.get("requestState").and_then(Json::as_str).map(str::to_string);
         let requests = result.get("inputRequests").and_then(Json::as_object);
-        let Some(requests) = requests.filter(|requests| !requests.is_empty()) else {
+        let first = requests.and_then(|requests| requests.iter().next().map(|first| (requests, first)));
+        let Some((requests, (key, request))) = first else {
             // the same state again with no new request: still waiting on the one asked before
             return Ok(Outcome::InputRequired {
                 request_state,
@@ -705,7 +706,6 @@ pub fn call_tool(
                 key: retry.and_then(|(_, key)| key).map(str::to_string),
             });
         };
-        let (key, request) = requests.iter().next().expect("not empty");
         let params = request.get("params").cloned().unwrap_or(Json::Null);
         let is_url = request.get("method").and_then(Json::as_str) == Some("elicitation/create")
             && params.get("mode").and_then(Json::as_str) == Some("url");

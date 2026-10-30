@@ -259,8 +259,11 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
                     Test::Before(date(field, rest.trim(), false))
                 } else if text.len() > 1 && text.starts_with('%') && text.ends_with('%') {
                     Test::Contains(text.trim_matches('%').to_string())
-                } else if text.len() > 1 && text.ends_with('%') && !text[..text.len() - 1].contains('%') {
-                    Test::Begins(text.trim_end_matches('%').to_string())
+                } else if let Some(begins) = text
+                    .strip_suffix('%')
+                    .filter(|head| !head.is_empty() && !head.contains('%'))
+                {
+                    Test::Begins(begins.to_string())
                 } else {
                     Test::Equals(date(field, text, false))
                 }
@@ -808,7 +811,11 @@ struct ListRow {
 fn lists_of(document: &Json) -> Vec<ListData> {
     fn walk(value: &Json, out: &mut Vec<ListData>) {
         match value {
-            Json::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            Json::Array(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
             Json::Object(map) => {
                 if map.get("t").and_then(Json::as_str) == Some("formList") {
                     out.push(list_of(value));

@@ -1,0 +1,52 @@
+# The email services, on top of moqui-core (plans/Crate-Split.md): outbound SMTP (send#EmailMessage, send#EmailTemplate,
+# the server test) and, under imap, IMAP and POP3, the mail client's sync, IDLE and import, the OAuth sign-in of mail
+# accounts and the delivery of mail the host's SMTP listener received. Its own crate so an edit here does not rebuild
+# the framework, and lettre, imap, mail-parser and rustls stay out of core. Core reaches it only through
+# moqui_core::extension, which this crate fills with an inventory entry; moqui-host links it under its smtp feature.
+# lettre SMTP is blocking (tokio1 off). imap is blocking (native-tls off).
+
+[package]
+name = "moqui-mail"
+description = "The email services: outbound SMTP, IMAP and POP3, the mail client's sync."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+tracing = { workspace = true }
+lettre = { workspace = true }
+# rustls reads the extra CA file (email-client tls-ca-file) for SMTP, and wraps the IMAP and POP3 streams; lettre links
+# it already.
+rustls = { workspace = true }
+indexmap = { workspace = true }
+getrandom = { workspace = true }
+base64 = { workspace = true }
+jiff = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+imap = { workspace = true, optional = true }
+mail-parser = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+
+# The host's smtp feature links the crate without imap (default-features off in the workspace entry); its imap and
+# inbound-smtp features turn imap on.
+[features]
+default = ["imap"]
+# Inbound: IMAP and POP3 poll, the mail client's sync, IDLE and import, inbound MIME, the OAuth sign-in of mail accounts
+# and the delivery of mail the host's SMTP listener received. The OAuth sign-in (src/oauth.rs) and autodiscover call
+# the providers with the blocking HTTP client, so it turns on http.
+imap = ["dep:imap", "dep:mail-parser", "dep:webpki-roots", "moqui-core/http", "moqui-lib/http"]
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open; xlsx for a screen mailed as a workbook, telemetry for
+# the trace of the provider calls.
+moqui-core = { workspace = true, features = ["http", "test-support", "xlsx", "telemetry"] }
+# Reads back the workbook a screen email attaches.
+calamine = { workspace = true }
+
+[lints]
+workspace = true

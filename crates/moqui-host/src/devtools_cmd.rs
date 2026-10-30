@@ -12,16 +12,16 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui check` and `moqui refs` (plans/design-dev-aide.md 13.6, F13): the checks of `moqui_core::devtools::check` and
-//! the references of `moqui_core::devtools::refs` from the command line, on a model-only boot as `moqui types` boots,
+//! `moqui check` and `moqui refs` (plans/design-dev-aide.md 13.6, F13): the checks of `moqui_devkit::check` and
+//! the references of `moqui_devkit::refs` from the command line, on a model-only boot as `moqui types` boots,
 //! for a developer, a git hook or a coding agent outside the server.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::index::{Direction, MemoryIndex};
-use moqui_core::devtools::{check, Problem, Severity};
+use moqui_devkit::index::{Direction, MemoryIndex};
+use moqui_devkit::{check, Problem, Severity};
 use moqui_lib::error::Error;
 
 struct CheckArgs {
@@ -50,7 +50,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
                         .ok_or_else(|| crate::usage::command_usage("check"))?,
                 );
             }
-            other if other.starts_with("--server=") => parsed.server = Some(other["--server=".len()..].to_string()),
+            other if let Some(url) = other.strip_prefix("--server=") => parsed.server = Some(url.to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("check")),
             other => parsed.paths.push(PathBuf::from(other)),
         }
@@ -279,9 +279,9 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
             "--out" => outgoing = true,
             "--json" => json = true,
             "--server" => server = rest.next().cloned(),
-            other if other.starts_with("--server=") => server = Some(other["--server=".len()..].to_string()),
+            other if let Some(url) = other.strip_prefix("--server=") => server = Some(url.to_string()),
             "--kind" => kinds.extend(rest.next().cloned()),
-            other if other.starts_with("--kind=") => kinds.push(other["--kind=".len()..].to_string()),
+            other if let Some(kind) = other.strip_prefix("--kind=") => kinds.push(kind.to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("refs")),
             other if name.is_none() => name = Some(other.to_string()),
             _ => return Err(crate::usage::command_usage("refs")),
@@ -407,5 +407,21 @@ fn remote_refs(url: &str, name: &str, outgoing: bool, json: bool, kinds: &[Strin
         Err(Error::new(format!(
             "moqui refs --server {url} needs the tui feature's client"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_takes_the_server_either_way() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+        let parsed = parse_check(&args(&["--server=https://a.test", "a.xml"])).unwrap();
+        assert_eq!(parsed.server.as_deref(), Some("https://a.test"));
+        assert_eq!(parsed.paths, [PathBuf::from("a.xml")]);
+        let parsed = parse_check(&args(&["--server", "https://b.test"])).unwrap();
+        assert_eq!(parsed.server.as_deref(), Some("https://b.test"));
+        assert!(parse_check(&args(&["--serverx"])).is_err());
     }
 }

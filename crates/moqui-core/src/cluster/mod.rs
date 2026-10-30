@@ -39,7 +39,7 @@ use moqui_db::sql::{
 use moqui_lib::codec::hex_encode;
 use moqui_lib::env;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 use sha2::{Digest, Sha256};
 
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -290,7 +290,7 @@ pub fn publish(facade: &EntityFacade, topic: &'static str, message: &TopicMessag
 }
 
 /// Whether `facade`'s factory posts to cluster peers, whose sockets may have the users of a notification.
-pub(crate) fn is_linked(facade: &EntityFacade) -> bool {
+pub fn is_linked(facade: &EntityFacade) -> bool {
     linked_state(facade).is_some()
 }
 
@@ -575,10 +575,7 @@ fn send_loop(state: &ClusterState) {
         let batch: Vec<(&'static str, TopicMessage)> = {
             let mut queue = lock(&state.queue);
             while queue.messages.is_empty() {
-                let (next, waited) = state
-                    .ready
-                    .wait_timeout(queue, SENDER_IDLE)
-                    .unwrap_or_else(|err| err.into_inner());
+                let (next, waited) = wait_timeout(&state.ready, queue, SENDER_IDLE);
                 queue = next;
                 if waited.timed_out() && queue.messages.is_empty() {
                     queue.sending = false;
@@ -589,7 +586,7 @@ fn send_loop(state: &ClusterState) {
             queue.messages.drain(..).collect()
         };
         // A panic in one batch must not end the thread that every later message waits on.
-        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, coalesce(batch))));
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, &coalesce(batch))));
         if sent.is_err() {
             tracing::error!("cluster fan-out batch panicked");
         }
@@ -597,7 +594,7 @@ fn send_loop(state: &ClusterState) {
     }
 }
 
-fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
+fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
     let Some(factory) = lock(&state.factory).upgrade() else {
         return;
     };
@@ -611,7 +608,7 @@ fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
         }
         return;
     };
-    for (topic, message) in &batch {
+    for (topic, message) in batch {
         let payload = match payload_bytes(message) {
             Ok(bytes) => bytes,
             Err(err) => {

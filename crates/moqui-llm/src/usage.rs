@@ -28,6 +28,7 @@ use std::sync::Mutex;
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use rust_decimal::Decimal;
 
 use super::conf::{ContentLogConf, LimitsConf, Prices};
@@ -774,7 +775,7 @@ fn larger(left: QuotaLimit, right: QuotaLimit) -> QuotaLimit {
         }
     }
     QuotaLimit {
-        period: left.period.clone(),
+        period: left.period,
         max_tokens: max_of(left.max_tokens, right.max_tokens),
         max_cost: max_of(left.max_cost, right.max_cost),
         requests_per_minute: max_of(left.requests_per_minute, right.requests_per_minute),
@@ -931,7 +932,7 @@ static REQUESTS: Mutex<Option<HashMap<String, VecDeque<i64>>>> = Mutex::new(None
 ///
 /// Returns the whole seconds until a request of the minute ages out.
 pub fn take_request(key: &str, per_minute: u32, now_millis: i64) -> Result<(), u64> {
-    let mut all = REQUESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut all = lock(&REQUESTS);
     let all = all.get_or_insert_with(HashMap::new);
     if all.len() > 10_000 {
         all.retain(|_, times| times.back().is_some_and(|last| now_millis - last < 60_000));

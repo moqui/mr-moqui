@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait_timeout};
 
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
@@ -163,11 +163,18 @@ pub(crate) fn user_ids(value: Option<&Value>) -> Vec<String> {
         }
     };
     match value {
-        Some(Value::List(items)) => items
-            .iter()
-            .filter(|item| !is_empty(item))
-            .for_each(|item| add(to_plain_string(item))),
-        Some(other) if !is_empty(other) => to_plain_string(other).split(',').for_each(|id| add(id.to_string())),
+        Some(Value::List(items)) => {
+            for item in items {
+                if !is_empty(item) {
+                    add(to_plain_string(item));
+                }
+            }
+        }
+        Some(other) if !is_empty(other) => {
+            for id in to_plain_string(other).split(',') {
+                add(id.to_string());
+            }
+        }
         _ => {}
     }
     out
@@ -222,7 +229,7 @@ fn publish_shell_counts(
 /// Whether the counts would reach anyone: not while the factory shuts down (its database is closing), and only with a
 /// notification socket in this process or cluster peers to post to. A command such as `moqui load` has neither, so the
 /// EECAs of the records it loads send nothing (and nothing runs after its database closes).
-pub(crate) fn would_deliver(shutting_down: bool, listening: bool, linked: bool) -> bool {
+pub fn would_deliver(shutting_down: bool, listening: bool, linked: bool) -> bool {
     !shutting_down && (listening || linked)
 }
 
@@ -381,11 +388,7 @@ fn run_sends(publisher: &Publisher) {
                     state.running = false;
                     return;
                 };
-                state = publisher
-                    .wake
-                    .wait_timeout(state, next.saturating_duration_since(now))
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .0;
+                state = wait_timeout(&publisher.wake, state, next.saturating_duration_since(now)).0;
             }
         };
         let Some(factory) = factory.upgrade().filter(|factory| !factory.is_shutting_down()) else {

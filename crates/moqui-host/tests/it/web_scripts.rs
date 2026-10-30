@@ -102,6 +102,9 @@ fn dechunk(mut raw: &[u8]) -> Vec<u8> {
 
 #[test]
 fn the_proxy_servlet_passes_requests_on_and_streams_a_large_answer() {
+    if !crate::common::own_process() {
+        return;
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let upstream = listener.local_addr().unwrap();
     let serving = std::thread::spawn(move || serve_upstream(listener));

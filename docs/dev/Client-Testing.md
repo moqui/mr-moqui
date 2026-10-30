@@ -28,6 +28,7 @@ moqui test-client runtime/dev-component/dev-aide --offline
 moqui test-client mr-marble --serve --junit build/test-results
 moqui test-client framework --spec LoadBasic --param users=50 --param duration=60
 moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
+moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results --fail-on-skip
 moqui test-client runtime/component/my-site/test/client --server https://test.example.com --insecure
 ```
@@ -49,6 +50,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--offline` | Run only specs with `server: false`. Pages open at `https://moqui.test`. Nothing listens. Not with `--serve` |
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, exactly (no patterns), with the specs their `dependsOn` names |
 | `--feature text` | Only the features whose names contain the text |
+| `--slow` | Also the specs and features marked `slow: true` (over 30 seconds), and with `--serve` the server's slow specs; without it they are listed as ignored, also when named ([Slow tests](../Build-Test.md#slow-tests)) |
 | `--param name=value` | Repeatable; `params.name` in specs. `MOQUI_TEST_<NAME>` variables are params too, in camel case (`MOQUI_TEST_LOAD_PASSWORD` is `params.loadPassword`), for a password that should not show in `ps`. A `--param` wins over a variable |
 | `--junit dir` | `TEST-<component>.client.<Spec>.xml` per spec. Files a case attaches are `[[ATTACHMENT\|path]]` lines in its `system-out`, after its load table |
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
@@ -56,6 +58,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--timeout seconds` | What `waitUntil`, a raw request, a WebSocket connect and receive, and a browser action wait by default. 10 |
 | `--chromium path` | The browser, else `MOQUI_CHROMIUM`, else `runtime/chromium` (`./moq chromium-download`), `chromium` or `chromium-browser` on the PATH, then `google-chrome` |
 | `--headed` | A visible browser, for debugging |
+| `--video` | Record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json` ([Video](#video)). Needs `ffmpeg` |
 | `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too |
 | `--allow-http` | Allow plain `http` to another machine |
 | `--fail-on-skip` | A skipped spec or feature fails the run, so that a missing Chromium or fixture does not pass as green in CI |
@@ -114,11 +117,15 @@ child's output goes to `server-<n>.log` in the output directory. Once the ready 
 run against it; then the pipe closes, and the child stops and removes its scratch runtime. The child also stops when
 the client dies without cleaning up, since its standard input closes. A component with no declaration, or a child that
 exits or does not start within 30 minutes, fails that group's specs with the last lines of its log; the other groups
-still run.
+still run. The child gets `--slow` when the client has it; a component whose specs are all slow starts no server
+without it. When nothing names a browser for PDF (`pdf_chromium_path`), the child renders PDF with the browser the
+client drives, so the specs that check a PDF have one where the child's own search finds only Google Chrome.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under
-`runtime/save` that `--db snapshot` restores on later runs while the entity and data files and the binary are unchanged.
-A first run with Mantle's data takes minutes; later ones take seconds.
+`runtime/save` that `--db snapshot` restores on later runs while the components it loads, their entity and data files
+and the binary are unchanged. Servers on different confs or instance purposes load different components (a dev
+component only on a dev instance), so each has a snapshot of its own. A first run with Mantle's data takes minutes;
+later ones take seconds.
 
 `moqui test --serve [address]` is the server side, also for use by hand. When its specs pass it shuts the test factory
 down and serves the same scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone, on
@@ -163,9 +170,14 @@ sets never mix, and a component can have both. `test/client/suite.js`, `suite(["
 the order; the other spec files run after it, by name. Each spec gets a default session, and its sessions, sockets,
 pages and browser are closed after `cleanupSpec`.
 
+A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, tells one business process as a story
+(Chisel's Process Story Diff records it with `--video`). It runs only when named: by `--spec <businessProcessId>` with
+its component, or by its file path. A whole-component run leaves it out. It can `dependsOn` the component's other specs.
+
 `spec({...})` and `feature(name, {...})` take what they take in `moqui test` (`dependsOn`, `requires`, `stepwise`,
-`timeout`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
-`allowMessageErrors`: there is no `ec.message` to check.
+`timeout`, `slow`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
+`allowMessageErrors`: there is no `ec.message` to check. A client spec over about 15 seconds is for a special case;
+one over 30 seconds is `slow: true` and runs only with `--slow` ([Slow tests](../Build-Test.md#slow-tests)).
 
 **Fixtures are server specs.** Data a client suite needs is made by a `test/*.spec.js` of the same component that also
 asserts what it made, such as `framework/test/ClientFixtures.spec.js`, which makes the `sec.*` users and `test.load` as
@@ -417,6 +429,46 @@ feature("New Survey opens and closes on Escape", {
 })
 ```
 
+### Video
+
+`--video` records each spec that opens a page: `<out>/video/<Spec>.webm` (VP8), and beside it
+`<Spec>.timeline.json`, the spec's features on the video's clock. It needs `ffmpeg` on the `PATH` (`/usr/bin/ffmpeg`
+from the distribution's package will do) as well as Chromium. Without either, an error names what is missing, the
+specs still run, and only the timelines are written.
+
+Each page is recorded with the DevTools screencast (`Page.startScreencast`, JPEG, every frame, each acknowledged). The
+screencast sends a frame only when the page changes, so each frame lasts until the next one, from the time the browser
+drew it, and the last frame lasts until the spec ends: a page that stays the same for ten seconds is ten seconds of
+video. The video starts when the spec starts and is white until the first page draws. A spec with several pages is one
+video: it shows the page opened last that is still open, and when that page closes, the one before it again. A spec
+that opens no page has a timeline and no video. A failed feature does not stop the recording.
+
+The timeline has every feature that was reported, in order, those that open no page and the skipped ones too:
+
+```json
+[
+  { "feature": "a page changes and then stays the same", "start": 0.012, "end": 1.31, "status": "passed", "reason": null },
+  { "feature": "a feature the before phase skips", "start": 1.31, "end": 1.311, "status": "skipped", "reason": "phase is before" }
+]
+```
+
+`start` and `end` are seconds from the start of the video (the start of the spec), on the clock of its frames. `status`
+is `passed`, `failed` or `skipped` (an `ignore` is `skipped`); `reason` is the skip reason or the failure message, or
+`null`. With `--param`, one spec can serve several runs: `params` is there at the top of the file and in every block,
+and a feature that does not belong to this run calls `skip("reason")`:
+
+```js
+spec({ server: false })
+const phase = params.phase                       // --param phase=before
+
+feature("the new layout", {
+    expect() {
+        if (phase === "before") skip(`phase is ${phase}`)
+        browser.newPage().goto("/apps/my-app").status == 200
+    },
+})
+```
+
 ### From Playwright
 
 | Playwright | Here |
@@ -523,6 +575,7 @@ The output directory has what the specs wrote and what failures left:
 - `response.save(name)` bodies, `page.screenshot(name)` PNGs and `page.pdf(name)` PDFs, under their names;
 - `failed-<feature>-<n>.png` and `.txt` for each page open at a failure;
 - `load/<component>.<Spec>.<feature>.json` for each load;
+- `video/<Spec>.webm` and `video/<Spec>.timeline.json` with `--video`;
 - `server-<n>.log`, the output of each `--serve` child.
 
 ## Examples in the repository
@@ -536,7 +589,8 @@ The output directory has what the specs wrote and what failures left:
   one), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server.
 - `crates/moqui-host/tests/fixtures/test-component/test/client/`: the harness's own specs (HTTP, sessions and the
   token, raw, WebSocket, load and parallel, skip, and a served spec), and `browser-client/Browser.spec.js` over the
-  gallery screens (`cargo test -p moqui-host --test client_browser`, opt-in because it needs Chromium).
+  gallery screens and `browser-client/Video.spec.js` with `--video` (`cargo test -p moqui-host --test client_browser`,
+  opt-in because it needs Chromium).
 
 ## Pitfalls
 

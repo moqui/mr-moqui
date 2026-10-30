@@ -167,7 +167,7 @@ impl ToolFactory for RichFactory {
         let err = factory.register_service("probe::echo", echo).unwrap_err();
         assert!(err.to_string().contains("duplicate"), "a catalogue location: {err}");
         let err = factory
-            .register_service("moqui_core::service::mail::send_template", echo)
+            .register_service("moqui_core::service::contacts::filter_contact_addresses", echo)
             .unwrap_err();
         assert!(err.to_string().contains("duplicate"), "a built-in location: {err}");
         Ok(())
@@ -582,13 +582,18 @@ fn resources_and_templates_need_neither_services_nor_tools() {
 }
 
 #[test]
-fn missing_duplicate_and_inactive_implementations_fail_clearly() {
+fn missing_and_duplicate_implementations_fail_clearly() {
+    // A tool factory that is not linked, or whose component is not, is left out and the boot goes on (a dev
+    // component's on a Lite binary, since 05425cb9).
+    for (component, class, name) in [
+        ("native-probe", "missing", "missing"),
+        ("unlinked-component", "probe::First", "First"),
+    ] {
+        let runtime = Runtime::new(component, &format!("<tools><tool-factory class=\"{class}\"/></tools>"));
+        let factory = runtime.boot().expect("a tool factory that is not linked is left out");
+        assert!(factory.get_tool_factory(name).is_none(), "{component} {class}");
+    }
     for (component, config, expected) in [
-        (
-            "native-probe",
-            "<tools><tool-factory class=\"missing\"/></tools>",
-            "tool-factory missing",
-        ),
         (
             "native-probe",
             "<resource-facade><resource-reference scheme=\"memory\" class=\"missing\"/></resource-facade>",
@@ -609,11 +614,6 @@ fn missing_duplicate_and_inactive_implementations_fail_clearly() {
             "native-probe",
             "<tools><tool-factory class=\"probe::First\"/><tool-factory class=\"probe::Alias\"/></tools>",
             "duplicate tool name First",
-        ),
-        (
-            "unlinked-component",
-            "<tools><tool-factory class=\"probe::First\"/></tools>",
-            "not linked",
         ),
     ] {
         let runtime = Runtime::new(component, config);
@@ -774,76 +774,4 @@ fn tools_are_isolated_and_drop_closes_them() {
     drop(first);
     assert!(!first_tool.ready.load(Ordering::Acquire));
     assert!(second_tool.ready.load(Ordering::Acquire));
-}
-
-/// The framework's VCard and ICalendar tools, selected as MoquiDefaultConf.xml selects them, reach a script with
-/// plain values both ways.
-#[test]
-fn framework_contact_and_calendar_tools_reach_scripts() {
-    let default_conf = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/conf/MoquiDefaultConf.xml"),
-    )
-    .unwrap();
-    for class in [moqui_core::pim::VCARD_CLASS, moqui_core::pim::ICALENDAR_CLASS] {
-        assert!(
-            default_conf.contains(&format!("<tool-factory class=\"{class}\"")),
-            "{class}"
-        );
-    }
-    let runtime = Runtime::new(
-        "native-probe",
-        &format!(
-            "<tools><tool-factory class=\"{}\"/><tool-factory class=\"{}\"/></tools>",
-            moqui_core::pim::VCARD_CLASS,
-            moqui_core::pim::ICALENDAR_CLASS
-        ),
-    );
-    runtime.services(
-        r#"<services>
-      <service verb="use" noun="Tools" authenticate="false" transaction="ignore">
-        <out-parameters><parameter name="text"/><parameter name="starts" type="List"/><parameter name="ics"/></out-parameters>
-        <actions><script><![CDATA[
-            const vcard = ec.factory.getTool('VCard')
-            const cards = vcard.parse('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Vee Card\r\nN:Card;Vee;;;\r\nEMAIL;TYPE=work,pref:vee@example.com\r\nEND:VCARD\r\n')
-            const written = vcard.write([{partyId: 'P1', firstName: 'Vee', lastName: 'Card', name: 'Vee Card',
-                emails: [{emailAddress: 'vee@example.com', contactMechPurposeId: 'EmailPrimary'}]}], '4.0')
-            text = [ec.factory.getToolFactory('VCard') != null, ec.factory.getToolFactory('Nope') == null, cards.length,
-                cards[0].firstName, cards[0]['email1.label'], written.split('\r\n')[2]].join('|')
-            const calendar = ec.factory.getTool('ICalendar')
-            // 2027-05-10 10:00 in Chicago, weekly five times; the second week from the range
-            starts = Array.from(calendar.expand('FREQ=WEEKLY;COUNT=5', Date.UTC(2027, 4, 10, 15), 'America/Chicago', ['20270524T100000'],
-                null, Date.UTC(2027, 4, 16), Date.UTC(2027, 5, 30)))
-            const parsed = calendar.parse(calendar.write({method: 'REQUEST', events: [{uid: 'u1', summary: 'Sync', start: Date.UTC(2027, 4, 10, 15),
-                end: Date.UTC(2027, 4, 10, 16), timeZone: 'America/Chicago', rrule: 'FREQ=WEEKLY;COUNT=5',
-                organizer: {name: 'Ada', email: 'ada@example.com'}, attendees: [{email: 'bob@example.com', rsvp: true}]}]}))
-            ics = [parsed.method, parsed.events.length, parsed.events[0].timeZone, parsed.events[0].start === Date.UTC(2027, 4, 10, 15),
-                parsed.events[0].attendees[0].partstat].join('|')
-        ]]></script></actions>
-      </service>
-    </services>"#,
-    );
-    let factory = runtime.boot().unwrap();
-    attach(&factory);
-    factory.init_tools().unwrap();
-    assert!(factory
-        .get_tool_factory_typed::<moqui_core::pim::VCardToolFactory>("VCard")
-        .is_some());
-    let ec = factory.new_context();
-    let _entered = ec.enter();
-    let out = moqui_core::service::sync("Probe.use#Tools", &BTreeMap::new()).unwrap();
-    assert_eq!(
-        out["text"],
-        Value::string("true|true|1|Vee|* Work|UID:urn:moqui:mantle.party.Party:P1")
-    );
-    let week = 7 * 24 * 3_600_000i64;
-    let first = 1_809_961_200_000i64; // 2027-05-10T15:00:00Z
-    assert_eq!(
-        out["starts"],
-        Value::List(vec![
-            Value::I64(first + week),
-            Value::I64(first + 3 * week),
-            Value::I64(first + 4 * week)
-        ])
-    );
-    assert_eq!(out["ics"], Value::string("REQUEST|1|America/Chicago|true|NEEDS-ACTION"));
 }

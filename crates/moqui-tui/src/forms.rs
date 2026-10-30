@@ -871,8 +871,10 @@ impl Index {
 
 /// The `_N` of a multi form's row field (`orgId_3`), else empty.
 pub fn row_suffix(name: &str) -> &str {
-    match name.rfind('_') {
-        Some(at) if at + 1 < name.len() && name[at + 1..].chars().all(|ch| ch.is_ascii_digit()) => &name[at..],
+    match name.rsplit_once('_') {
+        Some((head, digits)) if !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()) => {
+            name.get(head.len()..).unwrap_or_default()
+        }
         _ => "",
     }
 }
@@ -1272,6 +1274,16 @@ pub fn date_text(date: jiff::civil::Date, previous: &str, format: &str, date_typ
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_suffix_is_an_underscore_and_digits_at_the_end() {
+        assert_eq!(row_suffix("orgId_3"), "_3");
+        assert_eq!(row_suffix("party_id_12"), "_12");
+        assert_eq!(row_suffix("orgId_"), "");
+        assert_eq!(row_suffix("orgId_3a"), "");
+        assert_eq!(row_suffix("orgId"), "");
+        assert_eq!(row_suffix("名前_7"), "_7");
+    }
 
     #[test]
     fn rules_and_dates_are_checked() {

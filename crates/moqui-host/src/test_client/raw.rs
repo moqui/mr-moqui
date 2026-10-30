@@ -180,10 +180,10 @@ pub(crate) fn send(
 
 /// The request with a header line after its request line.
 fn with_header(text: &str, name: &str, value: &str) -> String {
-    match text.find('\n') {
-        Some(at) => {
-            let eol = if text[..at].ends_with('\r') { "\r\n" } else { "\n" };
-            format!("{}{name}: {value}{eol}{}", &text[..=at], &text[at + 1..])
+    match text.split_once('\n') {
+        Some((first, rest)) => {
+            let eol = if first.ends_with('\r') { "\r\n" } else { "\n" };
+            format!("{first}\n{name}: {value}{eol}{rest}")
         }
         None => text.to_string(),
     }

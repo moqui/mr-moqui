@@ -22,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use moqui_lib::node::MNode;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait};
 
 use super::pool::WorkCleanup;
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
@@ -184,12 +184,11 @@ pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> 
 }
 
 fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transaction::TransactionManager, Error> {
-    let group = facade.inner.default_group.clone();
+    let group = facade.default_group();
     facade
-        .inner
-        .groups
-        .get(&group)
-        .map(|runtime| runtime.transactions.clone())
+        .groups()
+        .find(|(name, _, _)| *name == group)
+        .map(|(_, _, transactions)| transactions.clone())
         .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group}")))
 }
 
@@ -311,7 +310,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if let Some(work) = state.queue.pop_front() {
             return Some(work);
         }
-        state = shared.wake.wait(state).unwrap_or_else(|err| err.into_inner());
+        state = wait(&shared.wake, state);
     }
 }
 

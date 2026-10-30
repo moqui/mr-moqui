@@ -34,7 +34,7 @@ pub(super) fn render(request: &ExportMetricsServiceRequest, resource: &Resource)
             Some(Data::Gauge(gauge)) => {
                 header(&mut out, &mut typed, &base, "gauge");
                 for point in &gauge.data_points {
-                    sample(&mut out, &base, &point.attributes, None, number(&point.value));
+                    sample(&mut out, &base, &point.attributes, None, number(point.value.as_ref()));
                 }
             }
             Some(Data::Sum(sum)) => {
@@ -45,7 +45,7 @@ pub(super) fn render(request: &ExportMetricsServiceRequest, resource: &Resource)
                 };
                 header(&mut out, &mut typed, &name, kind);
                 for point in &sum.data_points {
-                    sample(&mut out, &name, &point.attributes, None, number(&point.value));
+                    sample(&mut out, &name, &point.attributes, None, number(point.value.as_ref()));
                 }
             }
             Some(Data::Histogram(histogram)) => {
@@ -221,7 +221,7 @@ fn sample(out: &mut String, name: &str, attributes: &[KeyValue], le: Option<&str
     let _ = writeln!(out, " {}", value(number));
 }
 
-fn number(point: &Option<number_data_point::Value>) -> f64 {
+fn number(point: Option<&number_data_point::Value>) -> f64 {
     match point {
         Some(number_data_point::Value::AsDouble(value)) => *value,
         Some(number_data_point::Value::AsInt(value)) => *value as f64,

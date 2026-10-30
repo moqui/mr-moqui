@@ -21,7 +21,7 @@ const SECRET_NAME_PARTS: &[&str] = &[
 /// Whether a parameter, URL query, header or telemetry attribute name names a credential or other secret, without
 /// case: the one rule for what request details, the HTTP log's query and telemetry attributes leave out. A count of
 /// tokens (`gen_ai.usage.input_tokens`) is not a secret, nor is a name that only holds "key" (`primaryKeyId`).
-pub(crate) fn secret_parameter(key: &str) -> bool {
+pub fn secret_parameter(key: &str) -> bool {
     let lowered;
     let lower = if key.bytes().any(|byte| byte.is_ascii_uppercase()) {
         lowered = key.to_ascii_lowercase();

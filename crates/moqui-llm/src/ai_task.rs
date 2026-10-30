@@ -499,7 +499,7 @@ fn input_of(parameters: &Parameters) -> Json {
 }
 
 /// Run or queue a task for a service; the out parameters of a synchronous one are `output` and `modelId`.
-fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str, input: Json) -> Out {
+fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str, input: &Json) -> Out {
     let Some(factory) = factory() else {
         return Ok(BTreeMap::new());
     };
@@ -508,7 +508,7 @@ fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str,
             &factory,
             facade,
             task_type,
-            &input,
+            input,
             param(parameters, "webhookUrl").as_deref(),
         ) {
             Ok(task_id) => Ok(out([("taskId", Value::string(task_id))])),
@@ -522,7 +522,7 @@ fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str,
         &factory,
         facade,
         task_type,
-        &input,
+        input,
         param(parameters, "modelId").as_deref(),
     ) {
         Ok(done) => Ok(out([
@@ -542,7 +542,7 @@ fn run_ai_task(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error("run#AiTask needs a taskType");
         return Ok(BTreeMap::new());
     };
-    task_service(parameters, facade, &task_type, input_of(parameters))
+    task_service(parameters, facade, &task_type, &input_of(parameters))
 }
 
 /// The typed out parameter of a task's output (`summary` of a summary), beside `output`.
@@ -570,7 +570,7 @@ fn text_input(parameters: &Parameters, keys: &[&str]) -> Json {
 fn run_summarize(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let input = text_input(parameters, &["text", "maxWords", "focus"]);
     Ok(with_typed(
-        task_service(parameters, facade, "summarize", input)?,
+        task_service(parameters, facade, "summarize", &input)?,
         "summary",
         "summary",
     ))
@@ -581,7 +581,7 @@ fn run_classify(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if let Some(labels) = parameters.get("labelList").filter(|value| !is_empty(value)) {
         input["labels"] = moqui_lib::json::to_json(labels);
     }
-    let result = task_service(parameters, facade, "classify", input)?;
+    let result = task_service(parameters, facade, "classify", &input)?;
     Ok(with_typed(with_typed(result, "label", "label"), "labels", "labelList"))
 }
 
@@ -597,7 +597,7 @@ fn run_extract(parameters: &Parameters, facade: &EntityFacade) -> Out {
         };
     }
     Ok(with_typed(
-        task_service(parameters, facade, "extract", input)?,
+        task_service(parameters, facade, "extract", &input)?,
         "values",
         "valueMap",
     ))
@@ -606,7 +606,7 @@ fn run_extract(parameters: &Parameters, facade: &EntityFacade) -> Out {
 fn run_translate(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let input = text_input(parameters, &["text", "targetLanguage"]);
     Ok(with_typed(
-        task_service(parameters, facade, "translate", input)?,
+        task_service(parameters, facade, "translate", &input)?,
         "text",
         "translatedText",
     ))
@@ -615,7 +615,7 @@ fn run_translate(parameters: &Parameters, facade: &EntityFacade) -> Out {
 fn run_generate(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let input = text_input(parameters, &["instructions", "text"]);
     Ok(with_typed(
-        task_service(parameters, facade, "generate", input)?,
+        task_service(parameters, facade, "generate", &input)?,
         "text",
         "generatedText",
     ))
@@ -783,7 +783,7 @@ fn execute_ai_task(parameters: &Parameters, facade: &EntityFacade) -> Out {
         &factory,
         std::slice::from_ref(&user_id),
         &format!("AI task {task_type} {state}"),
-        json!({"kind": "ai-task", "taskId": task_id, "taskType": task_type, "state": state}),
+        &json!({"kind": "ai-task", "taskId": task_id, "taskType": task_type, "state": state}),
     );
     if let Some(url) = param(parameters, "webhookUrl") {
         if let Err(error) = post_webhook(&url, &payload) {

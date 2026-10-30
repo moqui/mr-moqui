@@ -12,71 +12,45 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Entity facade. Field encryption stays in [`crypto`] and is not called from this spine.
+//! The entity facade: moqui-entity's, at its old path, with what needs the ExecutionContext.
 
-pub mod cache;
-pub mod crypto;
-pub mod datasource;
-pub mod document;
-pub mod fence;
-pub mod field_rw;
-pub mod load_feed;
-pub mod query_rest;
-pub mod sensitive;
+pub use moqui_entity::entity::*;
 
-mod data_writer;
-mod dbresource;
-pub(crate) mod derived;
-mod etl;
-pub(crate) mod exec;
-mod facade;
-mod find;
-mod fk;
-pub mod info;
-mod meta;
-mod params;
-mod relink;
-mod schema;
-mod search_form;
-mod sequence;
-mod share;
-mod sim_view;
-mod sql_cache;
-mod value;
+use moqui_lib::error::Error;
+use moqui_lib::node::MNode;
 
-pub(crate) use cache::screen_config_generation;
-pub use data_writer::{DataFileType, EntityDataWriter};
-pub use dbresource::{DbResourceChild, DbResourceInfo, DbResourceStat, DbResourceVersion};
-pub(crate) use derived::{generation as definition_generation, ByDefinition};
-pub use etl::EtlLoader;
-pub use exec::statement_stats;
-pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter};
-pub use find::{EntityFind, EntityListIterator};
-pub use meta::{DdlConf, EntityDbMeta};
-/// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
-pub use moqui_db::sql::{CompareOp, Condition};
-pub use relink::RelinkReport;
-pub(crate) use schema::{document as schema_document, FieldEnums};
-pub use search_form::SearchFormResult;
-pub(crate) use sequence::sequenced_id_primary;
-pub use sequence::uuid_v4;
-pub use sequence::{fill_bank, stagger_step, take_id, SequenceBank};
-pub use value::{field_map, string_map, EntityList, EntityValue, FieldMap, IntoFieldName, RustOnlyEntityHits};
+use crate::context::ExecutionContextFactory;
 
-/// Forget what the entity layer keeps on this thread once a unit of work is over. With `sim`, ends every sim
-/// session still open and clears the sim flag, so a missed `exit_sim` does not send the thread's later writes to a
-/// throwaway schema, and drops a read fence left on the thread ([`fence`]). With no transaction frame left on the thread, also drops the per-frame held rows, written
-/// entities and data-feed touches. The request and service pools call this after rolling back what the work left.
-pub(crate) fn clear_thread_state(facade: &EntityFacade, sim: bool) {
-    if sim {
-        cache::clear_sim(facade);
-        fence::clear();
-    }
-    if !crate::transaction::thread_in_transaction() {
-        cache::clear_frame_state();
-        load_feed::clear_frame_touches();
-    }
+/// Open the factory's component model and merged configuration over host-owned transaction groups.
+/// The host configures the groups' drivers and transaction settings; naming, load-entity files,
+/// extensions and encryption use the same merged configuration on every host.
+pub fn open_for_factory(
+    factory: &ExecutionContextFactory,
+    default_group: &str,
+    groups: Vec<EntityGroup>,
+) -> Result<EntityFacade, Error> {
+    let conf = MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let facade = EntityFacade::open_components_with_conf(
+        factory.framework_dir(),
+        &crate::context::component_entity_dirs(factory),
+        default_group,
+        groups,
+        &conf,
+    )?;
+    facade.crypt_from_conf(&conf)?;
+    Ok(facade)
 }
 
+// moqui-entity's tests that need an entered ExecutionContext, a service or a script
+#[cfg(test)]
+mod dbresource_tests;
+#[cfg(test)]
+mod document_tests;
+#[cfg(test)]
+mod field_rw_tests;
+#[cfg(test)]
+mod load_feed_tests;
+#[cfg(test)]
+mod search_form_tests;
 #[cfg(test)]
 mod tests;

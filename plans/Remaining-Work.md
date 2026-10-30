@@ -31,9 +31,9 @@ Guides [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Mail-OAuth](../docs/
 | Area | Item | Source |
 |---|---|---|
 | Replies | The automatic reply counts as internal a user's address, the domain of a hosted or shared account, or one of its `internalDomains`, and answers only mail with the account's or an identity's address in To or Cc (not mail an alias forwards) | M5c, `send#OutOfOfficeReplies` |
-| Sync | Not yet run against a real account (a Gmail app password). A folder gone from the server keeps its local messages (`remoteRemovedDate`); POP3 reads no sync window, newest first. BOSS's mail settings have no control for `EmailServer.storeAllowPlain` (the opt-out that lets a plain `imap` or `pop3` store sign in without STARTTLS or STLS) | M5d, `service/mail/sync.rs`, `inbound.rs` |
+| Sync | Not yet run against a real account (a Gmail app password). A folder gone from the server keeps its local messages (`remoteRemovedDate`); POP3 reads no sync window, newest first. BOSS's mail settings have no control for `EmailServer.storeAllowPlain` (the opt-out that lets a plain `imap` or `pop3` store sign in without STARTTLS or STLS) | M5d, `moqui-mail/src/sync.rs`, `inbound.rs` |
 | OAuth | Not yet run against real Google and Microsoft clients (the Testing 7-day limit and Google verification) | M5e, docs/interfaces/Mail-OAuth.md |
-| Inbound SMTP | No TLS client certificates (the allow-list is the gateway's identity); no BINARYMIME; no failure or delay DSNs of its own; the delivered report waits on the outgoing server for up to 30 seconds inside the store, before the listener answers | M5f, `moqui-host/src/smtp.rs`, `service/mail/delivery.rs` |
+| Inbound SMTP | No TLS client certificates (the allow-list is the gateway's identity); no BINARYMIME; no failure or delay DSNs of its own; the delivered report waits on the outgoing server for up to 30 seconds inside the store, before the listener answers | M5f, `moqui-host/src/smtp.rs`, `moqui-mail/src/delivery.rs` |
 | Sending | A held send goes at the job's next minute unless the client calls `send#DueDrafts` when its hold ends | `EmailClientServices` |
 | Accounts | `delete#EmailAccount` with deleteLocalCopies runs in the request (a job for large accounts) | `EmailClientServices` |
 | Capture | The mail capture records at the SMTP step of `send#EmailMessage`, so a send with no `EmailServer` or an empty SMTP host is not captured; IMAP and POP have no capture. mr-mantle `InboxThreads.spec.js` still makes a send fail and calls `record#SendResult`, which `ec.factory.getTool("MailCapture").enable()` would replace | `service/mail_capture.rs` |
@@ -149,8 +149,8 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Item | Source |
 |---|---|
 | No login flow: calls run with authorization disabled, except renders (`crates/moqui-browser/src/host.rs`) | [Wasm, Status](archive/Wasm.md) |
-| No lock between tabs: without pthreads the WasmFS OPFS backend opens a file through its async access handle, so a second tab opens and writes the database the first has open (`cargo test -p moqui-host --test wasm_browser` warns), and two writers can corrupt the SQLite file. A Web Locks (`navigator.locks`) lock per database name in the worker would make the second tab wait or refuse | same |
-| The WebSocket check is `cargo test -p moqui-host --test wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | same |
+| No lock between tabs: without pthreads the WasmFS OPFS backend opens a file through its async access handle, so a second tab opens and writes the database the first has open (`cargo test -p moqui-host --test it -- wasm_browser` warns), and two writers can corrupt the SQLite file. A Web Locks (`navigator.locks`) lock per database name in the worker would make the second tab wait or refuse | same |
+| The WebSocket check is `cargo test -p moqui-host --test it -- wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | same |
 
 ## Tests
 

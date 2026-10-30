@@ -98,7 +98,7 @@ impl ByteSource for ReaderSource {
     }
 
     fn read_at(&self, offset: u64, max: usize) -> Result<Vec<u8>, moqui_lib::error::Error> {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let mut state = moqui_lib::sync::lock(&self.state);
         let (reader, position) = &mut *state;
         if offset != *position {
             return Err(moqui_lib::error::Error::new(format!(

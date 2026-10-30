@@ -343,8 +343,8 @@ fn decode_attribute(text: &str) -> Cow<'_, str> {
 /// `http` or `https` URL, a path with no resource scheme (which the resource facade would read as a file), a location
 /// that cannot be read, or bytes that are not an image.
 fn data_url(location: &str) -> Option<String> {
-    let scheme = match location.find(':') {
-        Some(index) if index > 1 && !location[..index].contains('/') => location[..index].to_ascii_lowercase(),
+    let scheme = match location.split_once(':') {
+        Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme.to_ascii_lowercase(),
         _ => {
             tracing::warn!(src = location, "PDF image not inlined: it is not a resource location");
             return None;
@@ -392,7 +392,7 @@ fn image_type(bytes: &[u8]) -> Option<&'static str> {
         Some("image/jpeg")
     } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
         Some("image/gif")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
         Some("image/webp")
     } else if bytes.starts_with(b"BM") {
         Some("image/bmp")
@@ -404,8 +404,9 @@ fn image_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// Tests that install an engine hold this, since the slot is process-wide.
-#[cfg(test)]
-pub(crate) fn pdf_test_lock() -> std::sync::MutexGuard<'static, ()> {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn pdf_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     moqui_lib::sync::lock(&LOCK)
 }

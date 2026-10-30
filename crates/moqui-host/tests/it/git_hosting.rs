@@ -15,7 +15,7 @@
 //! The git server through the host on the seeded embedded Postgres: smart HTTP at `/git/<id>.git` (the request
 //! streamed into and the response out of the git pool), and `git-upload-pack` / `git-receive-pack` over the built-in
 //! SSH server with a `UserSshKey`, by the git command line (skipped when git, or for SSH ssh, is not installed). The
-//! protocol itself, over each storage, is `moqui-core/src/resource/git/server/tests.rs`.
+//! protocol itself, over each storage, is `moqui-git/src/server/tests.rs`.
 
 #![cfg(all(
     unix,
@@ -120,6 +120,9 @@ fn sync(name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<String, Value>, S
 
 #[test]
 fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
+    if !crate::common::own_process() {
+        return;
+    }
     if !git_available("git") {
         eprintln!("skipped: git is not on the PATH");
         return;

@@ -15,7 +15,7 @@
 //! `git://` files in a database repository on the seeded embedded Postgres: elFinder writes them (each write a commit,
 //! the objects `bytea` rows of `GitObject`), the file download reads one back, `export#GitRepository` writes the
 //! repository to disk, and the git command line, when installed, reads the export. The provider over each storage is
-//! `moqui-core/src/resource/git/tests.rs`.
+//! `moqui-git/src/tests.rs`.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "git"))]
 
@@ -83,6 +83,9 @@ fn git(args: &[&str]) -> Option<String> {
 
 #[test]
 fn a_database_git_repository_is_written_through_elfinder_and_exported() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("git-resources", DATA);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");

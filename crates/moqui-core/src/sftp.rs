@@ -21,9 +21,10 @@
 //! else trusts the key on first use and refuses a key that changed (`runtime/conf/ssh_known_hosts`); the host does
 //! the check.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::{read, write};
 
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 
@@ -204,20 +205,20 @@ struct Slot {
 /// Use `connector` for the SFTP connections made under `factory`.
 pub fn install_sftp_connector(factory: &ExecutionContextFactory, connector: Arc<dyn SftpConnector>) {
     let slot = factory.extension(|_| Slot::default());
-    *slot.connector.write().unwrap_or_else(PoisonError::into_inner) = Some(connector);
+    *write(&slot.connector) = Some(connector);
 }
 
 /// Remove the connector installed on `factory`.
 pub fn clear_sftp_connector(factory: &ExecutionContextFactory) {
     let slot = factory.extension(|_| Slot::default());
-    *slot.connector.write().unwrap_or_else(PoisonError::into_inner) = None;
+    *write(&slot.connector) = None;
 }
 
 /// The connector of the entered context's factory.
 fn connector() -> Result<Arc<dyn SftpConnector>, Error> {
     ExecutionContext::with_current(|ec| {
         let slot = ec.factory().extension(|_| Slot::default());
-        let found = slot.connector.read().unwrap_or_else(PoisonError::into_inner).clone();
+        let found = read(&slot.connector).clone();
         found
     })
     .flatten()
@@ -242,10 +243,8 @@ fn split_host_port(text: &str, default_port: u16) -> Result<(String, u16), Error
             None => Err(Error::new(format!("SFTP host {text} has text after the bracket"))),
         };
     }
-    match text.find(':') {
-        Some(index) if index > 0 && text.matches(':').count() == 1 => {
-            Ok((text[..index].to_string(), parse_port(&text[index + 1..])?))
-        }
+    match text.split_once(':') {
+        Some((host, port)) if !host.is_empty() && !port.contains(':') => Ok((host.to_string(), parse_port(port)?)),
         _ => Ok((text.to_string(), default_port)),
     }
 }
@@ -511,11 +510,10 @@ impl SftpClient {
     ///
     /// Not connected, or the server's error.
     pub fn rename_file(&mut self, file_path: &str, new_name: &str) -> Result<String, Error> {
-        let dir = match file_path.rfind('/') {
-            Some(index) if index > 0 => &file_path[..=index],
-            _ => "",
+        let new_path = match file_path.rsplit_once('/') {
+            Some((dir, _)) if !dir.is_empty() => format!("{dir}/{new_name}"),
+            _ => new_name.to_string(),
         };
-        let new_path = format!("{dir}{new_name}");
         self.session()?.rename(file_path, &new_path)?;
         Ok(new_path)
     }
@@ -703,9 +701,9 @@ fn child_path(dir: &str, name: &str) -> String {
 /// `new File(path).parent`.
 fn parent_of(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
-    match trimmed.rfind('/') {
-        Some(0) => "/".to_string(),
-        Some(index) => trimmed[..index].to_string(),
+    match trimmed.rsplit_once('/') {
+        Some(("", _)) => "/".to_string(),
+        Some((parent, _)) => parent.to_string(),
         None => String::new(),
     }
 }

@@ -36,9 +36,9 @@
 //!
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
-//! `RCPT TO` is answered from the accounts ([`moqui_core::service::mail_inbound::find_recipient`]): an address of a
+//! `RCPT TO` is answered from the accounts ([`moqui_mail::delivery::find_recipient`]): an address of a
 //! hosted or shared account is accepted, any other refused with 550 there, so nothing is accepted that would bounce
-//! later. After `DATA` the message is stored once per account ([`moqui_core::service::mail_inbound::deliver`]); a store
+//! later. After `DATA` the message is stored once per account ([`moqui_mail::delivery::deliver`]); a store
 //! that fails, or no request worker free, answers 451 so the gateway tries again, and the accounts that took it the
 //! first time do not store it twice. Both run on a request worker with authorization disabled.
 //!
@@ -54,8 +54,8 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
-use moqui_core::service::mail_inbound::{self as inbound, Envelope, Options, Outcome, RecipientDsn, Recipients};
 use moqui_lib::error::Error;
+use moqui_mail::delivery::{self as inbound, Envelope, Options, Outcome, RecipientDsn, Recipients};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -365,11 +365,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         }
     );
     crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
-    *factory
-        .extension(|_| SmtpAddress::default())
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+    *moqui_lib::sync::lock(&factory.extension(|_| SmtpAddress::default()).0) = Some(address);
     Ok(Some(SmtpServer { address, shutdown }))
 }
 
@@ -426,7 +422,7 @@ struct FactoryBackend {
 impl Backend for FactoryBackend {
     async fn recipient(&self, address: String) -> RcptAnswer {
         let delimiters = self.delimiters.clone();
-        let found = crate::ssh::on_pool_without_authz(&self.factory, move |factory| {
+        let found = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
@@ -442,7 +438,7 @@ impl Backend for FactoryBackend {
 
     async fn deliver(&self, message: Message) -> DataAnswer {
         let options = self.options.clone();
-        let delivered = crate::ssh::on_pool_without_authz(&self.factory, move |factory| {
+        let delivered = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
@@ -1419,10 +1415,9 @@ impl<B: Backend> Session<'_, B> {
             if line_start && line == b".\r\n" {
                 break;
             }
-            let content = if line_start && line.first() == Some(&b'.') {
-                &line[1..]
-            } else {
-                &line[..]
+            let content = match line.strip_prefix(b".") {
+                Some(unstuffed) if line_start => unstuffed,
+                _ => &line[..],
             };
             if !too_big {
                 if out.len() + content.len() > max {
@@ -1508,11 +1503,11 @@ fn parse_orcpt(value: &str) -> Option<String> {
 
 /// `rest` after a keyword such as `FROM:`, in any case, with the spaces some clients put after the colon.
 fn strip_keyword<'a>(rest: &'a str, keyword: &str) -> Option<&'a str> {
-    let head = rest.get(..keyword.len())?;
+    let (head, tail) = rest.split_at_checked(keyword.len())?;
     if !head.eq_ignore_ascii_case(keyword) {
         return None;
     }
-    Some(rest[keyword.len()..].trim_start())
+    Some(tail.trim_start())
 }
 
 /// A `<path>` and the parameters after it. The source route (`@a,@b:`) is dropped; a quoted local part may hold `>`.

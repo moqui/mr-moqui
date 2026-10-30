@@ -912,7 +912,7 @@ impl OpenSearchBackend {
 
     pub fn new(conf: &ClusterConf) -> Self {
         let authorization = conf.user.as_ref().map(|user| {
-            let pair = format!("{user}:{}", conf.password.clone().unwrap_or_default());
+            let pair = format!("{user}:{}", conf.password.as_deref().unwrap_or_default());
             format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(pair))
         });
         Self {

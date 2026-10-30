@@ -26,10 +26,11 @@
 //! `--- ok`, 1 for `--- error`, 2 for a session that is not there or not allowed.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
 use moqui_core::context::ExecutionContextFactory;
+use moqui_lib::sync::lock;
 use moqui_tui::{Agent, AgentAnswer, AGENT_HELP};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -59,7 +60,7 @@ pub(super) struct AgentSessions {
 impl AgentSessions {
     /// Drop the sessions no command has used for `IDLE`, which gives their slots back. One in use is left.
     fn reap(&self) {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.live);
         live.retain(|id, held| match held.try_lock() {
             Ok(held) => {
                 let keep = held.last_used.elapsed() < IDLE;
@@ -76,9 +77,9 @@ impl AgentSessions {
     }
 
     fn get(&self, id: &str, username: &str) -> Option<Arc<Mutex<Held>>> {
-        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = lock(&self.live);
         let held = live.get(id)?;
-        let mine = held.lock().unwrap_or_else(PoisonError::into_inner).username == username;
+        let mine = lock(held).username == username;
         mine.then(|| Arc::clone(held))
     }
 }
@@ -160,11 +161,13 @@ fn opened(id: &str, answer: &AgentAnswer) -> String {
 /// One `agent-apps <args>` exec: its output and exit status. `None` when there are no arguments, for the line mode.
 pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String, u32)> {
     let words: Vec<&str> = args.split_whitespace().collect();
-    let first = *words.first()?;
+    let [first, rest @ ..] = words.as_slice() else {
+        return None;
+    };
     access.agents.reap();
-    Some(match first {
+    Some(match *first {
         "help" | "--help" => (format!("{AGENT_HELP}\n\nagent-apps open [path] [--size CxR] [--json] starts a session; agent-apps <id> <command> runs one command in it.\n--- ok"), 0),
-        "open" => match parse_open(&words[1..]) {
+        "open" => match parse_open(rest) {
             Err(reason) => (format!("--- error {reason}"), 2),
             Ok(open) => match new_agent(access, open).await {
                 Err(reason) => (format!("--- error {reason}"), 2),
@@ -180,11 +183,7 @@ pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String
                         last_used: Instant::now(),
                         _slot: slot,
                     };
-                    access
-                        .agents
-                        .live
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
+                    lock(&access.agents.live)
                         .insert(id.clone(), Arc::new(Mutex::new(held)));
                     tracing::info!("SSH agent-apps session {id} of {} started", access.username);
                     (opened(&id, &answer), status(&answer))
@@ -197,7 +196,7 @@ pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String
             };
             let command = args.trim_start().strip_prefix(id).unwrap_or("").trim().to_string();
             let ran = tokio::task::spawn_blocking(move || {
-                let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut held = lock(&held);
                 held.last_used = Instant::now();
                 let answer = held.agent.run(&command);
                 (answer, held.agent.closed())
@@ -206,11 +205,7 @@ pub(super) async fn one_shot(access: &AgentAccess, args: &str) -> Option<(String
             match ran {
                 Ok((answer, closed)) => {
                     if closed {
-                        access
-                            .agents
-                            .live
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
+                        lock(&access.agents.live)
                             .remove(id);
                         tracing::info!("SSH agent-apps session {id} of {} closed", access.username);
                     }
@@ -240,7 +235,7 @@ pub(super) async fn lines<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, acc
     };
     tracing::info!("SSH agent-apps line session of {} started", access.username);
     let agent = Arc::new(Mutex::new(agent));
-    let first = agent.lock().unwrap_or_else(PoisonError::into_inner).look();
+    let first = lock(&agent).look();
     if stream.write_all(format!("{}\n", first.text).as_bytes()).await.is_err() {
         return 1;
     }
@@ -267,7 +262,7 @@ pub(super) async fn lines<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, acc
             }
             let agent = Arc::clone(&agent);
             let ran = tokio::task::spawn_blocking(move || {
-                let mut agent = agent.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut agent = lock(&agent);
                 let answer = agent.run(&line);
                 (answer, agent.closed())
             })

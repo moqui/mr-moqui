@@ -48,7 +48,7 @@ use crate::run::{self, in_tx, quietly, AgentDef, Budget, Change, EventSink, RunS
 use crate::tools::catalog::{Catalog, Entry};
 use crate::tools::{self, caps, AgentTool, Classification, ClientCaps, ToolInput, ToolOutcome, ToolPolicy};
 use crate::{flag_of, text_of};
-use moqui_core::context::{AgentOrigin, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{AgentOrigin, Authz, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use moqui_core::entity::EntityFacade;
 
 /// The registry's tools the server lists by their own names.
@@ -387,13 +387,13 @@ pub fn list(factory: &Arc<ExecutionContextFactory>, caller: &Caller, params: &Js
 struct Lists(std::sync::Mutex<std::collections::HashMap<String, Built>>);
 
 /// A list and when it was built.
-type Built = (Instant, Arc<Vec<Listed>>);
+type Built = (Instant, Arc<[Listed]>);
 
 /// The most lists kept; past it the lapsed ones are dropped, then all.
 const LISTS_MAX: usize = 1024;
 
 /// [`listed`] for the caller, from the cache while it is fresh.
-fn cached(ctx: &Ctx<'_>) -> Arc<Vec<Listed>> {
+fn cached(ctx: &Ctx<'_>) -> Arc<[Listed]> {
     let ttl = Duration::from_millis(crate::facade(ctx.factory).conf().mcp.tools_ttl_ms);
     let cache = ctx.factory.extension(|_| Lists::default());
     let key = &ctx.user.user_id;
@@ -403,7 +403,7 @@ fn cached(ctx: &Ctx<'_>) -> Arc<Vec<Listed>> {
             return Arc::clone(list);
         }
     }
-    let list = Arc::new(listed(ctx));
+    let list: Arc<[Listed]> = Arc::from(listed(ctx));
     if !ttl.is_zero() {
         let mut lists = moqui_lib::sync::lock(&cache.0);
         if lists.len() >= LISTS_MAX {
@@ -433,7 +433,7 @@ pub fn tool_result(text: &str, is_error: bool) -> Json {
 fn count_hit(name: &str) -> Result<(), McpError> {
     let artifact = format!("mcp:{name}");
     let counted = ExecutionContext::with_current(|ec| {
-        let pushed = ec.push_checked("AT_LLM", &artifact, "view", false, true, None);
+        let pushed = ec.push_checked("AT_LLM", &artifact, "view", Authz::NotRequired, Tarpit::Count, None);
         if pushed.is_ok() {
             let _ = ec.pop();
         }

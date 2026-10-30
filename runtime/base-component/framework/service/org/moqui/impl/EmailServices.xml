@@ -14,18 +14,18 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <!-- send#Email and send#EmailTemplate are moqui_core::service::mail::send_template.
-         send#EmailMessage is moqui_core::service::mail::send_message.
-         poll#EmailServer is moqui_core::service::mail::poll_server.
-         test#EmailServer is moqui_core::service::mail::test_server. -->
-    <service verb="send" noun="Email" type="rust" location="moqui_core::service::mail::send_template" allow-remote="false">
+    <!-- send#Email and send#EmailTemplate are moqui_mail::send_template.
+         send#EmailMessage is moqui_mail::send_message.
+         poll#EmailServer is moqui_mail::poll_server.
+         test#EmailServer is moqui_mail::test_server. -->
+    <service verb="send" noun="Email" type="rust" location="moqui_mail::send_template" allow-remote="false">
         <implements service="org.moqui.EmailServices.send#EmailTemplate"/>
         <in-parameters>
             <parameter name="body" allow-html="any"/>
             <parameter name="bodyText" allow-html="any"/>
         </in-parameters>
     </service>
-    <service verb="send" noun="EmailTemplate" type="rust" location="moqui_core::service::mail::send_template"
+    <service verb="send" noun="EmailTemplate" type="rust" location="moqui_mail::send_template"
             authenticate="anonymous-view" allow-remote="false">
         <description>NOTE: this service is meant for internal use and authentication is not required. Do not export or
             allow this service to be called remotely.</description>
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="bodyText" allow-html="any"/>
         </in-parameters>
     </service>
-    <service verb="send" noun="EmailMessage" type="rust" location="moqui_core::service::mail::send_message">
+    <service verb="send" noun="EmailMessage" type="rust" location="moqui_mail::send_message">
         <description>Send a stored EmailMessage that is not a draft. The server is the message's emailServerId, else the
             EmailServer of its mail client account (emailAccountId). A message of the mail client also brings its
             identity's reply-to address, its EmailMessageAttachment files (inline ones by Content-ID, in a related part)
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sendError"><description>Why the delivery failed</description></parameter>
         </out-parameters>
     </service>
-    <service verb="test" noun="EmailServer" type="rust" location="moqui_core::service::mail::test_server"
+    <service verb="test" noun="EmailServer" type="rust" location="moqui_mail::test_server"
             transaction="ignore" allow-remote="false">
         <description>Whether a server's settings work, for the mail account wizard; nothing is changed. SMTP connects,
             upgrades to TLS as configured and signs in; the store (when it has a storeHost) connects and signs in, and IMAP
@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
-    <service verb="poll" noun="EmailServer" type="rust" location="moqui_core::service::mail::poll_server"
+    <service verb="poll" noun="EmailServer" type="rust" location="moqui_mail::poll_server"
             authenticate="anonymous-all" transaction-timeout="600"
             semaphore="fail" semaphore-parameter="emailServerId">
         <!-- org.moqui.impl.EmailServices.poll#EmailServer -->

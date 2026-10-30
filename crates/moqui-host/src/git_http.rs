@@ -15,7 +15,7 @@
 //! git's smart HTTP protocol at `/git/<repositoryId>.git/...`: `GET info/refs?service=git-upload-pack` (or
 //! `git-receive-pack`) and `POST git-upload-pack` / `git-receive-pack`. The dumb protocol is not served. The request
 //! body streams into, and the response streams out of, a job of the git pool that runs
-//! `moqui_core::resource::git::server::serve_http`, so a clone or push is not held in memory, takes no request worker
+//! `moqui_git::server::serve_http`, so a clone or push is not held in memory, takes no request worker
 //! from the screens, and is exempt from `webapp_request_timeout` (a gap of `git-server` `idle-timeout`, 120 seconds, in the
 //! request body ends it). Bodies are limited by `git-server` `max-request` (64 MB, upload-pack) and `git-server` `max-push-size` (2 GB).
 //! Credentials are taken only over HTTPS (the listener, or `X-Forwarded-Proto` behind the proxy that
@@ -31,7 +31,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
 use bytes::Bytes;
 use hyper::body::{Body as _, Frame};
-use moqui_core::resource::git::server::{self, GitHttpRequest, GitService, HttpResponder};
+use moqui_git::server::{self, GitHttpRequest, GitService, HttpResponder};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::git_bridge::{ChannelReader, ChannelWriter, Chunk, QUEUED};
@@ -143,10 +143,10 @@ pub(crate) async fn handle(
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
     let path = parts.uri.path().strip_prefix("/git/").unwrap_or("");
-    let (repository, tail) = match path.find(".git/") {
-        Some(at) => (&path[..at], &path[at + 5..]),
-        None => path.split_once('/').unwrap_or((path, "")),
-    };
+    let (repository, tail) = path
+        .split_once(".git/")
+        .or_else(|| path.split_once('/'))
+        .unwrap_or((path, ""));
     let query = parts.uri.query().unwrap_or("");
     if let Some(lfs_path) = tail.strip_prefix("info/lfs/") {
         let Some(repository) = server::repository_of(repository) else {
@@ -263,7 +263,7 @@ async fn handle_lfs(
     path: String,
     query: String,
 ) -> Response {
-    use moqui_core::resource::git::server::lfs;
+    use moqui_git::server::lfs;
 
     let header = |name: &str| {
         parts

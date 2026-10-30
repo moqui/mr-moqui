@@ -188,6 +188,7 @@ fn usage_test_page_names_the_options() {
     for needle in [
         "--spec",
         "--feature",
+        "--slow",
         "--db",
         "none",
         "fresh",

@@ -230,7 +230,7 @@ fn plain(value: &Value) -> Value {
             }
             // A script's entity value: `Mutex<EntityValue>` in the script runtime.
             if let Some(cell) = object.downcast::<Mutex<EntityValue>>() {
-                let entity = cell.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let entity = moqui_lib::sync::lock(&cell);
                 return entity_map(&entity);
             }
             if let Some(entity) = object.downcast::<EntityValue>() {

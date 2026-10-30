@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.ArtifactServices`: the framework's artifact index (`moqui_core::devtools::index`,
+//! `org.moqui.devaide.ArtifactServices`: the framework's artifact index (`moqui_devkit::index`,
 //! plans/design-dev-aide.md 7) as the dev-aide shows it: each artifact with the root and path that open it in the
 //! Workspace and whether it is the site's or upstream (D17), search for the screens and the shell's palette, the
 //! reference lists, go to definition, and the site's customizations with their state.
@@ -20,8 +20,8 @@
 use std::path::Path;
 
 use moqui_core::context::{Error, ExecutionContext};
-use moqui_core::devtools::index::{self, ArtifactRow, Direction, RefEntry};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
+use moqui_devkit::index::{self, ArtifactRow, Direction, RefEntry};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};

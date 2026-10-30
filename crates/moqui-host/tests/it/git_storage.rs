@@ -129,6 +129,9 @@ fn mib(bytes: i64) -> String {
 #[test]
 #[ignore = "slow: imports the history of this repository"]
 fn storage_of_imported_histories() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_data("git-storage", DATA);
     let http = gate.server.address();
     let factory = Arc::clone(gate.server.factory());

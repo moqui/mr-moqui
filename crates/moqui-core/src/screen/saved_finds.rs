@@ -151,7 +151,7 @@ pub(crate) fn saved_find_location(location: &str, dynamic: bool, key: &FindKeySo
 
 /// The `#` suffix of a dynamic saved find. Empty when none of the three sources has one.
 fn form_location_extension(key: &FindKeySource) -> String {
-    if let Some(text) = present_extension(context_text("formLocationExtension")) {
+    if let Some(text) = present_extension(&context_text("formLocationExtension")) {
         return text;
     }
     for raw in &key.0 {
@@ -162,14 +162,14 @@ fn form_location_extension(key: &FindKeySource) -> String {
                 String::new()
             }
         };
-        if let Some(text) = present_extension(expanded) {
+        if let Some(text) = present_extension(&expanded) {
             return text;
         }
     }
     String::new()
 }
 
-fn present_extension(text: String) -> Option<String> {
+fn present_extension(text: &str) -> Option<String> {
     let text = text.trim();
     if text.is_empty() || text == "null" {
         None
@@ -408,16 +408,30 @@ pub(crate) fn form_list_find_screen_scheduled(find_id: &str) -> Result<Option<Va
     }))
 }
 
+/// A posted `formLocation` split into its parts.
+struct FormLocation {
+    /// The full location, with the extension after a `#`.
+    location: String,
+    screen_location: String,
+    form_name: String,
+    /// What follows the `#`, empty when there is none.
+    extension: String,
+}
+
 /// The form a posted `formLocation` names: a full location, else the name of a form of the screen at `screen_location`.
-/// Returns the full location, the screen location, the form name, and the location extension.
-fn split_form_location(posted: &str, screen_location: &str) -> Option<(String, String, String, String)> {
-    let (base, extension) = match posted.rfind('#') {
-        Some(at) if at > 0 => (&posted[..at], posted[at + 1..].to_string()),
+fn split_form_location(posted: &str, screen_location: &str) -> Option<FormLocation> {
+    let (base, extension) = match posted.rsplit_once('#') {
+        Some((base, extension)) if !base.is_empty() => (base, extension.to_string()),
         _ => (posted, String::new()),
     };
-    if let Some(at) = base.rfind('$') {
-        let screen = base[..at].rsplit_once('.').map(|(screen, _)| screen)?.to_string();
-        return Some((posted.to_string(), screen, base[at + 1..].to_string(), extension));
+    if let Some((before, form)) = base.rsplit_once('$') {
+        let (screen, _) = before.rsplit_once('.')?;
+        return Some(FormLocation {
+            location: posted.to_string(),
+            screen_location: screen.to_string(),
+            form_name: form.to_string(),
+            extension,
+        });
     }
     if base.is_empty() || base.contains('/') {
         return None;
@@ -428,7 +442,12 @@ fn split_form_location(posted: &str, screen_location: &str) -> Option<(String, S
     } else {
         format!("{full}#{extension}")
     };
-    Some((full, screen_location.to_string(), base.to_string(), extension))
+    Some(FormLocation {
+        location: full,
+        screen_location: screen_location.to_string(),
+        form_name: base.to_string(),
+        extension,
+    })
 }
 
 /// The fields of a form-list a saved find records, as `makeFormListFindFields`: each field (not the header submit, nor
@@ -587,8 +606,12 @@ pub(crate) fn process_saved_find(transition_screen: &str) -> Result<Option<Strin
         add_error("No form location specified, cannot process saved find");
         return Ok(None);
     }
-    let Some((mut location, screen_location, form_name, mut extension)) =
-        split_form_location(&posted, transition_screen)
+    let Some(FormLocation {
+        mut location,
+        screen_location,
+        form_name,
+        mut extension,
+    }) = split_form_location(&posted, transition_screen)
     else {
         add_error("Form location invalid, cannot process saved find");
         return Ok(None);
@@ -1071,7 +1094,7 @@ pub(crate) fn save_form_config(transition_screen: &str) -> Result<(), Error> {
         add_error("No form location specified, cannot save form configuration");
         return Ok(());
     }
-    let Some((location, ..)) = split_form_location(&posted, transition_screen) else {
+    let Some(FormLocation { location, .. }) = split_form_location(&posted, transition_screen) else {
         add_error("Form location invalid, cannot save form configuration");
         return Ok(());
     };

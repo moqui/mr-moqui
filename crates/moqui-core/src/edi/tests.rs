@@ -318,8 +318,8 @@ fn parse_needs_an_envelope_and_segments() {
     assert_eq!(java_split("", '~', '?'), vec![""]);
 }
 
-/// The six grammar files of mantle-edi, as `moqui convert --groovy` writes them, load in the handler, and the 850 parses
-/// the purchase order the cut-down fixture parses.
+/// The six grammar files of mantle-edi, as `moqui convert --groovy` writes them (moqui-devkit's groovy_convert tests
+/// check the conversion), load in the handler, and the 850 parses the purchase order the cut-down fixture parses.
 #[test]
 fn the_converted_mantle_grammars_load_and_parse() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/edi/testdata/mantle");
@@ -331,9 +331,6 @@ fn the_converted_mantle_grammars_load_and_parse() {
         "X12V4010TS856",
         "X12V4010TS997",
     ] {
-        let groovy = std::fs::read_to_string(dir.join(format!("{name}.groovy"))).unwrap();
-        let js = std::fs::read_to_string(dir.join(format!("{name}.js"))).unwrap();
-        assert_eq!(crate::script::groovy_convert::convert_literals(&groovy), js, "{name}");
         let mut edi = EdiHandler::new();
         edi.load_envelope(dir.join("X12Envelope.js").to_str().unwrap())
             .unwrap()

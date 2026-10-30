@@ -16,6 +16,7 @@
 
 use super::*;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 /// A named framework cache. A name the conf does not define is made with the default settings on first use, as Java.
 #[derive(Trace, JsLifetime)]
@@ -135,20 +136,17 @@ fn modified_of(path: &std::path::Path) -> Option<std::time::SystemTime> {
 
 /// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/design-dev-aide.md
 /// 6.1, F6). Answers the script locations dropped.
-pub(crate) fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
+pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
     let canonical = |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let files: Vec<std::path::PathBuf> = files.iter().map(|file| canonical(file)).collect();
     let mut dropped = Vec::new();
-    script_texts()
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .retain(|location, kept| {
-            let stale = files.contains(&canonical(&kept.path));
-            if stale {
-                dropped.push(location.clone());
-            }
-            !stale
-        });
+    lock(script_texts()).retain(|location, kept| {
+        let stale = files.contains(&canonical(&kept.path));
+        if stale {
+            dropped.push(location.clone());
+        }
+        !stale
+    });
     dropped
 }
 
@@ -158,7 +156,7 @@ pub(crate) fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
 pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
     let production = crate::web::is_production();
     {
-        let mut texts = script_texts().lock().unwrap_or_else(|err| err.into_inner());
+        let mut texts = lock(script_texts());
         if let Some(found) = texts.get_mut(location) {
             if production || found.checked.elapsed() < SCRIPT_CHECK {
                 return Ok(Arc::clone(&found.text));
@@ -174,7 +172,7 @@ pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
     let text = std::fs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read script {location}")).with_source(err))?;
     let text: Arc<str> = crate::script::parse::file_function(&text).into();
-    script_texts().lock().unwrap_or_else(|err| err.into_inner()).insert(
+    lock(script_texts()).insert(
         location.to_string(),
         ScriptText {
             path,
@@ -394,11 +392,11 @@ impl HostUser {
     #[qjs(get, rename = "passwordRules")]
     fn password_rules<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
-            let (length, digits, others) = crate::user::policy_password_rules();
+            let rules = crate::user::policy_password_rules();
             let mut map = indexmap::IndexMap::new();
-            map.insert("minLength".to_string(), Value::I64(length));
-            map.insert("minDigits".to_string(), Value::I64(digits));
-            map.insert("minOthers".to_string(), Value::I64(others));
+            map.insert("minLength".to_string(), Value::I64(rules.min_length));
+            map.insert("minDigits".to_string(), Value::I64(rules.min_digits));
+            map.insert("minOthers".to_string(), Value::I64(rules.min_others));
             host_to_js(&ctx, Value::Map(map))
         })
     }
@@ -1053,19 +1051,18 @@ impl HostWeb {
         fourth: Opt<JsValue<'_>>,
     ) -> rquickjs::Result<String> {
         host_guard(&ctx, || {
-            let text = |value: &Option<JsValue<'_>>| {
+            let text = |value: Option<&JsValue<'_>>| {
                 value
-                    .as_ref()
                     .and_then(|value| value.as_string())
                     .and_then(|text| text.to_string().ok())
                     .filter(|text| !text.is_empty())
             };
-            let flag = |value: &Option<JsValue<'_>>| value.as_ref().and_then(JsValue::as_bool);
+            let flag = |value: Option<&JsValue<'_>>| value.and_then(JsValue::as_bool);
             let named = first.0.as_ref().is_some_and(JsValue::is_string);
             let (webapp, full, encryption) = if named {
-                (text(&first.0), flag(&third.0), flag(&fourth.0))
+                (text(first.0.as_ref()), flag(third.0.as_ref()), flag(fourth.0.as_ref()))
             } else {
-                (None, flag(&first.0), flag(&second.0))
+                (None, flag(first.0.as_ref()), flag(second.0.as_ref()))
             };
             let webapp = webapp.unwrap_or_else(|| "webroot".to_string());
             Ok(crate::web::webapp_root_url(&webapp, full.unwrap_or(false), encryption))

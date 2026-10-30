@@ -55,7 +55,7 @@ use crate::prompt::Surface;
 use crate::provider::CancelToken;
 use crate::tools::{ClientCaps, Pause, PauseKind};
 use crate::{decimal_of, flag_of, int_of, text_of};
-use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{Authz, ExecutionContext, ExecutionContextFactory, Tarpit};
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::transaction::TransactionAttribute;
 
@@ -969,7 +969,7 @@ pub fn existing_message(
 pub fn count_run_hit(agent_id: &str) -> Result<(), Error> {
     let name = format!("agent:{agent_id}");
     ExecutionContext::with_current(|ec| -> Result<(), Error> {
-        ec.push_checked("AT_LLM", &name, "view", false, true, None)?;
+        ec.push_checked("AT_LLM", &name, "view", Authz::NotRequired, Tarpit::Count, None)?;
         let _ = ec.pop();
         Ok(())
     })
@@ -1215,7 +1215,7 @@ pub fn cancel_run(
 /// # Errors
 ///
 /// Returns an error when there is no such run or it cannot be read.
-pub fn wait_for(factory: &Arc<ExecutionContextFactory>, run_id: &str, timeout: Duration) -> Result<RunState, Error> {
+pub fn wait_for(factory: &ExecutionContextFactory, run_id: &str, timeout: Duration) -> Result<RunState, Error> {
     let facade = facade_of(factory)?;
     let engine = engine(factory);
     let deadline = Instant::now() + timeout;

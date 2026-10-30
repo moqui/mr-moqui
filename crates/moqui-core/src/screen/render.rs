@@ -40,7 +40,7 @@ use super::definition::{
 use super::dispatch;
 use super::gate::{self, HeldWrite, RenderOptions, RenderOrigin, TransitionGate, TransitionOutcome};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
-use crate::context::{Error, ErrorKind, ExecutionContext, ExecutionContextFactory};
+use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
 use crate::script::{self, ContextFrame};
 use crate::user;
 use crate::web::{self, WebRequest};
@@ -584,8 +584,8 @@ fn uri_char(ch: char) -> bool {
 /// `getRawPath` and `getRawQuery`.
 fn url_path_and_query(url: &str) -> String {
     let after = url.split_once("://").map_or("", |(_, rest)| rest);
-    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-    let rest = &after[end..];
+    // past the host and port
+    let rest = after.trim_start_matches(|ch| !matches!(ch, '/' | '?' | '#'));
     let (path, query) = match rest.split_once('?') {
         Some((path, query)) => (path, Some(query.split('#').next().unwrap_or(""))),
         None => (rest.split('#').next().unwrap_or(""), None),
@@ -1087,27 +1087,33 @@ fn json_envelope(
     };
     // The whole path for the breadcrumb, and how many of its last names are an extra path (the wiki space and page after
     // Wiki/wiki), which are not levels the client asks the tabs of.
-    let extra_path_count = match info.full_path.len().checked_sub(info.extra_path.len()) {
-        Some(count) if info.full_path[count..] == info.extra_path[..] => info.extra_path.len(),
-        _ => 0,
+    let extra_path_count = if info.full_path.ends_with(&info.extra_path) {
+        info.extra_path.len()
+    } else {
+        0
     };
     let path_list: Vec<String> = info.full_path.iter().map(|name| strip(name)).collect();
     let render_modes: Vec<String> = target.render_modes.iter().map(|mode| strip(mode)).collect();
-    serde_json::json!({
-        "v": 1,
-        "screen": {
+    // `json!` would serialize the rendered nodes, the parameters and the messages again by reference, a deep copy of
+    // the document; they are moved in.
+    let mut envelope = serde_json::Map::new();
+    envelope.insert("v".to_string(), 1.into());
+    envelope.insert(
+        "screen".to_string(),
+        serde_json::json!({
             "path": strip(&screen_path(info)),
             "pathList": path_list,
             "extraPathCount": extra_path_count,
             "title": strip(title),
             "renderModes": render_modes,
             "standalone": info.render_path_difference,
-        },
-        "parameters": parameters,
-        "messages": messages,
-        "focus": strip(focus),
-        "c": nodes,
-    })
+        }),
+    );
+    envelope.insert("parameters".to_string(), parameters);
+    envelope.insert("messages".to_string(), messages);
+    envelope.insert("focus".to_string(), strip(focus).into());
+    envelope.insert("c".to_string(), nodes);
+    serde_json::Value::Object(envelope)
 }
 
 fn screen_path(info: &ScreenUrlInfo) -> String {
@@ -1389,7 +1395,7 @@ impl Frames {
         }
     }
 
-    /// Push a frame. `count_tarpit` counts it against the tarpits, as Java's `pushInternal` does only for a screen's
+    /// Push a frame. `Tarpit::Count` counts it against the tarpits, as Java's `pushInternal` does only for a screen's
     /// render (`ScreenDefinition.render`) and a transition's run (`TransitionItem.run`); the authorization gate then
     /// counts a screen only when authorization is required of it, that is the target screen requiring authentication.
     pub(super) fn push(
@@ -1397,11 +1403,11 @@ impl Frames {
         artifact_type: &str,
         name: &str,
         action: &str,
-        requires_authz: bool,
-        count_tarpit: bool,
+        authz: Authz,
+        tarpit: Tarpit,
     ) -> Result<(), Error> {
         ExecutionContext::with_current(|ec| {
-            ec.push_checked(artifact_type, name, action, requires_authz, count_tarpit, None)?;
+            ec.push_checked(artifact_type, name, action, authz, tarpit, None)?;
             if self.untracked {
                 ec.untrack_hit();
             }
@@ -1428,7 +1434,13 @@ impl Frames {
     }
 
     pub(super) fn push_screen(&mut self, def: &ScreenDef, requires_authz: bool) -> Result<(), Error> {
-        self.push("AT_XML_SCREEN", &def.location, "view", requires_authz, false)
+        self.push(
+            "AT_XML_SCREEN",
+            &def.location,
+            "view",
+            Authz::required_if(requires_authz),
+            Tarpit::Skip,
+        )
     }
 
     /// Push a screen's frame, with authorization required only for the last screen of the path
@@ -1456,8 +1468,8 @@ impl Frames {
             "AT_XML_SCREEN",
             &def.location,
             "view",
-            is_target && def.authentication == Authentication::Required,
-            true,
+            Authz::required_if(is_target && def.authentication == Authentication::Required),
+            Tarpit::Count,
         )?;
         self.apply_anonymous(def)
     }
@@ -1705,8 +1717,8 @@ fn implicit_response(url: &str) -> ResponseDef {
 
 fn run_transition_steps(
     job: &Job<'_>,
-    info: &Arc<ScreenUrlInfo>,
-    state: &Rc<RenderState>,
+    info: &ScreenUrlInfo,
+    state: &RenderState,
     transition: &TransitionDef,
 ) -> Result<Step, Error> {
     // Screens above the transition are only on the stack, so they inherit but are not decided; a screen limited to a
@@ -1742,8 +1754,8 @@ fn run_transition_steps(
         "AT_XML_SCREEN_TRANS",
         &format!("{}/{}", screen.location, transition.name),
         &transition_authz_action(transition),
-        screen.authentication == Authentication::Required,
-        true,
+        Authz::required_if(screen.authentication == Authentication::Required),
+        Tarpit::Count,
     )?;
     frames.hit_detail(Some(&state.content_type), true);
 

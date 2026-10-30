@@ -26,10 +26,11 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use moqui_core::context::{Error, ExecutionContext};
-use moqui_core::devtools::index::{self, Direction};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
+use moqui_devkit::index::{self, Direction};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use serde_json::{json, Value as Json};
 
 use crate::artifacts::shown;
@@ -139,7 +140,7 @@ fn object_in(parameters: &Parameters, name: &str) -> serde_json::Map<String, Jso
 }
 
 /// The SECA rules of each service, by service name.
-fn seca_counts(rules: &[moqui_core::devtools::eca::EcaRuleInfo]) -> HashMap<String, usize> {
+fn seca_counts(rules: &[moqui_devkit::eca::EcaRuleInfo]) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for rule in rules
         .iter()
@@ -166,11 +167,8 @@ fn list_services(
         .map(str::to_string)
         .collect();
     let rows = index::of_kinds(&context.factory, &["service".to_string()], &components, 50_000)?;
-    let secas = seca_counts(&moqui_core::devtools::eca::rule_list(&context.factory));
-    let calls = coverage()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let secas = seca_counts(&moqui_devkit::eca::rule_list(&context.factory));
+    let calls = lock(coverage()).clone();
     let services: Vec<Json> = rows
         .iter()
         .filter(|row| filter.is_empty() || row.name.to_lowercase().contains(&filter))
@@ -219,7 +217,7 @@ fn get_service_view(
                 .map(|location| location_file(&context, location))
         })
         .flatten();
-    let secas: Vec<Json> = moqui_core::devtools::eca::rule_list(&context.factory)
+    let secas: Vec<Json> = moqui_devkit::eca::rule_list(&context.factory)
         .into_iter()
         .filter(|rule| rule.kind == "seca" && rule.target == name)
         .map(|rule| {
@@ -228,11 +226,7 @@ fn get_service_view(
             out
         })
         .collect();
-    let calls = coverage()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&name)
-        .copied();
+    let calls = lock(coverage()).get(&name).copied();
     let view = json!({
         "service": detail,
         "artifact": artifact,
@@ -620,7 +614,7 @@ fn run_spec(
             "a spec runs in the sim here, which this server has not (it needs embedded Postgres)",
         ));
     }
-    let spec = moqui_core::testkit::SpecFile {
+    let spec = moqui_devkit::testkit::SpecFile {
         name: name.clone(),
         display: resolved.relative.clone(),
         source,
@@ -630,9 +624,9 @@ fn run_spec(
     let ran =
         moqui_llm::approval::preview::run_in_sim(&context.factory, &username, &format!("Run spec {name}"), || {
             moqui_core::service::coverage::enable();
-            let result = moqui_core::testkit::run_spec(
+            let result = moqui_devkit::testkit::run_spec(
                 &spec,
-                &moqui_core::testkit::RunOptions {
+                &moqui_devkit::testkit::RunOptions {
                     feature_filter: filter,
                     ..Default::default()
                 },
@@ -643,7 +637,7 @@ fn run_spec(
         });
     let (result, calls) = ran?.value;
     {
-        let mut kept = coverage().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut kept = lock(coverage());
         for (service, count) in &calls {
             kept.insert(service.clone(), *count);
         }
@@ -653,12 +647,12 @@ fn run_spec(
         .iter()
         .map(|case| {
             let (outcome, message) = match &case.outcome {
-                moqui_core::testkit::Outcome::Passed => ("passed", String::new()),
-                moqui_core::testkit::Outcome::Failed(failure) => {
+                moqui_devkit::testkit::Outcome::Passed => ("passed", String::new()),
+                moqui_devkit::testkit::Outcome::Failed(failure) => {
                     ("failed", format!("{}: {}", failure.block, failure.message))
                 }
-                moqui_core::testkit::Outcome::Ignored(why) => ("ignored", why.clone()),
-                moqui_core::testkit::Outcome::Skipped(why) => ("skipped", why.clone()),
+                moqui_devkit::testkit::Outcome::Ignored(why) => ("ignored", why.clone()),
+                moqui_devkit::testkit::Outcome::Skipped(why) => ("skipped", why.clone()),
             };
             json!({ "name": case.name, "outcome": outcome, "message": message, "millis": case.duration.as_millis() })
         })
@@ -716,7 +710,7 @@ fn list_eca_rules(
     let component = text(parameters, "component");
     let target = text(parameters, "target").to_lowercase();
     let when = text(parameters, "when");
-    let rules: Vec<Json> = moqui_core::devtools::eca::rule_list(&context.factory)
+    let rules: Vec<Json> = moqui_devkit::eca::rule_list(&context.factory)
         .into_iter()
         .filter(|rule| kind.is_empty() || rule.kind == kind)
         .filter(|rule| component.is_empty() || rule.component == component)

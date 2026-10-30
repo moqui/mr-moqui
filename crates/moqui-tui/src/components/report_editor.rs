@@ -332,11 +332,12 @@ fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<Strin
         .collect()
 }
 fn write_document(props: &Value, state: &mut ComponentState, value: Value) -> Vec<Act> {
-    state.local["document"] = value.clone();
+    let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+    state.local["document"] = value;
     vec![Act::SetFormField {
         form: props["form"].as_str().unwrap_or("EditDefinition").into(),
         field: props["field"].as_str().unwrap_or("definitionJson").into(),
-        value: serde_json::to_string_pretty(&value).unwrap_or_default(),
+        value: text,
     }]
 }
 fn commit_scalar(props: &Value, state: &mut ComponentState, row: &Row) -> Vec<Act> {
@@ -574,10 +575,11 @@ impl Component for ReportDefinitionEditor {
                         items.push(value);
                     } else if let Some(fields) = target.as_object_mut() {
                         let key = if row.path.last().is_some_and(|key| key == "panels") {
-                            (1..)
-                                .map(|at| format!("panel{at}"))
-                                .find(|key| !fields.contains_key(key))
-                                .unwrap()
+                            let mut at = 1;
+                            while fields.contains_key(&format!("panel{at}")) {
+                                at += 1;
+                            }
+                            format!("panel{at}")
                         } else {
                             title
                         };
@@ -836,10 +838,12 @@ impl Component for ReportQueryEditor {
             Key::Tab => {
                 let choices = suggestions(props, state);
                 let choice = choices.get(state.choosing.unwrap_or(0))?;
-                let start = text.rfind(char::is_whitespace).map_or(0, |at| at + 1);
-                if &text[start..] == choice {
+                // the last word, as suggestions() reads it: after any whitespace, a no-break space too
+                let word = text.rsplit(char::is_whitespace).next().unwrap_or("");
+                if word == choice {
                     return None;
                 }
+                let start = text.len() - word.len();
                 text.replace_range(start.., choice);
             }
             _ => return None,
@@ -979,5 +983,15 @@ mod tests {
         assert!(
             matches!(&acts[0],Act::SetFormField{field,value,..}if field=="filtersJson"&&value.contains("\"negated\":true"))
         );
+    }
+    #[test]
+    fn query_completion_replaces_the_word_after_a_no_break_space() {
+        let props = json!({"value":"a\u{a0}sev","fields":[{"name":"severity_text"}]});
+        let mut state = ComponentState::default();
+        ReportQueryEditor.key(&props, &mut state, &KeyPress::plain(Key::Tab), false);
+        assert_eq!(query_text(&props, &state), "a\u{a0}severity_text:");
+        assert!(ReportQueryEditor
+            .key(&props, &mut state, &KeyPress::plain(Key::Tab), false)
+            .is_none());
     }
 }

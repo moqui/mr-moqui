@@ -17,7 +17,8 @@
 //! - `fresh`: a scratch runtime (the runtime's `conf` copied, `base-component` and each component linked) with its own
 //!   embedded Postgres, loaded with every data type. Removed when the run ends, unless kept.
 //! - `snapshot`: the same, but the loaded database is dumped to `runtime/save/test-<hash>/moqui.dump`, by a hash of the
-//!   entity and data files; a later run with the same files restores the dump instead of loading.
+//!   components the load reads and their entity and data files; a later run that loads the same components with the
+//!   same files restores the dump instead of loading.
 //! - `existing`: the runtime's own database as it is, the way `gradle test` ran against a loaded database. Tests change
 //!   its data.
 
@@ -196,12 +197,15 @@ fn copy_files(from: &Path, to: &Path) -> Result<(), Error> {
 
 fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMode) -> Result<(), Error> {
     let cluster = scratch.join("db/embedded");
-    let dump = (mode == DbMode::Snapshot).then(|| {
-        runtime
-            .join("save")
-            .join(format!("test-{:016x}", data_hash(runtime, framework)))
-            .join("moqui.dump")
-    });
+    let dump = match mode {
+        DbMode::Snapshot => Some(
+            runtime
+                .join("save")
+                .join(format!("test-{:016x}", data_hash(scratch, framework)?))
+                .join("moqui.dump"),
+        ),
+        _ => None,
+    };
     if let Some(dump) = dump.as_ref().filter(|dump| dump.is_file()) {
         let started = Instant::now();
         tracing::warn!("Restoring the test database from {}", dump.display());
@@ -227,32 +231,30 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     Ok(())
 }
 
-/// A hash of the binary's version and the name, size and change time of every entity and data file the load reads,
-/// so a snapshot is made again when one changes.
-fn data_hash(runtime: &Path, framework: &Path) -> u64 {
+/// A hash of the binary's version and of what the load of `scratch` reads: the components a factory on it loads, by
+/// name in load order (the conf and the instance purpose decide them: a dev component such as example loads only on a
+/// dev instance), and the name, size and change time of each one's entity and data files. A snapshot is made again
+/// when a file changes or a run loads another set of components: a server on a conf without the dev components once
+/// saved a snapshot that a run with example then restored, without example's tables.
+fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
     if let Ok(exe) = std::env::current_exe().and_then(std::fs::metadata) {
         exe.len().hash(&mut hasher);
         exe.modified().ok().hash(&mut hasher);
     }
-    let mut roots = vec![framework.join("entity"), framework.join("data")];
-    let component_dirs = ["component", "dev-component"]
-        .iter()
-        .filter_map(|parent| std::fs::read_dir(runtime.join(parent)).ok())
-        .flat_map(|entries| entries.flatten().map(|entry| entry.path()).collect::<Vec<_>>());
-    {
-        let mut dirs: Vec<PathBuf> = component_dirs.collect();
-        dirs.sort();
-        for dir in dirs {
-            roots.push(dir.join("entity"));
-            roots.push(dir.join("data"));
-        }
+    hash_tree(&framework.join("entity"), &mut hasher);
+    hash_tree(&framework.join("data"), &mut hasher);
+    let components = moqui_core::context::discover_components(scratch, framework)
+        .map_err(|err| Error::new(format!("could not list the components of the test runtime: {err}")))?;
+    for component in components {
+        component.name.hash(&mut hasher);
+        // the directory the scratch runtime links, the same in every run
+        let location = std::fs::canonicalize(&component.location).unwrap_or(component.location);
+        hash_tree(&location.join("entity"), &mut hasher);
+        hash_tree(&location.join("data"), &mut hasher);
     }
-    for root in roots {
-        hash_tree(&root, &mut hasher);
-    }
-    hasher.finish()
+    Ok(hasher.finish())
 }
 
 fn hash_tree(dir: &Path, hasher: &mut DefaultHasher) {
@@ -316,3 +318,7 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
     factory.init_tools().map_err(Error::from)?;
     Ok((factory, facade, sim, search, pdf, db))
 }
+
+#[cfg(test)]
+#[path = "fixture_tests.rs"]
+mod tests;

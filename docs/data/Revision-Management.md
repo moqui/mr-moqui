@@ -79,7 +79,7 @@ versions come from the branch's path index (below), not a walk from the head on 
 
 ### The path index
 
-Each branch has a path index (`crates/moqui-core/src/resource/git/index.rs`): every commit of its first-parent line with
+Each branch has a path index (`crates/moqui-git/src/index.rs`): every commit of its first-parent line with
 the files it changed against its first parent, and for each path (a file, or a directory with anything under it) the
 last commit that changed it. It is built on first use, extended in place when the head moves forward (a commit, a push
 to a `local` repository, a fetch), and built again when the branch was replaced (the old head is not on the new line).

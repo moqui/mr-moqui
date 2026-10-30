@@ -130,14 +130,14 @@ fn declarations_for_framework_and_tools_pass_tsc() {
 /// The golden output of the core emitter tests, with the authored file that exercises it.
 #[test]
 fn golden_fixture_declarations_pass_tsc() {
-    let expected = repo().join("crates/moqui-core/src/typegen/testdata/expected");
+    let expected = repo().join("crates/moqui-devkit/src/typegen/testdata/expected");
     let out = temp_dir("fixture");
     for entry in std::fs::read_dir(&expected).unwrap() {
         let path = entry.unwrap().path();
         std::fs::copy(&path, out.0.join(path.file_name().unwrap())).unwrap();
     }
     std::fs::copy(
-        repo().join("crates/moqui-core/src/typegen/testdata/usage-fixture.ts"),
+        repo().join("crates/moqui-devkit/src/typegen/testdata/usage-fixture.ts"),
         out.0.join("usage-fixture.ts"),
     )
     .unwrap();

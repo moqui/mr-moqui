@@ -118,14 +118,13 @@ fn family_name(sample: &str, types: &HashMap<String, String>) -> String {
 
 fn sample(line: &str) -> Option<Sample> {
     let name_end = line.find(|c: char| c == '{' || c.is_whitespace())?;
-    let name = &line[..name_end];
+    let (name, mut rest) = line.split_at(name_end);
     if name.is_empty()
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
         || name.starts_with(|c: char| c.is_ascii_digit())
     {
         return None;
     }
-    let mut rest = &line[name_end..];
     let mut labels = Vec::new();
     if let Some(after) = rest.strip_prefix('{') {
         let mut chars = after.char_indices().peekable();
@@ -228,8 +227,25 @@ pub struct Converted {
     pub skipped: usize,
 }
 
-/// A histogram series' `(le, cumulative count)` buckets, `_sum` and `_count`.
-type HistogramSamples = (Vec<(f64, f64)>, Option<f64>, Option<f64>);
+/// A histogram series' samples.
+#[derive(Default)]
+struct HistogramSamples {
+    /// `(le, cumulative count)`
+    buckets: Vec<(f64, f64)>,
+    sum: Option<f64>,
+    count: Option<f64>,
+}
+
+/// One OTLP histogram point from a series' samples: [`histogram_point`].
+#[derive(Debug, PartialEq)]
+struct HistogramPoint {
+    /// The finite upper bounds, ascending.
+    bounds: Vec<f64>,
+    /// The count of each bucket, not cumulative; one more than the bounds.
+    counts: Vec<u64>,
+    total: u64,
+    sum: Option<f64>,
+}
 
 /// One OTLP metrics request of every family, all points at `time_nanos`. Counters and histograms are cumulative with
 /// no start time, so the decoder takes a series' first scrape as its baseline and later scrapes as deltas; a counter
@@ -282,32 +298,31 @@ pub fn to_otlp(families: &[Family], resource: &[(String, String)], time_nanos: i
                     let entry = series.entry(labels).or_default();
                     if sample.name.ends_with("_bucket") {
                         match le.as_deref().and_then(number) {
-                            Some(bound) if !bound.is_nan() => entry.0.push((bound, sample.value)),
+                            Some(bound) if !bound.is_nan() => entry.buckets.push((bound, sample.value)),
                             _ => skipped += 1,
                         }
                     } else if sample.name.ends_with("_sum") {
-                        entry.1 = Some(sample.value);
+                        entry.sum = Some(sample.value);
                     } else if sample.name.ends_with("_count") {
-                        entry.2 = Some(sample.value);
+                        entry.count = Some(sample.value);
                     }
                 }
                 let mut data = Vec::new();
-                for (labels, (mut buckets, sum, count)) in series {
-                    buckets.sort_by(|a, b| a.0.total_cmp(&b.0));
-                    let Some(converted) = histogram_point(&buckets, sum, count) else {
+                for (labels, mut samples) in series {
+                    samples.buckets.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    let Some(point) = histogram_point(&samples.buckets, samples.sum, samples.count) else {
                         skipped += 1;
                         continue;
                     };
                     if room(1, &mut skipped) {
-                        let (bounds, counts, total, sum) = converted;
                         let mut value = json!({
                             "attributes": attributes(&labels),
                             "timeUnixNano": time,
-                            "count": total.to_string(),
-                            "explicitBounds": bounds,
-                            "bucketCounts": counts.iter().map(u64::to_string).collect::<Vec<_>>(),
+                            "count": point.total.to_string(),
+                            "explicitBounds": point.bounds,
+                            "bucketCounts": point.counts.iter().map(u64::to_string).collect::<Vec<_>>(),
                         });
-                        if let Some(sum) = sum {
+                        if let Some(sum) = point.sum {
                             value["sum"] = json!(sum);
                         }
                         data.push(value);
@@ -375,12 +390,7 @@ pub fn to_otlp(families: &[Family], resource: &[(String, String)], time_nanos: i
 
 /// Cumulative `le` buckets to OTLP's bounds and per-bucket counts. None when they are not a valid histogram: no `+Inf`
 /// bucket, a fractional or decreasing count, or a `_count` other than the `+Inf` bucket.
-#[allow(clippy::type_complexity)]
-fn histogram_point(
-    buckets: &[(f64, f64)],
-    sum: Option<f64>,
-    count: Option<f64>,
-) -> Option<(Vec<f64>, Vec<u64>, u64, Option<f64>)> {
+fn histogram_point(buckets: &[(f64, f64)], sum: Option<f64>, count: Option<f64>) -> Option<HistogramPoint> {
     let (last_bound, total) = *buckets.last()?;
     if last_bound != f64::INFINITY || total.fract() != 0.0 || total < 0.0 {
         return None;
@@ -404,7 +414,12 @@ fn histogram_point(
         counts.push((cumulative - previous) as u64);
         previous = *cumulative;
     }
-    Some((bounds, counts, total as u64, sum.filter(|sum| sum.is_finite())))
+    Some(HistogramPoint {
+        bounds,
+        counts,
+        total: total as u64,
+        sum: sum.filter(|sum| sum.is_finite()),
+    })
 }
 
 fn push_sum(metrics: &mut Vec<Json>, name: &str, help: &str, data: Vec<Json>) {
@@ -519,8 +534,8 @@ fn authority(url: &str) -> String {
 }
 
 /// One scrape: the body's families, the scrape's own `up`, `scrape_duration_seconds` and `scrape_samples_scraped`
-/// gauges, then decode and queue. Returns (points written, points skipped, status text).
-fn scrape_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> Result<(usize, usize, String), Error> {
+/// gauges, then decode and queue. Returns the points written and the status text, which counts the points skipped.
+fn scrape_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> Result<(usize, String), Error> {
     let target_id = text(row, "targetId");
     let url = text(row, "url");
     let mut headers = vec![(
@@ -595,7 +610,6 @@ fn scrape_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> Result
         Some(failure) => Err(Error::new(failure)),
         None => Ok((
             written,
-            skipped,
             format!("{scraped} samples, {written} written, {skipped} skipped"),
         )),
     }
@@ -623,7 +637,7 @@ pub fn scrape_targets(
         scraped += 1;
         let now = Value::I64(crate::user::now_millis());
         match scrape_one(ec, &row) {
-            Ok((points, _, status)) => {
+            Ok((points, status)) => {
                 written += points as i64;
                 record(
                     ec,
@@ -882,7 +896,12 @@ after_eof 1
         assert!(histogram_point(&[(1.0, 1.0), (f64::INFINITY, 2.0)], None, Some(3.0)).is_none());
         assert_eq!(
             histogram_point(&[(f64::INFINITY, 2.0)], Some(f64::NAN), None),
-            Some((vec![], vec![2], 2, None))
+            Some(HistogramPoint {
+                bounds: vec![],
+                counts: vec![2],
+                total: 2,
+                sum: None
+            })
         );
     }
 

@@ -263,7 +263,7 @@ impl HistoryClaim {
     /// The minute from `from_date` for `user_id`, or `None` when a login within the minute before claimed it.
     fn take(written: Arc<HistoryWritten>, user_id: &str, from_date: i64) -> Option<Self> {
         {
-            let mut claimed = written.claimed.lock().unwrap_or_else(|err| err.into_inner());
+            let mut claimed = moqui_lib::sync::lock(&written.claimed);
             if claimed.get(user_id).is_some_and(|stamp| *stamp > from_date - 60_000) {
                 return None;
             }
@@ -290,7 +290,7 @@ impl Drop for HistoryClaim {
         if self.kept {
             return;
         }
-        let mut claimed = self.written.claimed.lock().unwrap_or_else(|err| err.into_inner());
+        let mut claimed = moqui_lib::sync::lock(&self.written.claimed);
         if claimed.get(&self.user_id) == Some(&self.from_date) {
             claimed.remove(&self.user_id);
         }
@@ -333,7 +333,7 @@ impl LoginCheck {
     fn enter(user_id: &str, left: i64) -> Option<Self> {
         let checking = Self::checking();
         if !user_id.is_empty() {
-            let mut running = checking.running.lock().unwrap_or_else(|err| err.into_inner());
+            let mut running = moqui_lib::sync::lock(&checking.running);
             let count = running.entry(user_id.to_string()).or_insert(0);
             if *count >= left.max(1) {
                 return None;
@@ -349,9 +349,13 @@ impl LoginCheck {
     /// Wait until a check of `user_id` ends, or a second passes.
     fn wait(user_id: &str) {
         let checking = Self::checking();
-        let running = checking.running.lock().unwrap_or_else(|err| err.into_inner());
+        let running = moqui_lib::sync::lock(&checking.running);
         if running.get(user_id).is_some_and(|count| *count > 0) {
-            drop(checking.ended.wait_timeout(running, Duration::from_secs(1)));
+            drop(moqui_lib::sync::wait_timeout(
+                &checking.ended,
+                running,
+                Duration::from_secs(1),
+            ));
         }
     }
 }
@@ -361,7 +365,7 @@ impl Drop for LoginCheck {
         if self.user_id.is_empty() {
             return;
         }
-        let mut running = self.checking.running.lock().unwrap_or_else(|err| err.into_inner());
+        let mut running = moqui_lib::sync::lock(&self.checking.running);
         if let Some(count) = running.get_mut(&self.user_id) {
             *count -= 1;
             if *count <= 0 {
@@ -802,18 +806,18 @@ pub fn stamp_value(millis: i64) -> Value {
 }
 
 /// Java's `ec.user.nowTimestamp`: the entered context's effective time, or the clock.
-pub(crate) fn now_effective_value() -> Value {
+pub fn now_effective_value() -> Value {
     stamp_value(now_effective_millis())
 }
 
 /// [`now_effective_value`] as epoch millis.
-pub(crate) fn now_effective_millis() -> i64 {
+pub fn now_effective_millis() -> i64 {
     ExecutionContext::with_current(ExecutionContext::effective_time)
         .flatten()
         .unwrap_or_else(now_millis)
 }
 
-pub(crate) fn now_millis() -> i64 {
+pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -1248,7 +1252,7 @@ fn value_i64(value: &Value) -> Option<i64> {
     }
 }
 
-pub(crate) fn value_millis(value: &Value) -> Option<i64> {
+pub fn value_millis(value: &Value) -> Option<i64> {
     match value {
         Value::Timestamp(timestamp) => Some(timestamp.as_millisecond()),
         other => value_i64(other),

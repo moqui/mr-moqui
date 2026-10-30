@@ -253,7 +253,7 @@ pub fn hold(
 /// The request of the OpenUI Mutation `statement` of `canvas`, evaluated from the stored program with `state`: its
 /// method (upper case), its path and its body.
 fn openui_request(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     canvas: &super::Canvas,
     statement: &str,
     state: &Json,
@@ -302,11 +302,7 @@ fn openui_request(
 /// # Errors
 ///
 /// Why it may not run.
-pub fn check_write(
-    factory: &Arc<ExecutionContextFactory>,
-    groups: &[String],
-    held: &HeldMutation,
-) -> Result<(), String> {
+pub fn check_write(factory: &ExecutionContextFactory, groups: &[String], held: &HeldMutation) -> Result<(), String> {
     let transition = held.held["transition"].as_str().unwrap_or_default();
     let location = held.held["screenLocation"].as_str().unwrap_or_default();
     if !groups.is_empty() {
@@ -338,7 +334,7 @@ pub fn check_write(
 /// # Errors
 ///
 /// Why it may not be read.
-pub fn check_read(factory: &Arc<ExecutionContextFactory>, groups: &[String], path: &str) -> Result<(), String> {
+pub fn check_read(factory: &ExecutionContextFactory, groups: &[String], path: &str) -> Result<(), String> {
     let root = crate::screen::root_screen(factory);
     let hit = moqui_core::screen::locate(factory, &root, path).map_err(|_| format!("there is no screen at {path}"))?;
     if !groups.is_empty() {

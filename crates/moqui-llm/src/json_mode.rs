@@ -308,14 +308,14 @@ fn only_tool_call_blocks(text: &str) -> Option<Vec<Json>> {
     let mut out = Vec::new();
     while !rest.is_empty() {
         let after = rest.strip_prefix("<tool_call>")?;
-        let close = after.find("</tool_call>")?;
-        let inner = after[..close].trim();
+        let (inner, after) = after.split_once("</tool_call>")?;
+        let inner = inner.trim();
         let (start, end) = first_object(inner)?;
         if start != 0 || end != inner.len() {
             return None;
         }
         out.push(super::provider::parse_arguments(inner).ok()?);
-        rest = after[close + "</tool_call>".len()..].trim_start();
+        rest = after.trim_start();
     }
     Some(out)
 }
@@ -332,10 +332,11 @@ fn strip_fences(text: &str) -> &str {
 /// The byte range of the first balanced `{…}` of `text`, strings and their escapes respected.
 pub fn first_object(text: &str) -> Option<(usize, usize)> {
     let start = text.find('{')?;
+    let (_, from_open) = text.split_at_checked(start)?;
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
-    for (offset, ch) in text[start..].char_indices() {
+    for (offset, ch) in from_open.char_indices() {
         if in_string {
             if escaped {
                 escaped = false;
@@ -374,8 +375,8 @@ pub fn parse_intent(text: &str) -> Option<&'static str> {
 
 /// `tail` with a `likely: <intent>` line before its closing marker.
 pub fn tail_with_intent(tail: &str, intent: &str) -> String {
-    match tail.rfind("</context>") {
-        Some(at) => format!("{}likely: {intent}\n{}", &tail[..at], &tail[at..]),
+    match tail.rsplit_once("</context>") {
+        Some((head, after)) => format!("{head}likely: {intent}\n</context>{after}"),
         None => format!("{tail}\nlikely: {intent}"),
     }
 }

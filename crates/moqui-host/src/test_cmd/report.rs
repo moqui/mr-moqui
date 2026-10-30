@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
-use moqui_core::testkit::{CaseResult, Failure, Outcome, SpecResult};
+use moqui_devkit::testkit::{CaseResult, Failure, Outcome, SpecResult};
 use moqui_lib::error::Error;
 
 /// One spec's result, with the component it belongs to.

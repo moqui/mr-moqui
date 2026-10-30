@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, wait, wait_timeout};
 
 use super::call::AsyncCall;
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -79,14 +79,14 @@ impl Drop for WorkerFlag {
 /// still open on the factory's managers, which is rolled back, and the entity layer's thread state. Request and
 /// service workers, reserved threads and the scheduler pass hold one for each item, as Java runs `destroyAllInThread`
 /// in `finally`. It goes outside the item's `catch_unwind`, so it never runs during an unwind.
-pub(crate) struct WorkCleanup {
+pub struct WorkCleanup {
     factory: Option<Arc<ExecutionContextFactory>>,
     /// False for an inline item run under the caller's context, whose script stack and sim session stay.
     outermost: bool,
 }
 
 impl WorkCleanup {
-    pub(crate) fn new(factory: Option<Arc<ExecutionContextFactory>>) -> Self {
+    pub fn new(factory: Option<Arc<ExecutionContextFactory>>) -> Self {
         Self {
             factory,
             outermost: true,
@@ -129,8 +129,8 @@ pub(crate) fn cleanup_step(what: &str, work: impl FnOnce()) {
 /// A frame still open after a unit of work was never ended by the code that began it, so nothing decided to keep
 /// its writes; Java's `destroyAllInThread` commits it, and this rolls it back.
 pub(crate) fn rollback_frames(facade: &EntityFacade) {
-    for runtime in facade.inner.groups.values() {
-        rollback_manager(&runtime.transactions);
+    for (_, _, transactions) in facade.groups() {
+        rollback_manager(transactions);
     }
     if let Some(sim) = facade.sim_transactions() {
         rollback_manager(&sim);
@@ -144,7 +144,7 @@ fn rollback_manager(manager: &TransactionManager) {
 }
 
 /// The message of a caught panic, for the log.
-pub(crate) fn panic_text(payload: &(dyn Any + Send)) -> String {
+pub fn panic_text(payload: &(dyn Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|text| (*text).to_string())
@@ -405,8 +405,9 @@ impl ServicePools {
     }
 
     /// Test pool. `workers` is at least 1. Same Drop as a booted pool.
-    #[cfg(test)]
-    pub(crate) fn bounded(workers: usize, queue: usize) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn bounded(workers: usize, queue: usize) -> Self {
         start(Settings::test(workers.max(1), queue)).expect("service worker pool")
     }
 
@@ -495,7 +496,7 @@ impl ServicePools {
 
     /// Run `job` on a service worker in an execution context of its own, without waiting for it, as Java's
     /// `ThreadPoolRunnable`. A failure is logged with `what`. With no worker threads it runs now.
-    pub(crate) fn spawn(&self, what: &'static str, job: impl FnOnce() -> Result<(), Error> + Send + 'static) {
+    pub fn spawn(&self, what: &'static str, job: impl FnOnce() -> Result<(), Error> + Send + 'static) {
         let Some(shared) = &self.shared else {
             let result = match capture_factory() {
                 Ok(factory) => {
@@ -757,7 +758,7 @@ struct Settings {
     job_runner: bool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Settings {
     fn test(workers: usize, queue: usize) -> Self {
         Self {
@@ -908,7 +909,7 @@ fn job_loop(shared: Arc<Shared>) {
                     state.jobs_active += 1;
                     break run;
                 }
-                state = shared.job_wake.wait(state).unwrap_or_else(|err| err.into_inner());
+                state = wait(&shared.job_wake, state);
             }
         };
         run_job_work(run);
@@ -957,11 +958,11 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if state.stop {
             return None;
         }
-        state = shared.wake.wait(state).unwrap_or_else(|err| err.into_inner());
+        state = wait(&shared.wake, state);
     }
 }
 
-fn run_work(shared: &Arc<Shared>, work: Work) {
+fn run_work(shared: &Shared, work: Work) {
     lock(&shared.state).active += 1;
     match work {
         Work::Job(run) => run_job_work(run),
@@ -1200,11 +1201,7 @@ fn drain(shared: &Shared, limit: Duration) {
             );
             return;
         }
-        state = shared
-            .wake
-            .wait_timeout(state, left)
-            .unwrap_or_else(|err| err.into_inner())
-            .0;
+        state = wait_timeout(&shared.wake, state, left).0;
     }
 }
 
@@ -1242,7 +1239,7 @@ fn fail_one(work: Work) {
     }
 }
 
-fn queue_closure(shared: &Arc<Shared>, run: ClosureFn) -> Result<mpsc::Receiver<ClosureOut>, Error> {
+fn queue_closure(shared: &Shared, run: ClosureFn) -> Result<mpsc::Receiver<ClosureOut>, Error> {
     let (tx, rx) = mpsc::channel();
     {
         let mut state = lock(&shared.state);

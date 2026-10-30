@@ -64,6 +64,9 @@ fn distribution(mut values: Vec<f64>) -> Json {
 #[test]
 #[ignore = "real-store timings: MONITOR_PERF_MODE=off|roots|full; optional MONITOR_PERF_OPENSEARCH_URL and MONITOR_PERF_COLLECTOR_URL"]
 fn authorized_http_with_real_store_and_optional_collector() {
+    if !crate::common::own_process() {
+        return;
+    }
     let mode = std::env::var("MONITOR_PERF_MODE").expect("set MONITOR_PERF_MODE=off|roots|full");
     assert!(matches!(mode.as_str(), "off" | "roots" | "full"));
     let enabled = mode != "off";

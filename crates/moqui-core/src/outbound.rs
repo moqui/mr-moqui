@@ -563,8 +563,9 @@ mod http_tests {
 
 /// A stub server that keeps what each request sent, and a traced request to run calls in, for the tests of callers that
 /// send on a client of their own ([`ClientCall`]).
-#[cfg(all(test, feature = "http", feature = "telemetry"))]
-pub(crate) mod trace_tests {
+#[cfg(all(any(test, feature = "test-support"), feature = "http", feature = "telemetry"))]
+#[doc(hidden)]
+pub mod trace_tests {
     use std::io::{Read, Write};
     use std::sync::{mpsc, Arc, Mutex};
 
@@ -574,7 +575,7 @@ pub(crate) mod trace_tests {
 
     /// `http://127.0.0.1:<port>` of a server that answers every request `200 {}`, and the head of each request it got,
     /// lowercased.
-    pub(crate) fn stub() -> (String, mpsc::Receiver<String>) {
+    pub fn stub() -> (String, mpsc::Receiver<String>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let (sender, receiver) = mpsc::channel();
@@ -611,7 +612,7 @@ pub(crate) mod trace_tests {
     }
 
     /// Run `calls` in a sampled SERVER span; its context, and the spans exported.
-    pub(crate) fn traced(calls: impl FnOnce()) -> (TraceContext, Vec<Document>) {
+    pub fn traced(calls: impl FnOnce()) -> (TraceContext, Vec<Document>) {
         let ctx =
             ExecutionContextFactory::test_context_with_conf("<moqui-conf><telemetry sample-ratio=\"1\"/></moqui-conf>");
         let telemetry = crate::telemetry::for_factory(ctx.factory());
@@ -636,7 +637,7 @@ pub(crate) mod trace_tests {
 
     /// The CLIENT span of the request whose head is `head`: a child of `root` whose id is the request's `traceparent`,
     /// with the method, the redacted URL `url`, and the status 200.
-    pub(crate) fn assert_client_span(root: &TraceContext, spans: &[Document], head: &str, method: &str, url: &str) {
+    pub fn assert_client_span(root: &TraceContext, spans: &[Document], head: &str, method: &str, url: &str) {
         let parent = head
             .lines()
             .find_map(|line| line.strip_prefix("traceparent:"))

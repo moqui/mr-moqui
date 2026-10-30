@@ -52,10 +52,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::{
-    on_pool,
     sftp_fs::{Backend, SftpFs},
     shell,
 };
+use crate::worker::on_pool;
 
 const DEFAULT_MAX_SESSIONS: usize = 8;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
@@ -275,11 +275,7 @@ pub fn start(
         git_password_auth,
     });
     crate::edge::handle().spawn(accept_loop(listener, config, shared, watch, max_sessions));
-    *factory
-        .extension(|_| SshAddress::default())
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+    *moqui_lib::sync::lock(&factory.extension(|_| SshAddress::default()).0) = Some(address);
     tracing::info!("SSH server listening on {address}");
     // For the cluster member row: peers pin this key, and the ssh:// base URL defaults to this address.
     moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, fingerprint);
@@ -925,8 +921,8 @@ impl russh::server::Handler for Connection {
         }
         let line = String::from_utf8_lossy(data).into_owned();
         #[cfg(feature = "git")]
-        if moqui_core::resource::git::server::parse_ssh_command(&line).is_some()
-            || moqui_core::resource::git::server::lfs::parse_ssh_command(&line).is_some()
+        if moqui_git::server::parse_ssh_command(&line).is_some()
+            || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
             let (Some(username), true) = (self.username.clone(), self.can_git) else {
                 return session.channel_failure(channel);

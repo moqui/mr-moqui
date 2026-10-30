@@ -61,7 +61,7 @@ use crate::text_of;
 use crate::tools::PauseKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::EntityFacade;
-use moqui_core::testkit::SpecFile;
+use moqui_devkit::testkit::SpecFile;
 
 pub use metrics::{not_run, regressions, summarize, Summary, TaskMetrics, TaskOutcome, TaskResult};
 pub use spec::ScriptedApproval;

@@ -232,6 +232,9 @@ fn str_of(value: &Json) -> String {
 
 #[test]
 fn the_drawer_calls_over_http_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("assist", DATA);
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
@@ -1101,6 +1104,9 @@ fn tool_results(factory: &Arc<ExecutionContextFactory>, conversation_id: &str) -
 /// approval with no card, one without the user's activation is refused; the agent's own run of a Mutation is a card.
 #[test]
 fn the_canvas_over_http_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("assist-canvas", CANVAS_DATA);
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
@@ -1401,6 +1407,9 @@ impl Client {
 /// after; the events through a screen transition; the response actions of prompts.
 #[test]
 fn the_drawer_extras_over_http_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("assist-extras", DATA);
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();

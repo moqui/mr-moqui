@@ -39,7 +39,7 @@ pub fn effective_http_port(raw: &str) -> Result<u16, moqui_lib::error::Error> {
 }
 
 /// Configured HTTP port text for a URL. Invalid non-empty values are kept for listener validation.
-pub(crate) fn http_url_port(raw: &str) -> String {
+pub fn http_url_port(raw: &str) -> String {
     effective_http_port(raw)
         .map(|port| port.to_string())
         .unwrap_or_else(|_| raw.to_string())
@@ -264,7 +264,7 @@ impl Drop for WebGuard {
 }
 
 /// Install the parameter map for this request. A second install replaces the first.
-pub(crate) fn install(parameters: BTreeMap<String, Value>) -> WebGuard {
+pub fn install(parameters: BTreeMap<String, Value>) -> WebGuard {
     install_with(parameters, String::new())
 }
 
@@ -372,8 +372,9 @@ fn full_url(request: &WebRequest) -> String {
     let host = request.header("host").unwrap_or("localhost");
     let scheme = if request.https { "https" } else { "http" };
     let name = host_without_port(host);
-    let port = host[name.len()..]
-        .strip_prefix(':')
+    let port = host
+        .strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix(':'))
         .filter(|port| !port.is_empty() && *port != "80" && *port != "443");
     let mut url = match port {
         Some(port) => format!("{scheme}://{name}:{port}{}", request.path),
@@ -418,7 +419,7 @@ pub(crate) fn visit_request(request: &WebRequest) -> crate::user::session::Visit
     }
 }
 
-pub(crate) fn set_request_info(request: &WebRequest) {
+pub fn set_request_info(request: &WebRequest) {
     let scheme = if request.https { "https" } else { "http" };
     let url = full_url(request);
     let mut details = format!(
@@ -492,7 +493,7 @@ pub(crate) fn request_details() -> String {
 }
 
 /// The URL [`set_request_info`] kept. None with no request, or for a render with no socket.
-pub(crate) fn request_url() -> Option<String> {
+pub fn request_url() -> Option<String> {
     WEB.with(|slot| slot.borrow().as_ref().map(|web| web.request_url.clone()))
         .filter(|url| !url.is_empty())
 }
@@ -749,7 +750,7 @@ pub(crate) fn request_secure() -> Option<bool> {
 /// request whose security matches `use_encryption`; otherwise the scheme and host. Those are the render's base URL
 /// when it has one (an email, a render with no socket), else the conf `webapp`'s host and port. Never the request's
 /// `Host` header, which the sender of the request picks (Parity-Diffs P8-08).
-pub(crate) fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
+pub fn webapp_root_url(webapp_name: &str, require_full_url: bool, use_encryption: Option<bool>) -> String {
     let secure = request_secure();
     let require_encryption = use_encryption.unwrap_or(secure.unwrap_or(false));
     if !require_full_url && secure == Some(require_encryption) {
@@ -1109,8 +1110,8 @@ fn mark_email_message_viewed() -> Result<(), Error> {
     let Some(raw) = raw.as_str().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    let id = match raw.find('.') {
-        Some(index) if index > 0 => raw[..index].to_string(),
+    let id = match raw.split_once('.') {
+        Some((id, _)) if !id.is_empty() => id.to_string(),
         _ => raw.to_string(),
     };
     let facade = ExecutionContext::with_current(|ec| ec.factory().entity())
@@ -1400,7 +1401,7 @@ pub(crate) fn output_sent() -> bool {
 }
 
 /// Forget what was written, so a response can be sent after a body was taken for another use.
-pub(crate) fn clear_output() {
+pub fn clear_output() {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             web.sent = false;
@@ -1439,7 +1440,7 @@ pub(crate) fn restore_output(stash: OutputStash) {
 }
 
 /// Move the status, headers, body, and sent flag out of the slot.
-pub(crate) fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
+pub fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
     WEB.with(|slot| {
         slot.borrow_mut()
             .as_mut()
@@ -1539,11 +1540,14 @@ pub fn max_upload() -> usize {
 /// Bytes, or a number with a `k`, `m` or `g` suffix. `None` when `text` is not a size.
 pub fn parse_size(text: &str) -> Option<usize> {
     let text = text.trim().to_ascii_lowercase();
-    let (digits, unit) = match text.chars().last()? {
-        'k' => (&text[..text.len() - 1], 1024),
-        'm' => (&text[..text.len() - 1], 1024 * 1024),
-        'g' => (&text[..text.len() - 1], 1024 * 1024 * 1024),
-        _ => (text.as_str(), 1),
+    let (digits, unit) = if let Some(digits) = text.strip_suffix('k') {
+        (digits, 1024)
+    } else if let Some(digits) = text.strip_suffix('m') {
+        (digits, 1024 * 1024)
+    } else if let Some(digits) = text.strip_suffix('g') {
+        (digits, 1024 * 1024 * 1024)
+    } else {
+        (text.as_str(), 1)
     };
     digits
         .trim()
@@ -1697,13 +1701,11 @@ fn pairs_to_parameters(pairs: Vec<(String, String)>) -> BTreeMap<String, Value> 
     }
     grouped
         .into_iter()
-        .map(|(key, mut values)| {
-            let value = if values.len() == 1 && values[0] == NO_PARAMETER {
-                Value::Null
-            } else if values.len() == 1 {
-                Value::string(values.remove(0))
-            } else {
-                Value::List(values.into_iter().map(Value::string).collect())
+        .map(|(key, values)| {
+            let value = match <[String; 1]>::try_from(values) {
+                Ok([only]) if only == NO_PARAMETER => Value::Null,
+                Ok([only]) => Value::string(only),
+                Err(values) => Value::List(values.into_iter().map(Value::string).collect()),
             };
             (key, value)
         })
@@ -1741,10 +1743,16 @@ pub fn percent_decode(text: &str) -> String {
                 out.push(b' ');
                 index += 1;
             }
-            b'%' if index + 2 < bytes.len() && hex_pair(bytes[index + 1], bytes[index + 2]).is_some() => {
-                out.push(hex_pair(bytes[index + 1], bytes[index + 2]).unwrap_or(b'%'));
-                index += 3;
-            }
+            b'%' => match bytes.get(index + 1..index + 3) {
+                Some(&[high, low]) if let Some(byte) = hex_pair(high, low) => {
+                    out.push(byte);
+                    index += 3;
+                }
+                _ => {
+                    out.push(b'%');
+                    index += 1;
+                }
+            },
             byte => {
                 out.push(byte);
                 index += 1;
@@ -1983,7 +1991,7 @@ fn configured_webapp_host() -> String {
 /// `example.com:8080` is `example.com`, and `[::1]:8080` is `[::1]`.
 pub(crate) fn host_without_port(host: &str) -> &str {
     if host.starts_with('[') {
-        return host.find(']').map_or(host, |end| &host[..=end]);
+        return host.split_inclusive(']').next().unwrap_or(host);
     }
     host.split(':').next().unwrap_or(host)
 }
@@ -2001,7 +2009,7 @@ fn apply_cors(
 }
 
 /// Names a response never carries: `WebUtilities.stripCredentialParameters`, compared without case.
-pub(crate) const CREDENTIAL_PARAMETER_NAMES: [&str; 13] = [
+pub const CREDENTIAL_PARAMETER_NAMES: [&str; 13] = [
     "password",
     "oldpassword",
     "newpassword",
@@ -2023,9 +2031,15 @@ pub(crate) fn strip_credential_parameters(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             map.retain(|key, _| !CREDENTIAL_PARAMETER_NAMES.contains(&key.to_ascii_lowercase().as_str()));
-            map.values_mut().for_each(strip_credential_parameters);
+            for nested in map.values_mut() {
+                strip_credential_parameters(nested);
+            }
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(strip_credential_parameters),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_credential_parameters(item);
+            }
+        }
         _ => {}
     }
 }
@@ -2112,15 +2126,16 @@ pub(crate) fn status_for(err: &Error) -> u16 {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// A test's `instance_purpose` for this thread only, so it does not change other tests' instance.
-    pub(crate) static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    #[doc(hidden)]
+    pub static TEST_PRODUCTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// Whether this instance runs with `instance_purpose` production.
-pub(crate) fn is_production() -> bool {
-    #[cfg(test)]
+pub fn is_production() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(production) = TEST_PRODUCTION.with(std::cell::Cell::get) {
         return production;
     }

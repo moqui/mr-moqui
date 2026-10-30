@@ -402,7 +402,7 @@ fn run_json(run: &RunRow, row: Option<&EntityValue>, admin: bool) -> Json {
 }
 
 /// The approval card of a row: [`ApprovalView::to_json`], the tool's name and whether it can be previewed.
-pub(super) fn approval_card(row: &EntityValue, tool: Option<String>, can_preview: bool) -> Json {
+pub(super) fn approval_card(row: &EntityValue, tool: Option<&str>, can_preview: bool) -> Json {
     let view = ApprovalView::of(row);
     let mut card = view.to_json();
     card["tool"] = json!(tool);
@@ -687,7 +687,7 @@ pub(super) fn conversation(caller: &Caller, params: &Params) -> Answer {
             let tool = text_of(approval_row, "toolCallId")
                 .and_then(|id| calls.get(&id))
                 .and_then(|call| text_of(call, "toolName"));
-            let card = approval_card(approval_row, tool, can_preview);
+            let card = approval_card(approval_row, tool.as_deref(), can_preview);
             if text_of(approval_row, "statusId").as_deref() == Some(approval::ApprovalStatus::Pending.status_id()) {
                 approvals.push(card);
             } else if let Some(id) = text_of(approval_row, "approvalId") {

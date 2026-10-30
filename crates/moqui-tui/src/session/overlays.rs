@@ -14,7 +14,13 @@
 
 //! The overlays' keys: the confirmation, the login, a drop-down, the date picker and the drawer; and opening them.
 
-use super::*;
+use super::{DropDown, Intent, Login, Overlay, Picker, Session};
+use crate::edit::{self, Limits};
+use crate::forms::{self, FocusKind};
+use crate::keys::{Action, Key, KeyPress};
+use crate::link::{LinkCall, LinkError};
+use crate::model::{Choice, Widget};
+use crate::state::{Confirm, ConfirmKind, Purpose, Then};
 
 impl Session {
     pub(super) fn confirm_key(&mut self, mut confirm: Confirm, press: &KeyPress) {
@@ -173,7 +179,7 @@ impl Session {
             Key::End => drop.at = last,
             Key::Char(' ') if multiple => {
                 if let Some(choice) = choices.get(drop.at) {
-                    self.toggle_value(&drop.field.clone(), &choice.value);
+                    self.toggle_value(&drop.field, &choice.value);
                 }
             }
             Key::Enter => {
@@ -266,7 +272,7 @@ impl Session {
                 self.overlays.pop();
                 if let Some((format, date_type)) = self.date_format(&picker.key) {
                     let text = forms::date_text(picker.date, self.buffer(&picker.key), &format, &date_type);
-                    self.set_buffer(&picker.key.clone(), text);
+                    self.set_buffer(&picker.key, text);
                 }
                 return;
             }
@@ -302,7 +308,7 @@ impl Session {
             Key::Down => (at + 1).min(last),
             Key::Enter | Key::Right => {
                 self.overlays.pop();
-                if let Some(url) = rows.get(at).map(|row| row.1.clone()) {
+                if let Some(url) = rows.get(at).map(|row| row.url.clone()) {
                     self.follow_url(&url);
                 }
                 return true;

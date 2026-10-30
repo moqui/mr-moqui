@@ -62,7 +62,7 @@ pub fn from_nested_map(map: &IndexMap<String, Value>) -> Result<Vec<Query>, Erro
     Ok(out)
 }
 
-fn from_map(map: &IndexMap<String, Value>) -> Result<Query, Error> {
+pub(super) fn from_map(map: &IndexMap<String, Value>) -> Result<Query, Error> {
     if map.len() != 1 {
         return Err(Error::new(format!(
             "an Elastic query has one key, not {}",

@@ -104,7 +104,11 @@ pub fn git_top(dir: &Path) -> Option<PathBuf> {
 }
 
 /// A root found: its directory, its kind, and its components with their directories.
-type Found = (PathBuf, RootKind, Vec<(String, PathBuf)>);
+struct Found {
+    path: PathBuf,
+    kind: RootKind,
+    components: Vec<(String, PathBuf)>,
+}
 
 /// Every root of `factory`, repositories first in the order their first component loads.
 #[must_use]
@@ -113,15 +117,13 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     // (root path, kind) -> its components, in load order
     let mut found: Vec<Found> = Vec::new();
     fn add(found: &mut Vec<Found>, path: PathBuf, kind: RootKind, component: Option<(String, PathBuf)>) {
-        let slot = match found.iter().position(|(have, _, _)| *have == path) {
-            Some(slot) => slot,
-            None => {
-                found.push((path, kind, Vec::new()));
-                found.len() - 1
-            }
-        };
-        if let Some(component) = component {
-            found[slot].2.push(component);
+        match found.iter_mut().find(|have| have.path == path) {
+            Some(root) => root.components.extend(component),
+            None => found.push(Found {
+                path,
+                kind,
+                components: component.into_iter().collect(),
+            }),
         }
     }
     for component in factory.components() {
@@ -137,7 +139,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
         }
     }
     let conf = canonical(&factory.runtime_dir().join("conf"));
-    if conf.is_dir() && !found.iter().any(|(path, _, _)| conf.starts_with(path)) {
+    if conf.is_dir() && !found.iter().any(|root| conf.starts_with(&root.path)) {
         add(&mut found, conf, RootKind::Plain, None);
     }
     let mut labels: BTreeMap<PathBuf, String> = BTreeMap::new();
@@ -188,7 +190,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     found
         .into_iter()
-        .map(|(path, kind, components)| {
+        .map(|Found { path, kind, components }| {
             let base = path
                 .file_name()
                 .map_or_else(|| "root".to_string(), |name| name.to_string_lossy().into_owned());

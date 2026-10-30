@@ -16,7 +16,7 @@
 //! names), its outline (the elements to a depth, with their lines and naming attributes), and its git status, with
 //! whether it is the site's or upstream. Files are confined to the Workspace's roots as the editor's are.
 
-use moqui_core::devtools::index;
+use moqui_devkit::index;
 use moqui_lib::xml_edit::{Doc, Kind};
 use moqui_llm::run::context::TurnContext;
 use moqui_llm::tools::format::ToolError;

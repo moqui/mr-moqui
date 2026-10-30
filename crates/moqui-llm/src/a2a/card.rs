@@ -152,7 +152,7 @@ fn security(factory: &ExecutionContextFactory) -> (Json, Json) {
     (Json::Object(schemes), Json::Array(requirements))
 }
 
-fn card(factory: &ExecutionContextFactory, base: &str, skills: Vec<Json>) -> Json {
+fn card(factory: &ExecutionContextFactory, base: &str, skills: &[Json]) -> Json {
     let property = |name: &str, default: &str| {
         Some(moqui_lib::env::get_prop_or_env(name).trim().to_string())
             .filter(|value| !value.is_empty())
@@ -187,7 +187,7 @@ pub fn public(factory: &ExecutionContextFactory, origin: &Origin) -> Reply {
             &json!({"error": {"code": 404, "status": "NOT_FOUND", "message": "the A2A server is off"}}),
         );
     }
-    let body = card(factory, &base_url(factory, origin), vec![generic_skill()]);
+    let body = card(factory, &base_url(factory, origin), &[generic_skill()]);
     let mut reply = Reply::json(200, &body);
     reply.headers.retain(|(name, _)| name != "cache-control");
     reply
@@ -294,5 +294,5 @@ pub fn extended(
     if skills.is_empty() {
         skills.push(generic_skill());
     }
-    Ok(card(factory, &caller.base_url, skills))
+    Ok(card(factory, &caller.base_url, &skills))
 }

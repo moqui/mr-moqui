@@ -29,7 +29,7 @@ use super::render::parameter_value;
 use super::sri::{self, active_screen_path, NodeLit};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
 use super::RenderState;
-use crate::context::{Error, ErrorKind};
+use crate::context::{Authz, Error, ErrorKind, Tarpit};
 use crate::{script, web};
 
 /// A URL for a link, with the parameters added to it.
@@ -216,8 +216,8 @@ impl UrlInstance {
                 "AT_XML_SCREEN_TRANS",
                 &format!("{}/{}", target.location, transition.name),
                 &super::render::transition_authz_action(transition),
-                required,
-                false,
+                Authz::required_if(required),
+                Tarpit::Skip,
             )
             .is_ok()
     }
@@ -285,7 +285,15 @@ fn service_permitted(target: &ScreenDef, service: &str) -> bool {
         _ => false,
     };
     let mut frames = super::render::Frames::untracked();
-    frames.push("AT_SERVICE", service, &action, !allowed, false).is_ok()
+    frames
+        .push(
+            "AT_SERVICE",
+            service,
+            &action,
+            Authz::required_if(!allowed),
+            Tarpit::Skip,
+        )
+        .is_ok()
 }
 
 fn join_query(mut base: String, query: &str) -> String {
@@ -640,7 +648,10 @@ pub fn static_url(state: &RenderState, text: &str, url_type: &str) -> Result<Sta
             let def = sri::active_def(state);
             let local = names
                 .strip_prefix(active.as_slice())
-                .and_then(|rest| (rest.len() == 1).then(|| rest[0].clone()))
+                .and_then(|rest| match rest {
+                    [name] => Some(name.clone()),
+                    _ => None,
+                })
                 .and_then(|name| def.transition(&name, None).cloned());
             let screen_url = local
                 .as_ref()
@@ -683,12 +694,13 @@ fn link_parameters<'a>(
     let add = |out: &mut IndexMap<String, ParameterDef>, parameter: &ParameterDef| {
         out.insert(parameter.name.clone(), parameter.clone());
     };
-    screens.for_each(|parameter| add(&mut out, parameter));
+    for parameter in screens {
+        add(&mut out, parameter);
+    }
     if let Some(transition) = transition {
-        transition
-            .parameters
-            .iter()
-            .for_each(|parameter| add(&mut out, parameter));
+        for parameter in &transition.parameters {
+            add(&mut out, parameter);
+        }
         if let Some(service) = &transition.single_service {
             for name in service_parameter_names(service) {
                 out.entry(name.clone()).or_insert(ParameterDef {
@@ -700,7 +712,9 @@ fn link_parameters<'a>(
             }
         }
     }
-    extra.iter().for_each(|parameter| add(&mut out, parameter));
+    for parameter in extra {
+        add(&mut out, parameter);
+    }
     out.into_values().collect()
 }
 
@@ -925,6 +939,6 @@ pub fn active_in_current_menu(state: &RenderState) -> bool {
         .any(|item| {
             let mut names = active_screen_path(state);
             names.push(item.name.clone());
-            path.len() >= names.len() && path[..names.len()] == names[..]
+            path.starts_with(&names)
         })
 }

@@ -95,6 +95,9 @@ fn terminal_screen(address: SocketAddr, cookie: &str) -> (u16, Vec<(String, Stri
 
 #[test]
 fn the_browser_terminal_runs_the_apps_as_the_signed_in_user() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_conf_properties(
         "termws",
         Some(PLAIN_USER),

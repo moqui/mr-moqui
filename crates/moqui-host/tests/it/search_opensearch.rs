@@ -27,6 +27,9 @@ use crate::common::{basic, exchange, http_request, start_with_data};
 #[test]
 #[ignore = "needs OpenSearch: OPENSEARCH_URL=http://127.0.0.1:9200 cargo test -p moqui-host --test it -- search_opensearch --ignored"]
 fn opensearch_backend_proxies_and_exports_telemetry() {
+    if !crate::common::own_process() {
+        return;
+    }
     let url = std::env::var("OPENSEARCH_URL").expect("set OPENSEARCH_URL to run this test");
     let prefix = format!("moqui_server_test_{}_", std::process::id());
     for (name, value) in [

@@ -102,6 +102,24 @@ pub(crate) struct AuthInfo {
     pub(crate) aacv: Option<Arc<AuthzCheck>>,
 }
 
+/// What a check reads from the artifact stack: the frame below, whether a frame on the stack carries a deny, and whether
+/// authorization is disabled.
+#[derive(Debug)]
+pub(crate) struct StackAuthz {
+    pub(crate) last: Option<AuthInfo>,
+    pub(crate) ancestor_deny: bool,
+    pub(crate) authz_disabled: bool,
+}
+
+impl StackAuthz {
+    /// Outside an execution context: nothing below, no deny, and authorization disabled.
+    const NO_CONTEXT: Self = Self {
+        last: None,
+        ancestor_deny: false,
+        authz_disabled: true,
+    };
+}
+
 impl AuthInfo {
     fn from_check(check: &Arc<AuthzCheck>, user_id: &str, granted: bool) -> Self {
         Self {
@@ -175,8 +193,11 @@ pub fn authorize(artifact_type: &str, name: &str, action: &str) -> Result<(), Er
     if !context_entered() {
         return Ok(());
     }
-    let (last, ancestor_deny, disabled) =
-        ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or((None, false, true));
+    let StackAuthz {
+        last,
+        ancestor_deny,
+        authz_disabled: disabled,
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
     let (permitted, info) = is_permitted(
         artifact_type,
         name,
@@ -206,8 +227,11 @@ pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<()
     if !context_entered() {
         return Ok(());
     }
-    let (_, ancestor_deny, disabled) =
-        ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or((None, false, true));
+    let StackAuthz {
+        ancestor_deny,
+        authz_disabled: disabled,
+        ..
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
     let (permitted, info) = is_permitted(
         artifact_type,
         name,
@@ -676,7 +700,7 @@ fn load_user_groups(facade: &EntityFacade) -> Result<Arc<HashSet<String>>, Error
     Ok(Arc::new(groups))
 }
 
-fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn user_checks(facade: &EntityFacade) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     if let Some(checks) = with_session(|session| session.authz.checks.clone()) {
         return Ok(checks);
     }
@@ -686,7 +710,7 @@ fn user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error
 }
 
 /// One `ArtifactAuthzCheckView` read per group, as Java's `getArtifactAuthzCheckList`.
-fn load_user_checks(facade: &EntityFacade) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn load_user_checks(facade: &EntityFacade) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     let groups = user_groups(facade)?;
     let ordered: Vec<&String> = groups.iter().collect();
     load_group_checks(facade, ordered)
@@ -749,7 +773,7 @@ pub fn group_permits(groups: &[String], artifact_type: &str, name: &str, action:
 }
 
 /// The `ArtifactAuthzCheckView` rows of `groups`, one read per group in name order.
-fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result<Arc<Vec<Arc<AuthzCheck>>>, Error> {
+fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result<Arc<[Arc<AuthzCheck>]>, Error> {
     ordered.sort();
     ordered.dedup();
     let mut checks = Vec::new();
@@ -778,10 +802,10 @@ fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result
             }));
         }
     }
-    Ok(Arc::new(checks))
+    Ok(checks.into())
 }
 
-fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<TarpitCheck>>, Error> {
+fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<[TarpitCheck]>, Error> {
     cached(
         |cache| cache.tarpit.get(artifact_type).cloned(),
         || load_tarpit_checks(facade, artifact_type),
@@ -792,7 +816,7 @@ fn tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<T
 }
 
 /// One `ArtifactTarpitCheckView` read per group for the type, as Java's `getArtifactTarpitCheckList`.
-fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<Vec<TarpitCheck>>, Error> {
+fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<[TarpitCheck]>, Error> {
     let groups = user_groups(facade)?;
     let mut ordered: Vec<&String> = groups.iter().collect();
     ordered.sort();
@@ -813,7 +837,7 @@ fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<
             });
         }
     }
-    Ok(Arc::new(checks))
+    Ok(checks.into())
 }
 
 fn membership_open(row: &EntityValue, now: &Value) -> bool {

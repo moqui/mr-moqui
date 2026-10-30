@@ -25,7 +25,7 @@ pub const ENTITY_CACHE_INVALIDATE: &str = "entity-cache-invalidate";
 /// Notification topic. A repeated `message_id` is delivered once until it ages out of the recent set.
 pub const NOTIFICATION_MESSAGE: &str = "notification-message";
 
-/// A co-edited document's update or presence from another server (`crate::collab`), for that server's editors.
+/// A co-edited document's update or presence from another server (moqui-collab), for that server's editors.
 pub const COLLAB_UPDATE: &str = "collab-update";
 
 /// Web sessions ended on one server (`end#UserVisit`), `{"sessionIds": [..]}`, so every server stops serving its live copy.
@@ -109,9 +109,7 @@ impl Bus {
 
 fn lock() -> std::sync::MutexGuard<'static, Bus> {
     static BUS: OnceLock<Mutex<Bus>> = OnceLock::new();
-    BUS.get_or_init(|| Mutex::new(Bus::new()))
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
+    moqui_lib::sync::lock(BUS.get_or_init(|| Mutex::new(Bus::new())))
 }
 
 /// This process's origin id, stable for the life of the process.

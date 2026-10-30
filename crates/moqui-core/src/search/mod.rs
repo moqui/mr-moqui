@@ -36,6 +36,7 @@ pub mod postgres;
 pub mod query;
 pub mod semantic;
 pub mod telemetry;
+pub mod time;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -602,8 +603,8 @@ impl SearchFacade {
         Ok(stored)
     }
 
-    pub fn backend(&self) -> &Arc<dyn SearchBackend> {
-        &self.backend
+    pub fn backend(&self) -> &dyn SearchBackend {
+        self.backend.as_ref()
     }
 
     pub fn entity(&self) -> &EntityFacade {

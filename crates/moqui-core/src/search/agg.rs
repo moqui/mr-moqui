@@ -323,7 +323,7 @@ impl Agg {
                 // Both `{filter: {query: q}}` and Elastic's `{filter: q}` read here.
                 let query = match body.get("query") {
                     Some(query) => Query::from_value(query)?,
-                    None => super::es_json::from_es(&Value::Map(body.clone()))?,
+                    None => super::es_json::from_map(body)?,
                 };
                 Self::Filter { query, aggs: nested()? }
             }
@@ -970,13 +970,14 @@ pub fn parse_offset(text: &str) -> Result<SignedDuration, Error> {
         Some(rest) => (true, rest),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
-    let split = rest
+    let (digits, unit) = rest
         .find(|ch: char| !ch.is_ascii_digit())
+        .and_then(|split| rest.split_at_checked(split))
         .ok_or_else(|| Error::new(format!("offset {text} has no unit")))?;
-    let amount: i64 = rest[..split]
+    let amount: i64 = digits
         .parse()
         .map_err(|_| Error::new(format!("offset {text} has no amount")))?;
-    let per_unit = match &rest[split..] {
+    let per_unit = match unit {
         "d" => 86_400,
         "h" => 3_600,
         "m" => 60,
@@ -1138,6 +1139,11 @@ mod tests {
         assert_eq!(parse_offset("-1d").unwrap(), SignedDuration::from_hours(-24));
         assert_eq!(parse_offset("+6d").unwrap(), SignedDuration::from_hours(144));
         assert!(parse_offset("6").is_err());
+        assert_eq!(parse_offset("30m").unwrap(), SignedDuration::from_mins(30));
+        assert_eq!(parse_offset(" 500ms ").unwrap(), SignedDuration::from_millis(500));
+        assert!(parse_offset("d").is_err());
+        assert!(parse_offset("+1\u{e9}").is_err());
+        assert!(parse_offset("1w").is_err());
         assert!(parse_offset("+9223372036854775807d").is_err());
         assert!(parse_offset("-200000000000000000h").is_err());
         assert_eq!(

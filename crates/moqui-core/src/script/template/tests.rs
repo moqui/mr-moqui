@@ -380,3 +380,38 @@ fn the_extension_set_lists_each_registered_extension_once_in_conf_order() {
     unique.dedup();
     assert_eq!(unique, extensions);
 }
+
+#[test]
+fn list_tags_split_at_the_last_as_word() {
+    assert_eq!(split_last_word("a.b as item", "as"), Some(("a.b", "item")));
+    assert_eq!(split_last_word("x as y as z", "as"), Some(("x as y", "z")));
+    assert_eq!(split_last_word("items", "as"), None);
+}
+
+#[test]
+fn tag_rows_take_the_first_cell_of_placeholders_alone() {
+    let held = vec![
+        Held {
+            placeholder: "p0x".to_string(),
+            original: "<#if a>".to_string(),
+            is_tag: true,
+        },
+        Held {
+            placeholder: "p1x".to_string(),
+            original: "${b}".to_string(),
+            is_tag: false,
+        },
+    ];
+    assert_eq!(tag_row_text("<tr><td>p0x</td><td></td></tr>", "p", &held), Some("p0x"));
+    assert_eq!(
+        tag_row_text("<tr><td align=\"left\">p0x p0x</td></tr>", "p", &held),
+        Some("p0x p0x")
+    );
+    // A cell that is not empty after the first, an expression placeholder, other text and a bad row are not tag rows.
+    assert_eq!(tag_row_text("<tr><td>p0x</td><td>more</td></tr>", "p", &held), None);
+    assert_eq!(tag_row_text("<tr><td>p1x</td></tr>", "p", &held), None);
+    assert_eq!(tag_row_text("<tr><td>p0x text</td></tr>", "p", &held), None);
+    assert_eq!(tag_row_text("<tr><td>p9x</td></tr>", "p", &held), None);
+    assert_eq!(tag_row_text("<tr><td>p0x</tr>", "p", &held), None);
+    assert_eq!(tag_row_text("<tr><td></td></tr>", "p", &held), None);
+}

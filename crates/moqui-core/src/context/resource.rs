@@ -15,37 +15,22 @@
 //! `file`, `runtime`, `component`, `dbresource`, and `http` resources. Other schemes are named errors.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
-use moqui_lib::object::Value;
 use moqui_lib::resource::{FileResource, Resource};
 
-use super::error::Error;
+use super::Error;
 use crate::entity::{DbResourceInfo, EntityFacade};
 use crate::resource::textdiff::{self, TextDiff};
 
 mod changes;
+pub use crate::resource::version::version_author;
+pub use crate::resource::version::{with_version_author, ResourceChangeInfo, ResourceVersion, VersionAuthor};
 use changes::db_file_size;
-#[cfg(feature = "git")]
-pub(crate) use changes::millis_of;
-pub(crate) use changes::version_author;
+pub use changes::millis_of;
 pub(crate) use changes::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
-pub use changes::{
-    with_version_author, ChangeLogEntry, ChangeSetOutcome, ResourceChange, ResourceChangeInfo, VersionAuthor,
-};
-
-/// One version of a file, as Java's `ResourceReference.Version`: a `dbresource` history row, or a commit of a `git`
-/// file. `version_date` is a Timestamp value. `note` is what was written with the version: the commit message (without
-/// its `Moqui-User-Id` trailer) of a `git` file, the `versionNote` of a `dbresource` one.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResourceVersion {
-    pub version_name: String,
-    pub previous_version_name: Option<String>,
-    pub version_date: Value,
-    pub user_id: Option<String>,
-    pub note: Option<String>,
-}
+pub use changes::{ChangeLogEntry, ChangeSetOutcome, ResourceChange};
 
 /// A resolved resource with its logical location.
 ///
@@ -398,9 +383,6 @@ pub struct ResourceFacade {
     /// Shared with the factory. `None` until the host installs an entity facade.
     entity: Arc<RwLock<Option<EntityFacade>>>,
     providers: RwLock<HashMap<String, Arc<dyn crate::native::ResourceProvider>>>,
-    /// The `git` scheme, once `MoquiDefaultConf.xml` names it; the `GitServices` reach it here.
-    #[cfg(feature = "git")]
-    git: OnceLock<crate::resource::git::GitProvider>,
 }
 
 impl ResourceFacade {
@@ -414,28 +396,22 @@ impl ResourceFacade {
             components,
             entity,
             providers: RwLock::new(HashMap::new()),
-            #[cfg(feature = "git")]
-            git: OnceLock::new(),
         }
     }
 
-    /// Install the `git` scheme (`resource-reference scheme="git"` in the conf).
-    #[cfg(feature = "git")]
-    pub(crate) fn install_git(&self) -> Result<(), Error> {
-        let provider = crate::resource::git::GitProvider::new(Arc::clone(&self.entity), self.runtime_dir.clone());
-        self.install_provider("git", Arc::new(provider.clone()))?;
-        self.git
-            .set(provider)
-            .map_err(|_| Error::new("the git resource scheme is installed twice"))
+    /// The entity facade slot shared with the factory, for a provider that reads and writes through it (the `git`
+    /// scheme of moqui-git).
+    pub fn entity_slot(&self) -> Arc<RwLock<Option<EntityFacade>>> {
+        Arc::clone(&self.entity)
     }
 
-    /// The `git` scheme's provider, when it is installed.
-    #[cfg(feature = "git")]
-    pub fn git(&self) -> Option<&crate::resource::git::GitProvider> {
-        self.git.get()
+    /// The runtime directory, which `runtime://` locations resolve against.
+    pub fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
     }
 
-    pub(crate) fn install_provider(
+    /// Serve the `scheme://` locations with `provider`. The built-in schemes cannot be replaced.
+    pub fn install_provider(
         &self,
         scheme: &str,
         provider: Arc<dyn crate::native::ResourceProvider>,
@@ -974,7 +950,7 @@ impl ResourceFacade {
     }
 
     fn installed(&self) -> Option<EntityFacade> {
-        self.entity.read().unwrap_or_else(|err| err.into_inner()).clone()
+        moqui_lib::sync::read(&self.entity).clone()
     }
 
     fn db_ref(&self, location: &str) -> Result<ResourceRef, Error> {
@@ -1059,8 +1035,8 @@ fn db_snap(location: &str, info: &DbResourceInfo, facade: EntityFacade) -> DbSna
 }
 
 fn scheme_of(location: &str) -> &str {
-    match location.find(':') {
-        Some(index) if index > 1 && !location[..index].contains('/') => &location[..index],
+    match location.split_once(':') {
+        Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme,
         _ => "file",
     }
 }
@@ -1074,15 +1050,14 @@ enum Versioned {
 
 /// `location#versionName` as the location and the version name; `None` without a non-empty suffix.
 pub(crate) fn split_version(location: &str) -> Option<(&str, &str)> {
-    match location.find('#') {
-        Some(index) if index > 0 && index + 1 < location.len() => Some((&location[..index], &location[index + 1..])),
-        _ => None,
-    }
+    location
+        .split_once('#')
+        .filter(|(path, version)| !path.is_empty() && !version.is_empty())
 }
 
 fn strip_hash(location: &str) -> &str {
-    match location.find('#') {
-        Some(index) if index > 0 => &location[..index],
+    match location.split_once('#') {
+        Some((path, _)) if !path.is_empty() => path,
         _ => location,
     }
 }
@@ -1280,5 +1255,30 @@ mod tests {
         assert!(err.to_string().contains("scheme db"), "{err}");
         let err = facade().get("db://notes/hello.txt").unwrap_err();
         assert!(err.to_string().contains("scheme db"), "{err}");
+    }
+
+    #[test]
+    fn a_location_splits_into_its_scheme_path_and_version() {
+        assert_eq!(scheme_of("component://a/b.xml"), "component");
+        assert_eq!(scheme_of("dbresource://x"), "dbresource");
+        // one letter is a drive, a slash before the colon is a path
+        assert_eq!(scheme_of("c:/tmp/a.txt"), "file");
+        assert_eq!(scheme_of("runtime/a:b"), "file");
+        assert_eq!(scheme_of("plain.txt"), "file");
+        assert_eq!(scheme_of("é:x"), "é");
+
+        assert_eq!(
+            split_version("dbresource://a.txt#v2"),
+            Some(("dbresource://a.txt", "v2"))
+        );
+        assert_eq!(split_version("a#b#c"), Some(("a", "b#c")));
+        assert_eq!(split_version("a.txt#"), None);
+        assert_eq!(split_version("#v2"), None);
+        assert_eq!(split_version("a.txt"), None);
+
+        assert_eq!(strip_hash("a.txt#v2"), "a.txt");
+        assert_eq!(strip_hash("a.txt#"), "a.txt");
+        assert_eq!(strip_hash("#v2"), "#v2");
+        assert_eq!(strip_hash("é#ü"), "é");
     }
 }

@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
+use moqui_lib::sync::{read, write};
 
 use super::eca_rules;
 use super::util::has_error;
@@ -165,10 +166,7 @@ impl SecaIndex {
         if patterns.is_empty() {
             return Cow::Borrowed(named);
         }
-        let cached = self
-            .pattern_hits
-            .read()
-            .unwrap_or_else(|err| err.into_inner())
+        let cached = read(&self.pattern_hits)
             .get(when)
             .and_then(|by_service| by_service.get(plain.as_ref()))
             .cloned();
@@ -178,9 +176,7 @@ impl SecaIndex {
                 .copied()
                 .filter(|position| pattern_matches(&rules[*position], &plain))
                 .collect();
-            self.pattern_hits
-                .write()
-                .unwrap_or_else(|err| err.into_inner())
+            write(&self.pattern_hits)
                 .entry(when.to_string())
                 .or_default()
                 .insert(plain.into_owned(), Arc::clone(&hits));

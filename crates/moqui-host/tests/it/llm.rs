@@ -50,6 +50,9 @@ fn get(address: std::net::SocketAddr, auth: &str, path: &str) -> (u16, String) {
 
 #[test]
 fn the_llm_tables_the_registry_the_usage_and_the_screens_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_data("llm", DATA);
     let factory = std::sync::Arc::clone(gate.server.factory());
     let call_id = {
@@ -598,6 +601,9 @@ fn stream_ids(body: &str) -> Vec<i64> {
 
 #[test]
 fn runs_stream_their_events_to_their_owner_and_one_conversation_has_one_active_run() {
+    if !crate::common::own_process() {
+        return;
+    }
     use moqui_llm::provider::fake::{self, Step};
     use moqui_llm::run::{self, StartRequest};
     use std::time::Duration;

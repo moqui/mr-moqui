@@ -18,7 +18,11 @@ use crate::context::{Error, ExecutionContext};
 
 /// Reject a password that is short, has too few digits, or has no non-alphanumeric character.
 pub fn password_acceptable(password: &str) -> Result<(), Error> {
-    let (min_length, min_digits, min_others) = password_rules();
+    let PasswordRules {
+        min_length,
+        min_digits,
+        min_others,
+    } = password_rules();
     let length = i64::try_from(password.chars().count()).unwrap_or(i64::MAX);
     if length < min_length {
         return Err(Error::new(format!("Password shorter than {min_length} characters")));
@@ -38,12 +42,20 @@ pub fn password_acceptable(password: &str) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn password_rules() -> (i64, i64, i64) {
-    (
-        conf_number("password", "min-length", 8),
-        conf_number("password", "min-digits", 1),
-        conf_number("password", "min-others", 1),
-    )
+/// The `user-facade/password` minimums: the length, the digits, and the characters that are neither letter nor digit.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PasswordRules {
+    pub(crate) min_length: i64,
+    pub(crate) min_digits: i64,
+    pub(crate) min_others: i64,
+}
+
+pub(crate) fn password_rules() -> PasswordRules {
+    PasswordRules {
+        min_length: conf_number("password", "min-length", 8),
+        min_digits: conf_number("password", "min-digits", 1),
+        min_others: conf_number("password", "min-others", 1),
+    }
 }
 
 pub(crate) fn history_limit() -> i64 {

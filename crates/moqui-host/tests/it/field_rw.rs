@@ -47,6 +47,9 @@ impl Drop for CryptPassGuard {
 
 #[test]
 fn encrypt_audit_and_localized_reads() {
+    if !crate::common::own_process() {
+        return;
+    }
     let _lock = crate::common::serial();
     let dir = temp_cluster_dir();
     let _guard = DirGuard(dir.clone());

@@ -15,11 +15,13 @@
 //! The integration tests of the host as one test binary.
 //!
 //! Each file under `tests/` is its own binary, and each one links the whole host. Their tests are modules here instead, so a
-//! change to the sources links once. Tests that start a server or set process properties take [`common::serial`]; the
-//! seeded gates do so through `common::start*`.
+//! change to the sources links once. A test that starts a server or sets process properties runs in a process of its
+//! own ([`common::own_process`]), so those run in parallel; the seeded gates (`common::start*`) and [`common::serial`]
+//! fail outside one.
 //!
-//! `search_logs_postgres.rs` stays apart: it needs the process-wide log shipping as no earlier test left it.
-//! `gate3.rs` and `gate3_browser.rs` stay apart, out of the default run: `cargo test -p moqui-host --test gate3 --test gate3_browser`.
+//! `gate3.rs`, `gate3_browser.rs`, `client_browser.rs` and `tui_screens.rs` stay apart, out of the default run
+//! (`cargo test -p moqui-host --test gate3`), and so do the timings (`*_speed.rs`, `search_bench.rs`,
+//! `monitor_performance.rs`), which run optimized and by name.
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -39,10 +41,12 @@ mod assist;
 mod backup;
 mod cluster_notify;
 mod collab;
+mod component_load;
 mod devaide;
 mod elfinder;
 mod entity_cache;
 mod entity_db;
+mod factory_restart;
 mod field_rw;
 mod gate1;
 mod gate2;
@@ -54,14 +58,23 @@ mod llm;
 mod load_feed;
 #[cfg(all(feature = "devtools", feature = "tui"))]
 mod lsp;
+mod mantle_search;
 mod mcp;
+mod monitor_edge;
+mod monitor_readers;
+mod monitor_tui;
 mod notws;
 mod opensearch_start;
 mod pdf;
 mod pg_external;
 mod query_rest;
 mod qvt_report;
+mod report_alerts;
+mod report_documents;
+mod report_monitoring;
+mod report_schedule_lock;
 mod search;
+mod search_logs_postgres;
 mod search_opensearch;
 mod search_replica;
 mod search_semantic;
@@ -69,6 +82,7 @@ mod smtp;
 mod ssh;
 mod sso;
 mod system_sync;
+mod telemetry_rollup;
 mod termws;
 mod test_client;
 mod tool_components;
@@ -76,6 +90,7 @@ mod tools_screens;
 mod tools_services;
 mod tui_remote;
 mod types;
+mod wasm_browser;
 mod web_protection;
 mod web_scripts;
 mod web_streaming;

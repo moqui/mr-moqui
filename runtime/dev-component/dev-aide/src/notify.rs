@@ -23,8 +23,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::ReloadReport;
+use moqui_devkit::ReloadReport;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
 /// The notification topic of reload reports.
 pub const RELOAD_TOPIC: &str = "DevReload";
@@ -38,7 +39,7 @@ struct Listening;
 /// Send `factory`'s reload reports from now on, once per factory.
 pub(crate) fn ensure(factory: &Arc<ExecutionContextFactory>) {
     factory.extension::<Listening>(|factory| {
-        moqui_core::devtools::on_reload(factory, send);
+        moqui_devkit::on_reload(factory, send);
         Listening
     });
 }
@@ -132,7 +133,7 @@ fn presence() -> &'static Mutex<HashMap<String, Present>> {
 
 /// The editors of `root` but `except`, each with the open files, the expired ones dropped.
 pub(crate) fn editors(root: &str, except: &str) -> serde_json::Value {
-    let mut present = presence().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut present = lock(presence());
     present.retain(|_, entry| entry.at.elapsed() < PRESENCE_TTL);
     let editors: Vec<serde_json::Value> = present
         .iter()
@@ -151,7 +152,7 @@ pub(crate) fn set_presence(
     paths: Vec<String>,
 ) {
     let changed = {
-        let mut present = presence().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut present = lock(presence());
         let changed = present
             .get(user)
             .is_none_or(|entry| entry.root != root || entry.paths != paths);

@@ -34,6 +34,9 @@ const CONF: &str = r#"<webapp-list><webapp name="webroot" client-ip-header="X-Fo
 
 #[test]
 fn wrong_credentials_ban_the_client_and_rate_limits_answer_429() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf("web-protection", CONF, &[]);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -89,6 +92,9 @@ fn wrong_credentials_ban_the_client_and_rate_limits_answer_429() {
 /// `Retry-After`.
 #[test]
 fn a_screen_hit_past_its_tarpit_is_429_with_retry_after() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start("screen-tarpit");
     let address = gate.server.address();
     let get = |authorization: &str| {
@@ -124,6 +130,9 @@ fn a_screen_hit_past_its_tarpit_is_429_with_retry_after() {
 #[test]
 #[cfg(feature = "llm")]
 fn rejected_stream_login_keys_count_toward_the_client_ban() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf("stream-key-ban", CONF, &[]);
     let address = gate.server.address();
     let key = {

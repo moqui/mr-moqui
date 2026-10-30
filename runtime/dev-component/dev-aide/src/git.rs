@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
+use moqui_lib::sync::lock;
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +60,7 @@ fn running() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 /// Ask the command running as operation `id` to stop; whether one was running.
 #[must_use]
 pub fn cancel(id: &str) -> bool {
-    let running = running().lock().unwrap_or_else(|err| err.into_inner());
+    let running = lock(running());
     running.get(id).is_some_and(|flag| {
         flag.store(true, Ordering::SeqCst);
         true
@@ -105,7 +106,7 @@ impl Output {
 fn write_lock(repo: &Path) -> Arc<Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut locks = locks.lock().unwrap_or_else(|err| err.into_inner());
+    let mut locks = lock(locks);
     Arc::clone(locks.entry(repo.to_path_buf()).or_default())
 }
 
@@ -151,10 +152,8 @@ impl Git {
         stdin: Option<&str>,
         progress: Option<Progress>,
     ) -> Result<Output, Error> {
-        let lock = (mode != Mode::Read).then(|| write_lock(repo));
-        let _held = lock
-            .as_ref()
-            .map(|lock| lock.lock().unwrap_or_else(|err| err.into_inner()));
+        let repo_lock = (mode != Mode::Read).then(|| write_lock(repo));
+        let _held = repo_lock.as_deref().map(lock);
         let mut command = Command::new(&self.command);
         command
             .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
@@ -197,10 +196,7 @@ impl Git {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (stderr, id) = match progress {
             Some(progress) => {
-                running()
-                    .lock()
-                    .unwrap_or_else(|err| err.into_inner())
-                    .insert(progress.id.clone(), Arc::clone(&cancelled));
+                lock(running()).insert(progress.id.clone(), Arc::clone(&cancelled));
                 let pipe = child.stderr.take();
                 let id = progress.id.clone();
                 (
@@ -269,7 +265,7 @@ struct Registered(Option<String>);
 impl Drop for Registered {
     fn drop(&mut self) {
         if let Some(id) = &self.0 {
-            running().lock().unwrap_or_else(|err| err.into_inner()).remove(id);
+            lock(running()).remove(id);
         }
     }
 }
@@ -438,7 +434,7 @@ pub fn parse_status(out: &str) -> Status {
             b'?' | b'!' => {
                 let mark = char::from(kind);
                 status.entries.push(StatusEntry {
-                    path: record[2..].to_string(),
+                    path: record.get(2..).unwrap_or_default().to_string(),
                     original: None,
                     index: mark,
                     worktree: mark,

@@ -12,73 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{cookie_value, form_pairs, host_without_port, is_localhost, pairs_to_parameters, percent_decode};
+use super::{
+    cookie_value, form_pairs, host_without_port, is_localhost, pairs_to_parameters, parse_size, percent_decode,
+};
 use moqui_lib::object::Value;
-
-#[test]
-fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins() {
-    let _lock = crate::user::session::cookie_property_lock();
-    let names = [
-        "webapp_http_port",
-        "webapp_http_host",
-        "webapp_https_enabled",
-        "webapp_https_port",
-        "git_public_url",
-        "dav_public_url",
-    ];
-    struct Restore(Vec<(&'static str, String)>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            for (name, value) in &self.0 {
-                moqui_lib::env::set_property(name, value);
-            }
-        }
-    }
-    let _restore = Restore(
-        names
-            .iter()
-            .map(|name| (*name, moqui_lib::env::get_prop_or_env(name)))
-            .collect(),
-    );
-    for name in names {
-        moqui_lib::env::set_property(name, "");
-    }
-    let context = crate::context::ExecutionContextFactory::test_context_with_conf(
-        r#"<moqui-conf><webapp-list><webapp name="webroot" http-host="${webapp_http_host}" http-port="${webapp_http_port}"
-            https-enabled="${webapp_https_enabled}" https-port="${webapp_https_port}"/></webapp-list></moqui-conf>"#,
-    );
-    let _entered = context.enter();
-    let factory = context.factory();
-    let check = |expected: &str| {
-        assert_eq!(crate::dav::public_base_url(factory), expected);
-        #[cfg(feature = "git")]
-        assert_eq!(crate::resource::git::server::public_base_url(), expected);
-    };
-    assert_eq!(factory.webapp_root_url("webroot"), "http://localhost:8080");
-    check("http://localhost:8080");
-    for (configured, expected) in [("9090", "http://localhost:9090"), ("80", "http://localhost")] {
-        moqui_lib::env::set_property("webapp_http_port", configured);
-        assert_eq!(factory.webapp_root_url("webroot"), expected);
-        check(expected);
-    }
-    moqui_lib::env::set_property("webapp_https_enabled", "true");
-    moqui_lib::env::set_property("webapp_https_port", "9443");
-    check("https://localhost:9443");
-    let _web = super::install(std::collections::BTreeMap::new());
-    let mut request = super::WebRequest::new("GET", "/apps/git");
-    request.https = true;
-    request.set_header("host", "public.example:10443");
-    super::set_request_info(&request);
-    check("https://public.example:10443");
-    moqui_lib::env::set_property("git_public_url", "https://git.example/base/");
-    moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
-    #[cfg(feature = "git")]
-    assert_eq!(
-        crate::resource::git::server::public_base_url(),
-        "https://git.example/base"
-    );
-    assert_eq!(crate::dav::public_base_url(factory), "https://dav.example/base");
-}
 
 #[test]
 fn send_error_follows_accept() {
@@ -249,6 +186,22 @@ fn localhost_hosts_get_no_hsts() {
     assert!(!is_localhost(""));
     assert_eq!(host_without_port("[::1]:8443"), "[::1]");
     assert_eq!(host_without_port("example.com:8080"), "example.com");
+    assert_eq!(host_without_port("[::1]"), "[::1]");
+    assert_eq!(host_without_port("[::1"), "[::1");
+    assert_eq!(host_without_port("example.com"), "example.com");
+}
+
+#[test]
+fn an_upload_size_is_bytes_or_a_number_with_a_unit() {
+    assert_eq!(parse_size("1000"), Some(1000));
+    assert_eq!(parse_size(" 2K "), Some(2048));
+    assert_eq!(parse_size("3 m"), Some(3 * 1024 * 1024));
+    assert_eq!(parse_size("1g"), Some(1024 * 1024 * 1024));
+    assert_eq!(parse_size(""), None);
+    assert_eq!(parse_size("k"), None);
+    assert_eq!(parse_size("0"), None);
+    assert_eq!(parse_size("12x"), None);
+    assert_eq!(parse_size("5é"), None);
 }
 
 #[test]
@@ -326,6 +279,10 @@ fn percent_decode_keeps_bad_escapes_and_never_panics() {
     assert_eq!(percent_decode("%a\u{e9}"), "%a\u{e9}");
     assert_eq!(percent_decode("tail%"), "tail%");
     assert_eq!(percent_decode("%zz%41"), "%zzA");
+    assert_eq!(percent_decode("%4"), "%4");
+    assert_eq!(percent_decode("a%41"), "aA");
+    assert_eq!(percent_decode("%%41"), "%A");
+    assert_eq!(percent_decode("%C3%A9"), "\u{e9}");
 }
 
 #[test]

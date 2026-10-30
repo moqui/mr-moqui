@@ -306,14 +306,14 @@ pub(super) fn canvas_action(caller: &Caller, params: &Params) -> Answer {
                 &format!("canvas-{}-{}", canvas.artifact_id, run::now_millis()),
             )
         }
-        "mutation" => mutation(caller, params, canvas),
+        "mutation" => mutation(caller, params, &canvas),
         other => Err(DrawerError::invalid(format!(
             "{other} is not a canvas action; it is continue or mutation"
         ))),
     }
 }
 
-fn mutation(caller: &Caller, params: &Params, canvas: Canvas) -> Answer {
+fn mutation(caller: &Caller, params: &Params, canvas: &Canvas) -> Answer {
     let statement = params.required("statement")?;
     // only the user, at their page, by a click: never a header login, an agent's run or a script with no gesture; and
     // each click's nonce (kind=arm) runs one Mutation, once
@@ -324,7 +324,7 @@ fn mutation(caller: &Caller, params: &Params, canvas: Canvas) -> Answer {
         ));
     }
     let nonce = params.text("nonce").unwrap_or_default();
-    if nonce.is_empty() || !consume(&canvas, &nonce) {
+    if nonce.is_empty() || !consume(canvas, &nonce) {
         return Err(DrawerError::refused(
             "a canvas write needs the nonce of the click that runs it, once",
         ));
@@ -341,8 +341,8 @@ fn mutation(caller: &Caller, params: &Params, canvas: Canvas) -> Answer {
         Err(why) => return Ok(json!({"ok": false, "error": format!("{why}, so nothing was saved")})),
     };
     let state = Json::Object(values.clone());
-    let agent = agent_of(caller, &canvas)?;
-    let held = match ui::write::hold(&caller.factory, &agent, None, &canvas, &statement, Some(&state)) {
+    let agent = agent_of(caller, canvas)?;
+    let held = match ui::write::hold(&caller.factory, &agent, None, canvas, &statement, Some(&state)) {
         Ok(held) => held,
         Err(why) => return Ok(json!({"ok": false, "error": why})),
     };

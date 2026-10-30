@@ -309,6 +309,8 @@ Options:
   --spec Name[,Name]              Specs to run. The name is the file name without .spec.js.
                                   Specs named in dependsOn are included, in suite order.
   --feature text                  Run features whose names contain this text.
+  --slow                          Also run the specs and features marked slow: true (over 30
+                                  seconds). Without it they are listed as ignored, also when named.
   --db MODE                       none, fresh, snapshot, or existing. The default is fresh,
                                   or none when every selected spec sets database: false.
                                   none boots the factory and skips Postgres, including a build
@@ -317,7 +319,8 @@ Options:
                                   fresh loads every data type into a scratch runtime and removes
                                   it at the end. It needs embedded-postgres.
                                   snapshot saves that load under runtime/save and restores it
-                                  while the entity and data files and this binary are unchanged.
+                                  while the components the run loads, their entity and data
+                                  files and this binary are unchanged.
                                   existing uses the runtime's embedded database and changes its data.
   --junit dir                     Write TEST-<component>.<Spec>.xml into this directory.
   --keep                          Leave the scratch runtime in place.
@@ -389,6 +392,7 @@ output goes to server-<n>.log in the --out directory.
   moqui test-client runtime/component/my-site/test/client --server https://test.example.com
   moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results
   moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
+  moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 
 Options:
   --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
@@ -396,6 +400,9 @@ Options:
   --serve                         Start each suite's declared server, as above, instead of --server.
   --spec Name[,Name]              Specs to run, with the specs named in their dependsOn.
   --feature text                  Run features whose names contain this text.
+  --slow                          Also run the specs and features marked slow: true (over 30
+                                  seconds), and the server's slow specs with --serve. Without it
+                                  they are listed as ignored, also when named.
   --param name=value              Repeatable; params.name in specs. MOQUI_TEST_<NAME> variables
                                   are params too (MOQUI_TEST_LOAD_PASSWORD is params.loadPassword),
                                   for a password that should not show in ps.
@@ -411,6 +418,11 @@ Options:
                                   chromium-download), chromium or chromium-browser on the PATH, then
                                   google-chrome.
   --headed                        A visible browser, for debugging.
+  --video                         Record each spec's pages (the CDP screencast) into
+                                  <out>/video/<Spec>.webm, with <Spec>.timeline.json: each feature's
+                                  start, end, status and reason. Needs ffmpeg on the PATH; without
+                                  ffmpeg or Chromium an error says so and only the timelines are
+                                  written.
   --offline                       Run only specs with server: false. They open pages at
                                   https://moqui.test with no server and no listening port.
                                   Not with --serve.

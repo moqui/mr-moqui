@@ -353,13 +353,20 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   and compare it in `then`.
 - A Mantle spec creates its own data and does not depend on BOSS.
 - Run the specs of the screens and services you touched while working, and the whole component before a commit.
+  Those runs leave out the slow specs (`slow: true`), and so does every command unless given `--slow`.
+- **Keep a spec fast.** A spec or feature over about 15 seconds is slow and only for a special case: a specific
+  scenario, checked when its result is needed, not coverage. One over 30 seconds is marked `slow: true`
+  ([Slow tests](../Build-Test.md#slow-tests)), and an agent runs it only with the user's permission (AGENTS.md).
 
 ### Client specs (`test/client/*.spec.js`)
 
-- **Screenshots** of each screen at 390, 1280 and 1440 px, light and dark, from one table-driven spec per app
+- **Screenshots** of each screen once, light at 1280 px, from one table-driven spec per app
   (`mr-boss/test/client/ProductsShots.spec.js`): a group names a user, a screenshot prefix and its pages; a page may
-  wait for a text, open a dialog or row action, and check what it shows. **Look at the screenshots.** Shots that pass
-  can still show a broken layout.
+  wait for a text, open a dialog or row action, and check what it shows. The first page of each group is also shot at
+  390 and in the dark, and a page whose check depends on the width at 390 too (`GalleryShots.spec.js` is the same
+  shape). Never a width x theme matrix of every page: ProductsShots keeps the one it had, commented out, as the example
+  of an unacceptable test (535 cases, 9 minutes, for checks that did not change with either). A shots spec over 30
+  seconds is `slow: true`. **Look at the screenshots** when you run it: shots that pass can still show a broken layout.
 - Open the browser pages in `setupSpec`, one per user and width. Module variables are not shared between cases.
 - **Walks** for each scenario in the implementation plan: a user with only the needed grants, every click a user
   makes, and a screenshot of the result.
@@ -401,8 +408,8 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Every detail screen has the record header and a not-available state; every ending, bulk or irreversible action
   confirms, naming the record or the count.
 - Screens that differ by record kind share a template; each screen declares only the parameters it reads.
-- `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, the shots and walks run, and
-  the screenshots looked at.
+- `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, the walks run, and, when the
+  user agrees to the slow run (`--slow`), the shots run and the screenshots looked at.
 - A mechanical pass over the changed files:
   - `isInGroup(` in a service or script;
   - `PageRangeHigh` set in a screen;

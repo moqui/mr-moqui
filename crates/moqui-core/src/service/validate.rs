@@ -16,11 +16,12 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use moqui_lib::object::{
     basic_convert, convert_checked, decimal_compare, decimal_eq, is_empty, regex_full_match, to_plain_string, Value,
 };
+use moqui_lib::sync::lock;
 
 use super::define::{merge_param, AllowHtml, AutoParams, Check, Include, ParamDef, Required, ServiceDef};
 use crate::context::Error;
@@ -255,7 +256,7 @@ fn text_collection(value: &Value, java_type: &str) -> Option<Value> {
 
 /// A service's in-parameters with `auto-parameters` expanded, kept with the entity facade they were expanded from.
 #[derive(Default)]
-pub(crate) struct ExpandedParams(Mutex<Option<Expanded>>);
+pub struct ExpandedParams(Mutex<Option<Expanded>>);
 
 struct Expanded {
     /// The facade's model the parameters were expanded from, or None when no parameter reads one.
@@ -280,8 +281,7 @@ impl std::fmt::Debug for ExpandedParams {
 
 /// The facade's identity. The weak reference keeps the address from being reused while it is held.
 fn facade_key(facade: &EntityFacade) -> Weak<dyn Any + Send + Sync> {
-    let inner: Arc<dyn Any + Send + Sync> = facade.inner.clone();
-    Arc::downgrade(&inner)
+    facade.identity()
 }
 
 /// The in-parameters of `def` with `auto-parameters` expanded, made at the first call and kept on the definition.
@@ -295,7 +295,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         .filter(|_| reads_entity)
         .map_or(0, crate::entity::derived::generation);
     {
-        let cached = def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let cached = lock(&def.expanded_in.0);
         if let Some(cached) = cached.as_ref() {
             let same = match (&cached.facade, &key) {
                 (None, None) => true,
@@ -308,7 +308,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         }
     }
     let params: Arc<[ParamDef]> = expand_params(def, &def.in_params, facade)?.into();
-    *def.expanded_in.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(Expanded {
+    *lock(&def.expanded_in.0) = Some(Expanded {
         facade: key,
         generation,
         params: Arc::clone(&params),
@@ -363,7 +363,7 @@ fn expand_auto(def: &ServiceDef, auto: &AutoParams, facade: Option<&EntityFacade
 }
 
 /// The entity `auto-parameters` reads: its `entity-name`, else the service noun.
-pub(crate) fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<String, Error> {
+pub fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<String, Error> {
     let entity_name = auto
         .entity_name
         .clone()
@@ -379,7 +379,7 @@ pub(crate) fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<St
 }
 
 /// The parameters `auto-parameters` makes from the fields of `entity`.
-pub(crate) fn auto_fields(
+pub fn auto_fields(
     auto: &AutoParams,
     entity: &moqui_db::model::EntityDefinition,
     model: &moqui_db::model::EntityModel,

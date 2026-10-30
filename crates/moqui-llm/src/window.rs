@@ -484,8 +484,8 @@ fn replace_canvases(history: &mut History) -> bool {
 
 /// The version a `write_ui` result shows (`canvas v3 shown: …`).
 fn canvas_version(text: &str) -> Option<u32> {
-    let at = text.find("canvas v")? + "canvas v".len();
-    let digits: String = text[at..].chars().take_while(char::is_ascii_digit).collect();
+    let (_, after) = text.split_once("canvas v")?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
@@ -835,7 +835,11 @@ fn collect_ids(value: &Json, out: &mut Vec<String>) {
                 }
             }
         }
-        Json::Array(items) => items.iter().for_each(|item| collect_ids(item, out)),
+        Json::Array(items) => {
+            for item in items {
+                collect_ids(item, out);
+            }
+        }
         _ => {}
     }
 }

@@ -10,14 +10,14 @@ publish.workspace = true
 # moqui-lib http is blocking reqwest. rquickjs, croner, argon2,
 # pulldown-cmark, and totp-rs stay workspace pins. totp-rs is the second
 # factor of phase 11, with qr off as in plans/archive/License-Review.md.
-# lettre SMTP is blocking (tokio1 off). imap is blocking (native-tls off).
+# Mail (lettre, imap) is moqui-mail's (plans/Crate-Split.md).
 
 [dependencies]
 bytes = { workspace = true }
 inventory = { workspace = true }
 moqui-lib = { workspace = true }
 moqui-db = { workspace = true }
-csv = { workspace = true }
+moqui-entity = { workspace = true }
 encoding_rs = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
@@ -28,11 +28,6 @@ opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
 rquickjs = { workspace = true, features = ["macro"] }
-aes = { workspace = true }
-cbc = { workspace = true }
-des = { workspace = true }
-pbkdf2 = { workspace = true }
-md-5 = { workspace = true }
 sha2 = { workspace = true }
 memchr = { workspace = true }
 hmac = { workspace = true }
@@ -50,23 +45,13 @@ indexmap = { workspace = true }
 jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-lettre = { workspace = true, optional = true }
-imap = { workspace = true, optional = true }
-mail-parser = { workspace = true, optional = true }
-rustls = { workspace = true, optional = true }
-webpki-roots = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 totp-rs = { workspace = true }
 rust_xlsxwriter = { workspace = true, optional = true }
 calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
-similar = { workspace = true }
-yrs = { workspace = true }
 pulldown-cmark = { workspace = true }
-gix = { workspace = true, optional = true }
-gix-pack = { workspace = true, optional = true }
-notify = { workspace = true, optional = true }
 # gzip of outgoing OTLP; already linked through zip's deflate.
 flate2 = { workspace = true }
 tar = { workspace = true }
@@ -81,34 +66,22 @@ rquickjs = { workspace = true, features = ["bindgen"] }
 # A service of a feature left out is still registered and reports that the feature is not built into this host.
 [features]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-proto", "dep:prost"]
-default = ["mail", "http", "cluster-tls", "git", "image", "xlsx"]
-# Both halves of the email services.
-mail = ["smtp", "imap"]
-# Outbound SMTP: send#EmailMessage and send#EmailTemplate (password reset, notifications), test#EmailServer's SMTP step.
-# rustls reads the extra CA file (email-client tls-ca-file); lettre links it already.
-smtp = ["dep:lettre", "dep:rustls"]
-# Inbound: IMAP and POP3 poll, the mail client's sync, IDLE and import, inbound MIME, the OAuth sign-in of mail accounts
-# and the delivery of mail the host's SMTP listener received. Replies and the client's sends go out through SMTP, so
-# this includes it. The OAuth sign-in (service/mail/oauth.rs) calls the providers' token endpoints with the blocking
-# HTTP client, so it turns on http.
-imap = ["smtp", "dep:imap", "dep:mail-parser", "dep:webpki-roots", "http"]
+default = ["http", "cluster-tls", "image", "xlsx"]
 # remote-rest services, http resource locations, and the OpenSearch backend (blocking reqwest).
 http = ["moqui-lib/http"]
 # Generated self-signed cluster certificate.
 cluster-tls = ["dep:rcgen"]
-# git:// resource locations and org.moqui.impl.GitServices (gitoxide; fetch over HTTPS needs `http`).
-git = ["dep:gix", "dep:gix-pack", "http"]
 # org.moqui.impl.ImageServices (convert#Image) and elFinder thumbnails.
 image = ["dep:image"]
 # The xlsx render mode and org.moqui.impl.SpreadsheetServices.
 xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
-# moqui_core::testing, the in-memory entity facade, for the tests of the crates on this one (moqui-llm's).
-test-support = []
-# What only development needs (plans/design-dev-aide.md 3.3): the file watcher that reloads changed artifacts on a dev
-# instance. Off in moqui-core's default; the host's Dev and Debug packages turn it on.
-devtools = ["dep:notify"]
+# moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
+# moqui-git, moqui-mail).
+test-support = ["moqui-entity/test-support"]
 
 [dev-dependencies]
+# moqui_core::testing in core's own tests.
+moqui-entity = { workspace = true, features = ["test-support"] }
 # Model types only. Revue stays behind moqui-tui's ui feature, which this does not turn on.
 moqui-tui = { workspace = true, default-features = false, features = ["model"] }
 

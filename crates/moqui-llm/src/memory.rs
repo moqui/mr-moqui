@@ -523,8 +523,8 @@ pub fn active_lessons(facade: &EntityFacade, user_id: &str, anchor: &Anchor, max
                 let mut current = path.as_str();
                 while current.len() > "/apps".len() {
                     paths.push(Value::string(current));
-                    current = match current.rfind('/') {
-                        Some(at) => &current[..at],
+                    current = match current.rsplit_once('/') {
+                        Some((parent, _)) => parent,
                         None => break,
                     };
                 }

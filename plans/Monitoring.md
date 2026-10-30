@@ -121,7 +121,7 @@ This is the code as it stood when the plan was written. M1 and M2 replaced the l
   - There is no `tracing-subscriber`, and no OpenTelemetry, prost or tonic crate in `Cargo.lock`.
 - **Spans.** There are two `tracing` spans:
   - `artifact`, opened at each artifact-stack push and closed at pop ([`context/artifact.rs`](../crates/moqui-core/src/context/artifact.rs)). Screens, transitions, services, entities, REST and LLM calls all push frames.
-  - `sql`, in [`entity/exec.rs`](../crates/moqui-core/src/entity/exec.rs).
+  - `sql`, in [`entity/exec.rs`](../crates/moqui-entity/src/entity/exec.rs).
   - There is no request span and no job span.
 - **Hits.** `ExecutionContext::pop` calls `count_artifact_hit` ([`context/factory.rs`](../crates/moqui-core/src/context/factory.rs)).
   - [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs) queues ArtifactHit rows and 900 s ArtifactHitBin bins, and writes them on the scheduler tick and at shutdown.
@@ -337,7 +337,7 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 
 **ArtifactHit and ArtifactHitBin (M2)**
 - **Removed:**
-  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../crates/moqui-core/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
+  - Entities: ArtifactHit, ArtifactHitBin and the ArtifactHitReport view (`ServerEntities.xml`), their fence rows ([`entity/fence.rs`](../crates/moqui-entity/src/entity/fence.rs)), and the nontransactional-group note in `MoquiDefaultConf.xml`.
   - Recording: [`context/hits.rs`](../crates/moqui-core/src/context/hits.rs), `count_artifact_hit`, and the bin flush at shutdown in `moqui-host`.
   - Screens and REST: the System `ArtifactHitSummary.xml` and `ArtifactHitBins.xml` screens, and their REST list entries in `tools/service/moqui.rest.xml`.
   - Cleanup: `clean#ArtifactData` and its `clean_ArtifactData_daily` job, replaced by the telemetry retention job.
@@ -415,7 +415,7 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 | `content_type` | `http.response.header.content-type` |
 | `visitor_id` | `moqui.visitor.id` |
 
-- **Both backends.** The comments in `logs.rs` and `LogViewer.xml` say log indexes exist only on OpenSearch. That is stale: Postgres keeps them too (`keeps_log_indexes`, `crates/moqui-host/tests/search_logs_postgres.rs`). `otel_logs` is on both backends as well.
+- **Both backends.** The comments in `logs.rs` and `LogViewer.xml` say log indexes exist only on OpenSearch. That is stale: Postgres keeps them too (`keeps_log_indexes`, `crates/moqui-host/tests/it/search_logs_postgres.rs`). `otel_logs` is on both backends as well.
 
 **DataDocument Search (M3)**
 - **Removed:** `System/DataDocument/Search.xml`. The System dashboard's Data Documents box links to Explore in its place, and Edit, Export and Feed Index stay.
@@ -665,7 +665,7 @@ Light plan. Each milestone ends with tests and an overhead measurement against t
 - Tests:
   - span tree shape for a screen, service and entity call
   - propagation across `CallJob`
-  - Postgres-backend index and search (like `crates/moqui-host/tests/search_logs_postgres.rs`)
+  - Postgres-backend index and search (like `crates/moqui-host/tests/it/search_logs_postgres.rs`)
   - a failed export does not fail the request
 
 **M2: metrics, logs and panels; retire hits and log shipping**
@@ -796,7 +796,7 @@ Commands, from the repository root, with embedded PostgreSQL and Chromium availa
 cargo test -p moqui-core --features telemetry --lib --offline -- --test-threads=4
 cargo test -p moqui-tui --offline
 cargo test -p moqui-host --lib --offline -- --test-threads=1
-cargo test -p moqui-host --test monitor_edge --test report_monitoring --test report_alerts --test report_schedule_lock --test telemetry_rollup --test monitor_readers --test monitor_tui --test search_logs_postgres --test report_documents --test mantle_search --no-fail-fast --offline -- --test-threads=1
+cargo test -p moqui-host --test it --offline -- monitor_edge:: report_monitoring:: report_alerts:: report_schedule_lock:: telemetry_rollup:: monitor_readers:: monitor_tui:: search_logs_postgres:: report_documents:: mantle_search::
 cargo test -p moqui-host --test tui_screens --offline gallery_screens -- --exact --nocapture
 target/develop/moqui test framework --spec ScreenHtml,ScreenQvt --db none
 target/develop/moqui test-client tools --serve --spec Monitoring
@@ -808,9 +808,9 @@ cargo --offline lint-min
 Against disposable services (OpenSearch on 19200, a Collector on 14318; the tests use prefixed indexes and scratch databases, and the Collector-forwarding test starts its own container with `--pull=never`):
 
 ```sh
-MONITOR_READER_OPENSEARCH_URL=http://127.0.0.1:19200 cargo test -p moqui-host --test monitor_readers --test telemetry_rollup --test report_documents --offline -- --ignored --test-threads=1 --nocapture
+MONITOR_READER_OPENSEARCH_URL=http://127.0.0.1:19200 cargo test -p moqui-host --test it --offline -- monitor_readers:: telemetry_rollup:: report_documents:: --ignored --test-threads=1 --nocapture
 MONITOR_OPENSEARCH_URL=http://127.0.0.1:19200 cargo test -p moqui-core --features telemetry --lib --offline search::opensearch::tests::monitoring_aggregations_and_cursor_on_live_opensearch -- --ignored --exact --nocapture
-MONITOR_COLLECTOR_URL=http://127.0.0.1:14318 cargo test -p moqui-host --test monitor_edge --offline -- --ignored --test-threads=1 --nocapture
+MONITOR_COLLECTOR_URL=http://127.0.0.1:14318 cargo test -p moqui-host --test it --offline -- monitor_edge:: --ignored --test-threads=1 --nocapture
 ```
 
 ### Overhead

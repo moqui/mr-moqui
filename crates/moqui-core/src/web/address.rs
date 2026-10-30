@@ -106,10 +106,9 @@ pub fn masked(address: IpAddr, prefix: u8) -> IpAddr {
 /// `Forwarded` style `for=` pair.
 pub fn parse_hop(text: &str) -> Option<IpAddr> {
     let mut text = text.trim();
-    if let Some(rest) = text
-        .get(..4)
-        .filter(|start| start.eq_ignore_ascii_case("for="))
-        .map(|_| &text[4..])
+    if let Some((_, rest)) = text
+        .split_at_checked(4)
+        .filter(|(start, _)| start.eq_ignore_ascii_case("for="))
     {
         text = rest.split(';').next().unwrap_or("").trim();
     }

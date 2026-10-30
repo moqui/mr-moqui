@@ -13,7 +13,7 @@
  */
 
 //! Function registry for `type="rust"` services. Each function registers under its Rust path, down to the function
-//! name (`moqui_core::service::mail::send_template`). The service element's `location` is that path.
+//! name (`moqui_core::service::tools::print_document`). The service element's `location` is that path.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -48,29 +48,8 @@ static REGISTRY: OnceLock<BTreeMap<&'static str, RustServiceFn>> = OnceLock::new
 /// prefix that matches decides. A service at one of these locations still loads in a build without the feature, and a
 /// call reports that the feature is not built into this host.
 const FEATURE_LOCATIONS: &[(&str, &str, bool)] = &[
-    ("moqui_core::service::git::", "git", cfg!(feature = "git")),
-    ("moqui_core::service::git_hosting::", "git", cfg!(feature = "git")),
     ("moqui_core::service::images::", "image", cfg!(feature = "image")),
     ("moqui_core::service::spreadsheet::", "xlsx", cfg!(feature = "xlsx")),
-    (
-        "moqui_core::service::mail::send_template",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    (
-        "moqui_core::service::mail::send_message",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    ("moqui_core::service::mail::test_server", "smtp", cfg!(feature = "smtp")),
-    (
-        "moqui_core::service::mail::push_remote_changes",
-        "smtp",
-        cfg!(feature = "smtp"),
-    ),
-    // the app's contacts hook, with or without mail built in
-    ("moqui_core::service::mail::filter_contact_addresses", "", true),
-    ("moqui_core::service::mail::", "imap", cfg!(feature = "imap")),
 ];
 
 /// The feature `location` belongs to when this build leaves that feature out.
@@ -79,6 +58,7 @@ pub(crate) fn missing_feature(location: &str) -> Option<&'static str> {
         .iter()
         .find(|(prefix, _, _)| location.starts_with(prefix))
         .and_then(|(_, feature, built)| (!built).then_some(*feature))
+        .or_else(|| crate::extension::missing_feature(location))
         .or_else(|| (location.starts_with("moqui_llm::") && !crate::llm_hooks::linked()).then_some("llm"))
 }
 
@@ -98,9 +78,8 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::backup::register(&mut map),
         super::content::register(&mut map),
         super::external_agent::register(&mut map),
-        super::mail::register(&mut map),
+        super::contacts::register(&mut map),
         super::system_sync::register(&mut map),
-        super::elfinder::register(&mut map),
         super::sso::register(&mut map),
         super::tools::register(&mut map),
         #[cfg(feature = "image")]
@@ -109,18 +88,16 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::spreadsheet::register(&mut map),
         super::shell::register(&mut map),
         super::user_keys::register(&mut map),
-        super::dav::register(&mut map),
-        super::collab::register(&mut map),
-        super::devtools::register(&mut map),
         super::chat::register(&mut map),
         super::chat_link::register(&mut map),
-        #[cfg(feature = "git")]
-        super::git::register(&mut map),
-        #[cfg(feature = "git")]
-        super::git_hosting::register(&mut map),
         crate::llm_hooks::get().map_or(Ok(()), |hooks| (hooks.register_services)(&mut map)),
     ] {
         if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    for extension in crate::extension::linked() {
+        if let Err(error) = (extension.register_services)(&mut map) {
             errors.push(error);
         }
     }

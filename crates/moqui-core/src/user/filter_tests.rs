@@ -20,7 +20,7 @@ use moqui_db::sql::Condition;
 use moqui_lib::object::Value;
 
 use super::super::session;
-use crate::context::ExecutionContextFactory;
+use crate::context::{Authz, ExecutionContextFactory, Tarpit};
 use crate::entity::EntityFacade;
 use crate::script::{clear_context_stack, set_context_name};
 
@@ -121,7 +121,7 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
 
     // The filters come from the record that allowed this frame.
     context
-        .push_checked("AT_ENTITY", VIEW, "view", true, false, None)
+        .push_checked("AT_ENTITY", VIEW, "view", Authz::Required, Tarpit::Skip, None)
         .expect("the ALL_USERS allow covers the view");
     let incoming = Condition::equals("productId", Value::string("P1"));
     let filtered = super::apply_entity_filters(VIEW, Some(incoming)).expect("user org filter");

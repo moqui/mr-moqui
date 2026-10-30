@@ -18,7 +18,7 @@
 
 use std::path::Path;
 
-use moqui_core::devtools::index::{self, ArtifactRow, Direction};
+use moqui_devkit::index::{self, ArtifactRow, Direction};
 use moqui_llm::run::context::TurnContext;
 use moqui_llm::tools::format::ToolError;
 use moqui_llm::tools::schema::{object, Property};

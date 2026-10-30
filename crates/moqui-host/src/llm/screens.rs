@@ -24,11 +24,12 @@
 //! pool through the in-process transport. A session is a cache: the conversation keeps its state.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::screen::{RenderOptions, RenderOrigin, TransitionGate};
+use moqui_lib::sync::lock;
 use moqui_llm::screen::{
     self, ApprovalGrant, BrowserState, FieldChange, FieldConflict, FollowEvent, OpenSpec, PendingWrite, ScreenAnswer,
     ScreenCommand, ScreenError, ScreenSessions, ScreenState,
@@ -102,7 +103,7 @@ impl AgentLink {
     }
 
     fn take_held(&self) -> Option<HeldRequest> {
-        self.held.lock().unwrap_or_else(PoisonError::into_inner).take()
+        lock(&self.held).take()
     }
 
     /// Keep what the gate held on the request just made, if it held one: `true` when it did.
@@ -110,7 +111,7 @@ impl AgentLink {
         let Some(body) = self.link.take_held() else {
             return false;
         };
-        *self.held.lock().unwrap_or_else(PoisonError::into_inner) = Some(HeldRequest {
+        *lock(&self.held) = Some(HeldRequest {
             url: self.link.resolve(url),
             method: method.to_ascii_uppercase(),
             fields: fields.clone(),
@@ -120,10 +121,7 @@ impl AgentLink {
     }
 
     fn held_text(&self) -> String {
-        let transition = self
-            .held
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        let transition = lock(&self.held)
             .as_ref()
             .and_then(|held| held.body["heldWrite"]["transition"].as_str().map(str::to_string))
             .unwrap_or_default();
@@ -228,7 +226,7 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>) {
 impl ScreenRegistry {
     /// Drop the sessions idle past [`IDLE`]; one in use is left.
     fn reap(&self) {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.live);
         live.retain(|id, entry| match entry.held.try_lock() {
             Ok(held) => {
                 let keep = held.last_used.elapsed() < IDLE;
@@ -247,7 +245,7 @@ impl ScreenRegistry {
     /// The session `id` when it is `owner`'s.
     fn get(&self, id: &str, owner: &str) -> Option<Arc<Mutex<Held>>> {
         self.reap();
-        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = lock(&self.live);
         let entry = live.get(id)?;
         (entry.owner == owner).then(|| Arc::clone(&entry.held))
     }
@@ -256,7 +254,7 @@ impl ScreenRegistry {
     /// least recently used one that no command holds now ends. When all of them are busy the new one is refused,
     /// never let past the limit; so is one past [`MAX_SESSIONS`] on the node.
     fn make_room(&self, owner: &str) -> Result<(), ScreenError> {
-        let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut live = lock(&self.live);
         let mine: Vec<(String, Option<Instant>)> = live
             .iter()
             .filter(|(_, entry)| entry.owner == owner)
@@ -354,7 +352,7 @@ impl ScreenSessions for ScreenRegistry {
             spec.username,
             spec.conversation_id
         );
-        self.live.lock().unwrap_or_else(PoisonError::into_inner).insert(
+        lock(&self.live).insert(
             id.clone(),
             Entry {
                 owner: spec.user_id.clone(),
@@ -367,7 +365,7 @@ impl ScreenSessions for ScreenRegistry {
 
     fn find(&self, owner: &str, conversation_id: &str) -> Option<String> {
         self.reap();
-        let live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = lock(&self.live);
         live.iter()
             .find(|(_, entry)| entry.owner == owner && entry.conversation_id == conversation_id)
             .map(|(id, _)| id.clone())
@@ -375,7 +373,7 @@ impl ScreenSessions for ScreenRegistry {
 
     fn command(&self, id: &str, owner: &str, command: &ScreenCommand) -> Result<ScreenAnswer, ScreenError> {
         let held = self.get(id, owner).ok_or(ScreenError::NotFound)?;
-        let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = lock(&held);
         held.last_used = Instant::now();
         if !command.agent_id.is_empty() {
             held.agent_id.clone_from(&command.agent_id);
@@ -389,7 +387,7 @@ impl ScreenSessions for ScreenRegistry {
 
     fn sync(&self, id: &str, owner: &str, state: &BrowserState) -> Result<Vec<FollowEvent>, ScreenError> {
         let held = self.get(id, owner).ok_or(ScreenError::NotFound)?;
-        let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = lock(&held);
         held.last_used = Instant::now();
         held.link
             .gate(&held.agent_id, held.run_id.as_deref(), TransitionGate::Hold);
@@ -472,7 +470,7 @@ impl ScreenSessions for ScreenRegistry {
             args_hash: grant.args_hash.clone(),
         };
         if let Some(held) = self.get(id, owner) {
-            let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut held = lock(&held);
             held.last_used = Instant::now();
             held.agent_id.clone_from(&grant.agent_id);
             held.run_id.clone_from(&grant.run_id);
@@ -507,13 +505,7 @@ impl ScreenSessions for ScreenRegistry {
     }
 
     fn close(&self, id: &str) {
-        if self
-            .live
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(id)
-            .is_some()
-        {
+        if lock(&self.live).remove(id).is_some() {
             tracing::info!("agent screen session {id} closed");
         }
     }
@@ -528,7 +520,7 @@ impl ScreenRegistry {
             return Err(ScreenError::NotFound);
         }
         let session = self.get(id, owner).map(|held| {
-            let held = held.lock().unwrap_or_else(PoisonError::into_inner);
+            let held = lock(&held);
             (held.username.clone(), held.agent_id.clone())
         });
         let (username, session_agent) = match session {

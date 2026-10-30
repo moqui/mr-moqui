@@ -177,13 +177,13 @@ pub fn transition_info(
     let tree = walk(&facade, factory, &root, None, 0, &mut vec![root.location.clone()]);
     let mut paths = Vec::new();
     find_paths(&tree, &def.location, "", &mut paths);
-    if paths.len() != 1 {
+    let [path] = paths.as_slice() else {
         return Err(Error::new(if paths.is_empty() {
             "Screen is not mounted under the selected root"
         } else {
             "Screen is mounted more than once under the selected root"
         }));
-    }
+    };
     // The implicit `actions` transition runs the screen's actions, so it takes the screen's parameters.
     let declared = if transition.implicit == super::definition::Implicit::Actions {
         &def.parameters
@@ -210,7 +210,7 @@ pub fn transition_info(
         "location".to_string() => Value::string(location),
         "name".to_string() => Value::string(name),
         "method".to_string() => Value::string(method.to_ascii_lowercase()),
-        "path".to_string() => Value::string(format!("{}/{name}", paths[0])),
+        "path".to_string() => Value::string(format!("{path}/{name}")),
         "serviceName".to_string() => transition.single_service.as_deref().map_or(Value::Null, Value::string),
         "pathParameters".to_string() => Value::List(transition.path_parameters.iter().map(Value::string).collect()),
         "parameterMap".to_string() => Value::Map(parameters),

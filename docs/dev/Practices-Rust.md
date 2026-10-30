@@ -6,8 +6,8 @@ code goes, how a crate is organized, how tests are kept, and the idioms to use. 
 [Google's Rust style guide](https://google.github.io/styleguide/rustguide.html) where that helps this code, and says
 where MR Moqui departs from it on purpose (§8).
 
-The review that applies these practices to the existing code, with its targets and results, is
-[Rust-Practices-Review](../../plans/Rust-Practices-Review.md).
+The first pass of applying these practices to the existing code, with its targets, results and the sites left, is
+[Rust-Practices-Review](../../plans/archive/Rust-Practices-Review.md) (completed 2026-10-30).
 
 Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organization-within-a-crate) ·
 [3 tests](#3-tests) · [4 working on rust code](#4-working-on-rust-code) ·
@@ -18,22 +18,34 @@ Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organ
 ## 1. Crates and where code goes
 
 One workspace, one `src/` tree per crate. The cut and its reasons are in
-[Crate-Layout](../../plans/archive/Crate-Layout.md). Dependencies point one way:
+[Crate-Layout](../../plans/archive/Crate-Layout.md), and the splits under way in
+[Crate-Split](../../plans/Crate-Split.md). Dependencies point one way:
 
 ```
-moqui (bin) → moqui-host → moqui-llm, moqui-tui (optional features)
-              moqui-host → moqui-core → moqui-db → moqui-lib
-moqui-browser → moqui-core (default-features = false)
+moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report, moqui-collab, moqui-dav, moqui-devkit
+              moqui-host → moqui-drivers → moqui-core
+              moqui-host → moqui-core → moqui-entity → moqui-db → moqui-lib
+moqui-llm → moqui-devkit
+moqui-llm, moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-dav, moqui-devkit → moqui-core
+moqui-browser → moqui-core (default-features = false), moqui-report, moqui-dav
 ```
 
 | Crate | What belongs there |
 | --- | --- |
 | `moqui-lib` | Helpers that need no ExecutionContext and know nothing of the framework: text, numbers, dates, XML nodes, barcodes, `sync`. |
 | `moqui-db` | The entity model, SQL text and dialects. No facades and no database driver. |
+| `moqui-entity` | The entity facade, the transaction manager and the `DbDriver` port. No ExecutionContext: what it needs of the thread's context (the user, authorization, scripts, services, entity ECA rules) it calls through `moqui_entity::hooks`, which core fills. Core re-exports it at `moqui_core::entity`, `transaction`, `driver` and `context::Error`; code above core uses those paths. |
 | `moqui-core` | The framework: the ExecutionContext and facades, screens, services, scripts. Synchronous, on `std::thread`. |
 | `moqui-llm` | The agent runtime and model providers. Core reaches it only through the hook traits in `moqui_core::llm_hooks`, so an edit here does not rebuild the framework. |
+| `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/Crate-Split.md)). |
+| `moqui-mail` | The email services: outbound SMTP and, under its `imap` feature, IMAP and POP3, the mail client's sync, IDLE, import and OAuth sign-in, and the delivery of mail the host's SMTP listener received. A framework crate, as `moqui-git`. |
+| `moqui-report` | Reports, dashboards and their alerts and annotations, scheduled report delivery and the monitoring sources' ingest keys. A framework crate, as `moqui-git`, linked in every build and in the browser. |
+| `moqui-collab` | Co-edited documents (a Yjs document per record, on yrs) and `org.moqui.impl.CollabServices`. A framework crate, as `moqui-git`, linked in every host build and left out of the browser. |
+| `moqui-dav` | The DAV server (WebDAV over the drives, CalDAV and CardDAV), the `VCard` and `ICalendar` tools and the elFinder connector. A framework crate, as `moqui-git`, linked in every build and in the browser. |
+| `moqui-devkit` | The development kit: reload and the file watcher (its `watch` feature), `moqui check`, the artifact index, the Groovy converter, typegen (`moqui types`) and the spec runner (`moqui test`). A framework crate, linked in every host build; what core itself needs (`is_dev_instance`, restart, the observed calls) stays in `moqui_core::devtools`. |
 | `moqui-tui` | The terminal client of the `tui` render mode. It does no I/O; the host's link answers its calls. |
-| `moqui-host` | The process edge: the HTTP server (Tokio, axum), drivers, process spawn, the integration tests. |
+| `moqui-drivers` | The database drivers: Postgres on the host's own blocking client, MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens the entity facade over them. No Tokio. The host links it as `moqui_host::db` and forwards its features. |
+| `moqui-host` | The process edge: the HTTP server (Tokio, axum), process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
 | `moqui` | The binary: the CLI and the build packages and their features ([Packaging](../Build-Test.md#packages)). |
 
@@ -43,8 +55,14 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
 
 - Put code in the lowest crate that can hold it. A helper that needs no ExecutionContext goes in `moqui-lib`.
 - Never call up the chain. When a lower crate needs something a higher one supplies, define a trait or hook in the
-  lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm`.
-- Do not move code between crates as part of other work; a new crate or a move needs its own plan.
+  lower crate and install the implementation from above, as `moqui_core::llm_hooks` does for `moqui-llm` and core's
+  `entity_hooks.rs` does for `moqui_entity::hooks`. A crate that only adds services, tools and resource providers
+  submits a `moqui_core::extension::Extension` (`moqui-git`, `moqui-mail`, `moqui-report`, `moqui-collab`, `moqui-dav`, `moqui-devkit`).
+- An entity facade test that needs an entered ExecutionContext, a script or a service is in core
+  (`crates/moqui-core/src/entity/*_tests.rs`); the others are in `moqui-entity`, where no hooks are linked and each
+  hook answers as with no context entered.
+- Do not move code between crates as part of other work; a new crate or a move needs its own plan
+  ([Crate-Split](../../plans/Crate-Split.md) is the current one, with the seam rules and the files a new crate touches).
 - A feature-gated module has an off stub with the same API, so callers need no `cfg` of their own:
 
   ```rust
@@ -96,11 +114,18 @@ a reader (or an agent) loading the code does not load its tests too.
   module to the single `tests/it/` binary (see `tests/it/main.rs`) rather than a new file in `tests/`. Shared helpers
   are in `tests/common/`. A slow or opt-in suite (the Gate 3 browser tests, the speed tests) is a `[[test]]` with
   `test = false` in `Cargo.toml`, run by name.
+- **Slow tests.** A test over about 15 seconds is slow and only for a special case (a specific scenario, not
+  coverage); write tests to run in well under that. One over 30 seconds is `#[ignore = "slow: ..."]` (`cargo
+  test-slow` runs those), or an opt-in `[[test]]` that `./moq test-all` runs only with `--slow` (`gate3_browser`).
+  Never run one without the user's permission ([Build-Test](../Build-Test.md#slow-tests), AGENTS.md).
 - **Fixtures and goldens** go in a `testdata/` directory beside the code that reads them. A golden is rewritten by an
   environment variable, never by hand (`UPDATE_GOLDEN=1`, `MOQUI_REGENERATE_VECTORS=1`), and the diff is read before
   it is committed.
 - Tests may `unwrap`, `expect` and index; the rules of §5 are for non-test code.
-- A test that needs a process property or starts a server takes the serial lock (`common::serial` in the host).
+- A test that needs a process property or starts a server runs in a process of its own, beside the others: in the
+  host it begins with `if !crate::common::own_process() { return; }` (`tests/common`), and the gate starts and
+  `common::serial` fail without it. A server's boot writes process-wide properties, so two in one process would share
+  them; a test that only loads data with no property takes `common::shared` in the test binary's process.
 - JavaScript specs (`*.spec.js`) run under `moqui test` and `moqui test-client`, not Node ([Testing](../Build-Test.md#component-specs),
   [Client-Testing](Client-Testing.md)).
 
@@ -224,7 +249,7 @@ let (Some(&first), Some(&last)) = (buckets.keys().next(), buckets.keys().next_ba
 
 ### 5f. Already right
 
-- `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-core/src/entity/facade.rs`) states its
+- `downcast_mut::<T>().expect("slot type matches its TypeId")` (`crates/moqui-entity/src/entity/facade.rs`) states its
   invariant. This is the model for `expect` messages: say why the value is there, not "failed to …".
 - `unwrap_or`, `unwrap_or_default`, `unwrap_or_else(PoisonError::into_inner)`.
 
@@ -245,11 +270,13 @@ Take `&T` when the body only reads through the value, and so does everything it 
 passing `&factory`, because deref coercion turns `&Arc<T>` into `&T`.
 
 ```rust
-// before
-fn preview_overlay(factory: &Arc<ExecutionContextFactory>, token: &str) -> Option<Overlay>
-// after, when neither it nor its callees clone, store, or spawn with it
-fn preview_overlay(factory: &ExecutionContextFactory, token: &str) -> Option<Overlay>
+// before (crates/moqui-devkit/src/reload.rs)
+fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool
+// after: neither it nor its callees clone, store, or spawn with it
+fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) -> bool
 ```
+
+dev-aide's `preview_overlay` looks the same but keeps `&Arc`: it is a `screen::overlay::Provider`.
 
 Work bottom-up: change a leaf function first, then its callers. Keep `&Arc<T>` when:
 - the function or a callee calls `Arc::clone`;
@@ -300,8 +327,8 @@ are shared on purpose:
 - **Type annotations.** Annotate the result of `.parse()`, `.into()` and `.collect()` when the type is not obvious,
   on the binding: `let port: u16 = text.parse()?`, not `text.parse::<u16>()?`.
 - **`format!`** to join three or more strings and to fill in a template, not `+` chains or `str::replace` on a literal.
-- **Locks** go through `moqui_lib::sync::{lock, read, write}`, which recover a poisoned lock (§8). Do not write a local
-  helper or a non-test `.lock().unwrap()`.
+- **Locks** go through `moqui_lib::sync::{lock, read, write}`, and `Condvar` waits through `wait` and `wait_timeout`
+  there, which recover a poisoned lock (§8). Do not write a local helper or a non-test `.lock().unwrap()`.
 - **`unsafe`.** Add none. Every existing `unsafe` block has a `// SAFETY:` comment and every `unsafe fn` a `# Safety`
   doc (`clippy::undocumented_unsafe_blocks`).
 - **`#[must_use]`** on a function when dropping its result is a bug, such as a guard or a computed "changed" flag. The
@@ -322,8 +349,10 @@ Do not "fix" these:
   everyone out.
 - **async and threads.** `moqui-host` uses Tokio and axum. `moqui-core` is synchronous on `std::thread` by design. Do
   not add async to core.
-- **Few, larger crates.** Google favors small crates and a flat layout; here the crate cut of §1 stands, and modules
-  inside a crate carry the structure.
+- **Crates along hook seams.** Google favors small crates and a flat layout. Here a crate is split off only along a
+  seam a hook can carry (a register entry above core, a hook table below it), when the split saves rebuild time or
+  keeps a heavy dependency out of core ([Crate-Split](../../plans/Crate-Split.md)). Modules inside a crate carry the
+  rest of the structure; do not split by facade or by module for its own sake.
 - **Docs.** This is application code, so there is no `missing_docs`. Module docs and comments follow §2 and §4.
 - **Library-API rules** (`impl Into<T>`, returning `impl Iterator`, `#[non_exhaustive]`, generics over `dyn`). This is
   application code in one workspace, so `Vec` returns and `dyn` registries are fine.

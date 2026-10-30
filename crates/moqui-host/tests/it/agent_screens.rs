@@ -228,6 +228,9 @@ fn command() -> ScreenCommand {
 
 #[test]
 fn agent_screen_sessions_hold_writes_sync_in_and_follow() {
+    if !crate::common::own_process() {
+        return;
+    }
     let files = [
         ("component/agentscreens/component.xml", COMPONENT),
         ("component/agentscreens/screen/AgentScreens.xml", SCREEN),

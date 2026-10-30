@@ -24,18 +24,24 @@ fn email_services_resolve_rust_locations() {
     ];
     let (defs, failures) = super::definitions_in(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
+    // moqui-mail's, which core's tests do not link: each still loads, and a call reports its feature missing
     let expect = [
-        ("send#Email", "moqui_core::service::mail::send_template"),
-        ("send#EmailTemplate", "moqui_core::service::mail::send_template"),
-        ("send#EmailMessage", "moqui_core::service::mail::send_message"),
-        ("poll#EmailServer", "moqui_core::service::mail::poll_server"),
+        ("send#Email", "moqui_mail::send_template", "smtp"),
+        ("send#EmailTemplate", "moqui_mail::send_template", "smtp"),
+        ("send#EmailMessage", "moqui_mail::send_message", "smtp"),
+        ("poll#EmailServer", "moqui_mail::poll_server", "imap"),
     ];
-    for (name, location) in expect {
+    for (name, location, feature) in expect {
         let full = format!("org.moqui.impl.EmailServices.{name}");
         let def = defs.iter().find(|def| def.name == full).expect(name);
         assert_eq!(def.kind, super::ServiceKind::Rust, "{full}");
         assert_eq!(def.location, location, "{full}");
-        assert!(def.rust_fn.is_some(), "{full}");
+        assert!(def.rust_fn.is_none(), "{full}");
+        assert_eq!(
+            super::super::rust_services::missing_feature(location),
+            Some(feature),
+            "{full}"
+        );
     }
     for name in ["save#EcaEmailMessage", "send#ScreenRenderEmail"] {
         let full = format!("org.moqui.impl.EmailServices.{name}");
@@ -81,8 +87,8 @@ fn rust_service_with_a_bad_location_stays_out_and_keeps_the_neighbor() {
         "rust",
         r#"<services>
                 <service verb="missing" noun="Location" type="rust"/>
-                <service verb="unknown" noun="Location" type="rust" location="moqui_core::service::mail::no_such"/>
-                <service verb="has" noun="Actions" type="rust" location="moqui_core::service::mail::send_template">
+                <service verb="unknown" noun="Location" type="rust" location="moqui_core::service::contacts::no_such"/>
+                <service verb="has" noun="Actions" type="rust" location="moqui_core::service::contacts::filter_contact_addresses">
                     <actions><set field="x" value="y"/></actions>
                 </service>
                 <service verb="plain" noun="Neighbor"/>

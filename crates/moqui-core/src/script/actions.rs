@@ -15,9 +15,10 @@
 //! XML actions. One cached script per action XML text. Names in that script are bare.
 
 use std::collections::HashSet;
-use std::sync::{mpsc, Mutex, OnceLock, PoisonError};
+use std::sync::{mpsc, Mutex, OnceLock};
 
 use moqui_lib::node::MNode;
+use moqui_lib::sync::lock;
 use rquickjs::{Ctx, Object};
 
 use super::runtime::ScriptText;
@@ -112,10 +113,9 @@ pub fn eval_condition_group(and_xml: &str) -> Result<bool, Error> {
 /// the statement. With `MOQUI_ACTIONS_DEBUG` set, the element comment above it is shown too.
 fn with_source_line(err: Error, source: &str, file_name: &str) -> Error {
     let message = err.message();
-    let prefix = format!("{file_name}:");
     let line = message
-        .find(&prefix)
-        .and_then(|at| message[at + prefix.len()..].split(':').next()?.parse::<usize>().ok());
+        .split_once(&format!("{file_name}:"))
+        .and_then(|(_, after)| after.split(':').next()?.parse::<usize>().ok());
     let Some(line) = line.filter(|line| *line > 0) else {
         return err;
     };
@@ -167,17 +167,14 @@ pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
 
 fn generated(xml: &str) -> Result<ScriptText, Error> {
     let scripts = generated_scripts();
-    let cached = scripts.lock().unwrap_or_else(PoisonError::into_inner).get(xml);
+    let cached = lock(scripts).get(xml);
     if let Some(script) = cached {
         return Ok(script);
     }
     // Not under the lock: two threads may generate the same text, and the second insert is the same script.
     let script = ScriptText::new(generate(xml)?);
     let bytes = xml.len() + script.text().len();
-    scripts
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert_sized(xml.to_string(), script.clone(), bytes);
+    lock(scripts).insert_sized(xml.to_string(), script.clone(), bytes);
     Ok(script)
 }
 
@@ -234,10 +231,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
         Mutex::new(sender)
     });
     let (reply, result) = mpsc::channel();
-    let sent = sender
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .send((xml.to_string(), debug, reply));
+    let sent = lock(sender).send((xml.to_string(), debug, reply));
     match sent {
         Ok(()) => result
             .recv()

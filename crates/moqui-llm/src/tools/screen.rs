@@ -138,7 +138,7 @@ impl AgentTool for ScreenTool {
             emit_follow(ctx, &answer.follow, stamp.as_ref());
         }
         match answer.held.take() {
-            Some(write) => held_write(ctx, &factory, &answer, write),
+            Some(write) => held_write(ctx, &factory, &answer, &write),
             None => ToolOutcome::Done(ToolResult {
                 text: answer.text.clone(),
                 data: Some(json!({"ok": answer.ok, "path": answer.path, "parameters": answer.parameters})),
@@ -174,12 +174,7 @@ impl AgentTool for ScreenTool {
 
 /// Keep the session's state for the conversation: a step writes it only while its node holds the run's lease, a
 /// call with no run only for its own user. A state with no path (a write run with no session) is not kept.
-fn keep_state(
-    ctx: &TurnContext<'_>,
-    factory: &Arc<ExecutionContextFactory>,
-    conversation_id: &str,
-    state: &ScreenState,
-) {
+fn keep_state(ctx: &TurnContext<'_>, factory: &ExecutionContextFactory, conversation_id: &str, state: &ScreenState) {
     if state.path.is_empty() {
         return;
     }
@@ -221,9 +216,9 @@ fn refused(answer: &ScreenAnswer, why: &str) -> ToolOutcome {
 /// act on, never a card the user cannot approve.
 fn held_write(
     ctx: &mut TurnContext<'_>,
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     answer: &ScreenAnswer,
-    write: PendingWrite,
+    write: &PendingWrite,
 ) -> ToolOutcome {
     let transition = write.transition().to_string();
     let location = write.held["screenLocation"].as_str().unwrap_or_default().to_string();
@@ -265,7 +260,7 @@ fn held_write(
             return refused(answer, &format!("{transition} could not be checked ({error}), so nothing was saved"))
         }
     }
-    let request = approval_request(answer, &write);
+    let request = approval_request(answer, write);
     match approval::request(ctx, &request) {
         Requested::Pause(pause) => ToolOutcome::Pause(pause),
         Requested::Refused(why) => refused(answer, &why),
@@ -337,11 +332,7 @@ fn approval_request(answer: &ScreenAnswer, write: &PendingWrite) -> ApprovalRequ
 
 /// Run an approved held write: the conflict check first (the screen rendered again and its values compared with the
 /// originals), then the exact request under the approval's grant, then the result recorded on the approval.
-fn execute(
-    ctx: &mut TurnContext<'_>,
-    factory: &Arc<ExecutionContextFactory>,
-    view: &approval::ApprovalView,
-) -> ToolOutcome {
+fn execute(ctx: &mut TurnContext<'_>, factory: &ExecutionContextFactory, view: &approval::ApprovalView) -> ToolOutcome {
     let write: PendingWrite = match serde_json::from_value(view.args.clone()) {
         Ok(write) => write,
         Err(error) => return ToolOutcome::Failed(format!("the approved write does not read: {error}")),
@@ -455,7 +446,7 @@ fn add_lessons(ctx: &TurnContext<'_>, text: &mut String, path: &str) {
 }
 
 /// The session reads its screen again after the user saved the write themselves.
-fn refresh(ctx: &mut TurnContext<'_>, factory: &Arc<ExecutionContextFactory>, write: &PendingWrite) {
+fn refresh(ctx: &mut TurnContext<'_>, factory: &ExecutionContextFactory, write: &PendingWrite) {
     let Some(sessions) = screen::sessions() else {
         return;
     };
@@ -540,7 +531,7 @@ fn command_of(args: &Json) -> Result<ScreenCommand, String> {
 /// Run `command` in the conversation's session, opening it (or opening it again, when this node no longer has it)
 /// from the state the conversation kept.
 fn run_command(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     sessions: &dyn ScreenSessions,
     handle: &mut ScreenHandle,
     user: &crate::run::context::UserRef,
@@ -564,7 +555,7 @@ fn run_command(
 }
 
 fn open_spec(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     handle: &ScreenHandle,
     user: &crate::run::context::UserRef,
     agent: &crate::run::context::AgentDef,
@@ -605,8 +596,8 @@ fn open_spec(
 
 /// `text` with its last line, the outcome, replaced by `outcome`.
 fn replace_outcome(text: &str, outcome: &str) -> String {
-    let kept = match text.rfind("\n--- ") {
-        Some(at) => &text[..at],
+    let kept = match text.rsplit_once("\n--- ") {
+        Some((kept, _)) => kept,
         None if text.starts_with("--- ") => "",
         None => text,
     };
@@ -618,7 +609,7 @@ fn replace_outcome(text: &str, outcome: &str) -> String {
 }
 
 /// The follow stamp of the run's conversation ([`crate::assist::follow_stamp`]), when it has one.
-fn follow_stamp_of(factory: &Arc<ExecutionContextFactory>, ctx: &TurnContext<'_>) -> Option<FollowStamp> {
+fn follow_stamp_of(factory: &ExecutionContextFactory, ctx: &TurnContext<'_>) -> Option<FollowStamp> {
     let conversation_id = ctx.screen.as_deref().map(|handle| handle.conversation_id.clone())?;
     let facade = factory.entity()?;
     Some(crate::assist::follow_stamp(&facade, &conversation_id))

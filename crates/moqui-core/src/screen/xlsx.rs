@@ -285,11 +285,8 @@ fn cell_text(text: &str) -> Cow<'_, str> {
     if text.chars().nth(CELL_TEXT_MAX).is_none() {
         return Cow::Borrowed(text);
     }
-    let end = text
-        .char_indices()
-        .nth(CELL_TEXT_MAX - 1)
-        .map_or(text.len(), |(at, _)| at);
-    Cow::Owned(format!("{}\u{2026}", &text[..end]))
+    let kept: String = text.chars().take(CELL_TEXT_MAX - 1).collect();
+    Cow::Owned(format!("{kept}\u{2026}"))
 }
 
 fn column(index: usize) -> Result<u16, Error> {

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use moqui_lib::env;
 use moqui_lib::node::MNode;
 
-use super::error::Error;
+use super::Error;
 
 #[derive(Clone, Debug)]
 pub struct ComponentInfo {
@@ -62,6 +62,14 @@ pub fn component_entity_dirs(factory: &super::ExecutionContextFactory) -> Vec<Pa
 struct Discovery<'a> {
     framework_dir: &'a Path,
     purpose: String,
+}
+
+/// The components a factory booted on these directories loads, in load order, without booting it: the merged conf's
+/// component list, on the instance purpose the boot would set (a `dev` component loads only on a dev instance). `moqui
+/// test` keys its database snapshot by them.
+pub fn discover_components(runtime_dir: &Path, framework_dir: &Path) -> Result<Vec<ComponentInfo>, Error> {
+    let conf = super::conf::load_merged_conf(framework_dir, runtime_dir)?;
+    discover(runtime_dir, framework_dir, &conf)
 }
 
 pub(super) fn discover(runtime_dir: &Path, framework_dir: &Path, conf: &MNode) -> Result<Vec<ComponentInfo>, Error> {

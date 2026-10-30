@@ -958,8 +958,8 @@ fn resolve_relationships(
         names.insert(entity.full_name.clone(), entity.full_name.clone());
     }
     for (short_name, indexes) in by_name {
-        if indexes.len() == 1 {
-            names.insert(short_name.clone(), entities[indexes[0]].full_name.clone());
+        if let [index] = indexes.as_slice() {
+            names.insert(short_name.clone(), entities[*index].full_name.clone());
         }
     }
     for entity in entities.iter() {
@@ -1121,19 +1121,23 @@ fn pk_strings(entity: &EntityDefinition) -> Vec<String> {
 /// otherwise to the same name. With several, a `related` name that is not a related field falls
 /// back to the related single primary key on a `one` relationship.
 pub fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], target: &EntityDefinition) -> Vec<(String, String)> {
-    let pks: Vec<String> = target.pk_field_names().into_iter().map(str::to_string).collect();
+    let pks = target.pk_field_names();
     let one = relationship_type.starts_with("one");
-    if key_map.is_empty() && one {
-        return pks.into_iter().map(|pk| (pk.clone(), pk)).collect();
-    }
-    if key_map.len() == 1 {
-        let map = &key_map[0];
-        let related = match map.related.as_deref().filter(|value| !value.is_empty()) {
-            Some(related) => related.to_string(),
-            None if one && pks.len() == 1 => pks[0].clone(),
-            None => map.field_name.clone(),
-        };
-        return vec![(map.field_name.clone(), related)];
+    // The related single primary key a `one` relationship falls back to.
+    let one_pk = match pks.as_slice() {
+        &[pk] if one => Some(pk),
+        _ => None,
+    };
+    match key_map {
+        [] if one => return pks.into_iter().map(|pk| (pk.to_string(), pk.to_string())).collect(),
+        [map] => {
+            let related = match map.related.as_deref().filter(|value| !value.is_empty()) {
+                Some(related) => related.to_string(),
+                None => one_pk.map_or_else(|| map.field_name.clone(), str::to_string),
+            };
+            return vec![(map.field_name.clone(), related)];
+        }
+        _ => {}
     }
     key_map
         .iter()
@@ -1143,8 +1147,8 @@ pub fn expand_key_map(relationship_type: &str, key_map: &[KeyMap], target: &Enti
                 .clone()
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| map.field_name.clone());
-            if one && pks.len() == 1 && !target.has_field(&related) {
-                related = pks[0].clone();
+            if let Some(pk) = one_pk.filter(|_| !target.has_field(&related)) {
+                related = pk.to_string();
             }
             (map.field_name.clone(), related)
         })

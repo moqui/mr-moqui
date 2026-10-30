@@ -49,7 +49,7 @@ pub fn with_limits<T>(limits: QueryLimits, body: impl FnOnce() -> Result<T, Erro
     let _restore = Restore(old);
     body()
 }
-pub(crate) fn remaining() -> Result<Option<Duration>, Error> {
+pub fn remaining() -> Result<Option<Duration>, Error> {
     ACTIVE.with(|active| match *active.borrow() {
         None => Ok(None),
         Some(active) => {

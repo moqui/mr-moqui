@@ -105,6 +105,25 @@ pub struct Browser {
     page_mark: usize,
     /// The page test that has started and not finished. A timeout names it.
     page_current: String,
+    /// The sessions [`Browser::start_screencast`] records.
+    screencasting: HashSet<String>,
+    /// The screencast frames received and not yet taken ([`Browser::take_frames`]).
+    frames: Vec<ScreencastFrame>,
+    /// The ids of the frame acks sent, whose replies nobody waits for.
+    acks: HashSet<u64>,
+}
+
+/// One `Page.screencastFrame`: the image of a page when it changed.
+#[derive(Clone, Debug)]
+pub struct ScreencastFrame {
+    /// The page's session.
+    pub session: String,
+    /// The image, as the screencast's format (JPEG here).
+    pub data: Vec<u8>,
+    /// When the frame was drawn, Unix seconds (`metadata.timestamp`), when the browser gave it.
+    pub timestamp: Option<f64>,
+    /// When it was read, Unix seconds.
+    pub received: f64,
 }
 
 /// One `test()` the page harness reported.
@@ -210,6 +229,9 @@ impl Browser {
             page_cases: Vec::new(),
             page_mark: 0,
             page_current: String::new(),
+            screencasting: HashSet::new(),
+            frames: Vec::new(),
+            acks: HashSet::new(),
         };
         browser.set_timeout(READ_WAIT)?;
         Ok(browser)
@@ -265,6 +287,7 @@ impl Browser {
             let _ = self.call_browser("Target.disposeBrowserContext", json!({"browserContextId": context}));
         }
         self.network.remove(session);
+        self.screencasting.remove(session);
         self.problems.retain(|problem| problem.session != session);
         if self.session == session {
             self.session.clear();
@@ -430,7 +453,9 @@ impl Browser {
                 return Self::command_result(method, &message);
             }
             if let Some(other) = message["id"].as_u64() {
-                self.responses.insert(other, message);
+                if !self.acks.remove(&other) {
+                    self.responses.insert(other, message);
+                }
             }
         }
     }
@@ -552,6 +577,10 @@ impl Browser {
             self.paused.push_back(event.clone());
             return;
         }
+        if method == "Page.screencastFrame" {
+            self.screencast_frame(params, &session);
+            return;
+        }
         match method {
             "Runtime.exceptionThrown" => {
                 let details = &params["exceptionDetails"];
@@ -647,6 +676,77 @@ impl Browser {
             self.events.drain(..KEPT_EVENTS / 2);
         }
         self.events.push(event.clone());
+    }
+
+    /// Record the page of `session` with the CDP screencast: a JPEG frame each time it changes, kept until
+    /// [`Browser::take_frames`]. Each frame is acknowledged as it is read, so the browser sends the next.
+    ///
+    /// # Errors
+    ///
+    /// Returns the browser's error.
+    pub fn start_screencast(&mut self, session: &str) -> Result<(), String> {
+        self.send(
+            "Page.startScreencast",
+            json!({"format": "jpeg", "quality": 80, "everyNthFrame": 1}),
+            Some(session),
+        )?;
+        self.screencasting.insert(session.to_string());
+        Ok(())
+    }
+
+    /// Stop recording the page of `session`, when it is recorded.
+    pub fn stop_screencast(&mut self, session: &str) {
+        if self.screencasting.remove(session) {
+            let _ = self.send("Page.stopScreencast", json!({}), Some(session));
+        }
+    }
+
+    /// The sessions recorded.
+    #[must_use]
+    pub fn screencasting(&self) -> Vec<String> {
+        self.screencasting.iter().cloned().collect()
+    }
+
+    /// The frames received since the last call, in the order read.
+    pub fn take_frames(&mut self) -> Vec<ScreencastFrame> {
+        std::mem::take(&mut self.frames)
+    }
+
+    /// Keep a `Page.screencastFrame` and acknowledge it. The ack is sent without waiting for its reply, which is
+    /// dropped when it comes.
+    fn screencast_frame(&mut self, params: &Value, session: &str) {
+        if let Some(id) = params["sessionId"].as_u64() {
+            self.next_id += 1;
+            let ack_id = self.next_id;
+            let ack = json!({"id": ack_id, "method": "Page.screencastFrameAck", "params": {"sessionId": id},
+                "sessionId": session});
+            if self.acks.len() > 10_000 {
+                self.acks.clear();
+            }
+            self.acks.insert(ack_id);
+            if let Err(err) = self.ws.send(Message::Text(ack.to_string().into())) {
+                tracing::error!("the screencast frame ack of page {session}: {err}");
+            }
+        }
+        if !self.screencasting.contains(session) {
+            return;
+        }
+        let data = match base64::engine::general_purpose::STANDARD.decode(params["data"].as_str().unwrap_or("")) {
+            Ok(data) => data,
+            Err(err) => {
+                tracing::error!("a screencast frame of page {session} did not decode: {err}");
+                return;
+            }
+        };
+        let received = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64());
+        self.frames.push(ScreencastFrame {
+            session: session.to_string(),
+            data,
+            timestamp: params["metadata"]["timestamp"].as_f64(),
+            received,
+        });
     }
 
     /// Read events for `duration`, and no longer: each read waits at most what is left of it, not [`READ_WAIT`].
@@ -798,7 +898,11 @@ impl Browser {
         if event != "pass" && event != "fail" {
             return;
         }
-        let problems = self.problems[self.page_mark..]
+        // take_problems and closing a page drop problems, so the mark may be past the end
+        let problems = self
+            .problems
+            .get(self.page_mark..)
+            .unwrap_or_default()
             .iter()
             .map(|problem| format!("{}: {}", problem.kind, problem.text))
             .collect();
@@ -1001,7 +1105,7 @@ impl Browser {
                 }
             };
         }
-        let (key, code, key_code) = key_codes(key);
+        let KeyCodes { key, code, key_code } = key_codes(key);
         let typed = key.chars().count() == 1 && modifiers & 7 == 0;
         let down = if typed { "keyDown" } else { "rawKeyDown" };
         let mut event =
@@ -1056,8 +1160,26 @@ impl Browser {
     }
 }
 
+/// A key as `Input.dispatchKeyEvent` names it: the DOM key and code, and the Windows key code.
+#[derive(Debug, PartialEq, Eq)]
+struct KeyCodes {
+    key: String,
+    code: String,
+    key_code: u32,
+}
+
+impl KeyCodes {
+    fn new(key: impl Into<String>, code: impl Into<String>, key_code: u32) -> Self {
+        Self {
+            key: key.into(),
+            code: code.into(),
+            key_code,
+        }
+    }
+}
+
 /// The DOM key, code and Windows key code of a Playwright key name.
-fn key_codes(key: &str) -> (String, String, u32) {
+fn key_codes(key: &str) -> KeyCodes {
     let named = match key {
         "Enter" => Some(("Enter", 13)),
         "Escape" => Some(("Escape", 27)),
@@ -1072,21 +1194,21 @@ fn key_codes(key: &str) -> (String, String, u32) {
         "End" => Some(("End", 35)),
         "PageUp" => Some(("PageUp", 33)),
         "PageDown" => Some(("PageDown", 34)),
-        "Space" | " " => return (" ".to_string(), "Space".to_string(), 32),
+        "Space" | " " => return KeyCodes::new(" ", "Space", 32),
         _ => None,
     };
     if let Some((code, key_code)) = named {
-        return (key.to_string(), code.to_string(), key_code);
+        return KeyCodes::new(key, code, key_code);
     }
     let mut chars = key.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphabetic() => (
-            key.to_string(),
+        (Some(c), None) if c.is_ascii_alphabetic() => KeyCodes::new(
+            key,
             format!("Key{}", c.to_ascii_uppercase()),
             u32::from(c.to_ascii_uppercase()),
         ),
-        (Some(c), None) if c.is_ascii_digit() => (key.to_string(), format!("Digit{c}"), u32::from(c)),
-        _ => (key.to_string(), key.to_string(), 0),
+        (Some(c), None) if c.is_ascii_digit() => KeyCodes::new(key, format!("Digit{c}"), u32::from(c)),
+        _ => KeyCodes::new(key, key, 0),
     }
 }
 
@@ -1150,14 +1272,14 @@ impl Drop for ChildGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::key_codes;
+    use super::{key_codes, KeyCodes};
 
     #[test]
     fn keys_have_their_codes() {
-        assert_eq!(key_codes("Enter"), ("Enter".to_string(), "Enter".to_string(), 13));
-        assert_eq!(key_codes("a"), ("a".to_string(), "KeyA".to_string(), 65));
-        assert_eq!(key_codes("7"), ("7".to_string(), "Digit7".to_string(), 55));
-        assert_eq!(key_codes("Space"), (" ".to_string(), "Space".to_string(), 32));
+        assert_eq!(key_codes("Enter"), KeyCodes::new("Enter", "Enter", 13));
+        assert_eq!(key_codes("a"), KeyCodes::new("a", "KeyA", 65));
+        assert_eq!(key_codes("7"), KeyCodes::new("7", "Digit7", 55));
+        assert_eq!(key_codes("Space"), KeyCodes::new(" ", "Space", 32));
     }
 
     /// A page at https://moqui.test with no server: the webroot stylesheet and a repo file, and a parent path is not

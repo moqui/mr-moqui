@@ -25,9 +25,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use moqui_core::context::{Error, ExecutionContext};
-use moqui_core::devtools::index::{self, Direction};
 use moqui_core::entity::info;
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
+use moqui_devkit::index::{self, Direction};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
@@ -308,13 +308,12 @@ fn list_entities(
 /// The `type` attribute of a data file's `entity-facade-xml` root, read from the file's head; `None` when the file is
 /// not a data file.
 fn data_type_of(head: &str) -> Option<String> {
-    let start = head.find("<entity-facade-xml")?;
-    let tag = &head[start..];
-    let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
-    let kind = tag.find("type=").map_or(String::new(), |at| {
-        let rest = &tag[at + 5..];
-        let quote = rest.chars().next().unwrap_or('"');
-        rest[1..].split(quote).next().unwrap_or("").to_string()
+    let (_, tag) = head.split_once("<entity-facade-xml")?;
+    let tag = tag.split('>').next().unwrap_or(tag);
+    let kind = tag.split_once("type=").map_or(String::new(), |(_, rest)| {
+        let mut value = rest.chars();
+        let quote = value.next().unwrap_or('"');
+        value.as_str().split(quote).next().unwrap_or("").to_string()
     });
     Some(kind)
 }
@@ -704,6 +703,25 @@ fn load_seed_file(
 #[cfg(test)]
 mod tests {
     use serde_json::Value as Json;
+
+    #[test]
+    fn a_data_type_is_the_type_attribute_of_the_root() {
+        let kind = |head: &str| super::data_type_of(head);
+        assert_eq!(
+            kind("<?xml?>\n<entity-facade-xml type=\"seed\">\n<a/>").as_deref(),
+            Some("seed")
+        );
+        assert_eq!(kind("<entity-facade-xml type='demo'>").as_deref(), Some("demo"));
+        assert_eq!(kind("<entity-facade-xml>").as_deref(), Some(""));
+        assert_eq!(kind("<entity-facade-xml><a type=\"x\"/>").as_deref(), Some(""));
+        assert_eq!(kind("<entities/>"), None);
+        // a head cut off after the attribute name, or a quote that is not ASCII, is read without a panic
+        assert_eq!(kind("<entity-facade-xml type=").as_deref(), Some(""));
+        assert_eq!(
+            kind("<entity-facade-xml type=\u{201c}seed\u{201c}>").as_deref(),
+            Some("seed")
+        );
+    }
 
     #[test]
     fn the_changed_records_are_those_added_or_changed() {

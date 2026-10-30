@@ -14,7 +14,7 @@
 
 //! The read fence (plans/LLM-A2A-Assist.md 4.6) on service calls: a service labelled READ that writes fails, async,
 //! remote, mail and print calls, tx-commit rules, script HTTP and SQL that may write are refused, and the allowlisted
-//! entities are written.
+//! entities are written. The mail send's refusal is tested in moqui-mail.
 
 use std::collections::BTreeMap;
 
@@ -165,7 +165,7 @@ fn the_allowlisted_entities_are_written_under_the_fence() {
 }
 
 #[test]
-fn async_remote_mail_and_print_calls_are_refused_under_the_fence() {
+fn async_remote_and_print_calls_are_refused_under_the_fence() {
     let (facade, ctx) = fence_context("effects");
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();
@@ -183,18 +183,6 @@ fn async_remote_mail_and_print_calls_are_refused_under_the_fence() {
         errors.contains(FENCE_ERROR) && errors.contains("a remote call"),
         "{errors}"
     );
-
-    // mail
-    #[cfg(feature = "smtp")]
-    {
-        let message = BTreeMap::from([("emailMessageId".to_string(), Value::string("NO_SUCH_MESSAGE"))]);
-        let _ = super::sync("org.moqui.impl.EmailServices.send#EmailMessage", &message);
-        let errors = take_errors(&ctx);
-        assert!(
-            errors.contains(FENCE_ERROR) && errors.contains("mail (send#EmailMessage)"),
-            "{errors}"
-        );
-    }
 
     // printing
     let print_job: indexmap::IndexMap<String, Value> = [("printJobId".to_string(), Value::string("FENCED_JOB"))]

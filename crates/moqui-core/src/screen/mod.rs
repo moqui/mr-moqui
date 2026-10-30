@@ -22,9 +22,9 @@ pub(crate) mod aggregate;
 mod cache;
 mod definition;
 mod dispatch;
-pub(crate) mod form;
+pub mod form;
 pub mod gate;
-pub(crate) mod generate;
+pub mod generate;
 pub(crate) mod html_text;
 pub mod info;
 pub(crate) mod menu;
@@ -71,8 +71,9 @@ pub use gate::{
     clear_transition_observer, held_write_hash, install_transition_observer, interactive_request, HeldWrite,
     InteractiveRequest, RenderOptions, RenderOrigin, TransitionGate, TransitionObserver, TransitionOutcome,
 };
-#[cfg(test)]
-pub(crate) use pdf::pdf_test_lock;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use pdf::pdf_test_lock;
 pub use pdf::{
     clear_pdf_engine, install_pdf_engine, install_pdf_unavailable, PdfEngine, PdfLibrary, PdfPreview,
     PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE, PREVIEW_UNSUPPORTED,
@@ -260,7 +261,7 @@ fn handle(
         &guard,
         presented.as_deref(),
         visitor_cookie.as_deref(),
-        token_before,
+        token_before.as_deref(),
     )?;
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
@@ -376,7 +377,11 @@ fn serve_servlet(
 
 /// The HTTP log's session, visitor, and username. Read before the session guard drops.
 fn stamp_http_log(response: &mut WebResponse) {
-    let (session, visitor_id, remote_user) = user::http_log_identity();
+    let user::HttpLogIdentity {
+        session_id: session,
+        visitor_id,
+        username: remote_user,
+    } = user::http_log_identity();
     let mut attributes = crate::entity::document::Document::new();
     for key in ["type", "name", "action", "sub_type", "slow"] {
         if let Some(value) = web::attribute(&format!("moqui.telemetry.artifact.{key}")) {
@@ -673,7 +678,7 @@ fn attach_session(
     guard: &user::SessionGuard,
     presented: Option<&str>,
     visitor_cookie: Option<&str>,
-    token_before: Option<String>,
+    token_before: Option<&str>,
 ) -> Result<WebResponse, Error> {
     if presented != Some(guard.session_id().as_str()) {
         response
@@ -686,7 +691,7 @@ fn attach_session(
         }
     }
     let token_after = user::csrf_token()?;
-    if presented != Some(guard.session_id().as_str()) || token_before.as_deref() != Some(token_after.as_str()) {
+    if presented != Some(guard.session_id().as_str()) || token_before != Some(token_after.as_str()) {
         response
             .headers
             .push(("moquiSessionToken".to_string(), token_after.clone()));

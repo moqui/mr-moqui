@@ -17,23 +17,19 @@
 pub mod backup;
 pub mod build_info;
 pub mod cluster;
-pub mod collab;
 pub mod context;
-pub mod dav;
 pub mod devtools;
-pub mod driver;
+pub use moqui_entity::driver;
 pub mod edi;
 pub mod entity;
+pub mod entity_hooks;
+pub mod extension;
 pub mod l10n;
 pub mod llm_hooks;
-pub mod monitor;
 pub mod native;
 pub mod notify;
 pub mod outbound;
-pub mod pim;
 pub mod print;
-pub mod report;
-pub mod report_schedule;
 pub mod resource;
 pub mod screen;
 pub mod script;
@@ -45,10 +41,8 @@ pub mod telemetry;
 // the in-memory entity facade of the tests, here and in moqui-llm's (the test-support feature)
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
-pub mod testing;
-pub mod testkit;
-pub mod transaction;
-pub mod typegen;
+pub use moqui_entity::testing;
+pub use moqui_entity::transaction;
 pub mod user;
 pub mod web;
 

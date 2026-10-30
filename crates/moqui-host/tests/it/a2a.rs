@@ -322,6 +322,9 @@ fn states(frames: &[Json], pointer: &str) -> Vec<String> {
 
 #[test]
 fn the_a2a_server_over_both_bindings_on_postgres() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf_properties("a2a", Some(DATA), CONF, &[]);
     let factory = Arc::clone(gate.server.factory());
     let address = gate.server.address();
@@ -1062,6 +1065,9 @@ fn the_a2a_server_over_both_bindings_on_postgres() {
 
 #[test]
 fn the_a2a_server_is_off_by_default() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = start_with_conf_properties("a2a-off", None, "", &[]);
     let address = gate.server.address();
     let (status, _, _) = exchange(address, &http_request("GET", "/.well-known/agent-card.json", &[], ""));

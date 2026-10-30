@@ -250,7 +250,7 @@ pub(crate) fn decode_text(bytes: &[u8], charset: Option<&str>) -> Result<String,
 
 /// An uploaded file made from text, as the JavaScript object a service or spec holds. The test harness uses it to call
 /// the services that take a `FileItem` without a web request.
-pub(crate) fn text_upload_to_js<'js>(
+pub fn text_upload_to_js<'js>(
     ctx: &Ctx<'js>,
     field_name: &str,
     file_name: &str,

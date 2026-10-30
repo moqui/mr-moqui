@@ -1688,7 +1688,11 @@ pub fn outline_of(laid: &LaidOut) -> String {
 fn write_piece(out: &mut String, piece: &Piece, indent: &str) {
     let nested = format!("{indent}  ");
     match piece {
-        Piece::Stack(pieces) => pieces.iter().for_each(|piece| write_piece(out, piece, indent)),
+        Piece::Stack(pieces) => {
+            for piece in pieces {
+                write_piece(out, piece, indent);
+            }
+        }
         Piece::Row(placed) => {
             out.push_str(&format!("{indent}row\n"));
             for item in placed {
@@ -1703,7 +1707,9 @@ fn write_piece(out: &mut String, piece: &Piece, indent: &str) {
                 let ids: Vec<&str> = laid.toolbar.iter().map(Inline::id).collect();
                 out.push_str(&format!("{nested}toolbar {}\n", ids.join(" ")));
             }
-            laid.body.iter().for_each(|piece| write_piece(out, piece, &nested));
+            for piece in &laid.body {
+                write_piece(out, piece, &nested);
+            }
         }
         Piece::Form(form) => {
             out.push_str(&format!("{indent}form {}\n", form.name));

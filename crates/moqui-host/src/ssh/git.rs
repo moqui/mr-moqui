@@ -13,14 +13,14 @@
  */
 
 //! `git-upload-pack '<repo>'` and `git-receive-pack '<repo>'` as SSH `exec` commands: the channel's bytes go to and
-//! from `moqui_core::resource::git::server::serve_ssh` on a job of the git pool, as the logged-in user. Its messages
+//! from `moqui_git::server::serve_ssh` on a job of the git pool, as the logged-in user. Its messages
 //! go on the channel's stderr, then its exit status, end of file and close. `GIT_PROTOCOL` from the channel's `env`
 //! request selects protocol v2 (`ssh -o SendEnv=GIT_PROTOCOL`, which git sets up itself).
 
 use std::sync::{Arc, Weak};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::resource::git::server;
+use moqui_git::server;
 use russh::server::{Handle, Msg};
 use russh::{Channel, ChannelId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -120,7 +120,7 @@ pub struct Renewal {
 /// # Errors
 ///
 /// Returns an error when the rows cannot be read or written.
-pub fn renew(factory: &Arc<ExecutionContextFactory>) -> Result<Renewal, Error> {
+pub fn renew(factory: &ExecutionContextFactory) -> Result<Renewal, Error> {
     let engine = engine(factory);
     let ids = engine.local_ids();
     let mut renewal = Renewal::default();

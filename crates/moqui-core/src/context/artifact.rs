@@ -22,7 +22,7 @@ use std::time::{Instant, SystemTime};
 
 use moqui_lib::object::Value;
 
-use super::error::Error;
+use super::Error;
 use crate::user::AuthInfo;
 
 struct Frame {
@@ -116,9 +116,9 @@ impl ArtifactStack {
         let name = name.to_string();
         let action = known(action);
         // the calls observed on a dev instance, for the artifact index (plans/design-dev-aide.md 7.1)
-        if crate::devtools::index::calls::enabled() {
+        if crate::devtools::calls::enabled() {
             if let Some(parent) = self.frames.last() {
-                crate::devtools::index::calls::observe(&parent.artifact_type, &parent.name, &artifact_type, &name);
+                crate::devtools::calls::observe(&parent.artifact_type, &parent.name, &artifact_type, &name);
             }
         }
         let telemetry = crate::telemetry::current();
@@ -369,6 +369,35 @@ impl ArtifactStack {
     pub(super) fn authz_disabled(&self) -> bool {
         self.authz_depth.get() > 0
     }
+}
+
+/// Whether a frame pushed by [`super::ExecutionContext::push_checked`] needs an authorization record (Java's
+/// `requiresAuthz`). `NotRequired` pushes the frame whatever the records say, so that it can still inherit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Authz {
+    Required,
+    NotRequired,
+}
+
+impl Authz {
+    /// `Required` when `required`, for a caller that holds the answer as a bool (a service's or screen's
+    /// authentication).
+    #[must_use]
+    pub fn required_if(required: bool) -> Self {
+        if required {
+            Self::Required
+        } else {
+            Self::NotRequired
+        }
+    }
+}
+
+/// Whether a push counts against the tarpits (Java's `pushInternal` argument), unless
+/// [`super::ExecutionContext::disable_tarpit`] is in force.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tarpit {
+    Count,
+    Skip,
 }
 
 /// Decrements the authorization-disabled depth when dropped.

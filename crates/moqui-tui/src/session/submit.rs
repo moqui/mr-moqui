@@ -14,7 +14,14 @@
 
 //! Form submits, their answers, and what a field's change sets off: depends-on options and visible-when.
 
-use super::*;
+use std::collections::BTreeMap;
+
+use super::{Intent, Overlay, Session, Submitted};
+use crate::forms::{self, Scope};
+use crate::link::{LinkCall, LinkError, TransitionOutcome};
+use crate::model::{Choice, Widget};
+use crate::nav::Location;
+use crate::state::{Confirm, Purpose, Then};
 
 impl Session {
     // ---- forms ----

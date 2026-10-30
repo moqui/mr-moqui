@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="run" noun="Command" type="rust" location="moqui_core::service::elfinder::run_command">
+    <service verb="run" noun="Command" type="rust" location="moqui_dav::elfinder::run_command">
         <description>See elFinder API docs at: https://github.com/Studio-42/elFinder/wiki/Client-Server-API-2.0
             The body is Rust (crates/moqui-core/src/service/elfinder.rs), the port of ElFinderConnector.groovy.</description>
         <in-parameters>

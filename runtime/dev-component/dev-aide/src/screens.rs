@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -29,6 +29,7 @@ use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
 use moqui_core::screen::overlay::Overlay;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 use serde_json::{json, Value as Json};
 
 use crate::roots::{self, Root};
@@ -231,10 +232,10 @@ fn update_subscreen(
 
 /// What references a screen, from the index: each with its file and line.
 fn screen_refs(context: &Context, location: &str) -> Result<Vec<Json>, LibError> {
-    Ok(moqui_core::devtools::index::refs(
+    Ok(moqui_devkit::index::refs(
         &context.factory,
         &format!("screen:{location}"),
-        moqui_core::devtools::index::Direction::In,
+        moqui_devkit::index::Direction::In,
         &[],
     )?
     .iter()
@@ -296,7 +297,7 @@ fn remove_screen(
             ..Default::default()
         },
     );
-    let report = moqui_core::devtools::reload_paths(&context.factory, &[resolved.path.clone(), directory]);
+    let report = moqui_devkit::reload_paths(&context.factory, &[resolved.path.clone(), directory]);
     out.insert("removed".into(), Value::Bool(true));
     out.insert("reload".into(), json_value(&report));
     Ok(out)
@@ -383,7 +384,7 @@ fn move_screen(
             }
         }
     }
-    let report = moqui_core::devtools::reload_paths(
+    let report = moqui_devkit::reload_paths(
         &context.factory,
         &[from.path.clone(), to.path.clone(), old_dir, new_dir],
     );
@@ -411,8 +412,15 @@ fn location_of(root: &Root, relative: &str) -> Option<String> {
     Some(format!("component://{}/{rest}", component.name))
 }
 
+/// A file as the Workspace opens it: its root, its path in the root, and whether it is the site's.
+struct RootFile {
+    root_id: String,
+    relative: String,
+    site: bool,
+}
+
 /// The file of a `component://` location, or a path, as the Workspace opens it.
-fn file_of(context: &Context, location: &str) -> Option<(String, String, bool)> {
+fn file_of(context: &Context, location: &str) -> Option<RootFile> {
     let path = match location.strip_prefix("component://") {
         Some(rest) => {
             let (name, rest) = rest.split_once('/')?;
@@ -427,8 +435,11 @@ fn file_of(context: &Context, location: &str) -> Option<(String, String, bool)> 
     };
     let path = std::fs::canonicalize(&path).unwrap_or(path);
     let (root, relative) = roots::locate(&context.roots, &path)?;
-    let site = root.is_site_path(&relative);
-    Some((root.id.clone(), relative, site))
+    Some(RootFile {
+        root_id: root.id.clone(),
+        site: root.is_site_path(&relative),
+        relative,
+    })
 }
 
 /// `get#ScreenChildren`: the subscreens of a screen (the apps under the shell when none is named), each with its URL
@@ -451,13 +462,13 @@ fn get_screen_children(
             let mut out = moqui_lib::json::to_json(&Value::Map(row));
             let name = out["name"].as_str().unwrap_or_default().to_string();
             out["path"] = json!(format!("{path}/{name}"));
-            if let Some((root, relative, site)) = out["location"]
+            if let Some(file) = out["location"]
                 .as_str()
                 .and_then(|location| file_of(&context, location))
             {
-                out["rootId"] = json!(root);
-                out["relativePath"] = json!(relative);
-                out["site"] = json!(site);
+                out["rootId"] = json!(file.root_id);
+                out["relativePath"] = json!(file.relative);
+                out["site"] = json!(file.site);
             }
             out
         })
@@ -469,7 +480,7 @@ fn get_screen_children(
 
 /// The URL path under the shell where the screen at `location` renders: a walk of the tree from the apps, at most a
 /// few hundred screens deep enough for an app's pages.
-fn path_of(factory: &Arc<ExecutionContextFactory>, location: &str) -> Option<String> {
+fn path_of(factory: &ExecutionContextFactory, location: &str) -> Option<String> {
     let mut queue = std::collections::VecDeque::from([(APPS.to_string(), APPS_PATH.to_string(), 0usize)]);
     let mut seen = 0usize;
     while let Some((at, path, depth)) = queue.pop_front() {
@@ -540,7 +551,7 @@ fn get_screen_view(
         url_path = path_of(&context.factory, &location).unwrap_or_default();
     }
     let base = file_of(&context, &location);
-    let base_site = base.as_ref().is_some_and(|(_, _, site)| *site);
+    let base_site = base.as_ref().is_some_and(|file| file.site);
     let in_place = base_site || context.upstream_edits();
     let after_scheme = location.strip_prefix("component://").unwrap_or(&location).to_string();
     let extension = (!in_place)
@@ -554,7 +565,7 @@ fn get_screen_view(
         .collect();
     let view = json!({
         "location": location,
-        "base": base.as_ref().map(|(root, path, site)| json!({ "rootId": root, "path": path, "site": site })),
+        "base": base.as_ref().map(|file| json!({ "rootId": file.root_id, "path": file.relative, "site": file.site })),
         "urlPath": url_path,
         "query": query,
         "parameters": parameters_list,
@@ -614,7 +625,7 @@ fn put_canvas_buffer(
         let location = location_of(root, &resolved.relative).unwrap_or_else(|| resolved.path.display().to_string());
         texts.push((location, body.to_string()));
     }
-    let mut kept = buffers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut kept = lock(buffers());
     kept.retain(|_, buffer| buffer.at.elapsed() < BUFFER_LIFE);
     if kept.len() >= MAX_BUFFERS {
         if let Some(oldest) = kept
@@ -639,10 +650,10 @@ fn put_canvas_buffer(
 }
 
 /// The overlay of a `buffer:<id>` token: the current user's canvas buffer of that id (an empty one renders the files).
-pub(crate) fn buffer_overlay(factory: &Arc<ExecutionContextFactory>, id: &str) -> Option<Overlay> {
+pub(crate) fn buffer_overlay(factory: &ExecutionContextFactory, id: &str) -> Option<Overlay> {
     let user = moqui_core::user::current_user_id().ok().flatten()?;
     moqui_core::devtools::dev_aide_user(factory, &user).then_some(())?;
-    let kept = buffers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let kept = lock(buffers());
     let mut overlay = Overlay::new();
     if let Some(buffer) = kept.get(&(user, id.to_string())) {
         for (location, text) in &buffer.texts {
@@ -692,7 +703,7 @@ fn resolve_stamps(
             continue;
         }
         let entry = match file_of(&context, file) {
-            Some((root, path, site)) => json!({ "rootId": root, "path": path, "site": site,
+            Some(found) => json!({ "rootId": found.root_id, "path": found.relative, "site": found.site,
                 "line": line.parse::<u32>().unwrap_or(0), "column": column.parse::<u32>().unwrap_or(0) }),
             None => json!({ "file": file, "line": line.parse::<u32>().unwrap_or(0) }),
         };

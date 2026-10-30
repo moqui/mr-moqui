@@ -167,6 +167,9 @@ impl Client {
 
 #[test]
 fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_conf_files(
         "smtp",
         Some(DATA),
@@ -407,6 +410,9 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
 
 #[test]
 fn the_lmtp_listener_answers_each_recipient_by_its_account() {
+    if !crate::common::own_process() {
+        return;
+    }
     let gate = crate::common::start_with_conf_files(
         "lmtp",
         None,

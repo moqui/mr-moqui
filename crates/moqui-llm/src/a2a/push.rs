@@ -467,7 +467,7 @@ pub fn tick(factory: &Arc<ExecutionContextFactory>) -> Result<usize, Error> {
 /// Make the outbox rows of the followed configs whose task has events past what was projected. A config is read once,
 /// when it is new to this node (each round reads only the configs made since the last); it is let go once its task
 /// ended and every event of it was projected, when it is gone, or after [`CONFIG_DAYS`].
-fn project(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, state: &mut PushState) -> Result<(), Error> {
+fn project(factory: &ExecutionContextFactory, facade: &EntityFacade, state: &mut PushState) -> Result<(), Error> {
     let now = now_millis();
     let since = state.watermark.unwrap_or(now - CONFIG_DAYS * DAY) - 5_000;
     let new_rows = facade
@@ -577,7 +577,7 @@ fn project(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, state:
 /// The outbox rows of a config's `run.state` events after `cursor`. Out: the new cursor, or `None` when the config is
 /// gone.
 fn project_config(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     config_id: &str,
     task: &TaskRow,
@@ -604,7 +604,7 @@ fn project_config(
     let base_url = settings(&config)
         .1
         .unwrap_or_else(|| super::card::base_url(factory, &Origin::default()));
-    let mut projector = Projector::new(Follow::of(task, &base_url, false, false));
+    let mut projector = Projector::new(Follow::of(task, &base_url));
     let mut last = cursor;
     for event in events.values() {
         let stored = run::events::StoredEvent::of(event);
@@ -902,7 +902,7 @@ fn deliver(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, deadli
 
 /// Send one row when it is due and this node claims it. Out: whether it got through.
 fn deliver_one(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     config: &EntityValue,
     row: &EntityValue,
