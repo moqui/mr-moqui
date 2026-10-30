@@ -146,8 +146,8 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Item | Source |
 |---|---|
 | No login flow: calls run with authorization disabled, except renders (`crates/moqui-browser/src/host.rs`) | [Wasm, Status](archive/Wasm.md) |
-| No lock between tabs: without pthreads the WasmFS OPFS backend opens a file through its async access handle, so a second tab opens and writes the database the first has open (`cargo test -p moqui-host --test wasm_browser` warns), and two writers can corrupt the SQLite file. A Web Locks (`navigator.locks`) lock per database name in the worker would make the second tab wait or refuse | same |
-| The WebSocket check is `cargo test -p moqui-host --test wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | same |
+| No lock between tabs: without pthreads the WasmFS OPFS backend opens a file through its async access handle, so a second tab opens and writes the database the first has open (`cargo test -p moqui-host --test it -- wasm_browser` warns), and two writers can corrupt the SQLite file. A Web Locks (`navigator.locks`) lock per database name in the worker would make the second tab wait or refuse | same |
+| The WebSocket check is `cargo test -p moqui-host --test it -- wasm_browser`, against that test's `/notws` mock, not moqui-host. A live-host mode needs the package served from moqui-host's origin, a signed-in session, and checks of what the real `/notws` does (the mock's `echo:`, `drop` and `Ack` replies are its own) | same |
 
 ## Tests
 

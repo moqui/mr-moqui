@@ -1,7 +1,6 @@
 //! Real PostgreSQL schedule claims, restart recovery, revocation, and independent destinations.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{
     context::ExecutionContextFactory,
     native::{NativeComponent, NativeRegistry, Parameters, ServiceInfo},

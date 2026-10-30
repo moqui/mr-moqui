@@ -1,7 +1,6 @@
 //! HTTP boundary and scheduled report acceptance on a real seeded PostgreSQL server.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{native::Parameters, transaction::TransactionAttribute};
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};

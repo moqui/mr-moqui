@@ -13,15 +13,12 @@
  */
 
 //! The default Postgres backend: SDK log events read through authorized Explore, retained
-//! HTTP root spans, telemetry retention, and the Elastic proxy staying closed. This binary
-//! owns the process logger, so it has one test.
+//! HTTP root spans, telemetry retention, and the Elastic proxy staying closed. The test runs in a process of its own
+//! (`common::own_process`), which owns the process logger.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
-mod common;
-
-// the example component loads with the repository runtime; link its tool factory as the moqui binary does
-use example as _;
+use crate::common;
 
 use std::time::{Duration, Instant};
 

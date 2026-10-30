@@ -89,6 +89,9 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
 
 #[test]
 fn a_component_loads_its_entities_rules_services_and_data() {
+    if !crate::common::own_process() {
+        return;
+    }
     let runtime = temp_dir("moqui-comp-rt");
     let cluster_dir = temp_dir("moqui-comp-pg");
     let _guards = (DirGuard(runtime.clone()), DirGuard(cluster_dir.clone()));

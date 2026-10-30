@@ -1,7 +1,6 @@
 //! Real PostgreSQL acceptance tests for the authorized report boundary and telemetry store.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{
     entity::{document::Document, EntityFacade},
     native::{Parameters, ServiceInfo},

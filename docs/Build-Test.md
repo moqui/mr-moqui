@@ -123,7 +123,10 @@ spec({
 The profiles are in `.cargo/config.toml`, so the generated `target/moqui-app` crate builds the same way. Each package
 has its own, so the artifacts of one never replace another's and switching packages does not rebuild.
 
-- `dev` (Debug): the workspace crates at opt-level 0 with debug info, the dependencies at opt-level 3.
+- `dev` (Debug, and every `cargo test`): the workspace crates at opt-level 0 with debug info, the dependencies at
+  opt-level 3 with line tables only (file and line in a backtrace). The debug info stays in the object files under
+  `target/debug` (`split-debuginfo = "unpacked"`), where debuggers read it, instead of being copied into each binary:
+  a host test binary was 1.5 GB, 83% of it debug info.
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.

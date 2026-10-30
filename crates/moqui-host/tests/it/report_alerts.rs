@@ -1,8 +1,7 @@
 //! Real alert persistence, concurrency and delivery gates. Every evaluation uses a fresh
 //! authenticated context; restart also discards the factory and all in-memory alert state.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{
     context::{ExecutionContext, ExecutionContextFactory},
     entity::document::Document,

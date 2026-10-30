@@ -21,9 +21,6 @@
 
 #![cfg(all(unix, feature = "embedded-postgres"))]
 
-// the example component loads with the repository runtime; link its tool factory as the moqui binary does
-use example as _;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -102,6 +99,9 @@ fn fixture(day: &dyn Fn(i64) -> String) -> String {
 
 #[test]
 fn mantle_search_callers_on_the_search_facade() {
+    if !crate::common::own_process() {
+        return;
+    }
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let components = repo.join("runtime/component");
     if !components.join("mr-mantle").is_dir() {

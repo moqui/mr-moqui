@@ -165,6 +165,18 @@ test = false
 name = "client_browser"
 test = false
 
+# Opt-in search benchmarks over a generated corpus. Not linked by a default `cargo test`.
+# SEARCH_BENCH_DOCS=100000 cargo test --release -p moqui-host --test search_bench -- --ignored --nocapture
+[[test]]
+name = "search_bench"
+test = false
+
+# Opt-in real-store and transport timings of the monitoring HTTP boundary (plans/Monitoring.md). Not linked by a default
+# `cargo test`. cargo test --profile develop -p moqui-host --test monitor_performance -- --ignored --nocapture
+[[test]]
+name = "monitor_performance"
+test = false
+
 # Opt-in entity facade timings. Not linked by a default `cargo test`.
 # CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test entity_speed -- --ignored --nocapture
 [[test]]

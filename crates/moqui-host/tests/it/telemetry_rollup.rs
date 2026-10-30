@@ -1,7 +1,6 @@
 //! Streaming/idempotent maintenance acceptance against the actual search stores.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "telemetry"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{entity::document::Document, search, telemetry::maintenance};
 use moqui_lib::object::Value;
 

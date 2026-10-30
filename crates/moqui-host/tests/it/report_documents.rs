@@ -1,8 +1,7 @@
 //! Mixed-index reporting uses authorized document types and immutable row constraints before
 //! retrieval, totals, paging and document expansion. Framework rows keep this fixture small.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{
     context::{ExecutionContext, ExecutionContextFactory},
     native::{Parameters, ServiceInfo},

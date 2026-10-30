@@ -3,7 +3,7 @@
      directory (scripts/wasm-build.sh) and open this page; #result reads SMOKE OK or SMOKE FAILED.
      The database is on OPFS (WasmFS, per commit), so a second load reports the stored row with no
      flush step. remote-rest calls go to /echo, /fail, and /slow on the serving origin, which
-     `cargo test -p moqui-host --test wasm_browser` answers. -->
+     `cargo test -p moqui-host --test it -- wasm_browser` answers. -->
 <meta charset="utf-8">
 <title>moqui-browser smoke</title>
 <pre id="log"></pre>

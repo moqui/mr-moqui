@@ -1,7 +1,6 @@
 //! Replacement readers must retain request histories and log context without artifact-hit storage.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::entity::document::Document;
 use moqui_lib::object::Value;
 use serde_json::json;

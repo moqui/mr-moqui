@@ -46,6 +46,9 @@ impl ToolFactory for Probe {
 #[test]
 #[ignore = "slow: starts embedded Postgres and loads seed data"]
 fn empty_db_recreates_factory_once_and_existing_db_does_not() {
+    if !crate::common::own_process() {
+        return;
+    }
     let root = std::env::temp_dir().join(format!("moqui-factory-restart-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let runtime = root.join("runtime");

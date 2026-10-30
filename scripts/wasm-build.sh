@@ -3,7 +3,7 @@
 #   scripts/wasm-build.sh [--release] [out-dir]
 # out-dir defaults to <target>/wasm-pkg/<profile>. It holds moqui_browser.mjs, .wasm, .data,
 # and js/*.js; serve that directory, or run scripts/wasm-smoke.mjs against it.
-# The Chromium smokes are `cargo test -p moqui-host --test wasm_browser`. Build with
+# The Chromium smokes are `cargo test -p moqui-host --test it -- wasm_browser`. Build with
 # CARGO_TARGET_DIR=target/browser so the package is target/browser/wasm-pkg/debug, or set MOQUI_WASM_PKG.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)

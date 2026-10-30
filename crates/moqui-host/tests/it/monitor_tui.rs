@@ -1,7 +1,6 @@
 //! Every monitoring/report screen must render through HostLink and expose its native interactions.
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
-mod common;
-use example as _;
+use crate::common;
 use moqui_core::{
     entity::document::Document,
     native::{Parameters, ServiceInfo},
