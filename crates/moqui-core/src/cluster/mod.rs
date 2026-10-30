@@ -589,7 +589,7 @@ fn send_loop(state: &ClusterState) {
             queue.messages.drain(..).collect()
         };
         // A panic in one batch must not end the thread that every later message waits on.
-        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, coalesce(batch))));
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, &coalesce(batch))));
         if sent.is_err() {
             tracing::error!("cluster fan-out batch panicked");
         }
@@ -597,7 +597,7 @@ fn send_loop(state: &ClusterState) {
     }
 }
 
-fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
+fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
     let Some(factory) = lock(&state.factory).upgrade() else {
         return;
     };
@@ -611,7 +611,7 @@ fn send_batch(state: &ClusterState, batch: Vec<(&'static str, TopicMessage)>) {
         }
         return;
     };
-    for (topic, message) in &batch {
+    for (topic, message) in batch {
         let payload = match payload_bytes(message) {
             Ok(bytes) => bytes,
             Err(err) => {

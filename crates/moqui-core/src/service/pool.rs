@@ -962,7 +962,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
     }
 }
 
-fn run_work(shared: &Arc<Shared>, work: Work) {
+fn run_work(shared: &Shared, work: Work) {
     lock(&shared.state).active += 1;
     match work {
         Work::Job(run) => run_job_work(run),
@@ -1243,7 +1243,7 @@ fn fail_one(work: Work) {
     }
 }
 
-fn queue_closure(shared: &Arc<Shared>, run: ClosureFn) -> Result<mpsc::Receiver<ClosureOut>, Error> {
+fn queue_closure(shared: &Shared, run: ClosureFn) -> Result<mpsc::Receiver<ClosureOut>, Error> {
     let (tx, rx) = mpsc::channel();
     {
         let mut state = lock(&shared.state);

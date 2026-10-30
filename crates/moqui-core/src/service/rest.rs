@@ -212,7 +212,7 @@ fn reload_current_roots() -> Result<Arc<Roots>, Error> {
     Ok(fresh)
 }
 
-fn roots_of(factory: &Arc<ExecutionContextFactory>) -> Arc<Roots> {
+fn roots_of(factory: &ExecutionContextFactory) -> Arc<Roots> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
     let guard = shared.read().unwrap_or_else(|err| err.into_inner());
     Arc::clone(&guard)

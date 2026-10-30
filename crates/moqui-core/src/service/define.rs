@@ -344,7 +344,7 @@ fn entered() -> Result<Arc<Shared>, Error> {
         .ok_or_else(|| Error::new("no execution context is entered; service definitions belong to its factory"))
 }
 
-fn registry_of(factory: &Arc<ExecutionContextFactory>) -> Arc<Shared> {
+fn registry_of(factory: &ExecutionContextFactory) -> Arc<Shared> {
     factory.extension::<Shared>(|_| Shared::default())
 }
 

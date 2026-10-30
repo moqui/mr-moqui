@@ -107,7 +107,7 @@ pub struct PassReport {
 }
 
 /// One scheduler pass for the pool's factory. Errors are logged, so a bad pass never ends the thread.
-pub(crate) fn run_scheduled(shared: &Arc<Shared>) -> PassReport {
+pub(crate) fn run_scheduled(shared: &Shared) -> PassReport {
     let Some(factory) = shared.factory() else {
         return PassReport::default();
     };
@@ -133,7 +133,7 @@ pub(crate) fn run_scheduled(shared: &Arc<Shared>) -> PassReport {
     report
 }
 
-fn pass(shared: &Arc<Shared>, factory: &Arc<ExecutionContextFactory>) -> Result<PassReport, Error> {
+fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassReport, Error> {
     let mut report = PassReport::default();
     let Some(facade) = factory.entity() else {
         return Ok(report);
@@ -284,7 +284,7 @@ fn readiness(
 }
 
 fn dispatch(
-    shared: &Arc<Shared>,
+    shared: &Shared,
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     plan: &LockPlan,

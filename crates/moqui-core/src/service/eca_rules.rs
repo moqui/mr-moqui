@@ -90,7 +90,7 @@ pub(super) fn current() -> Option<Arc<EcaRules>> {
     ExecutionContext::with_current(|ctx| rules_of(ctx.factory()))
 }
 
-fn rules_of(factory: &Arc<ExecutionContextFactory>) -> Arc<EcaRules> {
+fn rules_of(factory: &ExecutionContextFactory) -> Arc<EcaRules> {
     let shared = factory.extension::<Shared>(|factory| RwLock::new(Arc::new(load(factory))));
     let guard = shared.read().unwrap_or_else(|err| err.into_inner());
     Arc::clone(&guard)
@@ -99,7 +99,7 @@ fn rules_of(factory: &Arc<ExecutionContextFactory>) -> Arc<EcaRules> {
 /// Read a factory's SECA, EmECA and gitECA rules again from their files and swap them in (plans/design-dev-aide.md
 /// 6.1, F4); a call in flight keeps the rules it has. A file that does not parse is logged and skipped, as at a boot.
 /// Answers how many SECA, EmECA and gitECA rules there are now.
-pub fn reload(factory: &Arc<ExecutionContextFactory>) -> (usize, usize, usize) {
+pub fn reload(factory: &ExecutionContextFactory) -> (usize, usize, usize) {
     let rules = load(factory);
     let counts = (rules.seca.len(), rules.email.len(), rules.git.len());
     install(factory, rules);
@@ -107,7 +107,7 @@ pub fn reload(factory: &Arc<ExecutionContextFactory>) -> (usize, usize, usize) {
 }
 
 /// Replace a factory's rules: tests that bring their own XML, and [`reload`].
-pub(super) fn install(factory: &Arc<ExecutionContextFactory>, rules: EcaRules) {
+pub(super) fn install(factory: &ExecutionContextFactory, rules: EcaRules) {
     let shared = factory.extension::<Shared>(|_| RwLock::new(Arc::new(EcaRules::default())));
     *shared.write().unwrap_or_else(|err| err.into_inner()) = Arc::new(rules);
 }
