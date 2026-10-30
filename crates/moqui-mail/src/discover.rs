@@ -142,7 +142,7 @@ pub(super) fn discover_server(
     let want_mx = by_domain.is_none() && !providers.is_empty();
     let mut asked_mx = false;
     if suggestion.is_none() {
-        let (found, hosts) = dns_lookup(&domain, &address, true, want_mx);
+        let (found, hosts) = dns_lookup(&domain, &address, /* with_srv */ true, want_mx);
         suggestion = found;
         mx = hosts;
         asked_mx = want_mx;
@@ -543,8 +543,14 @@ fn read_name(packet: &[u8], mut offset: usize) -> Option<(String, usize)> {
     Some((labels.join("."), end?))
 }
 
-/// An SRV record: priority, weight, port, target.
-pub(super) type SrvRecord = (u16, u16, u16, String);
+/// An SRV record (RFC 2782).
+#[derive(Debug, PartialEq)]
+pub(super) struct SrvRecord {
+    pub(super) priority: u16,
+    pub(super) weight: u16,
+    pub(super) port: u16,
+    pub(super) target: String,
+}
 
 /// The id and SRV records of a DNS answer.
 pub(super) fn srv_answers(packet: &[u8]) -> Option<(u16, Vec<SrvRecord>)> {
@@ -569,12 +575,12 @@ pub(super) fn srv_answers(packet: &[u8]) -> Option<(u16, Vec<SrvRecord>)> {
         if kind == 33 && length >= 7 {
             let fields = packet.get(data..data + 6)?;
             let (target, _) = read_name(packet, data + 6)?;
-            out.push((
-                u16::from_be_bytes([fields[0], fields[1]]),
-                u16::from_be_bytes([fields[2], fields[3]]),
-                u16::from_be_bytes([fields[4], fields[5]]),
+            out.push(SrvRecord {
+                priority: u16::from_be_bytes([fields[0], fields[1]]),
+                weight: u16::from_be_bytes([fields[2], fields[3]]),
+                port: u16::from_be_bytes([fields[4], fields[5]]),
                 target,
-            ));
+            });
         }
         offset = data + length;
     }
@@ -614,7 +620,7 @@ pub(super) fn mx_answers(packet: &[u8]) -> Option<(u16, Vec<String>)> {
 
 /// The domain's MX hosts alone, for a domain whose servers came from autoconfig. Empty when DNS does not answer.
 fn mx_lookup(domain: &str) -> Vec<String> {
-    dns_lookup(domain, "", false, true).1
+    dns_lookup(domain, "", /* with_srv */ false, /* with_mx */ true).1
 }
 
 /// The MX hosts of a domain, for `find#OAuthProvider` with `lookupMx`. Empty when DNS does not answer.
@@ -695,9 +701,9 @@ fn dns_lookup(domain: &str, address: &str, with_srv: bool, with_mx: bool) -> (Op
         // the lowest priority, then the highest weight; a target of "." means no such service
         let best = records
             .into_iter()
-            .filter(|(_, _, port, target)| !target.is_empty() && target != "." && *port > 0)
-            .min_by(|left, right| left.0.cmp(&right.0).then(right.1.cmp(&left.1)));
-        if let Some((_, _, port, target)) = best {
+            .filter(|record| !record.target.is_empty() && record.target != "." && record.port > 0)
+            .min_by(|left, right| left.priority.cmp(&right.priority).then(right.weight.cmp(&left.weight)));
+        if let Some(SrvRecord { port, target, .. }) = best {
             let choice = Choice {
                 kind: kind.to_string(),
                 host: target.trim_end_matches('.').to_string(),
@@ -780,7 +786,7 @@ fn guess(domain: &str, address: &str) -> Suggestion {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_config, srv_answers, srv_query, valid_domain};
+    use super::{parse_config, srv_answers, srv_query, valid_domain, SrvRecord};
 
     /// An autoconfig fetch on a thread of its own is still a CLIENT span of the asking request's trace.
     #[test]
@@ -847,6 +853,14 @@ mod tests {
         answer.extend_from_slice(target);
         let (id, records) = srv_answers(&answer).expect("answer");
         assert_eq!(id, 0x1234);
-        assert_eq!(records, vec![(10, 5, 993, "mail.example.com".to_string())]);
+        assert_eq!(
+            records,
+            vec![SrvRecord {
+                priority: 10,
+                weight: 5,
+                port: 993,
+                target: "mail.example.com".to_string()
+            }]
+        );
     }
 }

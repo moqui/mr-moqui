@@ -151,22 +151,33 @@ pub(crate) fn diff_trees(
     Ok(())
 }
 
-/// Commits from `from` along the first-parent line, newest first, until `stop` (not included) or the root, or `max`.
-/// Whether `stop` was reached.
+/// Where a [`walk`] ended.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WalkEnd {
+    /// At `stop`.
+    Stop,
+    /// At `max` commits, before `stop` or the root.
+    Max,
+    /// At the root commit.
+    Root,
+}
+
+/// Commits from `from` along the first-parent line, newest first, until `stop` (not included) or the root, or `max`;
+/// and which of them it ended at.
 fn walk(
     store: &dyn GitStore,
     from: &ObjectId,
     stop: Option<&ObjectId>,
     max: usize,
-) -> Result<(Vec<IndexedCommit>, bool, bool), Error> {
+) -> Result<(Vec<IndexedCommit>, WalkEnd), Error> {
     let mut found = Vec::new();
     let mut current = ops::read_commit(store, from)?;
     loop {
         if Some(&current.id) == stop {
-            return Ok((found, true, false));
+            return Ok((found, WalkEnd::Stop));
         }
         if found.len() >= max {
-            return Ok((found, false, true));
+            return Ok((found, WalkEnd::Max));
         }
         let parent = match current.parents.first() {
             Some(id) => Some(ops::read_commit(store, id)?),
@@ -183,7 +194,7 @@ fn walk(
         found.push(IndexedCommit { info: current, changes });
         match parent {
             Some(parent) => current = parent,
-            None => return Ok((found, false, false)),
+            None => return Ok((found, WalkEnd::Root)),
         }
     }
 }
@@ -200,13 +211,13 @@ fn commit_bytes(commit: &IndexedCommit) -> usize {
 impl BranchIndex {
     /// The index of the branch whose head is `head`.
     pub(crate) fn build(store: &dyn GitStore, head: &ObjectId) -> Result<Self, Error> {
-        let (mut commits, _, truncated) = walk(store, head, None, MAX_INDEX_COMMITS)?;
+        let (mut commits, end) = walk(store, head, None, MAX_INDEX_COMMITS)?;
         commits.reverse();
         let mut index = Self {
             head: *head,
             commits: Vec::with_capacity(commits.len()),
             last: HashMap::new(),
-            truncated,
+            truncated: end == WalkEnd::Max,
             bytes: 0,
         };
         for commit in commits {
@@ -244,8 +255,8 @@ impl BranchIndex {
             return Ok(());
         }
         let room = MAX_INDEX_COMMITS.saturating_sub(self.commits.len()).max(1);
-        let (mut commits, reached, _) = walk(store, head, Some(&self.head), room)?;
-        if !reached {
+        let (mut commits, end) = walk(store, head, Some(&self.head), room)?;
+        if end != WalkEnd::Stop {
             *self = Self::build(store, head)?;
             return Ok(());
         }

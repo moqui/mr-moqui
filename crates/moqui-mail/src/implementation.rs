@@ -1825,6 +1825,31 @@ impl Drop for SinkGuard {
     }
 }
 
+/// One step of `test#EmailServer`: its name, whether it worked, and what it found or why it failed.
+pub(super) struct TestStep {
+    step: &'static str,
+    ok: bool,
+    message: String,
+}
+
+impl TestStep {
+    pub(super) fn passed(step: &'static str, message: String) -> Self {
+        Self {
+            step,
+            ok: true,
+            message,
+        }
+    }
+
+    pub(super) fn failed(step: &'static str, message: String) -> Self {
+        Self {
+            step,
+            ok: false,
+            message,
+        }
+    }
+}
+
 /// `test#EmailServer`: whether a server's settings work, step by step, for the mail account wizard. SMTP connects,
 /// upgrades to TLS as configured and signs in (then QUIT); the store connects and signs in, and IMAP lists its folders
 /// with their special-use attributes and the folder kind each maps to. Each step is `{step, ok, message}`; a step that
@@ -1866,16 +1891,19 @@ pub(super) fn test_server(
         #[cfg(feature = "imap")]
         super::inbound::store_steps(facade, &server, &mut steps, &mut folders);
         #[cfg(not(feature = "imap"))]
-        steps.push(("store", false, "imap is not built into this host".to_string()));
+        steps.push(TestStep::failed(
+            "store",
+            "imap is not built into this host".to_string(),
+        ));
     }
-    let success = !steps.is_empty() && steps.iter().all(|step| step.1);
+    let success = !steps.is_empty() && steps.iter().all(|step| step.ok);
     let mut out = BTreeMap::new();
     out.insert(
         "stepList".into(),
         Value::List(
             steps
                 .into_iter()
-                .map(|(step, ok, message)| {
+                .map(|TestStep { step, ok, message }| {
                     let mut map = IndexMap::new();
                     map.insert("step".to_string(), Value::string(step));
                     map.insert("ok".to_string(), Value::Bool(ok));
@@ -1892,10 +1920,10 @@ pub(super) fn test_server(
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 
-fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> (&'static str, bool, String) {
+fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> TestStep {
     let host = field_text(server, "smtpHost");
     if host.is_empty() {
-        return ("smtp", false, "The server has no SMTP host".to_string());
+        return TestStep::failed("smtp", "The server has no SMTP host".to_string());
     }
     let port = field_text(server, "smtpPort");
     let place = if port.is_empty() {
@@ -1916,10 +1944,12 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> (&'static str, bool
         });
     let user = smtp_user(server);
     match checked {
-        Ok(true) if !user.is_empty() => ("smtp", true, format!("Connected to {place} and signed in as {user}")),
-        Ok(true) => ("smtp", true, format!("Connected to {place}")),
-        Ok(false) => ("smtp", false, format!("{place} closed the connection")),
-        Err(err) => ("smtp", false, format!("SMTP {place}: {err}")),
+        Ok(true) if !user.is_empty() => {
+            TestStep::passed("smtp", format!("Connected to {place} and signed in as {user}"))
+        }
+        Ok(true) => TestStep::passed("smtp", format!("Connected to {place}")),
+        Ok(false) => TestStep::failed("smtp", format!("{place} closed the connection")),
+        Err(err) => TestStep::failed("smtp", format!("SMTP {place}: {err}")),
     }
 }
 

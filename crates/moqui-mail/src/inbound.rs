@@ -28,7 +28,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
 use super::implementation::{
-    extra_ca_certificates, fail, find_one, force_new, note_error, parse_port, require_host, SERVER,
+    extra_ca_certificates, fail, find_one, force_new, note_error, parse_port, require_host, TestStep, SERVER,
 };
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{EntityFacade, EntityValue};
@@ -236,7 +236,7 @@ fn in_eca_transaction(facade: &EntityFacade, run: impl FnOnce() -> Result<(), Er
 pub(super) fn store_steps(
     facade: &EntityFacade,
     server: &EntityValue,
-    steps: &mut Vec<(&'static str, bool, String)>,
+    steps: &mut Vec<TestStep>,
     folders: &mut Vec<Value>,
 ) {
     let host = field_text(server, "storeHost");
@@ -253,13 +253,13 @@ pub(super) fn store_steps(
     let port = match parse_port(&field_text(server, "storePort"), if pop { 995 } else { 993 }) {
         Ok(port) => port,
         Err(err) => {
-            steps.push(("storeLogin", false, err.to_string()));
+            steps.push(TestStep::failed("storeLogin", err.to_string()));
             return;
         }
     };
     let place = format!("{host}:{port}");
     if let Err(err) = require_host(&host) {
-        steps.push(("storeLogin", false, err.to_string()));
+        steps.push(TestStep::failed("storeLogin", err.to_string()));
         return;
     }
     let settings = StoreSettings {
@@ -295,7 +295,10 @@ pub(super) fn store_steps(
             pop3.close()
                 .map_err(|err| super::sync::SyncFailure::Connect(err.to_string()))
         }) {
-            Ok(()) => steps.push(("storeLogin", true, format!("Signed in to POP3 {place}{how}"))),
+            Ok(()) => steps.push(TestStep::passed(
+                "storeLogin",
+                format!("Signed in to POP3 {place}{how}"),
+            )),
             Err(err) => {
                 let text = err.to_string();
                 let text = if text.starts_with("POP3 ") {
@@ -303,26 +306,25 @@ pub(super) fn store_steps(
                 } else {
                     format!("POP3 {place}: {text}")
                 };
-                steps.push(("storeLogin", false, text));
+                steps.push(TestStep::failed("storeLogin", text));
             }
         }
         return;
     }
     if !matches!(protocol.as_str(), "imap" | "imaps") {
-        steps.push((
+        steps.push(TestStep::failed(
             "storeLogin",
-            false,
             format!("storeProtocol {protocol} is not supported"),
         ));
         return;
     }
     let mut session = match super::sync::connect_imap(facade, &info) {
         Ok(conn) => {
-            steps.push(("storeLogin", true, format!("Signed in to IMAP {place}")));
+            steps.push(TestStep::passed("storeLogin", format!("Signed in to IMAP {place}")));
             conn.session
         }
         Err(err) => {
-            steps.push(("storeLogin", false, format!("IMAP {place}: {err}")));
+            steps.push(TestStep::failed("storeLogin", format!("IMAP {place}: {err}")));
             return;
         }
     };
@@ -348,9 +350,12 @@ pub(super) fn store_steps(
                 map.insert("folderKindEnumId".to_string(), Value::string(kind));
                 folders.push(Value::Map(map));
             }
-            steps.push(("storeList", true, format!("Found {} folders", folders.len())));
+            steps.push(TestStep::passed(
+                "storeList",
+                format!("Found {} folders", folders.len()),
+            ));
         }
-        Err(err) => steps.push(("storeList", false, format!("IMAP LIST on {place}: {err}"))),
+        Err(err) => steps.push(TestStep::failed("storeList", format!("IMAP LIST on {place}: {err}"))),
     }
     let _ = session.logout();
 }
