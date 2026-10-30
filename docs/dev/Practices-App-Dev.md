@@ -6,7 +6,8 @@ that keep an app's code and screens good. The reference guides for each tool (en
 facades) are separate; they are being ported from the Moqui Java documentation and extended.
 
 Most of these practices come from reviews of the Products app (`runtime/component/mr-boss/plan/impl-products.md`,
-section "R — Review" and findings F43–F46) and of Accounting P0–P3 (`impl-accounting.md` "R — Review", F61 on),
+section "R — Review" and findings F43–F46), of Accounting P0–P3 (`impl-accounting.md` "R — Review", F61 on) and of
+Accounting P4–P5 (`impl-accounting.md` "R2 — Review"),
 measured against the Projects app, which is the reference implementation of the screen archetypes. They cover code
 quality, organization and UI quality, not individual bugs.
 
@@ -33,9 +34,9 @@ Each component is its own git repository. Commit in each repository that a chang
 | --- | --- |
 | `component.xml`, `MoquiConf.xml` | The component and its conf: screen mounts (`screen-facade`), tool factories, properties. |
 | `entity/*.xml` | Entity definitions, view entities and extensions (`extend-entity`). In BOSS these are rare; the data model is Mantle's. |
-| `data/*.xml` | Seed, setup and demo data (`type="seed"`, `"seed-initial"`, `"demo"`): enumerations, status flows, security (`ArtifactGroup`, `ArtifactAuthz`, `UserGroupPermission`), demo records the walks and screenshots use. |
-| `service/<package path>/*.xml` | Service definitions: verb and noun, parameters, `<description>`, the implementation (`<actions>` with XML actions or a `<script>`, or `type="script"` with a location). SECAs in `*.secas.xml`, EECAs in `entity/*.eecas.xml`. |
-| `service/<package path>/*.js` | The JavaScript behind the services: one module per area (`Prices.js`, `Methods.js`), plus a shared library (`ProductsLib.js`). |
+| `data/*.xml` | Seed, setup and demo data (`type="seed"`, `"seed-initial"`, `"demo"`): enumerations, status flows, security (`ArtifactGroup`, `ArtifactAuthz`, `UserGroupPermission`), demo records the walks use. |
+| `service/<package path>/*.xml` | Service definitions: verb and noun, parameters, `<description>`, and the implementation, inline XML Actions in `<actions>` (§4). SECAs in `*.secas.xml`, EECAs in `entity/*.eecas.xml`. |
+| `service/<package path>/*.js` | Script modules for logic too involved for XML Actions: one module per area (`Prices.js`, `Methods.js`), plus a shared library (`ProductsLib.js`). |
 | `screen/<App>.xml`, `screen/<App>/**/*.xml` | XML Screens: the app root, its sections and subscreens. `screen/Shared/*.xml` holds screens mounted in several apps. |
 | `screen/**/*.qvue` | Vue single-file screens and widgets for the browser (§6), each beside an XML screen. |
 | `screen-extend/` | Extensions of another component's screens. |
@@ -46,6 +47,8 @@ Each component is its own git repository. Commit in each repository that a chang
 
 ### Languages and render modes
 
+- **Services are XML Actions first.** A service's implementation is inline XML Actions in its definition; JavaScript is
+  for logic XML Actions do not express well (§4).
 - **Scripts are JavaScript** (QuickJS), not Groovy. XML action expressions, `<script>` bodies, conditions, `${}`
   template text and service scripts are all JavaScript. Groovy's `?:` and `?.` habits do not all carry over: use `||` or
   `??`. `moqui lint --groovy <dir>` reports Groovy left in a component; `moqui lint --screens` reports idioms and hazards
@@ -67,7 +70,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | --- | --- |
 | `./moq run` | Start the server on the dev conf. |
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
-| `./moq test-client <component> --serve -- --spec S --out DIR` | Client specs against a started server; screenshots to `DIR` ([Client-Testing](Client-Testing.md)). |
+| `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([Client-Testing](Client-Testing.md)). |
 | `target/develop/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
 | `moqui lint [service-file]`, `moqui lint --groovy <dir>` | Service expression lint; leftover Groovy. |
 | `moqui tui`, `moqui tui --server` | The terminal UI, to see a screen's `tui` rendering. |
@@ -79,7 +82,6 @@ Each component is its own git repository. Commit in each repository that a chang
   (§5), states and feedback (§6), devices and breakpoints (§7), and the checklist for a new XML element (§8.1).
 - **Archetype gallery:** `runtime/dev-component/example/screen/Gallery*.xml` and its `.qvue` files, at
   `/qapps/gallery` once signed in on a dev instance. One screen per archetype; its README lists them.
-  `test/client/GalleryShots.spec.js` is the pattern for screenshot specs.
 - **Reference implementation:** the Projects app, `runtime/component/mr-boss/screen/Projects/`. For record headers
   and actions see `Projects/Projects/ProjectDetail.xml` (the `m-record-header` block); for a landing see
   `Projects/Home.xml`.
@@ -99,6 +101,13 @@ Each component is its own git repository. Commit in each repository that a chang
 
 ## 3. Where logic goes
 
+- **Use Mantle before adding to it.** Mantle was ported from Moqui Java's mantle-usl, much of it used in production
+  for years (`/moqui/runtime/component/mantle-usl` in a Java checkout is the original). Before writing a service, find
+  the one that already does it and use it, or extend it with a parameter: payments are created, changed and posted
+  through `create#`/`update#Payment` and `post#Payment` (so their SECAs run), applied through the `apply#*` services,
+  refunded through `create#RefundPayment`; gateway operations go through the `*#SinglePayment` services and their
+  gateway interfaces; invoices print over `get#InvoicePrintInfo` and send through an `EmailTemplate`. Accounting P4–P5
+  first rebuilt each of these beside Mantle, with its own entities and guards, and the review removed the copies.
 - **Business rules lean to Mantle.** A rule about the records (validation, effective dating, rounding, policy, totals)
   is a Mantle service in the package of the records it changes, with its own spec, passing under
   `./moq test mr-mantle` alone. The app keeps its access check, its screen context and its settings forms. Products'
@@ -140,6 +149,25 @@ Each component is its own git repository. Commit in each repository that a chang
   interface into a second file to reuse it is a copy too: implement the first.
 - Undeclared in-parameters are dropped before the service runs. A screen that passes `context` passes only what the
   service declares.
+
+### Service implementations
+
+- **Inline XML Actions** in the service definition: `entity-find`, `entity-find-one`, `entity-find-count`,
+  `entity-make-value`, `entity-create`/`update`/`delete`, `service-call`, `set`, `if`, `iterate`, `return`, `message`.
+  A Mantle service that checks its own permission and organization scope reads and writes with `disable-authz="true"`
+  on these actions (and on `service-call`), as its script would with `.disableAuthz()`. A short JavaScript expression in
+  a `set from` or a condition is fine.
+- **A script module** only for logic that XML Actions do not express well: paging over several kinds of record,
+  allocation planning, a posting preview, hashing, CSV, date arithmetic. Accounting P4–P5 first had nearly every
+  service as a one-line `<script>` into a module of 1,000 to 1,600 lines, most of it entity and service calls.
+- **No authorization by caller.** A service does not read `ec.artifactExecution.getStackNameString()` to decide whether
+  its caller may write; it checks permissions. Status rules are `StatusFlowTransition` data that `update#` checks.
+- **No EECA guarding an entity that only its own module writes**, and no EECA or SECA on a hot path (every `Payment` or
+  `AcctgTrans` write, a framework entity, `service=".*"`) without a narrow `<condition>`.
+- **Nothing for tests in production files.** Test entities, services, SECAs and scripts under `test/` are not loaded by
+  `entity/` or `service/` files; a spec makes its own data and faults.
+- Sequenced ids (`entity-sequenced-id-primary`, the `create#` services), not `ec.user.randomString`; status and kind
+  fields are `StatusItem` or `Enumeration` ids with relationships, not free text.
 
 ### Script modules
 
@@ -360,16 +388,13 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 
 ### Client specs (`test/client/*.spec.js`)
 
-- **Screenshots** of each screen once, light at 1280 px, from one table-driven spec per app
-  (`mr-boss/test/client/ProductsShots.spec.js`): a group names a user, a screenshot prefix and its pages; a page may
-  wait for a text, open a dialog or row action, and check what it shows. The first page of each group is also shot at
-  390 and in the dark, and a page whose check depends on the width at 390 too (`GalleryShots.spec.js` is the same
-  shape). Never a width x theme matrix of every page: ProductsShots keeps the one it had, commented out, as the example
-  of an unacceptable test (535 cases, 9 minutes, for checks that did not change with either). A shots spec over 30
-  seconds is `slow: true`. **Look at the screenshots** when you run it: shots that pass can still show a broken layout.
+- **No screenshot specs.** A spec asserts what a page shows; it does not save images that no one compares or looks at.
+  To look at a screen, take a screenshot while working (the browser tools, or `page.screenshot` in a spec run by hand)
+  and do not keep it in the suite. A failed browser feature still writes its own `failed-*.png` for debugging.
+  The specs of a phone layout check overflow at 390 px; a theme is checked only where a feature depends on it.
 - Open the browser pages in `setupSpec`, one per user and width. Module variables are not shared between cases.
 - **Walks** for each scenario in the implementation plan: a user with only the needed grants, every click a user
-  makes, and a screenshot of the result.
+  makes, and an assertion of the result.
 - Click what the user clicks. A menu item that holds a dialog or link is a `q-item` around a button: click the button
   (`.q-menu button, .q-menu a`), not the `q-item`, which does nothing (F43 was this test mistake). Scope a header
   menu to its own actions container: a 360 screen has more than one "More".
@@ -408,12 +433,15 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Every detail screen has the record header and a not-available state; every ending, bulk or irreversible action
   confirms, naming the record or the count.
 - Screens that differ by record kind share a template; each screen declares only the parameters it reads.
-- `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, the walks run, and, when the
-  user agrees to the slow run (`--slow`), the shots run and the screenshots looked at.
+- Mantle's services used or extended, not rebuilt beside them; service implementations in inline XML Actions, script
+  modules only for complex logic; no caller-name guards, no self-guarding EECAs, nothing for tests in production files.
+- `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, and the walks run.
 - A mechanical pass over the changed files:
   - `isInGroup(` in a service or script;
   - `PageRangeHigh` set in a screen;
   - `toISOString` in a script or spec;
+  - `getStackNameString`, `ec.user.randomString` for an id, `ec.context.putAll(ec.resource.script(`, and a
+    `component://.../test/` location in a `service/` or `entity/` file;
   - `like` without `ignoreCase`, and a `limit` before a JavaScript filter;
   - a form whose `transition` is not on its screen;
   - more than one `type="primary"`/`btn-type="primary"` on a screen at a time;
