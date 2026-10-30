@@ -936,7 +936,7 @@ pub(crate) fn cancel(ctx: &Ctx<'_>, params: &Json) -> Result<TaskRow, Failure> {
 /// # Errors
 ///
 /// Returns an error when the task cannot be read.
-pub fn wait_canceled(factory: &Arc<ExecutionContextFactory>, task: &TaskRow, base_url: &str) -> Result<Json, Error> {
+pub fn wait_canceled(factory: &ExecutionContextFactory, task: &TaskRow, base_url: &str) -> Result<Json, Error> {
     let facade = run::facade_of(factory)?;
     let deadline = Instant::now() + CANCEL_WAIT;
     let mut now = task.clone();

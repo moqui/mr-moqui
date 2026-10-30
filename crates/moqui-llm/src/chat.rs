@@ -833,7 +833,7 @@ fn status_of(tool: &str) -> String {
 }
 
 /// The room side of a chat run's committed events: typing, the cards and the answer.
-pub(crate) fn observe(factory: &Arc<ExecutionContextFactory>, batch: &RunEvents) {
+pub(crate) fn observe(factory: &ExecutionContextFactory, batch: &RunEvents) {
     let Some(facade) = factory.entity() else {
         return;
     };

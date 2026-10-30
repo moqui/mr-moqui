@@ -1215,7 +1215,7 @@ pub fn cancel_run(
 /// # Errors
 ///
 /// Returns an error when there is no such run or it cannot be read.
-pub fn wait_for(factory: &Arc<ExecutionContextFactory>, run_id: &str, timeout: Duration) -> Result<RunState, Error> {
+pub fn wait_for(factory: &ExecutionContextFactory, run_id: &str, timeout: Duration) -> Result<RunState, Error> {
     let facade = facade_of(factory)?;
     let engine = engine(factory);
     let deadline = Instant::now() + timeout;
