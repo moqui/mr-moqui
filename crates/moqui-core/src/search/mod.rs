@@ -603,8 +603,8 @@ impl SearchFacade {
         Ok(stored)
     }
 
-    pub fn backend(&self) -> &Arc<dyn SearchBackend> {
-        &self.backend
+    pub fn backend(&self) -> &dyn SearchBackend {
+        self.backend.as_ref()
     }
 
     pub fn entity(&self) -> &EntityFacade {

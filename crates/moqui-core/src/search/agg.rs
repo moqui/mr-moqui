@@ -323,7 +323,7 @@ impl Agg {
                 // Both `{filter: {query: q}}` and Elastic's `{filter: q}` read here.
                 let query = match body.get("query") {
                     Some(query) => Query::from_value(query)?,
-                    None => super::es_json::from_es(&Value::Map(body.clone()))?,
+                    None => super::es_json::from_map(body)?,
                 };
                 Self::Filter { query, aggs: nested()? }
             }

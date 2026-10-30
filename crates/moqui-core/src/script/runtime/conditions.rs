@@ -142,7 +142,7 @@ pub(super) fn make_condition<'js>(
     ignore_case: Opt<JsValue<'js>>,
 ) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
-        let as_text = |value: &Option<JsValue<'js>>| -> rquickjs::Result<String> {
+        let as_text = |value: Option<&JsValue<'js>>| -> rquickjs::Result<String> {
             match value {
                 Some(value) if value.is_string() => js_string(&ctx, value),
                 _ => Ok(String::new()),
@@ -155,12 +155,12 @@ pub(super) fn make_condition<'js>(
                     parts.push(condition);
                 }
             }
-            let operator = as_text(&second.0)?;
+            let operator = as_text(second.0.as_ref())?;
             return condition_js(&ctx, join(parts, &operator));
         }
         if first.is_string() {
             let field = js_string(&ctx, &first)?;
-            let operator = as_text(&second.0)?;
+            let operator = as_text(second.0.as_ref())?;
             let value = match &third.0 {
                 Some(value) => js_to_host(&ctx, value)?,
                 None => Value::Null,

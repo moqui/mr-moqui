@@ -1053,19 +1053,18 @@ impl HostWeb {
         fourth: Opt<JsValue<'_>>,
     ) -> rquickjs::Result<String> {
         host_guard(&ctx, || {
-            let text = |value: &Option<JsValue<'_>>| {
+            let text = |value: Option<&JsValue<'_>>| {
                 value
-                    .as_ref()
                     .and_then(|value| value.as_string())
                     .and_then(|text| text.to_string().ok())
                     .filter(|text| !text.is_empty())
             };
-            let flag = |value: &Option<JsValue<'_>>| value.as_ref().and_then(JsValue::as_bool);
+            let flag = |value: Option<&JsValue<'_>>| value.and_then(JsValue::as_bool);
             let named = first.0.as_ref().is_some_and(JsValue::is_string);
             let (webapp, full, encryption) = if named {
-                (text(&first.0), flag(&third.0), flag(&fourth.0))
+                (text(first.0.as_ref()), flag(third.0.as_ref()), flag(fourth.0.as_ref()))
             } else {
-                (None, flag(&first.0), flag(&second.0))
+                (None, flag(first.0.as_ref()), flag(second.0.as_ref()))
             };
             let webapp = webapp.unwrap_or_else(|| "webroot".to_string());
             Ok(crate::web::webapp_root_url(&webapp, full.unwrap_or(false), encryption))

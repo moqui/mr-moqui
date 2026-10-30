@@ -200,7 +200,9 @@ pub fn embedding_text(mapping: &DocumentMapping, body: &Document, max_chars: usi
         }
     }
     let mut rest = Vec::new();
-    strings(&Value::Map(body.clone()), &mut rest);
+    for value in body.values() {
+        strings(value, &mut rest);
+    }
     for text in rest {
         if out.len() >= max_chars {
             break;

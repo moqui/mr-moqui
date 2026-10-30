@@ -859,9 +859,9 @@ fn collection_get_map_array_list_values<'js>(
             return Null.into_js(&ctx);
         };
         let maps: Vec<indexmap::IndexMap<String, Value>> = items
-            .iter()
+            .into_iter()
             .filter_map(|item| match item {
-                Value::Map(map) => Some(map.clone()),
+                Value::Map(map) => Some(map),
                 _ => None,
             })
             .collect();
