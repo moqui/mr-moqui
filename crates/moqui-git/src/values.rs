@@ -67,7 +67,7 @@ pub(crate) fn commit_value(commit: &CommitDetails) -> Value {
     }
     let mut entries = vec![
         ("commitId", Value::string(&id)),
-        ("shortId", Value::string(&id[..10])),
+        ("shortId", Value::string(commit.id.to_hex_with_len(10).to_string())),
         ("treeId", Value::string(commit.tree.to_string())),
         (
             "parentIds",

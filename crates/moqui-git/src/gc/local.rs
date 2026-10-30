@@ -308,7 +308,9 @@ fn unpack(store: &FsStore, root: &Path, id: &ObjectId, millis: i64) -> Result<()
         .ok_or_else(|| Error::new(format!("git object {id} is missing")))?;
     store.write(kind, &data)?;
     let hex = id.to_string();
-    let path = root.join("objects").join(&hex[..2]).join(&hex[2..]);
+    // a loose object is objects/<first two hex digits>/<the rest>
+    let (directory, file) = hex.split_at(2);
+    let path = root.join("objects").join(directory).join(file);
     let time = UNIX_EPOCH + Duration::from_millis(u64::try_from(millis).unwrap_or(0));
     // an object left with the time of now is only kept longer
     if let Err(err) = std::fs::File::open(&path).and_then(|file| file.set_modified(time)) {

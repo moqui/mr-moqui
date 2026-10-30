@@ -500,7 +500,7 @@ impl Refused {
             }
             Self::Conflicts { paths, at } => {
                 let at = at
-                    .map(|id| format!(" at commit {}", &id.to_string()[..10]))
+                    .map(|id| format!(" at commit {}", id.to_hex_with_len(10)))
                     .unwrap_or_default();
                 format!(
                     "{source} does not merge into {target}{at}: conflicts in {}",

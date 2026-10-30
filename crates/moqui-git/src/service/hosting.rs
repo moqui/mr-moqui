@@ -412,7 +412,7 @@ fn find_updates(parameters: &Parameters, facade: &EntityFacade) -> Out {
 fn commit_summary(commit: &crate::ops::CommitDetails) -> Value {
     map([
         ("commitId", Value::string(commit.id.to_string())),
-        ("shortId", Value::string(commit.id.to_string()[..10].to_string())),
+        ("shortId", Value::string(commit.id.to_hex_with_len(10).to_string())),
         ("summary", Value::string(commit.summary())),
         ("authorName", opt_text(&commit.author.name)),
         ("authorEmail", opt_text(&commit.author.email)),
@@ -1343,8 +1343,8 @@ fn hex(bytes: &[u8]) -> String {
 /// The `sha256=<hex>` signature of a body with a webhook's secret, as GitHub's `X-Hub-Signature-256`.
 pub(crate) fn signature(secret: &str, body: &[u8]) -> String {
     use hmac::Mac;
-    let mut mac = <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(secret.as_bytes())
-        .unwrap_or_else(|_| <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(b"").expect("an empty key"));
+    let mut mac =
+        <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");
     mac.update(body);
     format!("sha256={}", hex(&mac.finalize().into_bytes()))
 }

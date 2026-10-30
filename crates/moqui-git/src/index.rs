@@ -230,7 +230,7 @@ impl BranchIndex {
                 if path.is_empty() {
                     break;
                 }
-                path = path.rfind('/').map_or("", |slash| &path[..slash]);
+                path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
             }
         }
         self.head = commit.info.id;
