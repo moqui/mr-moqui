@@ -306,7 +306,7 @@ impl EntityFind {
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", operation)?;
         cache::sim_check_find(&self.facade, &self.entity_name)?;
         let condition = self.combined();
-        let lookup = self.lookup(&condition);
+        let lookup = self.lookup(condition.as_ref());
         if let Some(schema) = self.sim_view_schema(false)? {
             let plan = self.plan(false, condition)?;
             let rows = cache::query_sim(&self.facade, &schema, &plan.sql, &plan.params)?;
@@ -496,7 +496,7 @@ impl EntityFind {
             return count_of(&rows);
         }
         let condition = self.combined();
-        let lookup = self.lookup(&condition);
+        let lookup = self.lookup(condition.as_ref());
         let bypass = self.bypasses_cache();
         if let Some(count) = cache::before_count(&self.facade, &lookup).filter(|_| !bypass) {
             return Ok(count);
@@ -567,7 +567,7 @@ impl EntityFind {
         let _authz = self.authz_guard();
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", "iterator")?;
         let condition = self.combined();
-        let lookup = self.lookup(&condition);
+        let lookup = self.lookup(condition.as_ref());
         if !self.bypasses_cache() {
             if let Some(cached) = cache::before_find(&self.facade, &lookup) {
                 return Ok(EntityListIterator::memory(self.facade, self.entity_name, cached));
@@ -605,12 +605,12 @@ impl EntityFind {
         Ok(())
     }
 
-    fn lookup(&self, condition: &Option<Condition>) -> FindLookup {
+    fn lookup(&self, condition: Option<&Condition>) -> FindLookup {
         FindLookup {
-            filtered: !self.is_unfiltered(condition.as_ref()),
+            filtered: !self.is_unfiltered(condition),
             entity_name: self.entity_name.clone(),
             use_cache: self.use_cache,
-            condition: condition.clone(),
+            condition: condition.cloned(),
             order: self.order.clone(),
             limit: self.limit,
             offset: self.offset,

@@ -36,7 +36,7 @@ pub fn document(facade: &EntityFacade, names: &[String], master: bool) -> Result
     let Some(name) = names.first() else {
         return facade.with_model(|model| Ok(Builder::new(facade, model).catalog(master)));
     };
-    let master_name = master.then(|| names.get(1).cloned().unwrap_or_else(|| "default".to_string()));
+    let master_name = master.then(|| names.get(1).map_or("default", String::as_str));
     // The entity may be one built at runtime (a DB view entity, `DataDocument.<id>`); what it refers to is in the model.
     let found = facade.with_entity(name, |entity, _, model| {
         Ok(Builder::new(facade, model).one_entity(entity, master_name))
@@ -71,8 +71,8 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn one_entity(&mut self, entity: &EntityDefinition, master_name: Option<String>) -> Result<Value, Error> {
-        let master = match master_name.as_deref() {
+    fn one_entity(&mut self, entity: &EntityDefinition, master_name: Option<&str>) -> Result<Value, Error> {
+        let master = match master_name {
             Some(master_name) => Some(entity.masters.iter().find(|item| item.name == master_name).ok_or_else(
                 || {
                     bad_request(format!(

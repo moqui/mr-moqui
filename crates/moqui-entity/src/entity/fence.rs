@@ -437,22 +437,17 @@ fn refuse(violation: Violation) -> Result<(), Error> {
     let Some((at, kind)) = in_force() else {
         return Ok(());
     };
+    let described = violation.describe();
     let label = FENCE.with(|stack| {
         let mut stack = stack.borrow_mut();
         let frame = stack.get_mut(at)?;
-        frame.violations.push(violation.clone());
+        frame.violations.push(violation);
         frame.label.clone()
     });
     let label = label.unwrap_or_default();
     let message = match kind {
-        Kind::Sim => format!(
-            "{FENCE_ERROR} {} is not run in {label}, which writes only to the sim",
-            violation.describe()
-        ),
-        _ => format!(
-            "{FENCE_ERROR} {} is not allowed in {label}, which may only read",
-            violation.describe()
-        ),
+        Kind::Sim => format!("{FENCE_ERROR} {described} is not run in {label}, which writes only to the sim"),
+        _ => format!("{FENCE_ERROR} {described} is not allowed in {label}, which may only read"),
     };
     tracing::warn!("{message}");
     Err(Error::new(message))

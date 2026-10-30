@@ -193,7 +193,7 @@ impl ViewPlan {
             }
             let own = cache::sim_written_rows(facade, &member.entity_name)?;
             let mut visited = HashSet::from([member.alias.clone()]);
-            self.walk(facade, member, own, &mut visited, &mut copied)?;
+            self.walk(facade, member, &own, &mut visited, &mut copied)?;
         }
         Ok(schema)
     }
@@ -239,7 +239,7 @@ impl ViewPlan {
             groups.entry(fields).or_default().push(values);
         }
         for (fields, tuples) in groups {
-            let found = matching_rows(facade, &member.entity_name, &fields, tuples)?;
+            let found = matching_rows(facade, &member.entity_name, &fields, &tuples)?;
             copy_rows(facade, &member.entity_name, &found, copied)?;
         }
         Ok(())
@@ -251,7 +251,7 @@ impl ViewPlan {
         &self,
         facade: &EntityFacade,
         from: &Member,
-        rows: Vec<FieldMap>,
+        rows: &[FieldMap],
         visited: &mut HashSet<String>,
         copied: &mut usize,
     ) -> Result<(), Error> {
@@ -289,10 +289,10 @@ impl ViewPlan {
                 .filter(|tuple| seen.insert(tuple.iter().map(to_plain_string).collect::<Vec<_>>()))
                 .collect();
             let fields: Vec<String> = pairs.into_iter().map(|(_, theirs)| theirs).collect();
-            let found = matching_rows(facade, &other.entity_name, &fields, tuples)?;
+            let found = matching_rows(facade, &other.entity_name, &fields, &tuples)?;
             copy_rows(facade, &other.entity_name, &found, copied)?;
-            let next = found.into_iter().map(|value| value.fields().clone()).collect();
-            self.walk(facade, other, next, visited, copied)?;
+            let next: Vec<FieldMap> = found.into_iter().map(|value| value.fields().clone()).collect();
+            self.walk(facade, other, &next, visited, copied)?;
         }
         Ok(())
     }
@@ -323,7 +323,7 @@ fn matching_rows(
     facade: &EntityFacade,
     entity_name: &str,
     fields: &[String],
-    tuples: Vec<Vec<Value>>,
+    tuples: &[Vec<Value>],
 ) -> Result<Vec<EntityValue>, Error> {
     let mut out = Vec::new();
     for batch in tuples.chunks(MATCH_BATCH) {

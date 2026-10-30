@@ -1242,7 +1242,7 @@ pub(super) fn copy_replica(facade: &EntityFacade, entity_name: &str, plain: Fiel
     let owner = facade.clone();
     let (full_name, pk, sealed) = facade.with_entity(entity_name, |entity, _, _| {
         let pk = identity(entity, &plain)?;
-        let sealed = field_rw::seal_stored(&owner, entity, plain.clone())?;
+        let sealed = field_rw::seal_stored(&owner, entity, plain)?;
         Ok((entity.full_name.clone(), pk, sealed))
     })?;
     let key = row_key(&full_name, &pk);
