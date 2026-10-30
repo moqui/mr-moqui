@@ -301,15 +301,14 @@ fn tag_row_text<'a>(row: &'a str, prefix: &str, held: &[(String, String, bool)])
     let mut cells = row.strip_prefix("<tr>")?.strip_suffix("</tr>")?;
     let mut first = None;
     while !cells.is_empty() {
-        let cell = cells.strip_prefix("<td")?;
-        let cell = &cell[cell.find('>')? + 1..];
-        let end = cell.find("</td>")?;
+        let (_, cell) = cells.strip_prefix("<td")?.split_once('>')?;
+        let (content, after) = cell.split_once("</td>")?;
         if first.is_none() {
-            first = Some(&cell[..end]);
-        } else if end > 0 {
+            first = Some(content);
+        } else if !content.is_empty() {
             return None;
         }
-        cells = &cell[end + "</td>".len()..];
+        cells = after;
     }
     let text = first?;
     let mut rest = text.trim();
@@ -318,12 +317,12 @@ fn tag_row_text<'a>(row: &'a str, prefix: &str, held: &[(String, String, bool)])
     }
     while !rest.is_empty() {
         let after = rest.strip_prefix(prefix)?;
-        let digits = after.find(|c: char| !c.is_ascii_digit())?;
-        let index: usize = after[..digits].parse().ok()?;
+        let (digits, after) = after.split_at_checked(after.find(|c: char| !c.is_ascii_digit())?)?;
+        let index: usize = digits.parse().ok()?;
         if !held.get(index)?.2 {
             return None;
         }
-        rest = after[digits..].strip_prefix('x')?.trim_start();
+        rest = after.strip_prefix('x')?.trim_start();
     }
     Some(text)
 }
@@ -845,9 +844,8 @@ fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
 
 /// `a.b as item` split at the last ` as ` word.
 fn split_last_word<'a>(text: &'a str, word: &str) -> Option<(&'a str, &'a str)> {
-    let needle = format!(" {word} ");
-    let at = text.rfind(&needle)?;
-    Some((text[..at].trim(), text[at + needle.len()..].trim()))
+    let (before, after) = text.rsplit_once(&format!(" {word} "))?;
+    Some((before.trim(), after.trim()))
 }
 
 fn is_identifier(name: &str) -> bool {
@@ -1109,7 +1107,7 @@ fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rqui
             // A date alone (`yyyy-MM-dd`) is a date, formatted with no time zone shift, as Java formats a Date.
             Some(pattern) if crate::l10n::is_date_pattern(pattern) => {
                 let trimmed = text.trim();
-                let date_only = trimmed.len() == 10 && trimmed.as_bytes()[4] == b'-' && trimmed.as_bytes()[7] == b'-';
+                let date_only = matches!(trimmed.as_bytes(), [_, _, _, _, b'-', _, _, b'-', _, _]);
                 date_only
                     .then(|| moqui_lib::object::parse_date(trimmed).map(Value::Date))
                     .flatten()

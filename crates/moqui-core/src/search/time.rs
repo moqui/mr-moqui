@@ -70,40 +70,39 @@ fn eval(text: &str, now: i64, up: bool, week: Option<Weekday>) -> Result<(i64, b
     let zone = crate::l10n::time_zone();
     let mut time = Timestamp::from_millisecond(anchor).map_err(fail)?.to_zoned(zone);
     let mut rounded = false;
-    while let Some(op) = rest.chars().next() {
-        rest = &rest[1..];
+    loop {
+        let mut chars = rest.chars();
+        let Some(op) = chars.next() else {
+            break;
+        };
+        rest = chars.as_str();
         match op {
             '+' | '-' => {
                 let n = rest.bytes().take_while(u8::is_ascii_digit).count();
-                if n == 0 {
+                let Some((digits, after)) = rest.split_at_checked(n).filter(|_| n > 0) else {
                     return Err(fail(format!("invalid relative report time {text}")));
-                }
-                let amount = rest[..n].parse::<i64>().map_err(fail)? * if op == '-' { -1 } else { 1 };
-                rest = &rest[n..];
-                let unit = rest
-                    .chars()
-                    .next()
-                    .ok_or_else(|| Error::new("relative time needs a unit"))?;
-                rest = &rest[unit.len_utf8()..];
+                };
+                let amount: i64 = digits.parse().map_err(fail)?;
+                let amount = amount * if op == '-' { -1 } else { 1 };
+                let mut chars = after.chars();
+                let unit = chars.next().ok_or_else(|| Error::new("relative time needs a unit"))?;
+                rest = chars.as_str();
                 time = time.checked_add(span(unit, amount)?).map_err(fail)?;
             }
             '/' => {
-                let unit = if rest.starts_with("fy") {
-                    "fy"
+                // `fy`, or one ASCII unit letter, which is also the unit to step by when rounding up.
+                let (unit, step_unit, after) = if let Some(after) = rest.strip_prefix("fy") {
+                    ("fy", 'y', after)
                 } else {
-                    rest.get(..1).unwrap_or_default()
+                    match (rest.chars().next(), rest.split_at_checked(1)) {
+                        (Some(first), Some((unit, after))) => (unit, first, after),
+                        _ => return Err(fail(format!("report time {text} has no rounding unit"))),
+                    }
                 };
-                if unit.is_empty() {
-                    return Err(fail(format!("report time {text} has no rounding unit")));
-                }
-                rest = &rest[unit.len()..];
+                rest = after;
                 time = round_down(&time, unit, week)?;
                 if up {
-                    let step = if unit == "fy" {
-                        span('y', 1)?
-                    } else {
-                        span(unit.chars().next().unwrap(), 1)?
-                    };
+                    let step = span(step_unit, 1)?;
                     time = time
                         .checked_add(step)
                         .and_then(|next| next.checked_sub(Span::new().milliseconds(1)))
@@ -192,6 +191,12 @@ mod tests {
         assert!(parse("now-whatever", now).is_err());
         assert!(parse("now/", now).is_err());
         assert!(parse("now/q", now).is_err());
+        assert!(parse("now+", now).is_err());
+        assert!(parse("now+1", now).is_err());
+        // A character that is not ASCII is an error, not a panic, wherever it falls.
+        assert!(parse("now\u{e9}", now).is_err());
+        assert!(parse("now+1\u{e9}", now).is_err());
+        assert!(parse("now/\u{e9}", now).is_err());
     }
     #[test]
     fn accepts_absolute_times() {

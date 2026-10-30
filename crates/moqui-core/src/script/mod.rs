@@ -57,4 +57,21 @@ mod tests {
         assert!(parse_js("a b").is_err());
         run_actions("<actions/>").unwrap();
     }
+
+    #[test]
+    fn groovy_hints_find_closure_calls_and_arrows() {
+        use super::parse::{has_closure_call, has_groovy_arrow};
+        assert!(has_closure_call("list.each { it }"));
+        assert!(has_closure_call("each{"));
+        assert!(has_closure_call("x.findAll{ a } + list.sort {"));
+        assert!(!has_closure_call("list.forEach(x => x)"));
+        assert!(!has_closure_call("eachItem { }"));
+        assert!(!has_closure_call("preeach { }"));
+        assert!(!has_closure_call("\u{e9}each(1)"));
+        assert!(has_closure_call("\u{e9} each {"));
+        assert!(has_groovy_arrow("{ a -> a }"));
+        assert!(has_groovy_arrow("->"));
+        assert!(!has_groovy_arrow("a => a"));
+        assert!(!has_groovy_arrow("a =-> b"));
+    }
 }

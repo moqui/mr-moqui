@@ -112,10 +112,9 @@ pub fn eval_condition_group(and_xml: &str) -> Result<bool, Error> {
 /// the statement. With `MOQUI_ACTIONS_DEBUG` set, the element comment above it is shown too.
 fn with_source_line(err: Error, source: &str, file_name: &str) -> Error {
     let message = err.message();
-    let prefix = format!("{file_name}:");
     let line = message
-        .find(&prefix)
-        .and_then(|at| message[at + prefix.len()..].split(':').next()?.parse::<usize>().ok());
+        .split_once(&format!("{file_name}:"))
+        .and_then(|(_, after)| after.split(':').next()?.parse::<usize>().ok());
     let Some(line) = line.filter(|line| *line > 0) else {
         return err;
     };

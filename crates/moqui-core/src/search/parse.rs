@@ -169,13 +169,13 @@ fn tokenize(input: &str) -> Result<Vec<(Token, usize)>, Error> {
                     .ok_or_else(|| clause_error(input, start, "unclosed range"))?;
                 let body: String = chars[index + 1..close].iter().collect();
                 let parts: Vec<&str> = body.split_whitespace().collect();
-                if parts.len() != 3 || parts[1] != "TO" {
+                let [low, "TO", high] = parts.as_slice() else {
                     return Err(clause_error(input, start, "a range is [low TO high]"));
-                }
+                };
                 tokens.push((
                     Token::Range {
-                        low: unquote(parts[0]),
-                        high: unquote(parts[2]),
+                        low: unquote(low),
+                        high: unquote(high),
                         low_inclusive: ch == '[',
                         high_inclusive: chars[close] == ']',
                     },
@@ -465,7 +465,7 @@ impl Parser<'_> {
 
 fn word_query(field: Option<&str>, text: &str, quoted: bool, wild: &[bool]) -> Query {
     let field = field.filter(|name| *name != "*");
-    if !quoted && wild.len() == 1 && wild[0] {
+    if !quoted && wild == [true] {
         return match field {
             Some(name) => Query::exists(name),
             None => Query::MatchAll,
@@ -633,6 +633,10 @@ mod tests {
         );
         assert_eq!(parse("te?t"), text(None, "te?t", TextMatch::Wildcard));
         assert_eq!(parse("a\\*b"), text(None, "a*b", TextMatch::Term));
+        // A lone star is every document, or every document with the field.
+        assert_eq!(parse("*"), Query::MatchAll);
+        assert_eq!(parse("size:*"), Query::exists("size"));
+        assert_eq!(parse("\"*\""), text(None, "*", TextMatch::Phrase));
     }
 
     #[test]
@@ -652,6 +656,8 @@ mod tests {
             "AND b",
             "/re/",
             "x:[1 TO]",
+            "x:[1 to 2]",
+            "x:[1 TO 2 3]",
             "\"open",
         ] {
             let err = parse_query_string(bad).unwrap_err().to_string();

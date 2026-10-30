@@ -541,10 +541,9 @@ impl<'a> Compiler<'a> {
             out.push(")");
             return out;
         }
-        if list.len() == 2 && distance < NEAR_PHRASE_LIMIT {
+        if let ([first, second], true) = (list, distance < NEAR_PHRASE_LIMIT) {
             // Two words: "within distance" is the second word 1 to distance + 1 positions after the first, which
             // the phrase operators check in the GIN-indexed match itself, without reading positions row by row.
-            let (first, second) = (&list[0], &list[1]);
             let alternatives: Vec<String> = (1..=distance + 1)
                 .map(|gap| format!("{first} <{gap}> {second}"))
                 .collect();

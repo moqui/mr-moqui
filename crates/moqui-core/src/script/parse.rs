@@ -142,11 +142,11 @@ pub(crate) fn file_function(source: &str) -> String {
     });
     let mut out = String::with_capacity(source.len() + 32);
     out.push_str("(function(){");
-    match last.filter(|at| source.is_char_boundary(*at)) {
-        Some(at) => {
-            out.push_str(&source[..at]);
+    match last.and_then(|at| source.split_at_checked(at)) {
+        Some((before, last)) => {
+            out.push_str(before);
             out.push_str("return ");
-            out.push_str(&source[at..]);
+            out.push_str(last);
         }
         None => out.push_str(source),
     }
@@ -189,18 +189,17 @@ pub fn has_closure_call(text: &str) -> bool {
         "sort",
         "with",
     ];
-    let bytes = text.as_bytes();
     for word in WORDS {
-        let mut start = 0;
-        while let Some(found) = text[start..].find(word) {
-            let at = start + found;
-            let end = at + word.len();
-            let before_ok = at == 0 || !is_ident(bytes[at - 1]);
-            let after_ok = end >= bytes.len() || !is_ident(bytes[end]);
-            if before_ok && after_ok && text[end..].trim_start().starts_with('{') {
+        for (at, _) in text.match_indices(word) {
+            let Some((before, after)) = text.split_at_checked(at) else {
+                continue;
+            };
+            let after = after.strip_prefix(word).unwrap_or(after);
+            let before_ok = !before.bytes().next_back().is_some_and(is_ident);
+            let after_ok = !after.bytes().next().is_some_and(is_ident);
+            if before_ok && after_ok && after.trim_start().starts_with('{') {
                 return true;
             }
-            start = end;
         }
     }
     false
