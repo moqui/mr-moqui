@@ -283,7 +283,7 @@ impl GitProvider {
                     .ok_or_else(|| Error::new("no execution context"))?;
                 let provider = self.clone();
                 let id = repository_id.to_string();
-                transactions.on_commit(move || schedule_on(&factory, provider, id))?;
+                transactions.on_commit(move || schedule_on(&factory, provider, &id))?;
                 Ok(true)
             })()
             .unwrap_or(false);
@@ -296,7 +296,7 @@ impl GitProvider {
     /// for the job that runs pending updates.
     pub(crate) fn schedule(&self, repository_id: &str) {
         if let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) {
-            schedule_on(&factory, self.clone(), repository_id.to_string());
+            schedule_on(&factory, self.clone(), repository_id);
         }
     }
 
@@ -710,9 +710,9 @@ impl GitProvider {
 fn schedule_on(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     provider: GitProvider,
-    repository_id: String,
+    repository_id: &str,
 ) {
-    let id = repository_id.clone();
+    let id = repository_id.to_string();
     let submitted = super::server::pool(factory).try_submit(Arc::clone(factory), move || {
         if let Err(err) = provider.process_repository(&id) {
             tracing::error!(repository = %id, "git update events failed: {err}");

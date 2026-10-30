@@ -1068,14 +1068,14 @@ impl GitProvider {
         &self,
         repo: &Repo,
         location: &str,
-        path: Vec<String>,
+        path: &[String],
         blob: ObjectId,
         note: Option<&str>,
     ) -> Result<(), Error> {
         let shown = path.join("/");
         self.commit(repo, |head| {
             let existing = match head {
-                Some(head) => ops::resolve(repo.store.as_ref(), &head.tree, &path)?,
+                Some(head) => ops::resolve(repo.store.as_ref(), &head.tree, path)?,
                 None => None,
             };
             let kind = match existing {
@@ -1091,7 +1091,7 @@ impl GitProvider {
                 .map(str::trim)
                 .filter(|note| !note.is_empty())
                 .map_or_else(|| format!("{verb} {shown}"), str::to_string);
-            Ok(Some((vec![Edit::Put(path.clone(), kind, blob)], message)))
+            Ok(Some((vec![Edit::Put(path.to_vec(), kind, blob)], message)))
         })?;
         Ok(())
     }
@@ -1227,7 +1227,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
             return Err(Error::new(format!("cannot write the root of a repository: {location}")));
         }
         let blob = self.store_file(&repo, &path, lfs_files::FileContent::Bytes(bytes))?;
-        self.put_file(&repo, location, path, blob, note)
+        self.put_file(&repo, location, &path, blob, note)
     }
 
     /// A large file is stored as it is read (a content blob of a `db` repository), never all in memory.
@@ -1245,7 +1245,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
             return Err(Error::new(format!("cannot write the root of a repository: {location}")));
         }
         let blob = self.store_file(&repo, &path, lfs_files::FileContent::Stream(input, size))?;
-        self.put_file(&repo, location, path, blob, None)
+        self.put_file(&repo, location, &path, blob, None)
     }
 
     /// Git keeps no empty directories, so a new directory gets an empty `.gitkeep` file, the usual convention. A

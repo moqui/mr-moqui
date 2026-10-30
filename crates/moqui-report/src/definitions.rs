@@ -6,7 +6,7 @@ const VERSION: &str = "moqui.report.DefinitionVersion";
 const REFERENCE: &str = "moqui.report.DefinitionReference";
 #[derive(Default)]
 struct Shipped {
-    definitions: std::sync::RwLock<Option<std::sync::Arc<Vec<Json>>>>,
+    definitions: std::sync::RwLock<Option<std::sync::Arc<[Json]>>>,
 }
 
 /// Load component files once at boot. A bad independent file is logged and skipped; named
@@ -15,7 +15,7 @@ pub fn load_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> R
     let registry = factory.extension(|_| Shipped::default());
     let definitions = scan_shipped(factory);
     let count = definitions.len();
-    *registry.definitions.write().unwrap_or_else(|e| e.into_inner()) = Some(std::sync::Arc::new(definitions));
+    *registry.definitions.write().unwrap_or_else(|e| e.into_inner()) = Some(definitions.into());
     Ok(count)
 }
 
@@ -56,7 +56,7 @@ fn visible(ec: &ExecutionContext, mut definition: Json) -> Result<Json, Error> {
     Ok(definition)
 }
 
-fn shipped(ec: &ExecutionContext) -> std::sync::Arc<Vec<Json>> {
+fn shipped(ec: &ExecutionContext) -> std::sync::Arc<[Json]> {
     let registry = ec.factory().extension(|_| Shipped::default());
     {
         if let Some(definitions) = registry.definitions.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
@@ -64,9 +64,7 @@ fn shipped(ec: &ExecutionContext) -> std::sync::Arc<Vec<Json>> {
         }
     }
     let mut state = registry.definitions.write().unwrap_or_else(|e| e.into_inner());
-    state
-        .get_or_insert_with(|| std::sync::Arc::new(scan_shipped(ec.factory())))
-        .clone()
+    state.get_or_insert_with(|| scan_shipped(ec.factory()).into()).clone()
 }
 
 fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<Json> {

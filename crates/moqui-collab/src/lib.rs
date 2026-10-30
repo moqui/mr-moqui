@@ -567,7 +567,7 @@ pub fn tick() {
     }
 }
 
-fn tick_room(key: &str, room: &Arc<Mutex<Room>>) -> Result<(), Error> {
+fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     let (dirty, quiet, members, unsaved, on_database, last_editor) = {
         let room = locked(room);
         (
@@ -603,7 +603,7 @@ fn tick_room(key: &str, room: &Arc<Mutex<Room>>) -> Result<(), Error> {
 }
 
 /// Write the room's state now.
-fn flush(key: &str, room: &Arc<Mutex<Room>>) -> Result<(), Error> {
+fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     let guard = locked(room);
     let unsaved = guard.unsaved.clone();
     let editor = guard.last_editor.clone();
@@ -615,7 +615,7 @@ fn flush(key: &str, room: &Arc<Mutex<Room>>) -> Result<(), Error> {
 
 /// Save the document as a version of its record, as `user_id` (an editor with update access), with `note` or one that
 /// names its editors. Out: the version made, none when the text was unchanged.
-fn save_room(key: &str, room: &Arc<Mutex<Room>>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
+fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
     let (target, page_text, editors) = {
         let room = locked(room);
         (room.target.clone(), markdown::render(&room.doc), room.unsaved.clone())
