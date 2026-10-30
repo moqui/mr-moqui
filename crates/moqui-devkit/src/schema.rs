@@ -595,7 +595,7 @@ mod tests {
     use super::*;
 
     fn xsd_dir() -> PathBuf {
-        crate::context::framework_dir().join("xsd")
+        moqui_core::context::framework_dir().join("xsd")
     }
 
     #[test]

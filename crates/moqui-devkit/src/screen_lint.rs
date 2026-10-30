@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use moqui_lib::node::MNode;
 
-use crate::context::Error;
+use moqui_core::context::Error;
 
 /// Elements that hold XML actions. The generated script of each must parse.
 const ACTION_CONTAINERS: &[&str] = &["actions", "always-actions", "pre-actions", "row-actions"];
@@ -524,7 +524,7 @@ pub fn lint_screens(roots: &[PathBuf]) -> Result<ScreenLintReport, Error> {
     paths.sort();
     paths.dedup();
     let mut report = ScreenLintReport::default();
-    let (names, opaque) = crate::screen::generate::widget_vocabulary()?;
+    let (names, opaque) = moqui_core::screen::generate::widget_vocabulary()?;
     for path in paths {
         if let Some((_, reason)) = KNOWN_EXCLUSIONS.iter().find(|(suffix, _)| path.ends_with(suffix)) {
             report.excluded.push((path, reason));
@@ -545,7 +545,7 @@ pub fn lint_screens(roots: &[PathBuf]) -> Result<ScreenLintReport, Error> {
 ///
 /// Returns an error when the text does not parse as XML.
 pub fn lint_screen_text(path: &Path, text: &str) -> Result<Option<FileReport>, Error> {
-    let (names, opaque) = crate::screen::generate::widget_vocabulary()?;
+    let (names, opaque) = moqui_core::screen::generate::widget_vocabulary()?;
     scan_screen_text(path.to_path_buf(), text, &names, &opaque)
 }
 
@@ -565,7 +565,7 @@ fn scan_screen_text(
     };
     scan_node(&root, false, &mut file);
     scan_widgets(&root, names, opaque, &mut file);
-    super::lint_hazards::refine(&root, &mut file);
+    crate::lint_hazards::refine(&root, &mut file);
     if root.has_name("screen") {
         scan_tui(&root, &mut file);
         scan_anchors(&root, &mut file);
@@ -717,7 +717,7 @@ pub fn lint_groovy(roots: &[PathBuf], show_all: bool) -> Result<ScreenLintReport
             ..FileReport::default()
         };
         scan_node(&root, false, &mut file);
-        super::lint_hazards::refine(&root, &mut file);
+        crate::lint_hazards::refine(&root, &mut file);
         report.files.push(file);
     }
     Ok(report)
@@ -846,12 +846,12 @@ fn generated_ok(node: &MNode) -> Result<(), Error> {
         }
         format!("<actions>{}</actions>", copy.write_string())
     };
-    super::check_actions(&xml)
+    moqui_core::script::check_actions(&xml)
 }
 
 fn check_condition(node: &MNode, file: &mut FileReport) {
     let xml = format!("<actions><if>{}</if></actions>", node.deep_copy().write_string());
-    if let Err(err) = super::check_actions(&xml) {
+    if let Err(err) = moqui_core::script::check_actions(&xml) {
         file.generated_errors.push((node.line(), format!("condition {err}")));
     }
 }
@@ -949,7 +949,7 @@ fn scan_text(node: &MNode, line: u32, file: &mut FileReport) {
     if node.attribute_is("template", "false") || dropped {
         return;
     }
-    match super::template::check_template(&body) {
+    match moqui_core::script::template::check_template(&body) {
         Ok(()) => file.dialect_bodies += 1,
         Err(err) => file
             .template_errors
@@ -958,7 +958,7 @@ fn scan_text(node: &MNode, line: u32, file: &mut FileReport) {
 }
 
 fn site(line: u32, element: &str, attr: &str, kind: SiteKind, text: &str, whole: bool) -> Site {
-    let error = super::parse_js(text).err().map(|err| err.to_string());
+    let error = moqui_core::script::parse_js(text).err().map(|err| err.to_string());
     let mut idioms = classify(text);
     if whole && kind == SiteKind::Expression {
         if let Some(sample) = truthiness_candidate(attr, text) {
@@ -1250,7 +1250,7 @@ pub fn classify(text: &str) -> Vec<(Idiom, String)> {
     if let Some(at) = range_at(bytes) {
         out.push(sample(text, Idiom::Range, at));
     }
-    if super::parse::has_closure_call(m) || super::parse::has_groovy_arrow(m) {
+    if moqui_core::script::parse::has_closure_call(m) || moqui_core::script::parse::has_groovy_arrow(m) {
         out.push(sample(
             text,
             Idiom::Closure,

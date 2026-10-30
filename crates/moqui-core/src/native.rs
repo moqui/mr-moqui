@@ -58,7 +58,7 @@ pub(crate) type NativeBody =
 /// A service body as the definition holds it: a catalogue function, or a closure bound with
 /// [`ExecutionContextFactory::register_service`].
 #[derive(Clone)]
-pub(crate) struct NativeServiceFn(Arc<NativeBody>);
+pub struct NativeServiceFn(Arc<NativeBody>);
 
 impl NativeServiceFn {
     pub(crate) fn new(body: Arc<NativeBody>) -> Self {

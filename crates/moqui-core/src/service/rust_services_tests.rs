@@ -26,16 +26,6 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::chat_link::fetch_link_page",
         "moqui_core::service::contacts::filter_contact_addresses",
         "moqui_core::service::content::gc_content_blobs",
-        "moqui_core::service::devtools::apply_xml_ops",
-        "moqui_core::service::devtools::find_artifacts",
-        "moqui_core::service::devtools::get_artifact",
-        "moqui_core::service::devtools::get_artifact_at",
-        "moqui_core::service::devtools::get_artifact_extensions",
-        "moqui_core::service::devtools::get_artifact_refs",
-        "moqui_core::service::devtools::get_schema_digest",
-        "moqui_core::service::devtools::get_xml_outline",
-        "moqui_core::service::devtools::rebuild_artifact_index",
-        "moqui_core::service::devtools::restart_server",
         "moqui_core::service::content::migrate_db_resource_blobs",
         "moqui_core::service::external_agent::request",
         "moqui_core::service::images::convert_image",
@@ -97,6 +87,10 @@ fn an_unlinked_framework_crate_service_reports_its_feature() {
         Some("collab")
     );
     assert_eq!(super::missing_feature("moqui_dav::elfinder::run_command"), Some("dav"));
+    assert_eq!(
+        super::missing_feature("moqui_devkit::service::restart_server"),
+        Some("devkit")
+    );
     // moqui-mail is smtp, with the receive half its imap
     assert_eq!(super::missing_feature("moqui_mail::send_message"), Some("smtp"));
     assert_eq!(super::missing_feature("moqui_mail::push_remote_changes"), Some("smtp"));

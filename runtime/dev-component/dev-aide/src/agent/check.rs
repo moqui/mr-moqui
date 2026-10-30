@@ -17,7 +17,7 @@
 //! with no file, the problems of the last reloads. The words are the editor's Problems panel's, so a person and a model
 //! fix them the same way.
 
-use moqui_core::devtools::{check, recent_reports, Problem, Severity};
+use moqui_devkit::{check, recent_reports, Problem, Severity};
 use moqui_llm::run::context::TurnContext;
 use moqui_llm::tools::format::ToolError;
 use moqui_llm::tools::schema::{object, Property};

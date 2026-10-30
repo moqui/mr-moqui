@@ -15,6 +15,8 @@
 //! `git://` locations through the resource facade, for each repository kind: the same scenario over a bare
 //! repository on disk and over `GitObject`/`GitRef` rows, then export, import and a mirror fetch.
 
+// A push runs the report definitions' git sync (moqui-report), as in the host; naming the crate links it here.
+use moqui_report as _;
 use std::path::{Path, PathBuf};
 
 use moqui_lib::object::Value;

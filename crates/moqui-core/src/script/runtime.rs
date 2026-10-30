@@ -80,7 +80,7 @@ use decimal::*;
 pub use ec_extra::expand_localized;
 use entities::*;
 use error_info::*;
-pub(crate) use facades::forget_scripts;
+pub use facades::forget_scripts;
 pub use facades::run_script_location;
 use facades::*;
 use helpers::*;
@@ -719,9 +719,9 @@ pub fn expand(template: &str) -> Result<String, Error> {
 }
 
 /// See [`upload::text_upload_to_js`].
-pub(crate) use upload::text_upload_to_js;
+pub use upload::text_upload_to_js;
 
-pub(crate) fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+pub fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
     with_context(body)
 }
 

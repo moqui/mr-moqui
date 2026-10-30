@@ -14,11 +14,11 @@
 
 //! `moqui types [--out dir]`: TypeScript declarations from the loaded definitions (`plans/archive/TypeGeneration.md`). The
 //! definitions load as they do for a server, against an entity model with no database, then
-//! `moqui_core::typegen::generate` writes the files. The default output is `types/` in the runtime directory.
+//! `moqui_devkit::typegen::generate` writes the files. The default output is `types/` in the runtime directory.
 
 use std::path::{Path, PathBuf};
 
-use moqui_core::typegen::TypeFiles;
+use moqui_devkit::typegen::TypeFiles;
 use moqui_lib::error::Error;
 
 use crate::qvt_report::{component_roots, model_only_factory, screen_files};
@@ -33,7 +33,7 @@ pub fn generate_types(runtime: &Path, framework: &Path) -> Result<TypeFiles, Err
     // `screen_files` takes the files below a directory named `screen`. `component_roots` includes the framework
     // directory only when it is not already inside the runtime component directories.
     let roots = component_roots(runtime, framework);
-    moqui_core::typegen::generate(&factory, &screen_files(&roots)).map_err(|err| Error::new(err.to_string()))
+    moqui_devkit::typegen::generate(&factory, &screen_files(&roots)).map_err(|err| Error::new(err.to_string()))
 }
 
 /// Generate the declarations and write them into `out`. Returns the summary line the command prints.

@@ -24,8 +24,8 @@ use moqui_db::model::EntityModel;
 use moqui_lib::node::MNode;
 
 use super::ts::{doc, ident, is_name, quote, server_type};
-use crate::screen::statics::{is_lookup, option_key, sub_nodes, HEADER_SUFFIXES, PAGE_SUFFIXES};
-use crate::screen::{ScreenDef, SectionKind};
+use moqui_core::screen::statics::{is_lookup, option_key, sub_nodes, HEADER_SUFFIXES, PAGE_SUFFIXES};
+use moqui_core::screen::{ScreenDef, SectionKind};
 
 /// One form of a screen: the assembled form element, or the form's own element when assembly failed.
 pub(super) struct FormSource {

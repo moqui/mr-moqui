@@ -278,7 +278,7 @@ fn get_overview(
         }
         roots.push(row);
     }
-    let reports = moqui_core::devtools::recent_reports(&context.factory);
+    let reports = moqui_devkit::recent_reports(&context.factory);
     let restart = reports.iter().any(|report| report.restart);
     let rebuild = reports.iter().any(|report| report.rebuild);
     let reloads: Vec<serde_json::Value> = reports
@@ -468,24 +468,20 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
 
 /// The reload and check of a written file, and its git status, into `out`.
 fn after_write(context: &Context, root: &Root, resolved: &confine::Resolved, text: Option<&str>, out: &mut Parameters) {
-    let report = moqui_core::devtools::reload_paths(&context.factory, std::slice::from_ref(&resolved.path));
-    let mut problems: Vec<moqui_core::devtools::Problem> = report.problems().cloned().collect();
+    let report = moqui_devkit::reload_paths(&context.factory, std::slice::from_ref(&resolved.path));
+    let mut problems: Vec<moqui_devkit::Problem> = report.problems().cloned().collect();
     if let Some(text) = text {
         if resolved.relative.ends_with(".xml") {
-            problems.extend(moqui_core::devtools::check::check_text(
-                &context.factory,
-                &resolved.path,
-                text,
-            ));
+            problems.extend(moqui_devkit::check::check_text(&context.factory, &resolved.path, text));
         }
     }
     if !root.is_site_path(&resolved.relative) {
         // an edit of an upstream file while the lock is off is a fork; the check says so (D17)
-        problems.push(moqui_core::devtools::Problem {
+        problems.push(moqui_devkit::Problem {
             path: resolved.path.display().to_string(),
             line: 0,
             column: 0,
-            severity: moqui_core::devtools::Severity::Warning,
+            severity: moqui_devkit::Severity::Warning,
             rule: "upstream.edit".into(),
             message: format!(
                 "{} is upstream: an edit here is a fork every upgrade has to merge; an extension in {} is not",
@@ -493,7 +489,7 @@ fn after_write(context: &Context, root: &Root, resolved: &confine::Resolved, tex
                     .map_or(root.label.as_str(), |component| component.name.as_str()),
                 context.settings.default_site().unwrap_or("a site component")
             ),
-            skill: Some(format!("{}#Extending", moqui_core::devtools::check::SKILL_FILE)),
+            skill: Some(format!("{}#Extending", moqui_devkit::check::SKILL_FILE)),
         });
     }
     let status = statuses(context, root, &resolved.relative)
@@ -759,7 +755,7 @@ fn rename_path(
             ..Write::default()
         },
     );
-    let report = moqui_core::devtools::reload_paths(&context.factory, &[from.path.clone(), to.path.clone()]);
+    let report = moqui_devkit::reload_paths(&context.factory, &[from.path.clone(), to.path.clone()]);
     let mut out = Parameters::new();
     out.insert("path".into(), Value::string(&to.relative));
     out.insert("reload".into(), json_value(&report));
@@ -797,7 +793,7 @@ fn delete_path(
             ..Write::default()
         },
     );
-    let report = moqui_core::devtools::reload_paths(&context.factory, std::slice::from_ref(&resolved.path));
+    let report = moqui_devkit::reload_paths(&context.factory, std::slice::from_ref(&resolved.path));
     let mut out = Parameters::new();
     out.insert("reload".into(), json_value(&report));
     Ok(out)
@@ -959,7 +955,7 @@ fn check_file(
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let content = text(parameters, "text");
     let problems = if resolved.relative.ends_with(".xml") {
-        moqui_core::devtools::check::check_text(&context.factory, &resolved.path, &content)
+        moqui_devkit::check::check_text(&context.factory, &resolved.path, &content)
     } else {
         Vec::new()
     };

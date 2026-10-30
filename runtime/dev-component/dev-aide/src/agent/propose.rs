@@ -23,8 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use moqui_core::devtools::index::{self, extract};
-use moqui_core::devtools::{Problem, Severity};
+use moqui_devkit::index::{self, extract};
+use moqui_devkit::{Problem, Severity};
 use moqui_lib::node::MNode;
 use moqui_llm::approval::{
     self, ApprovalRequest, ChangeRow, HandoffTarget, PreviewMode, Requested, Resumed, TargetKind,
@@ -212,7 +212,7 @@ pub(crate) struct Prepared<'a> {
     /// file is no longer at, or a new file that is there now. Operations and replacements apply to the file now.
     pub stale: Option<String>,
     pub new_text: String,
-    pub kind: moqui_core::devtools::ArtifactKind,
+    pub kind: moqui_devkit::ArtifactKind,
     pub location: String,
 }
 
@@ -229,7 +229,7 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
         let located = index::locate(&context.factory, &named.path);
         let kind = located
             .as_ref()
-            .map_or(moqui_core::devtools::ArtifactKind::Other, |found| found.kind);
+            .map_or(moqui_devkit::ArtifactKind::Other, |found| found.kind);
         let location = located.map_or_else(|| named.shown.clone(), |found| found.location);
         prepared.push(Prepared {
             named,
@@ -244,8 +244,8 @@ pub(crate) fn prepare<'a>(context: &'a Context, set: &ChangeSet) -> Result<Vec<P
     Ok(prepared)
 }
 
-fn order_of(kind: moqui_core::devtools::ArtifactKind) -> u8 {
-    use moqui_core::devtools::ArtifactKind as Kind;
+fn order_of(kind: moqui_devkit::ArtifactKind) -> u8 {
+    use moqui_devkit::ArtifactKind as Kind;
     match kind {
         Kind::Entity => 0,
         Kind::Data => 1,
@@ -484,8 +484,8 @@ pub(crate) fn change_card(prepared: &[Prepared<'_>]) -> Json {
             values.push(json!({"file": position, "label": "Title", "attribute": "title", "value": title}));
         }
         match file.kind {
-            moqui_core::devtools::ArtifactKind::Screen => preview.push(json!({"location": file.location})),
-            moqui_core::devtools::ArtifactKind::ScreenExtend => {
+            moqui_devkit::ArtifactKind::Screen => preview.push(json!({"location": file.location})),
+            moqui_devkit::ArtifactKind::ScreenExtend => {
                 preview.push(json!({"location": extract::extended_location(&file.location)}));
             }
             _ => {}
@@ -521,7 +521,7 @@ fn describe(file: &Prepared<'_>) -> Vec<Json> {
     };
     let shown = file.named.shown.as_str();
     let mut rows = Vec::new();
-    if file.kind == moqui_core::devtools::ArtifactKind::ScreenExtend {
+    if file.kind == moqui_devkit::ArtifactKind::ScreenExtend {
         let base = extract::extended_location(&file.location);
         let screen = short_file(&base).trim_end_matches(".xml").to_string();
         let before = form_fields(file.current.as_deref().unwrap_or(""));

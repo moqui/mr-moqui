@@ -66,9 +66,10 @@ one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `ll
 through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
 framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
 way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
-`moqui_core::extension`; `moqui-report`, `moqui-collab` and `moqui-dav` are three more, linked in every host build
-(the host's `xlsx` turns on the report crate's own, for the xlsx format of a scheduled report), and the browser build
-links the reports and `moqui-dav` (the VCard and ICalendar tools, elFinder) but not co-editing. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
+`moqui_core::extension`; `moqui-report`, `moqui-collab`, `moqui-dav` and `moqui-devkit` are four more, linked in
+every host build (the host's `xlsx` turns on the report crate's own, for the xlsx format of a scheduled report, and its
+`devtools` the dev kit's `watch`, the file watcher), and the browser build links the reports and `moqui-dav` (the VCard
+and ICalendar tools, elFinder) but not co-editing or the dev kit. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
 build, with no features of its own.
 
 | Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
@@ -84,7 +85,7 @@ build, with no features of its own.
 | `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes | yes |
 | `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes | yes |
 | `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | | yes | yes |
-| `devtools` | host, core | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
@@ -443,7 +444,7 @@ priceMap.price == 16.99
 - A feature also fails when it leaves errors in `ec.message`, unless `allowMessageErrors` is set. Messages are cleared
   between features.
 
-The source is rewritten for this before it runs (`crates/moqui-core/src/testkit/rewrite.rs`), with no new lines, so error
+The source is rewritten for this before it runs (`crates/moqui-devkit/src/testkit/rewrite.rs`), with no new lines, so error
 line numbers are the file's. A `then` or `expect` the rewrite cannot see, such as a feature object built in a helper
 function, is refused when the file loads rather than run with conditions that cannot fail. Use `where` rows instead.
 

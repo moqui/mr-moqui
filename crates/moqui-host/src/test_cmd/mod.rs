@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::testkit::{
+use moqui_devkit::testkit::{
     run_spec, spec_database_free, spec_depends_on, spec_missing_features, spec_slow, suite_order, CaseResult, Outcome,
     RunOptions, SpecFile, SpecResult, SLOW_REASON,
 };

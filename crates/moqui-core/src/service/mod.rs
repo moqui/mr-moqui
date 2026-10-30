@@ -25,8 +25,7 @@ mod chat_tests;
 mod contacts;
 mod content;
 pub mod coverage;
-pub(crate) mod define;
-mod devtools;
+pub mod define;
 mod eca;
 mod eca_rules;
 mod external_agent;
@@ -70,7 +69,7 @@ pub use call::{
 };
 pub use define::load_definitions;
 pub use define::{check, configured_service_files, lint, reload as reload_definitions, ServiceReload};
-pub(crate) use define::{input_hints, input_rules, merge_param, ClientRule};
+pub use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
@@ -100,7 +99,7 @@ pub(crate) use system_sync::receive_rest_message;
 pub use system_sync::{hmac_base64, timestamp_header};
 pub(crate) use validate::clean_safe_html;
 pub use validate::validate;
-pub(crate) use validate::{auto_entity_name, auto_fields};
+pub use validate::{auto_entity_name, auto_fields};
 
 /// A JSON body as a [`moqui_lib::object::Value`].
 pub(crate) fn parse_json(text: &str) -> Result<moqui_lib::object::Value, crate::context::Error> {

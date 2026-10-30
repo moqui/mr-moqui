@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::testkit::SpecFile;
+use moqui_devkit::testkit::SpecFile;
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_llm::provider::fake::{self, Reply, Step};
 use moqui_llm::testkit::agents::{evaluate, AgentSpecFile, EvalOptions, Mode, TaskOutcome};

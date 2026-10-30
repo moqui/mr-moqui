@@ -25,9 +25,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use moqui_core::context::{Error, ExecutionContext};
-use moqui_core::devtools::index::{self, Direction};
 use moqui_core::entity::info;
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
+use moqui_devkit::index::{self, Direction};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};

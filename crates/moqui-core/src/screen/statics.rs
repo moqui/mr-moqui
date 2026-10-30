@@ -41,7 +41,7 @@ use crate::web::{self, WebRequest};
 pub(crate) const UNIT_MODE: &str = "qvt-static";
 pub(crate) const STATIC_MODULE: &str = "framework/template/screen/ScreenQvtStatic.js";
 /// The module of server-merged qvt. A screen with another macro module for qvt is not transcribed.
-pub(crate) const MERGED_MODULE: &str = "framework/template/screen/ScreenQvt.js";
+pub const MERGED_MODULE: &str = "framework/template/screen/ScreenQvt.js";
 /// The conf's `Cache-Control` of a server-static response, `response-header` `screen-server-static`.
 pub fn server_static_cache_control() -> String {
     web::conf_header("screen-server-static", "Cache-Control").unwrap_or_else(|| "private, no-store".to_string())
@@ -50,7 +50,7 @@ const COMPILER_LOCATION: &str = "component://webroot/screen/webroot/libs/vue/com
 const STATIC_MODULE_SOURCE: &str =
     include_str!("../../../../runtime/base-component/framework/template/screen/ScreenQvtStatic.js");
 /// The keys the renderer sets for a paginated list, after the list name.
-pub(crate) const PAGE_SUFFIXES: [&str; 6] = [
+pub const PAGE_SUFFIXES: [&str; 6] = [
     "Count",
     "PageIndex",
     "PageSize",
@@ -182,7 +182,7 @@ fn structure_reasons(
 }
 
 /// The eligibility of `def` for static qvt. `force` answers as if the screen were marked, which the compatibility report asks.
-pub(crate) fn eligibility_of(
+pub fn eligibility_of(
     facade: &super::ScreenFacade,
     factory: &ExecutionContextFactory,
     def: &Arc<ScreenDef>,
@@ -728,7 +728,7 @@ fn is_name(text: &str) -> bool {
 
 /// The key under which the options of a widget are kept, which `ScreenQvtStatic.js` reads: the form, the field, the place of the
 /// field's sub-node among its children and the place of the widget in the sub-node.
-pub(crate) fn option_key(form: &str, field: &str, sub_index: usize, widget_index: usize) -> String {
+pub fn option_key(form: &str, field: &str, sub_index: usize, widget_index: usize) -> String {
     format!("mqOpt_{form}_{field}_{sub_index}_{widget_index}")
 }
 
@@ -762,7 +762,7 @@ fn editable_options(state: &RenderState, widget: &MNode) -> Option<(String, serd
     }
 }
 
-pub(crate) fn is_lookup(widget: &MNode) -> bool {
+pub fn is_lookup(widget: &MNode) -> bool {
     let dynamic = widget
         .first_named("dynamic-options")
         .is_some_and(|node| !node.attribute_is("server-search", "true"));
@@ -782,7 +782,7 @@ fn lookup_options(state: &RenderState, widget: &MNode) -> Result<serde_json::Val
     ))
 }
 
-pub(crate) fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
+pub fn sub_nodes(field: &MNode) -> impl Iterator<Item = (usize, MNode)> {
     field
         .children()
         .into_iter()
@@ -968,7 +968,7 @@ const PAGE_HEADERS: [&str; 6] = [
 ];
 
 /// The names a header field of a form-list reads from the request: its value and the find parameters that go with it.
-pub(crate) const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thru", "_poffset", "_period"];
+pub const HEADER_SUFFIXES: [&str; 8] = ["", "_op", "_not", "_ic", "_from", "_thru", "_poffset", "_period"];
 
 /// Whether the template has a form or a link with `pass-through-parameters="true"`, including an inlined include-screen.
 /// A screen that does not use the attribute does not get the package key. A failed lookup is logged and skipped.

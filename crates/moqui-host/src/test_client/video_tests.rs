@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use moqui_core::testkit::Failure;
+use moqui_devkit::testkit::Failure;
 
 use super::*;
 

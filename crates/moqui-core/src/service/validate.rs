@@ -255,7 +255,7 @@ fn text_collection(value: &Value, java_type: &str) -> Option<Value> {
 
 /// A service's in-parameters with `auto-parameters` expanded, kept with the entity facade they were expanded from.
 #[derive(Default)]
-pub(crate) struct ExpandedParams(Mutex<Option<Expanded>>);
+pub struct ExpandedParams(Mutex<Option<Expanded>>);
 
 struct Expanded {
     /// The facade's model the parameters were expanded from, or None when no parameter reads one.
@@ -362,7 +362,7 @@ fn expand_auto(def: &ServiceDef, auto: &AutoParams, facade: Option<&EntityFacade
 }
 
 /// The entity `auto-parameters` reads: its `entity-name`, else the service noun.
-pub(crate) fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<String, Error> {
+pub fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<String, Error> {
     let entity_name = auto
         .entity_name
         .clone()
@@ -378,7 +378,7 @@ pub(crate) fn auto_entity_name(def: &ServiceDef, auto: &AutoParams) -> Result<St
 }
 
 /// The parameters `auto-parameters` makes from the fields of `entity`.
-pub(crate) fn auto_fields(
+pub fn auto_fields(
     auto: &AutoParams,
     entity: &moqui_db::model::EntityDefinition,
     model: &moqui_db::model::EntityModel,

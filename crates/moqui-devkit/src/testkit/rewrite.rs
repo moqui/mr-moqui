@@ -31,7 +31,7 @@ use oxc_ast::ast::{
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::GetSpan;
 
-use crate::context::Error;
+use moqui_core::context::Error;
 
 /// The name a rewritten `then` or `expect` member gets.
 pub const REWRITTEN_SUFFIX: &str = "$pa";

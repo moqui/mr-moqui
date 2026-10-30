@@ -448,9 +448,9 @@ The service section names the Rust service bodies. This section is where the add
 |---|---|---|
 | `moqui-host/src/lib.rs`, `usage.rs` | `MoquiStart` commands that exist: run, load, save-db, load-save, and the help text. WAR packaging, the executable-WAR classpath, and H2 are not ported. | Partial |
 | `moqui/src/main.rs` | Process entry that calls the host. | Native |
-| `testkit/mod.rs`, `testkit/run.rs`, `testkit/rewrite.rs` | Spock, reimplemented as JavaScript specs. [TestHarness](archive/TestHarness.md). | Native |
+| `moqui-devkit/src/testkit/mod.rs`, `testkit/run.rs`, `testkit/rewrite.rs` | Spock, reimplemented as JavaScript specs. [TestHarness](archive/TestHarness.md). | Native |
 | `moqui-host/src/test_cmd/mod.rs`, `test_cmd/fixture.rs`, `test_cmd/report.rs`, `test_cmd/coverage.rs` | `moqui test` driver, database fixture, JUnit XML, coverage. | Native |
-| `typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
+| `moqui-devkit/src/typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
 | `moqui-host/src/types.rs` | `moqui types`. | Native |
 | `moqui-host/src/qvt_report.rs` | `moqui lint --screens --qvt-static`. The report is `screen/statics/report.rs`. | Native |
 | `moqui-host/src/tui.rs`, `tui_remote.rs`, `tui_cmd.rs`, `crates/moqui-tui` | `moqui tui`: the in-process and HTTP screen links and the terminal client on Revue. Not in Java. [Screen-TUI-Impl](archive/Screen-TUI-Impl.md), [TUI](../docs/ui/TUI.md). | Native |

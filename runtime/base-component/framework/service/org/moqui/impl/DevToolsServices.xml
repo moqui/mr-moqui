@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
         dev-aide component, the command line and agents outside the server. Each answers only when instance_purpose is
         dev, for a user with the DEV_AIDE permission or in the ADMIN group; the pure text services (the XML operations,
         the outline, the schema digest) and the index's reads for any dev-aide permission. -->
-    <service verb="apply" noun="XmlOps" type="rust" location="moqui_core::service::devtools::apply_xml_ops"
+    <service verb="apply" noun="XmlOps" type="rust" location="moqui_devkit::service::apply_xml_ops"
             allow-remote="false" read-only="true">
         <description>The operations of the lossless XML layer (plans/design-dev-aide.md 5.2) on a text: set, remove and
             rename an attribute, insert, remove, move and replace an element, set an element's text, wrap and unwrap,
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outline" type="Map"><description>The outline of the new text, as get#XmlOutline answers it.</description></parameter>
         </out-parameters>
     </service>
-    <service verb="get" noun="XmlOutline" type="rust" location="moqui_core::service::devtools::get_xml_outline"
+    <service verb="get" noun="XmlOutline" type="rust" location="moqui_devkit::service::get_xml_outline"
             allow-remote="false" read-only="true">
         <description>The outline of an XML text (plans/design-dev-aide.md 5.2): its elements as a tree, each with the path
             the XML operations take, its name, its attributes as values, its line and column, its span in UTF-16 code
@@ -43,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="text" required="true" allow-html="any"/></in-parameters>
         <out-parameters><parameter name="outline" type="Map"/></out-parameters>
     </service>
-    <service verb="get" noun="SchemaDigest" type="rust" location="moqui_core::service::devtools::get_schema_digest"
+    <service verb="get" noun="SchemaDigest" type="rust" location="moqui_devkit::service::get_schema_digest"
             allow-remote="false" read-only="true">
         <description>The digest of the framework's XSDs for a root element (screen, services, entities, secas and the
             rest): each element, its children and its attributes with their values, defaults and documentation, for an
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="rootElement" required="true"/></in-parameters>
         <out-parameters><parameter name="digest" type="Map"/></out-parameters>
     </service>
-    <service verb="find" noun="Artifacts" type="rust" location="moqui_core::service::devtools::find_artifacts"
+    <service verb="find" noun="Artifacts" type="rust" location="moqui_devkit::service::find_artifacts"
             allow-remote="false" read-only="true">
         <description>The artifacts of the index (plans/design-dev-aide.md 7.1) whose names match a text, best first:
             segments and camel case match (OrdHdr, place#Order), an exact id or name first. Any user with a dev-aide
@@ -65,13 +65,13 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="artifacts" type="List"/></out-parameters>
     </service>
-    <service verb="get" noun="Artifact" type="rust" location="moqui_core::service::devtools::get_artifact"
+    <service verb="get" noun="Artifact" type="rust" location="moqui_devkit::service::get_artifact"
             allow-remote="false" read-only="true">
         <description>One artifact of the index by its id (entity:moqui.example.Example), or the best match of a name.</description>
         <in-parameters><parameter name="artifactId" required="true"/></in-parameters>
         <out-parameters><parameter name="artifact" type="Map"/></out-parameters>
     </service>
-    <service verb="get" noun="ArtifactRefs" type="rust" location="moqui_core::service::devtools::get_artifact_refs"
+    <service verb="get" noun="ArtifactRefs" type="rust" location="moqui_devkit::service::get_artifact_refs"
             allow-remote="false" read-only="true">
         <description>What uses an artifact (direction in) or what it uses (out), from the files and the calls observed
             on this dev instance; a screen's or entity's transitions, forms and fields count as it.</description>
@@ -82,7 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="refs" type="List"/></out-parameters>
     </service>
-    <service verb="get" noun="ArtifactAt" type="rust" location="moqui_core::service::devtools::get_artifact_at"
+    <service verb="get" noun="ArtifactAt" type="rust" location="moqui_devkit::service::get_artifact_at"
             allow-remote="false" read-only="true">
         <description>The reference at a line of a file (the one naming word when given) and the artifact it resolves
             to, else the artifact defined on the line: go to definition.</description>
@@ -93,20 +93,20 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/></out-parameters>
     </service>
-    <service verb="get" noun="ArtifactExtensions" type="rust" location="moqui_core::service::devtools::get_artifact_extensions"
+    <service verb="get" noun="ArtifactExtensions" type="rust" location="moqui_devkit::service::get_artifact_extensions"
             allow-remote="false" read-only="true">
         <description>The extensions the components make (extend-entity, screen-extend and its anchors, ECA rules on
             another's service or entity) with whether each target is there, broken first.</description>
         <in-parameters><parameter name="components" type="Object"/></in-parameters>
         <out-parameters><parameter name="extensions" type="List"/><parameter name="brokenCount" type="Integer"/></out-parameters>
     </service>
-    <service verb="rebuild" noun="ArtifactIndex" type="rust" location="moqui_core::service::devtools::rebuild_artifact_index"
+    <service verb="rebuild" noun="ArtifactIndex" type="rust" location="moqui_devkit::service::rebuild_artifact_index"
             allow-remote="false">
         <description>Read every component file whose hash changed into the index now; with full, every file.</description>
         <in-parameters><parameter name="full" type="Boolean" default-value="false"/></in-parameters>
         <out-parameters><parameter name="report" type="Map"/></out-parameters>
     </service>
-    <service verb="restart" noun="Server" type="rust" location="moqui_core::service::devtools::restart_server"
+    <service verb="restart" noun="Server" type="rust" location="moqui_devkit::service::restart_server"
             allow-remote="false">
         <description>Shut the server down gracefully, as on SIGTERM, and run it again with the same arguments: the
             fallback for what does not reload (an entity change, a conf or component change). Sessions and the sim

@@ -36,6 +36,8 @@ zip = { workspace = true }
 moqui-core = { workspace = true, features = ["http", "test-support", "image", "xlsx"] }
 # The elFinder connector, whose git volume a test runs (run#ElFinderCommand).
 moqui-dav = { workspace = true }
+# The report definitions' git sync, which a push to a repository runs (pull#DefinitionGitSyncs), as in the host.
+moqui-report = { workspace = true }
 # The file services' image thumbnails and spreadsheet previews, written by the tests.
 image = { workspace = true }
 rust_xlsxwriter = { workspace = true }

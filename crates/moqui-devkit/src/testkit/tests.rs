@@ -19,16 +19,16 @@ use std::sync::{Arc, Mutex};
 use super::run::{
     run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult, SLOW_REASON,
 };
-use crate::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
 fn run(source: &str) -> SpecResult {
     run_with(source, &RunOptions::default())
 }
 
 fn run_with(source: &str, options: &RunOptions) -> SpecResult {
-    crate::script::clear_context_stack();
+    moqui_core::script::clear_context_stack();
     let context = ExecutionContextFactory::test_context();
-    context.factory().set_entity(crate::testing::open());
+    context.factory().set_entity(moqui_core::testing::open());
     let _entered = context.enter();
     let spec = SpecFile {
         name: "Sample".to_string(),
@@ -513,7 +513,7 @@ impl SpecHost for FakeHost {
 }
 
 fn run_client(source: &str) -> (SpecResult, Arc<FakeHost>) {
-    crate::script::clear_context_stack();
+    moqui_core::script::clear_context_stack();
     assert!(
         ExecutionContext::with_current(|_| ()).is_none(),
         "no context is entered"
@@ -780,14 +780,14 @@ fn template_specs_run_with_no_entity_facade() {
     let _ = std::fs::remove_dir_all(&runtime);
     std::fs::create_dir_all(&runtime).unwrap();
     let framework = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
-    let _lock = crate::user::session::cookie_property_lock();
+    let _lock = moqui_core::user::session::cookie_property_lock();
     let factory = ExecutionContextFactory::boot_with_options(
         &runtime,
         &framework,
-        crate::context::BootOptions {
-            executor: crate::context::Executor::Inline,
+        moqui_core::context::BootOptions {
+            executor: moqui_core::context::Executor::Inline,
             test_confs: true,
-            ..crate::context::BootOptions::default()
+            ..moqui_core::context::BootOptions::default()
         },
     )
     .expect("boot");

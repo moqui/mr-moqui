@@ -28,7 +28,7 @@ use crate::transaction::TransactionAttribute;
 const SEMAPHORE_ENTITY: &str = "moqui.service.semaphore.ServiceParameterSemaphore";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ServiceKind {
+pub enum ServiceKind {
     Inline,
     EntityAuto,
     Script,
@@ -42,7 +42,7 @@ pub(crate) enum ServiceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Authenticate {
+pub enum Authenticate {
     Required,
     Off,
     AnonymousAll,
@@ -50,21 +50,21 @@ pub(crate) enum Authenticate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SemaphoreMode {
+pub enum SemaphoreMode {
     None,
     Fail,
     Wait,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Required {
+pub enum Required {
     True,
     False,
     Disabled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Include {
+pub enum Include {
     Pk,
     NonPk,
     All,
@@ -73,7 +73,7 @@ pub(crate) enum Include {
 /// `allow-html`. The default, `none`, rejects text with a `<`. `safe` cleans the markup, as Jsoup
 /// does in Java, and `any` leaves it alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AllowHtml {
+pub enum AllowHtml {
     #[default]
     None,
     Safe,
@@ -89,7 +89,7 @@ fn allow_html_of(node: &MNode) -> AllowHtml {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct AutoParams {
+pub struct AutoParams {
     pub allow_html: AllowHtml,
     pub entity_name: Option<String>,
     pub include: Include,
@@ -98,7 +98,7 @@ pub(crate) struct AutoParams {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum Check {
+pub enum Check {
     Matches {
         regexp: String,
         message: String,
@@ -135,7 +135,7 @@ pub(crate) enum Check {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ParamDef {
+pub struct ParamDef {
     pub name: String,
     pub java_type: String,
     pub required: Required,
@@ -176,7 +176,7 @@ const MERGED_ATTRIBUTES: [&str; 8] = [
 /// checks and its nested parameters, and keeps its place, so one that sets only `required` keeps the earlier `type`;
 /// any other is added at the end. `auto-parameters` are added as they are, to be expanded and merged at the call. As
 /// Java replaces the `<description>` child, one that `param` has replaces the earlier one, and one it lacks keeps it.
-pub(crate) fn merge_param(params: &mut Vec<ParamDef>, param: ParamDef) {
+pub fn merge_param(params: &mut Vec<ParamDef>, param: ParamDef) {
     let found = (!param.name.is_empty())
         .then(|| params.iter_mut().find(|have| have.name == param.name))
         .flatten();
@@ -208,13 +208,13 @@ pub(crate) fn merge_param(params: &mut Vec<ParamDef>, param: ParamDef) {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ImplementRef {
+pub struct ImplementRef {
     pub service: String,
     pub required: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ServiceDef {
+pub struct ServiceDef {
     pub name: String,
     pub verb: String,
     pub noun: String,
@@ -385,7 +385,7 @@ const PATTERN_URL: &str = r"((([A-Za-z]{3,9}:(?:\/\/)?)(?:[\-;:&=\+\$,\w]+@)?[A-
 /// A check of a field's value made before a submit. qvt writes it as a JavaScript expression over `value`
 /// ([`ClientRule::js`]); tui sends it as data ([`ClientRule::json`]) that the terminal client checks itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ClientRule {
+pub enum ClientRule {
     Required,
     Number,
     Integer,
@@ -452,7 +452,7 @@ impl ClientRule {
 
 /// `FormInstance.getFieldValidationJsRules` for a service parameter: each rule the browser checks with its message,
 /// not localized yet. None when the service or parameter is not there.
-pub(crate) fn input_rules(service: &str, parameter: &str) -> Option<Vec<(ClientRule, String)>> {
+pub fn input_rules(service: &str, parameter: &str) -> Option<Vec<(ClientRule, String)>> {
     let def = find(service)?;
     let param = def.in_params.iter().find(|param| param.name == parameter)?;
     let mut rules: Vec<(ClientRule, String)> = Vec::new();
@@ -529,13 +529,13 @@ pub(crate) fn input_rules(service: &str, parameter: &str) -> Option<Vec<(ClientR
 }
 
 /// What a form field shows of an input parameter's rules: the classes the macros turn into input attributes.
-pub(crate) struct ParamHints {
+pub struct ParamHints {
     pub classes: Vec<&'static str>,
     pub regexp: Option<(String, String)>,
 }
 
 /// The validation hints of input parameter `parameter` of `service`, as `getFieldValidationClasses` reads them.
-pub(crate) fn input_hints(service: &str, parameter: &str) -> Option<ParamHints> {
+pub fn input_hints(service: &str, parameter: &str) -> Option<ParamHints> {
     let def = find(service)?;
     let param = def.in_params.iter().find(|param| param.name == parameter)?;
     let mut classes = Vec::new();
@@ -579,7 +579,7 @@ pub(crate) fn input_hints(service: &str, parameter: &str) -> Option<ParamHints> 
 }
 
 /// A service of the entered context's factory. `None` when it is not defined or no context is entered.
-pub(crate) fn find(name: &str) -> Option<Arc<ServiceDef>> {
+pub fn find(name: &str) -> Option<Arc<ServiceDef>> {
     let shared = entered().ok()?;
     if let Some(def) = snapshot(&shared).services.get(name) {
         return Some(Arc::clone(def));
@@ -758,7 +758,7 @@ fn names_in_file(path: &Path, relative: &Path, names: &mut BTreeSet<String>) {
 /// # Errors
 ///
 /// Returns an error when no context is entered.
-pub(crate) fn registered() -> Result<Vec<ServiceDef>, Error> {
+pub fn registered() -> Result<Vec<ServiceDef>, Error> {
     Ok(snapshot(&*entered()?)
         .services
         .values()
@@ -771,8 +771,9 @@ pub(crate) fn registered() -> Result<Vec<ServiceDef>, Error> {
 /// # Errors
 ///
 /// Returns an error when a file cannot be read.
-#[cfg(test)]
-pub(crate) fn definitions_in(paths: &[PathBuf]) -> Result<(Vec<ServiceDef>, Vec<String>), Error> {
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn definitions_in(paths: &[PathBuf]) -> Result<(Vec<ServiceDef>, Vec<String>), Error> {
     let registry = build(paths)?;
     Ok((
         registry.services.into_values().map(Arc::unwrap_or_clone).collect(),
@@ -1722,7 +1723,7 @@ fn find_member(root: &MNode, verb: &str, noun: &str) -> Option<MNode> {
 
 /// The prefix a service file gives its services: its path under `service/`, the `.xml` dropped and `/` as `.`
 /// (`service/moqui/example/ExampleServices.xml` is `moqui.example.ExampleServices`), empty outside one.
-pub(crate) fn service_prefix(path: &Path) -> String {
+pub fn service_prefix(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     let Some(index) = text.rfind("/service/") else {
         return String::new();

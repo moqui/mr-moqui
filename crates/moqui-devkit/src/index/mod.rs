@@ -23,7 +23,8 @@
 //! keeps its rows, marked stale, and the others go on. A model-only boot (`moqui refs`, `moqui check --extensions`)
 //! reads the files into a [`MemoryIndex`] instead.
 
-pub mod calls;
+// on the artifact stack's hot path, so core's
+pub use moqui_core::devtools::calls;
 pub mod extract;
 pub mod resolve;
 pub mod rows;
@@ -41,9 +42,9 @@ use serde::Serialize;
 pub use self::extract::{ArtifactRow, FileIndex, FileInfo, RefRow, ToKind};
 use self::resolve::Resolver;
 use super::ArtifactKind;
-use crate::context::ExecutionContextFactory;
-use crate::entity::{fence, EntityFacade, EntityValue};
-use crate::transaction::TransactionAttribute;
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::entity::{fence, EntityFacade, EntityValue};
+use moqui_core::transaction::TransactionAttribute;
 
 const FILE: &str = "moqui.devtools.DevArtifactFile";
 const ARTIFACT: &str = "moqui.devtools.DevArtifact";
@@ -579,10 +580,10 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Whether the index keeps rows on this instance: a dev instance with a database.
 #[must_use]
 pub fn enabled(factory: &ExecutionContextFactory) -> bool {
-    super::is_dev_instance()
-        && factory
-            .entity()
-            .is_some_and(|facade| !facade.is_model_only() && crate::entity::info::is_entity_defined(&facade, ARTIFACT))
+    moqui_core::devtools::is_dev_instance()
+        && factory.entity().is_some_and(|facade| {
+            !facade.is_model_only() && moqui_core::entity::info::is_entity_defined(&facade, ARTIFACT)
+        })
 }
 
 /// Build the index in the background, when this is a dev instance with a database (a dev server's start).
@@ -1037,7 +1038,7 @@ fn apply(
     let run = |batch: &[Change]| -> Result<(), Error> {
         tx.run(TransactionAttribute::ForceNew, None, || {
             // the rows go without waiting for each result, as a data file's do, and are all in before the commit
-            let _pipeline = crate::entity::exec::PipelineWrites::enter();
+            let _pipeline = moqui_core::entity::exec::PipelineWrites::enter();
             for change in batch {
                 write(change)?;
             }
@@ -1177,7 +1178,7 @@ fn store_file(
     row.set("component", Value::string(&file.component));
     row.set("fileKind", Value::string(extract::file_kind(file.kind).unwrap_or("")));
     row.set("fileHash", Value::string(hash));
-    row.set("indexedDate", crate::user::now_value());
+    row.set("indexedDate", moqui_core::user::now_value());
     row.set("stale", Value::string(if stale { "Y" } else { "N" }));
     if !problem.is_empty() {
         row.set("problem", Value::string(problem));
@@ -1202,7 +1203,7 @@ fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
 /// The references elsewhere to artifacts no file defines any more: unresolved now.
 fn unresolve(
     facade: &EntityFacade,
-    tx: &crate::transaction::TransactionManager,
+    tx: &moqui_core::transaction::TransactionManager,
     gone: &BTreeSet<String>,
     changed: &HashSet<String>,
 ) -> Result<(), Error> {
@@ -1233,7 +1234,7 @@ fn resolve_added(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
-    tx: &crate::transaction::TransactionManager,
+    tx: &moqui_core::transaction::TransactionManager,
     added: &[ArtifactRow],
     changed: &HashSet<String>,
 ) -> Result<(), Error> {
@@ -1358,7 +1359,7 @@ pub fn find(
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let _lifted = fence::lift();
     let query = extract::query_segments(text_query);
-    let narrow = |find: crate::entity::EntityFind| -> crate::entity::EntityFind {
+    let narrow = |find: moqui_core::entity::EntityFind| -> moqui_core::entity::EntityFind {
         let mut find = find.disable_authz();
         if !kinds.is_empty() {
             find = find.condition(Condition::is_in(

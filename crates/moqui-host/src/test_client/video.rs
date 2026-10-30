@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use moqui_core::testkit::{CaseResult, Outcome};
+use moqui_devkit::testkit::{CaseResult, Outcome};
 use serde_json::{json, Value};
 
 use super::cdp::ScreencastFrame;

@@ -15,9 +15,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::reload::reload_paths;
-use super::ArtifactKind;
-use crate::context::{ComponentInfo, ExecutionContext, ExecutionContextFactory};
+use crate::reload::reload_paths;
+use crate::ArtifactKind;
+use moqui_core::context::{ComponentInfo, ExecutionContext, ExecutionContextFactory};
 
 struct Bed {
     ctx: ExecutionContext,
@@ -62,7 +62,7 @@ fn bed(name: &str) -> Bed {
     };
     let ctx = ExecutionContextFactory::test_context_with_components(
         "",
-        crate::service::ServicePools::idle(),
+        moqui_core::service::ServicePools::idle(),
         dir.join("framework"),
         vec![component],
     );
@@ -78,7 +78,7 @@ fn service(verb: &str, value: &str) -> String {
 }
 
 fn defined(name: &str) -> Option<String> {
-    crate::service::define::find(name).map(|def| def.actions.clone())
+    moqui_core::service::define::find(name).map(|def| def.actions.clone())
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn a_changed_service_file_reloads_its_services_added_and_removed() {
     assert!(defined("devtest.Things.run#Thing").is_none());
     assert!(defined("devtest.Things.keep#Thing").unwrap().contains("second"));
     assert!(defined("devtest.Things.add#Thing").is_some());
-    assert_eq!(super::recent_reports(bed.factory()).len(), 1);
+    assert_eq!(crate::recent_reports(bed.factory()).len(), 1);
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn a_changed_seca_file_rebuilds_the_rule_set() {
     bed.write("service/devtest/Things.xml", &services(&service("run", "first")));
     let path = bed.write("service/Things.secas.xml", &format!("<secas>{}</secas>", rule("one")));
     let _entered = bed.ctx.enter();
-    let (before, _, _) = crate::service::reload_eca_rules(bed.factory());
+    let (before, _, _) = moqui_core::service::reload_eca_rules(bed.factory());
     bed.write(
         "service/Things.secas.xml",
         &format!("<secas>{}{}</secas>", rule("one"), rule("two")),
@@ -161,9 +161,9 @@ fn a_seca_rule_on_a_service_added_since_runs_after_the_service_file_reloads() {
     let path = bed.write("service/devtest/Things.xml", &services(&service("run", "first")));
     bed.write("service/Things.secas.xml", &format!("<secas>{rule}</secas>"));
     let _entered = bed.ctx.enter();
-    crate::service::reload_eca_rules(bed.factory());
+    moqui_core::service::reload_eca_rules(bed.factory());
     // the rule names a service not defined yet: left out
-    assert!(crate::service::info::seca_rule_texts("devtest.Things.add#Thing").is_empty());
+    assert!(moqui_core::service::info::seca_rule_texts("devtest.Things.add#Thing").is_empty());
     bed.write(
         "service/devtest/Things.xml",
         &services(&format!("{}{}", service("run", "first"), service("add", "first"))),
@@ -171,7 +171,7 @@ fn a_seca_rule_on_a_service_added_since_runs_after_the_service_file_reloads() {
     let report = reload_paths(bed.factory(), &[path]);
     assert_eq!(report.files[0].added, ["devtest.Things.add#Thing"], "{report:?}");
     assert_eq!(
-        crate::service::info::seca_rule_texts("devtest.Things.add#Thing").len(),
+        moqui_core::service::info::seca_rule_texts("devtest.Things.add#Thing").len(),
         1
     );
 }
@@ -188,7 +188,7 @@ fn a_screen_extend_that_does_not_parse_leaves_its_screen_rendering() {
         "<screen-extend><widgets-extend name=\"Main\">",
     );
     let _entered = bed.ctx.enter();
-    let facade = crate::screen::ScreenFacade::of(bed.factory());
+    let facade = moqui_core::screen::ScreenFacade::of(bed.factory());
     let def = facade.screen_def(bed.factory(), "component://devtest/screen/Base.xml");
     assert!(def.is_ok(), "{:?}", def.err());
 }
@@ -253,7 +253,7 @@ fn files_are_classified_by_their_place_and_kinds_that_do_not_reload_say_why() {
     assert!(outside.files.is_empty());
 }
 
-#[cfg(feature = "devtools")]
+#[cfg(feature = "watch")]
 #[test]
 fn the_watcher_reloads_a_service_file_changed_on_disk() {
     let bed = bed("watch");
@@ -262,7 +262,7 @@ fn the_watcher_reloads_a_service_file_changed_on_disk() {
         let _entered = bed.ctx.enter();
         assert!(defined("devtest.Watched.run#Thing").unwrap().contains("first"));
     }
-    assert!(super::watch::watch(
+    assert!(crate::watch::watch(
         bed.factory(),
         std::time::Duration::from_millis(100)
     ));
@@ -271,7 +271,7 @@ fn the_watcher_reloads_a_service_file_changed_on_disk() {
     std::fs::rename(&temp, bed.component().join("service/devtest/Watched.xml")).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        let reports = super::recent_reports(bed.factory());
+        let reports = crate::recent_reports(bed.factory());
         if let Some(report) = reports.first() {
             assert_eq!(report.files.len(), 1, "{report:?}");
             assert_eq!(report.files[0].kind, ArtifactKind::Service);
@@ -293,7 +293,7 @@ fn each_check_rule_is_in_its_skill_section() {
         "/../../runtime/base-component/framework/skill/moqui-coding-agent.md"
     ))
     .unwrap();
-    for (rule, section, sentence) in super::check::RULES {
+    for (rule, section, sentence) in crate::check::RULES {
         let start = skill
             .find(&format!("\n## {section}\n"))
             .unwrap_or_else(|| panic!("{rule}: no section {section}"));
@@ -304,4 +304,23 @@ fn each_check_rule_is_in_its_skill_section() {
             "{rule}: \"{sentence}\" is not in section {section}"
         );
     }
+}
+
+/// The Rust services register at the `moqui_devkit::` locations the service file names, and at no other.
+#[test]
+fn the_services_register_at_the_locations_the_service_file_names() {
+    let mut map = std::collections::BTreeMap::new();
+    crate::service::register(&mut map).unwrap();
+    let registered: Vec<&str> = map.keys().copied().collect();
+    let file = moqui_core::context::framework_dir().join("service/org/moqui/impl/DevToolsServices.xml");
+    let text = std::fs::read_to_string(file).unwrap();
+    let mut named: Vec<String> = text
+        .split("location=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(location, _)| location.to_string()))
+        .filter(|location| location.starts_with("moqui_devkit::"))
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    assert_eq!(registered, named);
 }

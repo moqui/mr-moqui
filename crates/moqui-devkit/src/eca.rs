@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use moqui_lib::node::MNode;
 use serde::Serialize;
 
-use crate::context::ExecutionContextFactory;
+use moqui_core::context::ExecutionContextFactory;
 
 /// One rule as the list shows it.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

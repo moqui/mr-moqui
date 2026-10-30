@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::service::{hmac_base64, timestamp_header};
-use moqui_core::testkit::{
+use moqui_devkit::testkit::{
     run_on_thread, run_spec, spec_missing_features, spec_offline, spec_slow, CaseExtras, RunOptions, SpecHost,
 };
 use moqui_lib::error::Error;
@@ -238,7 +238,7 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
     let skipped = results
         .iter()
         .flat_map(|spec| &spec.result.cases)
-        .filter(|case| matches!(case.outcome, moqui_core::testkit::Outcome::Skipped(_)))
+        .filter(|case| matches!(case.outcome, moqui_devkit::testkit::Outcome::Skipped(_)))
         .count();
     if args.fail_on_skip && skipped > 0 {
         return Err(Error::new(format!("{skipped} skipped, and --fail-on-skip")));
@@ -319,7 +319,7 @@ fn run_against(
             if args.video {
                 *lock(&host.recording) = Some(video::Recorder::new(&spec.name, out_dir, encode_video));
             }
-            let note_case = |case: &moqui_core::testkit::CaseResult| {
+            let note_case = |case: &moqui_devkit::testkit::CaseResult| {
                 if let Some(recorder) = lock(&host.recording).as_mut() {
                     recorder.case(case);
                 }

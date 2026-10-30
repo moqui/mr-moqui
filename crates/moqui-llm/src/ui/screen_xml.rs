@@ -25,7 +25,7 @@ use serde_json::{json, Value as Json};
 
 use super::{Dialect, Prepared, Refused, WriteInput};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
-use moqui_core::devtools::Severity;
+use moqui_devkit::Severity;
 
 /// The most characters a program has.
 const MAX_PROGRAM_CHARS: usize = 120_000;
@@ -133,7 +133,7 @@ impl Dialect for ScreenXml {
             .map(|factory| {
                 let path = location_path(&factory, &header.location)
                     .unwrap_or_else(|| std::path::PathBuf::from(header.location.trim_start_matches("component://")));
-                moqui_core::devtools::check::check_text(&factory, &path, program)
+                moqui_devkit::check::check_text(&factory, &path, program)
             })
             .unwrap_or_default();
         let errors: Vec<Json> = problems

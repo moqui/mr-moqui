@@ -12,6 +12,6 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The agent specs of `moqui test --agents`, on moqui_core::testkit.
+//! The agent specs of `moqui test --agents`, on moqui_devkit::testkit.
 
 pub mod agents;

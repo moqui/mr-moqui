@@ -20,7 +20,7 @@
 use moqui_lib::error::Error;
 
 use super::extract::{ArtifactRow, FileIndex, RefRow, ToKind};
-use crate::entity::{EntityFacade, EntityValue};
+use moqui_core::entity::{EntityFacade, EntityValue};
 
 /// One source of row artifacts: its pseudo file path and what its rows define.
 pub struct RowSource {

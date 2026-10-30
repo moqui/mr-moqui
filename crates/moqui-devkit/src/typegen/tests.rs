@@ -22,20 +22,20 @@ use moqui_db::model::EntityModel;
 use moqui_lib::node::MNode;
 
 use super::{assemble_files, fixture_root, screen_sources, testdata, TypeFiles};
-use crate::context::ExecutionContextFactory;
-use crate::screen::ScreenFacade;
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::screen::ScreenFacade;
 
 const SCREEN_LOCATION: &str = "component://typegen/screen/Invoices.xml";
 
 fn model() -> EntityModel {
-    let conf = MNode::parse_file(crate::testing::framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
+    let conf = MNode::parse_file(moqui_core::testing::framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
     EntityModel::load(&conf, &[fixture_root("entities.xml")]).unwrap()
 }
 
 fn fixture_files() -> TypeFiles {
     let model = model();
     let (services, failures) =
-        crate::service::define::definitions_in(&[testdata().join("service/typegen/services.xml")]).unwrap();
+        moqui_core::service::define::definitions_in(&[testdata().join("service/typegen/services.xml")]).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
     let ctx = ExecutionContextFactory::test_context();
     let _entered = ctx.enter();
@@ -257,7 +257,7 @@ fn host_and_shape_take_the_names_from_the_rust_constants() {
         "{shape}"
     );
     assert_eq!(
-        crate::screen::statics::option_key("F", "f", 1, 2),
+        moqui_core::screen::statics::option_key("F", "f", 1, 2),
         "mqOpt_F_f_1_2",
         "shape.ts writes the same key"
     );

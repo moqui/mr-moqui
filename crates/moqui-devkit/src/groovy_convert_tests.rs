@@ -120,7 +120,7 @@ fn a_grammar_file_becomes_javascript_the_edi_handler_reads() {
     let js = convert_literals(groovy);
     assert!(js.contains("{ID:'ISA',MIN:0,MAX:99999,"), "{js}");
     assert!(js.contains("{ID:'ST',MIN:0,MAX:99999},"), "{js}");
-    super::super::parse_js(&js).unwrap();
+    moqui_core::script::parse_js(&js).unwrap();
     assert!(!is_grammar("def x = 1\n[a]"));
 }
 
@@ -348,4 +348,22 @@ fn more_cast_operand_shapes() {
     assert_eq!(rewrite("a &gt;= b as int"), "a &gt;= b as int");
     let once = rewrite("x = (a || 60) as int");
     assert_eq!(rewrite(&once), once, "idempotent");
+}
+
+/// The six grammar files of mantle-edi convert to the JavaScript moqui-core's EDI tests load (`edi/testdata/mantle`).
+#[test]
+fn the_mantle_edi_grammars_convert_to_the_scripts_the_edi_tests_load() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../moqui-core/src/edi/testdata/mantle");
+    for name in [
+        "X12Envelope",
+        "X12V4010TS810",
+        "X12V4010TS850",
+        "X12V4010TS855",
+        "X12V4010TS856",
+        "X12V4010TS997",
+    ] {
+        let groovy = std::fs::read_to_string(dir.join(format!("{name}.groovy"))).unwrap();
+        let js = std::fs::read_to_string(dir.join(format!("{name}.js"))).unwrap();
+        assert_eq!(super::convert_literals(&groovy), js, "{name}");
+    }
 }

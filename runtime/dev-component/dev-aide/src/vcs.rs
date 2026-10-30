@@ -564,7 +564,7 @@ fn discard_files(
         .chain(tracked.iter())
         .map(|path| root.path.join(path))
         .collect();
-    let report = moqui_core::devtools::reload_paths(&context.factory, &changed);
+    let report = moqui_devkit::reload_paths(&context.factory, &changed);
     out.insert("reload".into(), json_value(&report));
     Ok(out)
 }
@@ -741,7 +741,7 @@ pub(crate) fn pull_remote(
         .filter(|path| !path.is_empty())
         .map(|path| root.path.join(path))
         .collect();
-    let report = moqui_core::devtools::reload_paths(&context.factory, &changed);
+    let report = moqui_devkit::reload_paths(&context.factory, &changed);
     out.insert("reload".into(), json_value(&report));
     match crate::artifacts::customizations(&context) {
         Ok((extensions, broken)) => {

@@ -712,7 +712,7 @@ fn the_index_follows_reloads_and_extensions() {
     let detail = gate.runtime.join("component/upstream-app/screen/UpApp/Detail.xml");
     std::fs::write(&detail, UPSTREAM_SCREEN.replace("name=\"Facts\"", "name=\"Facts2\"")).unwrap();
     let started = std::time::Instant::now();
-    moqui_core::devtools::reload_paths(&factory, std::slice::from_ref(&detail));
+    moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
     eprintln!(
         "artifact index: reload with its per-file update in {} ms",
         started.elapsed().as_millis()
@@ -730,7 +730,7 @@ fn the_index_follows_reloads_and_extensions() {
     assert_eq!(listed[0]["refType"], "anchor");
     // and back: the anchor resolves again
     std::fs::write(&detail, UPSTREAM_SCREEN).unwrap();
-    moqui_core::devtools::reload_paths(&factory, &[detail]);
+    moqui_devkit::reload_paths(&factory, &[detail]);
     let fixed = call(
         &factory,
         "john.doe",
@@ -743,7 +743,7 @@ fn the_index_follows_reloads_and_extensions() {
     // a call observed on the artifact stack: get#Outer calls get#Thing, counted and written
     let outer = run(&factory, "mysite.Things.get#Outer");
     assert_eq!(text(&outer, "result"), "thing");
-    moqui_core::devtools::index::calls::flush(&factory).unwrap();
+    moqui_core::devtools::calls::flush(&factory).unwrap();
     let callers = call(
         &factory,
         "john.doe",
@@ -796,13 +796,13 @@ fn the_index_scales() {
             .filter(|entry| entry.path().join("component.xml").is_file())
         {
             let name = entry.file_name().to_string_lossy().into_owned();
-            corpus.extend(moqui_core::devtools::index::directory_files(&name, &entry.path()));
+            corpus.extend(moqui_devkit::index::directory_files(&name, &entry.path()));
         }
     }
     let context = factory.new_context();
     let _entered = context.enter();
     moqui_core::user::internal_login_user("john.doe").unwrap();
-    use moqui_core::devtools::index;
+    use moqui_devkit::index;
     let measure = |label: &str, files: Vec<index::Located>| {
         index::clear(&factory).unwrap();
         let count = files.len();

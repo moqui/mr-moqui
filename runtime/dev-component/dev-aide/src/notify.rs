@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::ReloadReport;
+use moqui_devkit::ReloadReport;
 use moqui_lib::object::Value;
 
 /// The notification topic of reload reports.
@@ -38,7 +38,7 @@ struct Listening;
 /// Send `factory`'s reload reports from now on, once per factory.
 pub(crate) fn ensure(factory: &Arc<ExecutionContextFactory>) {
     factory.extension::<Listening>(|factory| {
-        moqui_core::devtools::on_reload(factory, send);
+        moqui_devkit::on_reload(factory, send);
         Listening
     });
 }

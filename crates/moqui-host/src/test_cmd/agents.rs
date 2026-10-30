@@ -24,7 +24,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use moqui_core::testkit::SpecFile;
+use moqui_devkit::testkit::SpecFile;
 use moqui_lib::error::Error;
 use moqui_llm::testkit::agents::{self, AgentSpecFile, EvalOptions, Mode, TaskOutcome, TaskResult};
 

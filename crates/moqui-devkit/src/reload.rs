@@ -28,8 +28,8 @@ use std::sync::{Arc, Mutex};
 use moqui_lib::node::MNode;
 use serde::Serialize;
 
-use super::Problem;
-use crate::context::{ExecutionContext, ExecutionContextFactory};
+use crate::Problem;
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
 /// How many reports a factory keeps (Home's reload log, the agents' `check` with no file).
 const KEPT_REPORTS: usize = 200;
@@ -357,7 +357,7 @@ fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileRelo
         Some(_) if failed => Err("an entity file does not parse, so the model was not relinked".to_string()),
         Some(facade) => {
             // a site's first entity file makes its entity directory, which the model is read from from now on
-            facade.set_component_entity_dirs(crate::context::component_entity_dirs(factory));
+            facade.set_component_entity_dirs(moqui_core::context::component_entity_dirs(factory));
             let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
             facade.relink(&paths).map_err(|err| err.to_string())
         }
@@ -366,7 +366,7 @@ fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileRelo
     match relinked {
         Ok(report) => {
             // forms built over the entities (auto-fields-entity) read the new fields on next use
-            crate::screen::ScreenFacade::of(factory).clear();
+            moqui_core::screen::ScreenFacade::of(factory).clear();
             for &at in &changed {
                 let file = &mut files[at];
                 let named = entities_of(&file.path, &report.changed);
@@ -432,10 +432,10 @@ fn reload_services(factory: &Arc<ExecutionContextFactory>, files: &mut [FileRelo
         return false;
     }
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
-    match crate::service::reload_definitions(&paths) {
+    match moqui_core::service::reload_definitions(&paths) {
         Ok(reload) => {
             // forms built from a service's parameters (auto-fields-service) read the new ones on next use
-            crate::screen::ScreenFacade::of(factory).clear();
+            moqui_core::screen::ScreenFacade::of(factory).clear();
             for &at in &changed {
                 let file = &mut files[at];
                 let prefix = service_prefix(&file.path);
@@ -469,14 +469,14 @@ fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]
     let changed = indexes(files, &[ArtifactKind::Seca]);
     if changed.is_empty() {
         if services_changed {
-            crate::service::reload_eca_rules(factory);
+            moqui_core::service::reload_eca_rules(factory);
         }
         return;
     }
     if !parse_all(files, &changed, "reload.eca") {
         return;
     }
-    let (seca, email, git) = crate::service::reload_eca_rules(factory);
+    let (seca, email, git) = moqui_core::service::reload_eca_rules(factory);
     for at in changed {
         files[at].summary = format!("ECA rules reloaded: {seca} SECA, {email} EmECA, {git} gitECA");
     }
@@ -496,7 +496,7 @@ fn reload_eecas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]
         );
         return;
     };
-    let count = crate::entity::load_feed::reload_eca_rules(&facade);
+    let count = moqui_core::entity::load_feed::reload_eca_rules(&facade);
     for at in changed {
         files[at].summary = format!("EECA rules reloaded: {count}");
     }
@@ -507,7 +507,7 @@ fn reload_rest(files: &mut [FileReload]) {
     if changed.is_empty() || !parse_all(files, &changed, "reload.rest") {
         return;
     }
-    match crate::service::reload_rest_roots() {
+    match moqui_core::service::reload_rest_roots() {
         Ok(count) => {
             for at in changed {
                 files[at].summary = format!("REST API files reloaded: {count} root resource{}", plural(count));
@@ -529,10 +529,10 @@ fn reload_screens(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReloa
         return;
     }
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
-    let screens = crate::screen::ScreenFacade::of(factory).forget(factory, &paths);
-    let scripts = crate::script::forget_scripts(&paths);
+    let screens = moqui_core::screen::ScreenFacade::of(factory).forget(factory, &paths);
+    let scripts = moqui_core::script::forget_scripts(&paths);
     if changed.iter().any(|&at| files[at].kind == ArtifactKind::ScreenText) {
-        crate::script::template::TemplateRegistry::of(factory).forget_texts();
+        moqui_core::script::template::TemplateRegistry::of(factory).forget_texts();
     }
     for at in changed {
         let file = &mut files[at];
@@ -559,7 +559,7 @@ fn reload_skills(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload
     if changed.is_empty() {
         return;
     }
-    if let Some(hooks) = crate::llm_hooks::get() {
+    if let Some(hooks) = moqui_core::llm_hooks::get() {
         let Some(facade) = factory.entity() else {
             fail_all(
                 files,
@@ -643,7 +643,7 @@ fn parses(path: &str, rule: &str) -> Result<(), Problem> {
 
 /// `org.moqui.impl.UserServices` for `.../service/org/moqui/impl/UserServices.xml`, as service names begin.
 fn service_prefix(path: &str) -> String {
-    crate::service::define::service_prefix(Path::new(path))
+    moqui_core::service::define::service_prefix(Path::new(path))
 }
 
 fn has_extension(path: &Path, extension: &str) -> bool {

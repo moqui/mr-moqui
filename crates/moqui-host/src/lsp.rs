@@ -14,7 +14,7 @@
 
 //! `moqui lsp` (plans/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
 //! coding agents, answering from what `moqui check` and `moqui refs` use: diagnostics (the checks of
-//! `moqui_core::devtools::check`, on each open file's text as it changes), go to definition and references (the artifact
+//! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
 //! digest gives, and entity and service names from the index in their attributes), and document and workspace symbols.
@@ -28,8 +28,8 @@ use std::sync::Arc;
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types as lsp;
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::index::{self, Direction, MemoryIndex};
-use moqui_core::devtools::{check, schema, Problem, Severity};
+use moqui_devkit::index::{self, Direction, MemoryIndex};
+use moqui_devkit::{check, schema, Problem, Severity};
 use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 

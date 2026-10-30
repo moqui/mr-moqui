@@ -29,7 +29,7 @@ use rquickjs::{Ctx, Exception, Function, Object};
 use serde::Deserialize;
 
 use super::rewrite::rewrite_spec;
-use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
 
 const PRELUDE: &str = include_str!("prelude.js");
 const PRELUDE_NAME: &str = "moqui-test-prelude.js";
@@ -303,11 +303,11 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
     let finish = || match &host {
         Some(host) => {
             host.after_spec();
-            crate::script::clear_context_stack();
+            moqui_core::script::clear_context_stack();
         }
         None => {
             // The mask lives on the thread's engine. Put ec.entity, call and screenTest back before the next spec.
-            let _ = crate::script::eval_named_value("__moquiTest.restoreDatabase()", PRELUDE_NAME);
+            let _ = moqui_core::script::eval_named_value("__moquiTest.restoreDatabase()", PRELUDE_NAME);
             reset_context();
         }
     };
@@ -384,7 +384,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             .requires
             .iter()
             .map(String::as_str)
-            .filter(|feature| !crate::build_info::has_feature(feature))
+            .filter(|feature| !moqui_core::build_info::has_feature(feature))
             .collect();
         let mut output = String::new();
         let mut outcome = if case.slow && !options.slow {
@@ -699,11 +699,11 @@ pub fn spec_database_free(source: &str) -> bool {
 }
 
 /// The features a spec `requires` (`spec({ requires: ['git'] })`) that this build leaves out
-/// ([`crate::build_info::has_feature`]). A spec with any is skipped, not run.
+/// ([`moqui_core::build_info::has_feature`]). A spec with any is skipped, not run.
 pub fn spec_missing_features(source: &str) -> Vec<String> {
     super::rewrite::spec_requires(source)
         .into_iter()
-        .filter(|feature| !crate::build_info::has_feature(feature))
+        .filter(|feature| !moqui_core::build_info::has_feature(feature))
         .collect()
 }
 
@@ -813,19 +813,19 @@ fn registration(message: impl Into<String>) -> Box<Failure> {
 }
 
 fn load(spec: &SpecFile, host: Option<&Arc<dyn SpecHost>>) -> Result<Plan, Box<Failure>> {
-    crate::script::clear_context_stack();
+    moqui_core::script::clear_context_stack();
     install_prelude_for(host).map_err(|err| registration(format!("the test prelude did not load: {err}")))?;
     let rewritten = rewrite_spec(&spec.source).map_err(|err| registration(format!("{}: {err}", spec.display)))?;
     let file = serde_json::to_string(&spec.display).unwrap_or_default();
-    crate::script::eval_named_value(&format!("__moquiTest.reset({file})"), PRELUDE_NAME)
+    moqui_core::script::eval_named_value(&format!("__moquiTest.reset({file})"), PRELUDE_NAME)
         .map_err(|err| registration(err.to_string()))?;
     // The wrapper opens on the file's first line, so a line in an error is the file's.
     let wrapped = format!("(function(){{{}\n}})();", rewritten.source);
-    crate::script::eval_named_value(&wrapped, &spec.display).map_err(|err| registration(err.to_string()))?;
+    moqui_core::script::eval_named_value(&wrapped, &spec.display).map_err(|err| registration(err.to_string()))?;
     let conditions = serde_json::to_string(&rewritten.conditions).unwrap_or_else(|_| "[]".to_string());
-    crate::script::eval_named_value(&format!("__moquiTest.setConditions({conditions})"), PRELUDE_NAME)
+    moqui_core::script::eval_named_value(&format!("__moquiTest.setConditions({conditions})"), PRELUDE_NAME)
         .map_err(|err| registration(err.to_string()))?;
-    let plan = crate::script::eval_named_value("__moquiTest.plan()", PRELUDE_NAME)
+    let plan = moqui_core::script::eval_named_value("__moquiTest.plan()", PRELUDE_NAME)
         .map_err(|err| registration(err.to_string()))?;
     let plan: Plan = serde_json::from_str(&to_plain_string(&plan))
         .map_err(|err| registration(format!("the spec plan did not read: {err}")))?;
@@ -834,7 +834,7 @@ fn load(spec: &SpecFile, host: Option<&Arc<dyn SpecHost>>) -> Result<Plan, Box<F
     }
     // After the file has registered, before setupSpec and the features. A client spec has no ec.
     if host.is_none() && plan.spec.database_free {
-        crate::script::eval_named_value("__moquiTest.denyDatabase()", PRELUDE_NAME)
+        moqui_core::script::eval_named_value("__moquiTest.denyDatabase()", PRELUDE_NAME)
             .map_err(|err| registration(err.to_string()))?;
     }
     Ok(plan)
@@ -848,12 +848,12 @@ pub fn install_prelude() -> Result<(), Error> {
 
 /// The core prelude and the host calls, then the mode's globals: the host's prelude, or the server helpers.
 fn install_prelude_for(host: Option<&Arc<dyn SpecHost>>) -> Result<(), Error> {
-    crate::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
-    crate::script::eval_named_value(ASSERT, ASSERT_NAME)?;
-    crate::script::with_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
+    moqui_core::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
+    moqui_core::script::eval_named_value(ASSERT, ASSERT_NAME)?;
+    moqui_core::script::with_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
     match host {
-        Some(host) => crate::script::eval_named_value(host.prelude(), HOST_PRELUDE_NAME)?,
-        None => crate::script::eval_named_value(SERVER_PRELUDE, SERVER_PRELUDE_NAME)?,
+        Some(host) => moqui_core::script::eval_named_value(host.prelude(), HOST_PRELUDE_NAME)?,
+        None => moqui_core::script::eval_named_value(SERVER_PRELUDE, SERVER_PRELUDE_NAME)?,
     };
     Ok(())
 }
@@ -876,8 +876,8 @@ fn install_host(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 fn block(spec: &SpecFile, call: &str, timeout_seconds: Option<f64>, block_name: &str) -> Result<(), Box<Failure>> {
     let _deadline = timeout_seconds
         .filter(|seconds| *seconds > 0.0)
-        .map(|seconds| crate::script::DeadlineGuard::new(Some(Duration::from_secs_f64(seconds))));
-    let value = crate::script::eval_named_value(call, PRELUDE_NAME).map_err(|err| {
+        .map(|seconds| moqui_core::script::DeadlineGuard::new(Some(Duration::from_secs_f64(seconds))));
+    let value = moqui_core::script::eval_named_value(call, PRELUDE_NAME).map_err(|err| {
         Box::new(Failure {
             kind: "error".to_string(),
             block: block_name.to_string(),
@@ -938,7 +938,7 @@ fn reset_context() {
         ec.script_enable_authz();
         ec.message().clear();
     });
-    if let Err(err) = crate::user::logout() {
+    if let Err(err) = moqui_core::user::logout() {
         tracing::debug!("logout after a spec: {err}");
     }
     let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()));
@@ -947,7 +947,7 @@ fn reset_context() {
             tracing::warn!("Async service work is still running 5 seconds after the spec");
         }
     }
-    crate::script::clear_context_stack();
+    moqui_core::script::clear_context_stack();
 }
 
 /// `__moquiTestHost.settle(promise)`: run this context's jobs until the promise fulfills or rejects.
@@ -1011,15 +1011,15 @@ pub fn run_on_thread(
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             let _host = HostGuard::set(Some(Arc::clone(&host)));
-            crate::script::clear_context_stack();
+            moqui_core::script::clear_context_stack();
             let body = || -> Result<String, Error> {
                 install_prelude_for(Some(&host))?;
                 let code = format!("JSON.stringify((({source}))(...({args_json})) ?? null)");
-                let value = crate::script::eval_named_value(&code, "thread")?;
+                let value = moqui_core::script::eval_named_value(&code, "thread")?;
                 Ok(to_plain_string(&value))
             };
             let out = body().map_err(|err| err.to_string());
-            crate::script::clear_context_stack();
+            moqui_core::script::clear_context_stack();
             out
         })
 }
@@ -1034,7 +1034,7 @@ fn uploaded_file_host<'js>(
     content_type: Option<String>,
 ) -> rquickjs::Result<rquickjs::Value<'js>> {
     let content_type = content_type.unwrap_or_else(|| "text/plain".to_string());
-    crate::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
+    moqui_core::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
 }
 
 fn parallel_host(
@@ -1109,18 +1109,18 @@ fn run_thread(
 ) -> Result<String, String> {
     let context = factory.new_context();
     let _entered = context.enter();
-    crate::script::clear_context_stack();
+    moqui_core::script::clear_context_stack();
     let body = || -> Result<String, moqui_lib::error::Error> {
         install_prelude()?;
         let code = format!("JSON.stringify((({source}))({thread_num}, {args}) ?? null)");
-        let value = crate::script::eval_named_value(&code, "parallel")?;
+        let value = moqui_core::script::eval_named_value(&code, "parallel")?;
         Ok(to_plain_string(&value))
     };
     let out = if transaction {
         match factory.entity() {
             Some(facade) => match facade.default_transactions().ok() {
                 Some(transactions) => {
-                    transactions.run(crate::transaction::TransactionAttribute::UseOrBegin, None, body)
+                    transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, body)
                 }
                 None => body(),
             },
@@ -1135,7 +1135,7 @@ fn run_thread(
     if !errors.is_empty() && out.is_ok() {
         return Err(errors.join("; "));
     }
-    if let Err(err) = crate::user::logout() {
+    if let Err(err) = moqui_core::user::logout() {
         tracing::debug!("logout after a parallel thread: {err}");
     }
     out

@@ -202,7 +202,7 @@ fn every_fancy_file_compiles() {
     assert!(files.len() >= 7, "{files:?}");
     for file in files {
         let source = std::fs::read_to_string(&file).unwrap();
-        crate::script::template::check_template(&source)
+        moqui_core::script::template::check_template(&source)
             .unwrap_or_else(|err| panic!("{}: {}", file.display(), err.message()));
     }
 }

@@ -1392,6 +1392,7 @@ name = "dev-aide"
 version = "0.1.0"
 dependencies = [
  "moqui-core",
+ "moqui-devkit",
  "moqui-lib",
  "moqui-llm",
  "regex",
@@ -4170,7 +4171,6 @@ dependencies = [
  "moqui-entity",
  "moqui-lib",
  "moqui-tui",
- "notify",
  "opentelemetry",
  "opentelemetry-proto",
  "opentelemetry_sdk",
@@ -4219,6 +4219,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-devkit"
+version = "0.1.0"
+dependencies = [
+ "moqui-core",
+ "moqui-db",
+ "moqui-lib",
+ "notify",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_parser",
+ "oxc_span",
+ "regex",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
+]
+
+[[package]]
 name = "moqui-entity"
 version = "0.1.0"
 dependencies = [
@@ -4262,6 +4282,7 @@ dependencies = [
  "moqui-dav",
  "moqui-db",
  "moqui-lib",
+ "moqui-report",
  "rust_xlsxwriter",
  "serde_json",
  "sha2 0.10.9",
@@ -4298,6 +4319,7 @@ dependencies = [
  "moqui-core",
  "moqui-dav",
  "moqui-db",
+ "moqui-devkit",
  "moqui-git",
  "moqui-lib",
  "moqui-llm",
@@ -4367,6 +4389,7 @@ dependencies = [
  "jiff",
  "moqui-core",
  "moqui-db",
+ "moqui-devkit",
  "moqui-lib",
  "rquickjs",
  "rust_decimal",

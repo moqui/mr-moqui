@@ -560,7 +560,7 @@ where
             if roots.is_empty() {
                 return Err(usage::command_usage("lint"));
             }
-            let report = moqui_core::script::screen_lint::lint_groovy(&roots, show_all)
+            let report = moqui_devkit::screen_lint::lint_groovy(&roots, show_all)
                 .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
             print!("{}", report.render());
             Ok(None)
@@ -572,7 +572,7 @@ where
                 return Err(usage::command_usage("convert"));
             }
             let roots: Vec<std::path::PathBuf> = dirs.iter().map(Into::into).collect();
-            let report = moqui_core::script::groovy_convert::convert_tree(&roots, write)
+            let report = moqui_devkit::groovy_convert::convert_tree(&roots, write)
                 .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
             print!("{}", report.render());
             Ok(None)
@@ -733,8 +733,8 @@ fn dispatch_lint_qvt_static(report: Option<&str>) -> Result<(), moqui_lib::error
 fn dispatch_lint_screens(report: Option<&str>) -> Result<(), moqui_lib::error::Error> {
     let (runtime, framework) = runtime_framework_dirs();
     let roots = qvt_report::component_roots(&runtime, &framework);
-    let screens = moqui_core::script::screen_lint::lint_screens(&roots)
-        .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
+    let screens =
+        moqui_devkit::screen_lint::lint_screens(&roots).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
     let text = screens.render();
     match report {
         Some(path) => {
@@ -1153,12 +1153,12 @@ fn serve_thread(
     // a port of its own: on a dev instance a changed file reloads what it defines.
     #[cfg(feature = "devtools")]
     if matches!(bind, ListenBind::Property) {
-        moqui_core::devtools::watch::start(&factory);
+        moqui_devkit::watch::start(&factory);
     }
     // The artifact index (plans/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
     // builds it at first use.
     if matches!(bind, ListenBind::Property) {
-        moqui_core::devtools::index::start(&factory);
+        moqui_devkit::index::start(&factory);
     }
     // The dev-aide gives its users code execution as this process's user (plans/design-dev-aide.md 15): say so when the
     // listener is reachable from other machines.

@@ -57,7 +57,7 @@ Known sites:
 - Glob imports at `crates/moqui-core/src/script/runtime.rs:78-83` (`use convert::*;`, `use decimal::*;` …).
 - ~24 `.for_each(...)` with side effects.
 - Local lock helpers to delete in favour of `moqui_lib::sync`: `crates/moqui-core/src/telemetry/mod.rs:71`,
-  `devtools/watch.rs:256`, `devtools/index/mod.rs:575`, `devtools/reload.rs:699`.
+  `crates/moqui-devkit/src/watch.rs:256`, `index/mod.rs:576`, `reload.rs:695`.
 - ~290 `Result<_, String>` signatures: leave unless already changing the function.
 - `#[must_use]` additions are low priority.
 

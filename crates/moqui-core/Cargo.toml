@@ -52,7 +52,6 @@ calamine = { workspace = true, optional = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
 pulldown-cmark = { workspace = true }
-notify = { workspace = true, optional = true }
 # gzip of outgoing OTLP; already linked through zip's deflate.
 flate2 = { workspace = true }
 tar = { workspace = true }
@@ -79,9 +78,6 @@ xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).
 test-support = ["moqui-entity/test-support"]
-# What only development needs (plans/design-dev-aide.md 3.3): the file watcher that reloads changed artifacts on a dev
-# instance. Off in moqui-core's default; the host's Dev and Debug packages turn it on.
-devtools = ["dep:notify"]
 
 [dev-dependencies]
 # moqui_core::testing in core's own tests.

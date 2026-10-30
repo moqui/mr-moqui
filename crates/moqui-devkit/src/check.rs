@@ -29,10 +29,10 @@ use std::sync::Arc;
 
 use moqui_lib::node::MNode;
 
-use super::refs::{self, RefKind};
-use super::schema::{self, Digest, ElementSpec};
-use super::{Problem, Severity};
-use crate::context::{ExecutionContext, ExecutionContextFactory};
+use crate::refs::{self, RefKind};
+use crate::schema::{self, Digest, ElementSpec};
+use crate::{Problem, Severity};
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
 /// The skill whose sections hold the rules the checks quote.
 pub const SKILL_FILE: &str = "framework/skill/moqui-coding-agent.md";
@@ -170,7 +170,7 @@ pub fn xsd_dir(factory: &ExecutionContextFactory) -> std::path::PathBuf {
     if dir.join("xml-screen-3.xsd").is_file() {
         dir
     } else {
-        crate::context::framework_dir().join("xsd")
+        moqui_core::context::framework_dir().join("xsd")
     }
 }
 
@@ -298,14 +298,14 @@ fn check_references(
             }
             let found = match rule.kind {
                 RefKind::Entity => facade.as_ref().map_or(Ok(()), |facade| {
-                    if crate::entity::info::is_entity_defined(facade, value) {
+                    if moqui_core::entity::info::is_entity_defined(facade, value) {
                         Ok(())
                     } else {
                         Err(("reference.entity", format!("entity {value}")))
                     }
                 }),
                 RefKind::Service => {
-                    if crate::service::is_service_defined(value, facade.as_ref()) {
+                    if moqui_core::service::is_service_defined(value, facade.as_ref()) {
                         Ok(())
                     } else {
                         Err(("reference.service", format!("service {value}")))
@@ -328,7 +328,7 @@ fn check_references(
                     _ => Ok(()),
                 },
                 RefKind::ServiceParameter => match refs::service_of(&node).filter(|name| refs::is_literal(name)) {
-                    Some(service) => match crate::service::define::find(&service) {
+                    Some(service) => match moqui_core::service::define::find(&service) {
                         Some(def)
                             if def.implements.is_empty()
                                 && !def.in_params.is_empty()
@@ -362,7 +362,7 @@ fn check_references(
 
 fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, problems: &mut Vec<Problem>) {
     // Screens, forms and widget templates: the screen lint reads the text.
-    if let Ok(Some(report)) = crate::script::screen_lint::lint_screen_text(path, text) {
+    if let Ok(Some(report)) = crate::screen_lint::lint_screen_text(path, text) {
         for site in &report.sites {
             if let Some(error) = &site.error {
                 problems.push(problem(
@@ -382,7 +382,7 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
     }
     // A service file: the service check, which reads the file on disk, when the text is what is on disk.
     if root.has_name("services") && std::fs::read_to_string(path).is_ok_and(|disk| disk == text) {
-        if let Ok(failures) = crate::service::check(&[path.to_path_buf()]) {
+        if let Ok(failures) = moqui_core::service::check(&[path.to_path_buf()]) {
             for failure in failures {
                 let rule =
                     if failure.contains("parse") || failure.contains("JavaScript") || failure.contains("expression") {
@@ -401,13 +401,13 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
 /// each `extend-entity` an entity, and each ECA rule the service or entity it runs on.
 #[must_use]
 pub fn check_extensions(factory: &Arc<ExecutionContextFactory>) -> Vec<Problem> {
-    let index = super::index::MemoryIndex::build(factory);
+    let index = crate::index::MemoryIndex::build(factory);
     extension_problems(&index.extensions(&[]))
 }
 
 /// The problems of the extensions whose targets are gone.
 #[must_use]
-pub fn extension_problems(extensions: &[super::index::Extension]) -> Vec<Problem> {
+pub fn extension_problems(extensions: &[crate::index::Extension]) -> Vec<Problem> {
     extensions
         .iter()
         .filter(|extension| !extension.resolved)
@@ -504,11 +504,11 @@ mod tests {
     fn a_service_file_with_each_kind_of_problem() {
         let ctx = ExecutionContextFactory::test_context_with_components(
             "",
-            crate::service::ServicePools::idle(),
-            crate::context::framework_dir(),
+            moqui_core::service::ServicePools::idle(),
+            moqui_core::context::framework_dir(),
             Vec::new(),
         );
-        let facade = crate::testing::open();
+        let facade = moqui_core::testing::open();
         ctx.factory().set_entity(facade);
         let _entered = ctx.enter();
         let text = r#"<services>
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn every_rule_quotes_a_sentence_of_its_skill_section() {
-        let skill = crate::context::framework_dir().join("skill/moqui-coding-agent.md");
+        let skill = moqui_core::context::framework_dir().join("skill/moqui-coding-agent.md");
         let text = std::fs::read_to_string(&skill).unwrap();
         for (rule, section, sentence) in RULES {
             let heading = format!("## {section}");

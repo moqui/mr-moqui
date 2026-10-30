@@ -12,16 +12,16 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui check` and `moqui refs` (plans/design-dev-aide.md 13.6, F13): the checks of `moqui_core::devtools::check` and
-//! the references of `moqui_core::devtools::refs` from the command line, on a model-only boot as `moqui types` boots,
+//! `moqui check` and `moqui refs` (plans/design-dev-aide.md 13.6, F13): the checks of `moqui_devkit::check` and
+//! the references of `moqui_devkit::refs` from the command line, on a model-only boot as `moqui types` boots,
 //! for a developer, a git hook or a coding agent outside the server.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::devtools::index::{Direction, MemoryIndex};
-use moqui_core::devtools::{check, Problem, Severity};
+use moqui_devkit::index::{Direction, MemoryIndex};
+use moqui_devkit::{check, Problem, Severity};
 use moqui_lib::error::Error;
 
 struct CheckArgs {

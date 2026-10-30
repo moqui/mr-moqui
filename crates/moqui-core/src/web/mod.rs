@@ -2001,7 +2001,7 @@ fn apply_cors(
 }
 
 /// Names a response never carries: `WebUtilities.stripCredentialParameters`, compared without case.
-pub(crate) const CREDENTIAL_PARAMETER_NAMES: [&str; 13] = [
+pub const CREDENTIAL_PARAMETER_NAMES: [&str; 13] = [
     "password",
     "oldpassword",
     "newpassword",

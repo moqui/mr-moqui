@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.DevToolsServices`: the framework's development tools (`crate::devtools`) as services, on dev
+//! `org.moqui.impl.DevToolsServices`: the framework's development tools (this crate) as services, on dev
 //! instances only (plans/design-dev-aide.md 17).
 
 use std::collections::BTreeMap;
@@ -20,12 +20,12 @@ use std::collections::BTreeMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
-use crate::context::ExecutionContext;
-use crate::entity::EntityFacade;
+use moqui_core::context::ExecutionContext;
+use moqui_core::entity::EntityFacade;
+use moqui_core::extension::RustServiceFn;
+use moqui_core::rust_service;
 
-pub(in crate::service) fn register(
-    map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
-) -> Result<(), String> {
+pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, restart_server)?;
     rust_service!(map, apply_xml_ops)?;
     rust_service!(map, get_schema_digest)?;
@@ -42,15 +42,15 @@ pub(in crate::service) fn register(
 /// Whether the current user may use the development tools here: a dev instance, and the `DEV_AIDE` permission or the
 /// `ADMIN` group. Adds the error and answers false otherwise.
 fn allowed(what: &str) -> bool {
-    if !crate::devtools::is_dev_instance() {
+    if !moqui_core::devtools::is_dev_instance() {
         ExecutionContext::with_current(|ec| {
             ec.message()
                 .add_error(format!("{what} is only available when instance_purpose is dev"));
         });
         return false;
     }
-    let permitted =
-        crate::user::has_permission("DEV_AIDE").unwrap_or(false) || crate::user::is_in_group("ADMIN").unwrap_or(false);
+    let permitted = moqui_core::user::has_permission("DEV_AIDE").unwrap_or(false)
+        || moqui_core::user::is_in_group("ADMIN").unwrap_or(false);
     if !permitted {
         ExecutionContext::with_current(|ec| {
             ec.message().add_error(format!("{what} needs the DEV_AIDE permission"));
@@ -62,7 +62,7 @@ fn allowed(what: &str) -> bool {
 /// Whether the current user may read the artifact index here: a dev instance, and one of the dev-aide's permissions
 /// (`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) or the `ADMIN` group. Adds the error and answers false otherwise.
 fn allowed_read(what: &str) -> bool {
-    if !crate::devtools::is_dev_instance() {
+    if !moqui_core::devtools::is_dev_instance() {
         ExecutionContext::with_current(|ec| {
             ec.message()
                 .add_error(format!("{what} is only available when instance_purpose is dev"));
@@ -71,8 +71,8 @@ fn allowed_read(what: &str) -> bool {
     }
     let permitted = ["DEV_AIDE_VIEW", "DEV_AIDE_EXTEND", "DEV_AIDE"]
         .iter()
-        .any(|permission| crate::user::has_permission(permission).unwrap_or(false))
-        || crate::user::is_in_group("ADMIN").unwrap_or(false);
+        .any(|permission| moqui_core::user::has_permission(permission).unwrap_or(false))
+        || moqui_core::user::is_in_group("ADMIN").unwrap_or(false);
     if !permitted {
         ExecutionContext::with_current(|ec| {
             ec.message()
@@ -113,7 +113,7 @@ fn json_value(value: &impl serde::Serialize) -> Value {
 
 /// Run `body` with the factory, answering its error as a message.
 fn with_index<T>(
-    body: impl FnOnce(&std::sync::Arc<crate::context::ExecutionContextFactory>) -> Result<T, LibError>,
+    body: impl FnOnce(&std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> Result<T, LibError>,
 ) -> Option<T> {
     let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))?;
     match body(&factory) {
@@ -139,7 +139,7 @@ fn find_artifacts(
         .unwrap_or(50)
         .clamp(1, 500);
     let found = with_index(|factory| {
-        crate::devtools::index::find(
+        crate::index::find(
             factory,
             &text_in(parameters, "text"),
             &list_in(parameters, "kinds"),
@@ -162,9 +162,7 @@ fn get_artifact(
     if !allowed_read("The artifact index") {
         return Ok(out);
     }
-    if let Some(found) =
-        with_index(|factory| crate::devtools::index::named(factory, &text_in(parameters, "artifactId")))
-    {
+    if let Some(found) = with_index(|factory| crate::index::named(factory, &text_in(parameters, "artifactId"))) {
         out.insert("artifact".to_string(), json_value(&found));
     }
     Ok(out)
@@ -179,9 +177,9 @@ fn get_artifact_refs(
     if !allowed_read("The artifact index") {
         return Ok(out);
     }
-    let direction = crate::devtools::index::Direction::parse(&text_in(parameters, "direction"));
+    let direction = crate::index::Direction::parse(&text_in(parameters, "direction"));
     let found = with_index(|factory| {
-        crate::devtools::index::refs(
+        crate::index::refs(
             factory,
             &text_in(parameters, "artifactId"),
             direction,
@@ -206,7 +204,7 @@ fn get_artifact_at(
     }
     let line = text_in(parameters, "line").parse::<u32>().unwrap_or(0);
     let found = with_index(|factory| {
-        crate::devtools::index::at(
+        crate::index::at(
             factory,
             &text_in(parameters, "path"),
             line,
@@ -230,7 +228,7 @@ fn get_artifact_extensions(
     if !allowed_read("The artifact index") {
         return Ok(out);
     }
-    let found = with_index(|factory| crate::devtools::index::extensions(factory, &list_in(parameters, "components")));
+    let found = with_index(|factory| crate::index::extensions(factory, &list_in(parameters, "components")));
     if let Some(found) = found {
         let broken = found.iter().filter(|extension| !extension.resolved).count();
         out.insert("extensions".to_string(), json_value(&found));
@@ -252,7 +250,7 @@ fn rebuild_artifact_index(
         return Ok(out);
     }
     let full = text_in(parameters, "full") == "true";
-    let found = with_index(|factory| crate::devtools::index::rebuild(factory, full));
+    let found = with_index(|factory| crate::index::rebuild(factory, full));
     if let Some(report) = found {
         out.insert("report".to_string(), json_value(&report));
     }
@@ -341,8 +339,8 @@ fn get_schema_digest(
         .get("rootElement")
         .map(moqui_lib::object::to_plain_string)
         .unwrap_or_default();
-    let digest = ExecutionContext::with_current(|ec| crate::devtools::check::xsd_dir(ec.factory()))
-        .and_then(|dir| crate::devtools::schema::digest(&dir, &root));
+    let digest = ExecutionContext::with_current(|ec| crate::check::xsd_dir(ec.factory()))
+        .and_then(|dir| crate::schema::digest(&dir, &root));
     let json = digest.map_or(serde_json::Value::Null, |digest| {
         serde_json::to_value(&*digest).unwrap_or(serde_json::Value::Null)
     });
@@ -359,7 +357,7 @@ fn restart_server(
     if !allowed("Restart") {
         return Ok(out);
     }
-    let user = crate::user::session::current_user_id()
+    let user = moqui_core::user::session::current_user_id()
         .ok()
         .flatten()
         .unwrap_or_default();
@@ -367,7 +365,7 @@ fn restart_server(
     // After the response: the shutdown waits for open requests, this one among them.
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        if !crate::devtools::restart::request_restart() {
+        if !moqui_core::devtools::restart::request_restart() {
             tracing::error!("Restart requested, but this process is not a server that can restart");
         }
     });

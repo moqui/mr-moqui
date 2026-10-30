@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use moqui_core::devtools::{Problem, Severity};
+use moqui_devkit::{Problem, Severity};
 use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 

@@ -40,7 +40,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::context::Error;
+use moqui_core::context::Error;
 
 /// What a rewrite changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -186,7 +186,7 @@ pub fn convert_tree(roots: &[PathBuf], write: bool) -> Result<ConvertReport, Err
     let mut xml = Vec::new();
     let mut groovy = Vec::new();
     for root in roots {
-        super::screen_lint::collect_all(root, &mut xml, &mut groovy)?;
+        crate::screen_lint::collect_all(root, &mut xml, &mut groovy)?;
     }
     xml.sort();
     groovy.sort();
@@ -198,7 +198,7 @@ pub fn convert_tree(roots: &[PathBuf], write: bool) -> Result<ConvertReport, Err
             continue;
         }
         let converted = convert_literals(&text);
-        if let Err(err) = super::parse_js(&converted) {
+        if let Err(err) = moqui_core::script::parse_js(&converted) {
             report.failed_grammars.push((path, err.to_string()));
             continue;
         }

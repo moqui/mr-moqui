@@ -135,7 +135,7 @@ fn modified_of(path: &std::path::Path) -> Option<std::time::SystemTime> {
 
 /// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/design-dev-aide.md
 /// 6.1, F6). Answers the script locations dropped.
-pub(crate) fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
+pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
     let canonical = |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let files: Vec<std::path::PathBuf> = files.iter().map(|file| canonical(file)).collect();
     let mut dropped = Vec::new();

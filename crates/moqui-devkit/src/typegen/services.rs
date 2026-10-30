@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use moqui_db::model::EntityModel;
 
 use super::ts::{doc, input_type, quote, server_type};
-use crate::service::define::{ParamDef, Required, ServiceDef, ServiceKind};
+use moqui_core::service::define::{ParamDef, Required, ServiceDef, ServiceKind};
 
 struct Key {
     ts_type: &'static str,
@@ -40,18 +40,18 @@ fn expand(
     let mut out = Vec::new();
     for param in params {
         let Some(auto) = param.auto.as_ref().filter(|_| param.name.is_empty()) else {
-            crate::service::merge_param(&mut out, param.clone());
+            moqui_core::service::merge_param(&mut out, param.clone());
             continue;
         };
-        let expanded = crate::service::auto_entity_name(def, auto).and_then(|name| {
-            let model = model.ok_or_else(|| crate::context::Error::new("no entity model is loaded"))?;
-            let entity = model.entity(&name).map_err(crate::context::Error::from)?;
-            Ok(crate::service::auto_fields(auto, entity, model))
+        let expanded = moqui_core::service::auto_entity_name(def, auto).and_then(|name| {
+            let model = model.ok_or_else(|| moqui_core::context::Error::new("no entity model is loaded"))?;
+            let entity = model.entity(&name).map_err(moqui_core::context::Error::from)?;
+            Ok(moqui_core::service::auto_fields(auto, entity, model))
         });
         match expanded {
             Ok(params) => {
                 for param in params {
-                    crate::service::merge_param(&mut out, param);
+                    moqui_core::service::merge_param(&mut out, param);
                 }
             }
             Err(err) => notes.push(format!("{}: auto-parameters: {err}", def.name)),

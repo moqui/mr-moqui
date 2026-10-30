@@ -32,7 +32,7 @@ use serde_json::{json, Value as Json};
 use super::screen_xml::{header_named, Header};
 use super::{Dialect, Prepared, Refused, WriteInput};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
-use moqui_core::devtools::Severity;
+use moqui_devkit::Severity;
 
 /// The skill whose sections the errors name.
 pub const SKILL: &str = "qvue-screens";
@@ -147,7 +147,7 @@ impl Dialect for QvueScreen {
             .map(|checker| {
                 let path = location_path(&checker, &header.location)
                     .unwrap_or_else(|| std::path::PathBuf::from(header.location.trim_start_matches("component://")));
-                moqui_core::devtools::check::check_text(&checker, &path, &xml)
+                moqui_devkit::check::check_text(&checker, &path, &xml)
             })
             .unwrap_or_default()
             .iter()

@@ -42,9 +42,7 @@ pub mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use moqui_entity::testing;
-pub mod testkit;
 pub use moqui_entity::transaction;
-pub mod typegen;
 pub mod user;
 pub mod web;
 

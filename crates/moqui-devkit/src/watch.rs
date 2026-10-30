@@ -14,7 +14,7 @@
 
 //! The dev file watcher (plans/design-dev-aide.md 6.3, F6): on a dev instance of a package with `devtools`, with
 //! `dev-reload` on (it is unless `enabled="false"`), every component directory is watched, and a change reloads what
-//! the file defines through [`super::reload_paths`], so an editor or an agent in a terminal gets live reload without
+//! the file defines through [`crate::reload_paths`], so an editor or an agent in a terminal gets live reload without
 //! the dev-aide. Events are gathered until `debounce-ms` (300) pass without one, so an editor's write and rename is one
 //! change. A write the dev-aide's save already reloaded is not reloaded again.
 //!
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
-use crate::context::ExecutionContextFactory;
+use moqui_core::context::ExecutionContextFactory;
 
 /// Directory names never watched, anywhere in a component.
 const SKIPPED: &[&str] = &[
@@ -52,7 +52,7 @@ pub struct DevWatcher {
 
 /// Start watching `factory`'s components when the instance is dev and `dev-reload` is on. Answers whether it started.
 pub fn start(factory: &Arc<ExecutionContextFactory>) -> bool {
-    if !super::is_dev_instance() {
+    if !moqui_core::devtools::is_dev_instance() {
         return false;
     }
     if !factory.conf_flag("dev-reload", "enabled", true) {
@@ -193,12 +193,12 @@ fn run(
                 }
                 let paths: Vec<PathBuf> = std::mem::take(&mut changed)
                     .into_iter()
-                    .filter(|path| !super::reload::already_reloaded(&factory, path))
+                    .filter(|path| !crate::reload::already_reloaded(&factory, path))
                     .collect();
                 if paths.is_empty() {
                     continue;
                 }
-                let report = super::reload_paths(&factory, &paths);
+                let report = crate::reload_paths(&factory, &paths);
                 if report.files.is_empty() {
                     continue;
                 }

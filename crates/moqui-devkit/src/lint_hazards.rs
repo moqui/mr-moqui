@@ -1,5 +1,5 @@
 //! Run-time hazards that a ported script parses and runs, and that behave differently from the Groovy it came from.
-//! `moqui lint --groovy` adds them to the sites of [`super::screen_lint`] as [`Idiom::DecimalOperator`],
+//! `moqui lint --groovy` adds them to the sites of [`crate::screen_lint`] as [`Idiom::DecimalOperator`],
 //! [`Idiom::FindListMutation`] and [`Idiom::InOnList`], and drops the empty-collection truthiness warnings that a
 //! parameter's declared type rules out.
 //!
@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use moqui_lib::node::MNode;
 
-use super::screen_lint::{is_expression_attr, mask_strings, snippet, FileReport, Idiom, SiteKind};
+use crate::screen_lint::{is_expression_attr, mask_strings, snippet, FileReport, Idiom, SiteKind};
 
 /// What one service (or one top-level element of another file) tells about its variables.
 #[derive(Default)]

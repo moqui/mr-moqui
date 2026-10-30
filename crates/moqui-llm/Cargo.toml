@@ -13,6 +13,8 @@ publish.workspace = true
 
 [dependencies]
 moqui-core = { workspace = true, features = ["http"] }
+# The spec runner (agent specs on moqui test) and the screen checks of the screen drafts (plans/Crate-Split.md).
+moqui-devkit = { workspace = true }
 moqui-db = { workspace = true }
 moqui-lib = { workspace = true, features = ["http"] }
 base64 = { workspace = true }

@@ -13,7 +13,7 @@
  */
 
 use super::*;
-use crate::devtools::index::resolve::Resolver;
+use crate::index::resolve::Resolver;
 
 fn read(kind: ArtifactKind, location: &str, text: &str) -> FileIndex {
     let info = FileInfo {

@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use moqui_core::testkit::{spec_offline, spec_slow, suite_server, Failure, SpecResult, SuiteServer};
+use moqui_devkit::testkit::{spec_offline, spec_slow, suite_server, Failure, SpecResult, SuiteServer};
 use moqui_lib::error::Error;
 
 use super::{run_against, ClientArgs, Server};

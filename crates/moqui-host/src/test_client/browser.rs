@@ -37,7 +37,7 @@ use super::video;
 use super::{field, text_field};
 
 const LOCATE: &str = include_str!("locate.js");
-const ASSERT_JS: &str = include_str!("../../../moqui-core/src/testkit/assert.js");
+const ASSERT_JS: &str = include_str!("../../../moqui-devkit/src/testkit/assert.js");
 const PAGE_HARNESS: &str = include_str!("page_harness.js");
 
 /// The viewport of a page that names none.

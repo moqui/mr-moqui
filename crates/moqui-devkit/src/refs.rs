@@ -150,7 +150,7 @@ pub fn scan_file(path: &std::path::Path) -> Vec<Reference> {
     };
     let display = path.display().to_string();
     let file_artifact = format!("file:{display}");
-    let prefix = crate::service::define::service_prefix(path);
+    let prefix = moqui_core::service::define::service_prefix(path);
     let mut found = Vec::new();
     let mut stack = vec![(root, file_artifact, String::new())];
     while let Some((node, from, parent)) = stack.pop() {
@@ -207,7 +207,7 @@ fn full_entity_name(node: &MNode) -> Option<String> {
 /// The XML files of the components' `entity`, `service`, `screen` and `screen-extend` directories, where references
 /// are made.
 #[must_use]
-pub fn component_xml_files(factory: &crate::context::ExecutionContextFactory) -> Vec<std::path::PathBuf> {
+pub fn component_xml_files(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     for component in factory.components() {
         for dir in ["entity", "service", "screen", "screen-extend"] {

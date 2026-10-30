@@ -13,7 +13,7 @@
  */
 
 //! One file's artifacts and references (plans/design-dev-aide.md 7.1), read from its text alone: what it defines,
-//! with each definition's line, and each reference the rules of [`crate::devtools::refs`] find, with the artifact it is
+//! with each definition's line, and each reference the rules of [`crate::refs`] find, with the artifact it is
 //! made in. Pure, so the server's index, the model-only index of `moqui refs` and the tests share it.
 
 use std::sync::LazyLock;
@@ -21,8 +21,8 @@ use std::sync::LazyLock;
 use moqui_lib::node::MNode;
 use regex::Regex;
 
-use crate::devtools::refs::{self, RefKind};
-use crate::devtools::ArtifactKind;
+use crate::refs::{self, RefKind};
+use crate::ArtifactKind;
 
 /// One artifact a file defines.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

@@ -168,7 +168,7 @@ fn groovy_hint(text: &str) -> Option<&'static str> {
     None
 }
 
-pub(super) fn has_groovy_arrow(text: &str) -> bool {
+pub fn has_groovy_arrow(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes
         .windows(2)
@@ -176,7 +176,7 @@ pub(super) fn has_groovy_arrow(text: &str) -> bool {
         .any(|(index, pair)| pair == b"->" && (index == 0 || bytes[index - 1] != b'='))
 }
 
-pub(super) fn has_closure_call(text: &str) -> bool {
+pub fn has_closure_call(text: &str) -> bool {
     const WORDS: &[&str] = &[
         "eachWithIndex",
         "findAll",

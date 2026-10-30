@@ -231,10 +231,10 @@ fn update_subscreen(
 
 /// What references a screen, from the index: each with its file and line.
 fn screen_refs(context: &Context, location: &str) -> Result<Vec<Json>, LibError> {
-    Ok(moqui_core::devtools::index::refs(
+    Ok(moqui_devkit::index::refs(
         &context.factory,
         &format!("screen:{location}"),
-        moqui_core::devtools::index::Direction::In,
+        moqui_devkit::index::Direction::In,
         &[],
     )?
     .iter()
@@ -296,7 +296,7 @@ fn remove_screen(
             ..Default::default()
         },
     );
-    let report = moqui_core::devtools::reload_paths(&context.factory, &[resolved.path.clone(), directory]);
+    let report = moqui_devkit::reload_paths(&context.factory, &[resolved.path.clone(), directory]);
     out.insert("removed".into(), Value::Bool(true));
     out.insert("reload".into(), json_value(&report));
     Ok(out)
@@ -383,7 +383,7 @@ fn move_screen(
             }
         }
     }
-    let report = moqui_core::devtools::reload_paths(
+    let report = moqui_devkit::reload_paths(
         &context.factory,
         &[from.path.clone(), to.path.clone(), old_dir, new_dir],
     );

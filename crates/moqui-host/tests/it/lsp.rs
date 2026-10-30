@@ -27,7 +27,7 @@
 use std::sync::Arc;
 
 use lsp_server::{Notification, Request, RequestId};
-use moqui_core::devtools::index::MemoryIndex;
+use moqui_devkit::index::MemoryIndex;
 use moqui_host::lsp::{Backend, Server};
 use serde_json::{json, Value as Json};
 
