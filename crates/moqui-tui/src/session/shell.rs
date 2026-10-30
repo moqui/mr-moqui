@@ -662,7 +662,7 @@ impl Session {
             .map(|(at, (name, _))| if at == tab { format!("[{name}]") } else { name.clone() })
             .collect();
         let title = format!("{} · {}", label, tabs.join(" "));
-        self.open_extra(TRAY, &title, &url.clone());
+        self.open_extra(TRAY, &title, url);
     }
 
     pub(super) fn tray_key(&mut self, press: &KeyPress) -> bool {

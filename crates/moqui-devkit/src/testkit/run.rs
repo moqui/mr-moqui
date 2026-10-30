@@ -320,7 +320,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
         cleanup_failure: None,
         duration: Duration::ZERO,
     };
-    let plan = match load(spec, host.as_ref()) {
+    let plan = match load(spec, host.as_deref()) {
         Ok(plan) => plan,
         Err(failure) => {
             result.setup_failure = Some(*failure);
@@ -810,7 +810,7 @@ fn registration(message: impl Into<String>) -> Box<Failure> {
     })
 }
 
-fn load(spec: &SpecFile, host: Option<&Arc<dyn SpecHost>>) -> Result<Plan, Box<Failure>> {
+fn load(spec: &SpecFile, host: Option<&dyn SpecHost>) -> Result<Plan, Box<Failure>> {
     moqui_core::script::clear_context_stack();
     install_prelude_for(host).map_err(|err| registration(format!("the test prelude did not load: {err}")))?;
     let rewritten = rewrite_spec(&spec.source).map_err(|err| registration(format!("{}: {err}", spec.display)))?;
@@ -845,7 +845,7 @@ pub fn install_prelude() -> Result<(), Error> {
 }
 
 /// The core prelude and the host calls, then the mode's globals: the host's prelude, or the server helpers.
-fn install_prelude_for(host: Option<&Arc<dyn SpecHost>>) -> Result<(), Error> {
+fn install_prelude_for(host: Option<&dyn SpecHost>) -> Result<(), Error> {
     moqui_core::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
     moqui_core::script::eval_named_value(ASSERT, ASSERT_NAME)?;
     moqui_core::script::with_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
@@ -1011,7 +1011,7 @@ pub fn run_on_thread(
             let _host = HostGuard::set(Some(Arc::clone(&host)));
             moqui_core::script::clear_context_stack();
             let body = || -> Result<String, Error> {
-                install_prelude_for(Some(&host))?;
+                install_prelude_for(Some(&*host))?;
                 let code = format!("JSON.stringify((({source}))(...({args_json})) ?? null)");
                 let value = moqui_core::script::eval_named_value(&code, "thread")?;
                 Ok(to_plain_string(&value))

@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -469,7 +469,7 @@ fn get_screen_children(
 
 /// The URL path under the shell where the screen at `location` renders: a walk of the tree from the apps, at most a
 /// few hundred screens deep enough for an app's pages.
-fn path_of(factory: &Arc<ExecutionContextFactory>, location: &str) -> Option<String> {
+fn path_of(factory: &ExecutionContextFactory, location: &str) -> Option<String> {
     let mut queue = std::collections::VecDeque::from([(APPS.to_string(), APPS_PATH.to_string(), 0usize)]);
     let mut seen = 0usize;
     while let Some((at, path, depth)) = queue.pop_front() {
@@ -639,7 +639,7 @@ fn put_canvas_buffer(
 }
 
 /// The overlay of a `buffer:<id>` token: the current user's canvas buffer of that id (an empty one renders the files).
-pub(crate) fn buffer_overlay(factory: &Arc<ExecutionContextFactory>, id: &str) -> Option<Overlay> {
+pub(crate) fn buffer_overlay(factory: &ExecutionContextFactory, id: &str) -> Option<Overlay> {
     let user = moqui_core::user::current_user_id().ok().flatten()?;
     moqui_core::devtools::dev_aide_user(factory, &user).then_some(())?;
     let kept = buffers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);

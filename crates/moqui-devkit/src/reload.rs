@@ -342,7 +342,7 @@ pub(crate) fn kind_of(component: &str, relative: &Path) -> ArtifactKind {
 /// (F5). A file that does not parse, or a model that does not link, keeps the old model, with the problem and "restart
 /// to apply" as the fallback.
 /// Answers whether the model was relinked.
-fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool {
+fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) -> bool {
     let changed = indexes(files, &[ArtifactKind::Entity]);
     if changed.is_empty() {
         return false;
@@ -424,7 +424,7 @@ fn entities_of(path: &str, changed: &[String]) -> Vec<String> {
 }
 
 /// Answers whether services were added or removed.
-fn reload_services(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool {
+fn reload_services(factory: &ExecutionContextFactory, files: &mut [FileReload]) -> bool {
     let changed: Vec<usize> = indexes(files, &[ArtifactKind::Service]);
     if changed.is_empty() {
         return false;
@@ -483,7 +483,7 @@ fn reload_secas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]
     }
 }
 
-fn reload_eecas(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+fn reload_eecas(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
     let changed = indexes(files, &[ArtifactKind::Eeca]);
     if changed.is_empty() || !parse_all(files, &changed, "reload.eca") {
         return;
@@ -518,7 +518,7 @@ fn reload_rest(files: &mut [FileReload]) {
     }
 }
 
-fn reload_screens(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+fn reload_screens(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
     let kinds = [
         ArtifactKind::Screen,
         ArtifactKind::ScreenExtend,
@@ -555,7 +555,7 @@ fn reload_screens(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReloa
     }
 }
 
-fn reload_skills(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) {
+fn reload_skills(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
     let changed = indexes(files, &[ArtifactKind::Skill]);
     if changed.is_empty() {
         return;

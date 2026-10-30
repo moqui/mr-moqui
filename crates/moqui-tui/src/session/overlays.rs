@@ -173,7 +173,7 @@ impl Session {
             Key::End => drop.at = last,
             Key::Char(' ') if multiple => {
                 if let Some(choice) = choices.get(drop.at) {
-                    self.toggle_value(&drop.field.clone(), &choice.value);
+                    self.toggle_value(&drop.field, &choice.value);
                 }
             }
             Key::Enter => {
@@ -266,7 +266,7 @@ impl Session {
                 self.overlays.pop();
                 if let Some((format, date_type)) = self.date_format(&picker.key) {
                     let text = forms::date_text(picker.date, self.buffer(&picker.key), &format, &date_type);
-                    self.set_buffer(&picker.key.clone(), text);
+                    self.set_buffer(&picker.key, text);
                 }
                 return;
             }

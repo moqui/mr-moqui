@@ -26,6 +26,7 @@ use moqui_core::screen::overlay::Overlay;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_llm::approval::{self, ApprovalStatus, TargetKind};
+use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
 use crate::agent::propose::{prepare, ChangeSet};
@@ -61,7 +62,7 @@ fn preview_overlay(factory: &Arc<ExecutionContextFactory>, token: &str) -> Optio
         if !matches!(view.status, ApprovalStatus::Pending | ApprovalStatus::HandedOff) {
             return None;
         }
-        let set: ChangeSet = serde_json::from_value(view.args.clone()).ok()?;
+        let set = ChangeSet::deserialize(&view.args).ok()?;
         let prepared = prepare(&context, &set).ok()?;
         let mut overlay = Overlay::new();
         for file in &prepared {
@@ -82,7 +83,7 @@ fn get_change_set(
     let context = Context::of(ec, Tier::Extend)?;
     let approval_id = text(parameters, "approvalId");
     let view = owned(&context, &approval_id)?;
-    let set: ChangeSet = serde_json::from_value(view.args.clone())
+    let set = ChangeSet::deserialize(&view.args)
         .map_err(|err| LibError::new(format!("the change set does not read: {err}")))?;
     let mut files: Vec<Json> = Vec::new();
     for change in &set.files {

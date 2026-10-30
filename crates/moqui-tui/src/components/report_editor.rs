@@ -332,11 +332,12 @@ fn scalar_choices(props: &Value, state: &ComponentState, row: &Row) -> Vec<Strin
         .collect()
 }
 fn write_document(props: &Value, state: &mut ComponentState, value: Value) -> Vec<Act> {
-    state.local["document"] = value.clone();
+    let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+    state.local["document"] = value;
     vec![Act::SetFormField {
         form: props["form"].as_str().unwrap_or("EditDefinition").into(),
         field: props["field"].as_str().unwrap_or("definitionJson").into(),
-        value: serde_json::to_string_pretty(&value).unwrap_or_default(),
+        value: text,
     }]
 }
 fn commit_scalar(props: &Value, state: &mut ComponentState, row: &Row) -> Vec<Act> {

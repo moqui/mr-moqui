@@ -257,7 +257,7 @@ fn order_of(kind: moqui_devkit::ArtifactKind) -> u8 {
 }
 
 fn propose(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError> {
-    let mut set: ChangeSet = serde_json::from_value(args.clone()).map_err(|err| {
+    let mut set = ChangeSet::deserialize(args).map_err(|err| {
         ToolError::new("bad_arguments", format!("The change set does not read: {err}"))
             .hint("files is a list of {file, ops | edits | text}.")
     })?;
@@ -358,7 +358,7 @@ fn propose(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolEr
 /// Accept: each file still at its base, or the change still applying to it now, is written through the save pipeline;
 /// nothing is written when one does not.
 fn write(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> ToolOutcome {
-    let set: ChangeSet = match serde_json::from_value(args.clone()) {
+    let set = match ChangeSet::deserialize(args) {
         Ok(set) => set,
         Err(err) => return ToolOutcome::Failed(format!("the approved change set does not read: {err}")),
     };

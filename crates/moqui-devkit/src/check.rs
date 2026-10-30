@@ -278,7 +278,7 @@ fn check_schema(
 }
 
 fn check_references(
-    factory: &Arc<ExecutionContextFactory>,
+    factory: &ExecutionContextFactory,
     root: &MNode,
     path: &str,
     lines: &LineIndex<'_>,
@@ -400,7 +400,7 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
 /// `screen-extend` file has a base screen at its path and each form, section, container or transition it names there,
 /// each `extend-entity` an entity, and each ECA rule the service or entity it runs on.
 #[must_use]
-pub fn check_extensions(factory: &Arc<ExecutionContextFactory>) -> Vec<Problem> {
+pub fn check_extensions(factory: &ExecutionContextFactory) -> Vec<Problem> {
     let index = crate::index::MemoryIndex::build(factory);
     extension_problems(&index.extensions(&[]))
 }
