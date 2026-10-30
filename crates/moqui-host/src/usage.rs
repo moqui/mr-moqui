@@ -319,7 +319,8 @@ Options:
                                   fresh loads every data type into a scratch runtime and removes
                                   it at the end. It needs embedded-postgres.
                                   snapshot saves that load under runtime/save and restores it
-                                  while the entity and data files and this binary are unchanged.
+                                  while the components the run loads, their entity and data
+                                  files and this binary are unchanged.
                                   existing uses the runtime's embedded database and changes its data.
   --junit dir                     Write TEST-<component>.<Spec>.xml into this directory.
   --keep                          Leave the scratch runtime in place.

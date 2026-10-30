@@ -29,7 +29,7 @@ pub mod status;
 
 pub use artifact::AuthzGuard;
 pub use cache::CacheFacade;
-pub use component::{component_entity_dirs, ComponentInfo};
+pub use component::{component_entity_dirs, discover_components, ComponentInfo};
 pub use conf::{load_merged_conf, merge_component_confs, merge_conf};
 pub use error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use factory::{

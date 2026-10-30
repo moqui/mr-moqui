@@ -122,8 +122,10 @@ without it. When nothing names a browser for PDF (`pdf_chromium_path`), the chil
 client drives, so the specs that check a PDF have one where the child's own search finds only Google Chrome.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under
-`runtime/save` that `--db snapshot` restores on later runs while the entity and data files and the binary are unchanged.
-A first run with Mantle's data takes minutes; later ones take seconds.
+`runtime/save` that `--db snapshot` restores on later runs while the components it loads, their entity and data files
+and the binary are unchanged. Servers on different confs or instance purposes load different components (a dev
+component only on a dev instance), so each has a snapshot of its own. A first run with Mantle's data takes minutes;
+later ones take seconds.
 
 `moqui test --serve [address]` is the server side, also for use by hand. When its specs pass it shuts the test factory
 down and serves the same scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone, on
