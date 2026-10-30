@@ -306,10 +306,10 @@ impl<'a> Renderer<'a> {
             return None;
         }
         let used = alias.entity_aliases_used();
-        if used.len() != 1 {
+        let [used] = used.as_slice() else {
             return None;
-        }
-        let member = self.view.member(used[0])?;
+        };
+        let member = self.view.member(used)?;
         if !member.sub_select.is_on() {
             return None;
         }
@@ -979,7 +979,11 @@ impl<'a> Renderer<'a> {
     /// `appendJoinConditions` does.
     fn join_keys(&self, member: &MemberEntity) -> Result<Vec<(String, String)>, Error> {
         let entity = self.member_entity(member)?;
-        let pks = entity.pk_field_names();
+        // The fallback applies only with one key map and one primary key.
+        let fallback_pk = match (entity.pk_field_names().as_slice(), member.key_map.len()) {
+            (&[pk], 1) => Some(pk),
+            _ => None,
+        };
         Ok(member
             .key_map
             .iter()
@@ -989,8 +993,8 @@ impl<'a> Renderer<'a> {
                     .clone()
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| key.field_name.clone());
-                if !entity.has_field(&related) && pks.len() == 1 && member.key_map.len() == 1 {
-                    related = pks[0].to_string();
+                if let Some(pk) = fallback_pk.filter(|_| !entity.has_field(&related)) {
+                    related = pk.to_string();
                 }
                 (key.field_name.clone(), related)
             })

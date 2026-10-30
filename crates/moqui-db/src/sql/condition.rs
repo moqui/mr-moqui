@@ -120,14 +120,15 @@ impl OrderBy {
         let mut case = None;
         let mut rest = text.trim_start();
         loop {
-            match rest.chars().next() {
+            let mut chars = rest.chars();
+            match chars.next() {
                 Some('-') => descending = true,
                 Some('+') => descending = false,
                 Some('^') => case = Some(true),
                 Some(' ') => {}
                 _ => break,
             }
-            rest = &rest[1..];
+            rest = chars.as_str();
         }
         let mut name = rest.trim_end().to_string();
         if name.is_empty() {

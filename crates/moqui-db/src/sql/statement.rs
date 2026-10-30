@@ -360,9 +360,9 @@ pub fn insert_or_update(entity: &EntityDefinition, dialect: &Dialect, columns: &
     if !supports_upsert(dialect) {
         return Err(Error::new(format!("database {} has no upsert statement", dialect.name)));
     }
-    if columns.is_empty() {
+    let Some(&first_column) = columns.first() else {
         return Err(Error::new("insert_or_update has no columns"));
-    }
+    };
     let mut sql = insert(entity, dialect, columns)?;
     let pk = entity.pk_field_names();
     let pk_owned: HashSet<&str> = pk.iter().copied().collect();
@@ -375,7 +375,7 @@ pub fn insert_or_update(entity: &EntityDefinition, dialect: &Dialect, columns: &
     if is_mysql(dialect) {
         sql.push_str(" ON DUPLICATE KEY UPDATE ");
         let targets: Vec<&str> = if updates.is_empty() {
-            vec![column_name(entity, columns[0])]
+            vec![column_name(entity, first_column)]
         } else {
             updates
         };
