@@ -270,11 +270,13 @@ Take `&T` when the body only reads through the value, and so does everything it 
 passing `&factory`, because deref coercion turns `&Arc<T>` into `&T`.
 
 ```rust
-// before
-fn preview_overlay(factory: &Arc<ExecutionContextFactory>, token: &str) -> Option<Overlay>
-// after, when neither it nor its callees clone, store, or spawn with it
-fn preview_overlay(factory: &ExecutionContextFactory, token: &str) -> Option<Overlay>
+// before (crates/moqui-devkit/src/reload.rs)
+fn reload_entities(factory: &Arc<ExecutionContextFactory>, files: &mut [FileReload]) -> bool
+// after: neither it nor its callees clone, store, or spawn with it
+fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) -> bool
 ```
+
+dev-aide's `preview_overlay` looks the same but keeps `&Arc`: it is a `screen::overlay::Provider`.
 
 Work bottom-up: change a leaf function first, then its callers. Keep `&Arc<T>` when:
 - the function or a callee calls `Arc::clone`;
