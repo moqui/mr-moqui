@@ -560,4 +560,4 @@ function execute(op, p) {
         if (!was) ec.artifactExecution.enableAuthz()
     }
 }
-;({ execute, authenticateDelegation, clientRegistered })
+;({ execute, authenticateDelegation, clientRegistered, requesterKey })
