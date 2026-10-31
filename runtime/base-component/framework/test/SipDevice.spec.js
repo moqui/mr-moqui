@@ -2,8 +2,9 @@
 // plans/Comms-Framework.md §5.2 "Registrar for phones", V4): the registrar off by default, a phone's credentials shown once
 // with only verifiers kept, another user refused with the same parameters, rotation and revocation ending the old
 // credentials and the registrations, a call ringing a user's registered phone beside their tabs with the first answer
-// winning (a phone over a tab, a tab over a phone, a phone over another phone), and a phone's own call placed as its
-// user. No SIP engine runs here: fake SipNode and CallMediaNode rows stand in for one, SipRegistration rows for the
+// winning (a phone over a tab, a tab over a phone, a phone over another phone), a phone call to a user with phones and a
+// voicemail box (tabs and phones ring together for the box's rings, then voicemail cancels every phone; a decline on one
+// phone declines the ring everywhere and sends the call to voicemail), and a phone's own call placed as its user. No SIP engine runs here: fake SipNode and CallMediaNode rows stand in for one, SipRegistration rows for the
 // bindings it would keep, and send#SipControl to them is only logged. The engine's side is moqui-sip's ua_phones tests
 // and `it sip::`.
 // Run: ./moq test framework --spec SipDevice
@@ -13,6 +14,8 @@ const B = "SIPDEV_SPEC_B"
 const NODE = "sipdev-spec-node"
 const DEVICE = "moqui.call.SipDevice"
 const LEG = "moqui.call.CallLeg"
+const NUMBER_A = "+15550180001"
+const CALLER = "+15557770188"
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -83,6 +86,8 @@ function clean() {
             ec.entity.find("moqui.call.SipRegistration").condition("sipDeviceId", d.sipDeviceId).deleteAll()
             d.delete()
         }
+        ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", NUMBER_A).deleteAll()
+        ec.entity.find("moqui.call.VoicemailBox").condition("userId", "in", [A, B]).deleteAll()
         ec.entity.find("moqui.call.SipNode").condition("instanceId", NODE).deleteAll()
         ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).deleteAll()
     })
@@ -269,6 +274,101 @@ feature("a tab's answer wins over the phone, and a phone that answers after anot
         phonesAfter.filter((l) => l.statusId == "ClsAnswered").length == 1
         phonesAfter.find((l) => l.callLegId == two[0].callLegId).statusId == "ClsAnswered"
         phonesAfter.find((l) => l.callLegId == two[1].callLegId).statusId == "ClsCanceled"
+    }
+})
+
+feature("with phones and a voicemail box, tabs and phones ring together until voicemail, which cancels every phone; a decline on a phone declines the ring and goes to voicemail", {
+    when() {
+        return on(() => {
+            nodesUp()
+            sys(() => {
+                const number = ec.entity.makeValue("moqui.call.PhoneNumber")
+                number.setFields({phoneNumber: NUMBER_A, routeTypeEnumId: "PnrUser", routeId: A}, true, null, null)
+                number.create()
+                const status = ec.entity.find("moqui.security.UserStatus").condition("userId", A).one()
+                if (status) { status.set("inCall", "N"); status.update() }
+            })
+            const second = as(A, "create#SipDevice", {name: "Soft phone 2"})
+            registered(deviceRow(first.sipDeviceId), "vm-1")
+            registered(deviceRow(second.sipDeviceId), "vm-2")
+            const rings = as(A, "org.moqui.impl.VoicemailServices.update#VoicemailSettings", {rings: 10})
+            const receive = () => internal("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: NUMBER_A, fromNumber: CALLER,
+                fromName: "Spec Caller", instanceId: NODE})
+            const legsOfA = (callSessionId) => legsOf(callSessionId).filter((l) => l.legTypeEnumId !== "CltPstn")
+            const logOf = (callSessionId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId, userId: A}).one())
+            const sessionOf = (callSessionId) => sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", callSessionId).one())
+            const ended = []
+
+            // unanswered: rung 50 s, past call_ring_seconds (45) and before the box's 10 rings (60 s), every leg still rings
+            const call = receive()
+            ended.push(call.callSessionId)
+            const rung = legsOfA(call.callSessionId)
+            sys(() => {
+                for (const leg of rung) {
+                    leg.set("offeredDate", new Date(Date.now() - 50000))
+                    leg.update()
+                }
+            })
+            internal("org.moqui.impl.CallServices.expire#Calls")
+            const stillRinging = legsOfA(call.callSessionId)
+            const begun = internal("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId,
+                callLegId: call.callLegId, reason: "noAnswer"})
+            const afterVoicemail = legsOfA(call.callSessionId)
+            const lateAnswer = note(call.callSessionId, rung.find((l) => l.legTypeEnumId === "CltSipDevice").callLegId, "answered")
+            const missedLog = logOf(call.callSessionId)
+
+            // declined on one phone: the tab and the other phone stop, and nobody else rings, so voicemail
+            const declinedCall = receive()
+            ended.push(declinedCall.callSessionId)
+            const phones = deviceLegs(declinedCall.callSessionId)
+            const refused = note(declinedCall.callSessionId, phones[0].callLegId, "busy")
+            const afterDecline = legsOfA(declinedCall.callSessionId)
+            const declinedSession = sessionOf(declinedCall.callSessionId)
+            const declinedBegun = internal("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: declinedCall.callSessionId,
+                callLegId: declinedCall.callLegId, reason: "declined"})
+            const declinedLog = logOf(declinedCall.callSessionId)
+
+            // a colleague's call declined on a phone ends, as one declined in a tab does
+            const direct = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const directRefused = note(direct.callSessionId, deviceLegs(direct.callSessionId)[0].callLegId, "busy")
+            const directSession = sessionOf(direct.callSessionId)
+
+            sys(() => {
+                for (const id of ended) {
+                    const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", id).one()
+                    if (s && s.statusId !== "CssEnded") { s.set("statusId", "CssEnded"); s.update() }
+                }
+            })
+            as(A, "revoke#SipDevice", {sipDeviceId: second.sipDeviceId})
+            return {rings, call, rung, stillRinging, begun, afterVoicemail, lateAnswer, missedLog, phones, refused, afterDecline,
+                declinedSession, declinedBegun, declinedLog, directRefused, directSession}
+        })
+    },
+    then({rings, call, rung, stillRinging, begun, afterVoicemail, lateAnswer, missedLog, phones, refused, afterDecline,
+          declinedSession, declinedBegun, declinedLog, directRefused, directSession}) {
+        rings.box.rings == 10
+        call.voicemailSeconds == 60
+        // the tab's leg and both phones
+        rung.length == 3
+        rung.filter((l) => l.legTypeEnumId == "CltSipDevice").length == 2
+        stillRinging.every((l) => l.statusId == "ClsOffered")
+        begun.errors == ""
+        begun.mode == "deposit"
+        afterVoicemail.every((l) => l.statusId == "ClsTimedOut")
+        lateAnswer.repeated == true
+        missedLog.outcomeEnumId == "CuoMissed"
+        phones.length == 2
+        refused.errors == ""
+        afterDecline.find((l) => l.callLegId == phones[0].callLegId).statusId == "ClsDeclined"
+        afterDecline.filter((l) => l.callLegId != phones[0].callLegId).every((l) => l.statusId == "ClsCanceled")
+        afterDecline.length == 3
+        declinedSession.statusId != "CssEnded"
+        declinedBegun.errors == ""
+        declinedBegun.mode == "deposit"
+        declinedLog.outcomeEnumId == "CuoDeclined"
+        directRefused.errors == ""
+        directSession.statusId == "CssEnded"
+        directSession.endReasonEnumId == "CerDeclined"
     }
 })
 

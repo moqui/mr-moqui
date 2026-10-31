@@ -23,11 +23,14 @@ An inbound call to a user's number (`PhoneNumber` routed `PnrUser`, from `receiv
   `call_ring_seconds`. Unanswered by then, it goes. The call's ring expiry is set 30 seconds later, so `expire#Calls`
   neither ends it nor stops the user's ringing first when the box rings longer than `call_ring_seconds`.
 - **Busy.** The user is in another call (`UserStatus.inCall`): the call is not rung at all and goes at once.
-- **Declined.** The user declines it and nobody else is rung for it (`decline#Call` sends the engine the control
-  `voicemail`).
+- **Declined.** The user declines it and nobody else is rung for it (`decline#Call`, or the reject key of one of their
+  desk or soft phones, sends the engine the control `voicemail`).
+
+The user's registered phones ([SIP, Registrar](SIP.md#registrar)) ring with their tabs for the whole time: until the
+box's rings, or the ring expiry. A decline on one of them is a decline on all.
 
 Each time the engine asks `begin#Voicemail` first, which moves the call there in one transaction (`Calls.js`
-`phoneToVoicemail`): the user's ringing leg times out, their `CallUserLog` is missed (a decline stays declined), the
+`phoneToVoicemail`): the user's ringing legs time out (the engine cancels each phone still ringing), their `CallUserLog` is missed (a decline stays declined), the
 ring bars close, and the call is active with the phone alone. Someone who answered first wins: `begin#Voicemail`
 refuses (`answered`) and the call goes on as answered. A user's box is made, with the defaults, the first time it is
 needed.
@@ -172,6 +175,9 @@ transcripts and its row.
 - `cargo test -p moqui-host --features sip --test it -- sip::`: a fake trunk calls a busy user on a real server and
   leaves a message, stored as Ogg Opus in their inbox (`a_busy…`); a caller on the access number keys the box number and
   PIN, hears a message and deletes it with `7` (`the_access_number…`).
+- `./moq test framework --spec SipDevice`: a user with registered phones and a box: the tab and both phones still ring
+  past `call_ring_seconds`, voicemail times them all out, and a decline on one phone stops the others and goes to
+  voicemail.
 - `./moq test framework --spec Voicemail`: busy and unanswered routing, begin and decline, private audio refused for
   another user with the same id, the PIN with its refusal and its limits per box and per source, the notices
   (attachments off by default), a failed transcription and its retry, the trash's retention, greeting uploads.

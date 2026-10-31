@@ -205,3 +205,31 @@ fn a_prompt_queues_after_the_one_playing() {
     leg::queue_prompt(&mut queue, &mut at, &[9]);
     assert_eq!(queue, vec![9]);
 }
+
+#[test]
+fn a_phone_rings_for_the_call_s_time_left_to_ring() {
+    use phones::device_ring_timeout;
+    // a voicemail box's ten rings and the grace: longer than the default
+    assert_eq!(
+        device_ring_timeout(&serde_json::json!({"ringSeconds": 90})),
+        Duration::from_secs(90)
+    );
+    assert_eq!(
+        device_ring_timeout(&serde_json::json!({"ringSeconds": "12"})),
+        Duration::from_secs(12)
+    );
+    // missing, zero or not a number: the default; never longer than five minutes
+    assert_eq!(device_ring_timeout(&serde_json::json!({})), RING_TIMEOUT);
+    assert_eq!(
+        device_ring_timeout(&serde_json::json!({"ringSeconds": 0})),
+        RING_TIMEOUT
+    );
+    assert_eq!(
+        device_ring_timeout(&serde_json::json!({"ringSeconds": "soon"})),
+        RING_TIMEOUT
+    );
+    assert_eq!(
+        device_ring_timeout(&serde_json::json!({"ringSeconds": 86_400})),
+        Duration::from_secs(300)
+    );
+}

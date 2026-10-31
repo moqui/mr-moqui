@@ -294,6 +294,9 @@ function ringDevices(p) {
   let fromUser = null
   if (p.fromUserId) fromUser = one('moqui.security.UserAccount', { userId: p.fromUserId })?.username || null
   if (!fromUser) fromUser = rows(LEG, { callSessionId: session.callSessionId, legTypeEnumId: 'CltPstn' })[0]?.phoneNumber || 'moqui'
+  // a phone rings as long as the call may ring: until the session's ring expiry (a voicemail box's rings, V2, can make it
+  // longer than call_ring_seconds); voicemail or an answer cancels it sooner
+  const ringSeconds = Math.max(1, Math.ceil(((ms(session.ringExpireDate) || now) - now) / 1000))
   let ringCount = 0
   for (const userId of Array.from(p.userIdList || [])) {
     const participant = one(PARTICIPANT, { callSessionId: session.callSessionId, userId })
@@ -308,7 +311,7 @@ function ringDevices(p) {
         sipDeviceId: device.sipDeviceId, statusId: 'ClsOffered', offeredDate: ec.user.nowTimestamp }, true, null, null)
       leg.create()
       sipControl(session.mediaNodeId, { action: 'ringDevice', callSessionId: session.callSessionId, callLegId: leg.callLegId,
-        sipDeviceId: device.sipDeviceId, username: device.username, fromUser, fromName: p.fromName || fromUser })
+        sipDeviceId: device.sipDeviceId, username: device.username, fromUser, fromName: p.fromName || fromUser, ringSeconds })
       ringCount++
     }
   }

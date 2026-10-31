@@ -564,21 +564,28 @@ function decline(p) {
   if (session.statusId === 'CssEnded') return { call: view(session, me), repeated: true }
   const offered = legOfMine(session, me, ['ClsOffered'])
   if (!offered.leg) return refuse('notRinging', 'This call is not ringing for you')
-  closeLeg(offered.leg, 'ClsDeclined', 'CerDeclined')
-  // declined in a tab: the user's phones stop ringing too (V4)
-  cancelSiblingOffers(session, offered.participant, offered.leg.callLegId)
-  setLog(session.callSessionId, me, { outcomeEnumId: 'CuoDeclined' })
+  declineRing(session, offered.participant, offered.leg, me)
+  return { call: view(session, me) }
+}
+
+/**
+ * A user declined the call on one of their legs, a tab (decline) or a phone (deviceEvent): their ring ends on every leg
+ * (the tabs' close, the SIP engine cancels each phone, V4) and stays declined. A direct call nobody else is rung for ends;
+ * an inbound phone call nobody else is rung for goes to voicemail (V2: the SIP engine starts it, begin#Voicemail).
+ */
+function declineRing(session, participant, leg, userId) {
+  closeLeg(leg, 'ClsDeclined', 'CerDeclined')
+  cancelSiblingOffers(session, participant, leg.callLegId)
+  setLog(session.callSessionId, userId, { outcomeEnumId: 'CuoDeclined' })
   const stillRinging = find(LEG).condition('callSessionId', session.callSessionId).condition('statusId', 'ClsOffered').count()
   if (session.kindEnumId === 'CskDirect' && !stillRinging) {
     endSession(session, 'CerDeclined')
-  } else {
-    bump(session)
-    session.update()
-    pushState(session, 'declined', { declinedBy: me })
-    // a phone call nobody else is rung for goes to voicemail (V2): the SIP engine starts it (VoicemailServices.begin#Voicemail)
-    if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) phoneControl(session, 'voicemail')
+    return
   }
-  return { call: view(session, me) }
+  bump(session)
+  session.update()
+  pushState(session, 'declined', { declinedBy: userId })
+  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) phoneControl(session, 'voicemail')
 }
 
 function join(p) {
@@ -1477,8 +1484,8 @@ function phoneEvent(p) {
 
 /**
  * Internal (VoicemailServices.begin#Voicemail, V2): an inbound phone call goes to voicemail, its phone leg answered by the
- * SIP engine with no one else in it. The users still rung stop ringing and missed it (CallUserLog, as a call that rang out;
- * one who declined keeps that); the call is active with the phone alone until it hangs up. Refused (reasonCode) when the
+ * SIP engine with no one else in it. The users still rung stop ringing, in their tabs and on their phones (V4), and
+ * missed it (CallUserLog, as a call that rang out; one who declined keeps that); the call is active with the phone alone until it hangs up. Refused (reasonCode) when the
  * call is not an inbound phone call (notFound), has ended (callEnded) or someone answered it (answered).
  */
 function phoneToVoicemail(p) {
@@ -1490,6 +1497,8 @@ function phoneToVoicemail(p) {
   if (localAnsweredCount(session.callSessionId)) return { reasonCode: 'answered' }
   for (const offered of rows(LEG, { callSessionId: session.callSessionId, statusId: 'ClsOffered' })) {
     closeLeg(offered, 'ClsTimedOut', 'CerNoAnswer')
+    // a desk or soft phone still ringing for it (V4) is canceled: the call stays up, so its room does not close them
+    if (isDeviceLeg(offered)) sipLegControl(session, offered.callLegId, 'hangup')
   }
   const callees = participantsOf(session.callSessionId).filter((x) => x.userId).map((x) => x.userId)
   const missed = []
@@ -1518,7 +1527,8 @@ function phoneToVoicemail(p) {
  * Internal (the SIP engine, through note#PhoneLeg): what a phone's leg did. A ringing phone that answers wins only if
  * none of the user's legs answered first (a tab, or another phone): then the user is in the call on it, their other
  * offers end, and an inbound phone call's trunk leg and a calling phone are answered; else it is hung up. A phone that
- * fails, is busy or is canceled while it rings just stops; one in the call that hangs up leaves it, as a tab that leaves.
+ * refuses its ring (busy) declines it, as a tab does (declineRing); one that fails or is canceled while it rings just
+ * stops; one in the call that hangs up leaves it, as a tab that leaves.
  */
 function deviceEvent(session, leg, p) {
   if (session.statusId === 'CssEnded' || !OPEN_LEG.includes(leg.statusId)) {
@@ -1556,9 +1566,12 @@ function deviceEvent(session, leg, p) {
   }
   if (p.event === 'ended' || p.event === 'canceled' || p.event === 'failed' || p.event === 'busy') {
     if (leg.statusId === 'ClsAnswered') return leaveLeg(session, leg, 'CerHangup', userId)
-    const busy = p.event === 'busy'
-    closeLeg(leg, busy ? 'ClsDeclined' : p.event === 'failed' ? 'ClsFailed' : 'ClsCanceled',
-      busy ? 'CerDeclined' : p.event === 'failed' ? 'CerFailed' : 'CerCanceled')
+    // a phone that refuses its ring (busy or decline: phones send either for the reject key) declines it, as a tab does
+    if (p.event === 'busy' && participant && userId) {
+      declineRing(session, participant, leg, userId)
+      return {}
+    }
+    closeLeg(leg, p.event === 'failed' ? 'ClsFailed' : 'ClsCanceled', p.event === 'failed' ? 'CerFailed' : 'CerCanceled')
     return {}
   }
   if (p.event === 'held' || p.event === 'resumed') pushState(session, p.event, { callLegId: leg.callLegId })

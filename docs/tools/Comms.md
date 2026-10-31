@@ -81,7 +81,8 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   a password, the domain, the port and the transport, each with a copy button, shown only then; put them in the desk
   phone or in a phone app (Linphone, Zoiper, Groundwire), choosing TLS and SRTP where it has them. Once it registers,
   the list shows it with its address and how long the registration lasts. A call to you rings the phone beside your
-  tabs, and whichever answers first takes it; the phone calls out as you, to a number (with your caller ID and your
+  tabs, and whichever answers first takes it; declining on one declines on all, and a call nobody answers goes to your
+  voicemail after your rings. The phone calls out as you, to a number (with your caller ID and your
   limits) or to a colleague by username. New password makes new credentials and stops the old ones at once; Remove
   ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
   until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
@@ -157,6 +158,6 @@ provider hooks and the app's parts through both mounts. `./moq test framework --
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
 and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and
-soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, a phone's own
-call). IronStone's own parts are in its specs (`Inbox`, `Compose`,
+soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
+after the tabs and phones ring or a phone declines, a phone's own call). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

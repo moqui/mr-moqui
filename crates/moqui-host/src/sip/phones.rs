@@ -31,6 +31,7 @@
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_sip::digest::Algorithm;
@@ -135,6 +136,17 @@ impl DeviceDirectory for ServiceDirectory {
     }
 }
 
+/// The longest a phone rings for a call.
+const MAX_DEVICE_RING: Duration = Duration::from_secs(300);
+
+/// How long a `ringDevice` rings its phone: `ringSeconds`, the call's time left to ring (a voicemail box's rings can make
+/// it longer than `call_ring_seconds`), at most [`MAX_DEVICE_RING`]; [`RING_TIMEOUT`] when it is missing.
+pub(super) fn device_ring_timeout(body: &Json) -> Duration {
+    number(body, "ringSeconds")
+        .filter(|s| *s > 0)
+        .map_or(RING_TIMEOUT, |s| Duration::from_secs(s).min(MAX_DEVICE_RING))
+}
+
 fn transport_code(transport: Transport) -> &'static str {
     match transport {
         Transport::Udp => "udp",
@@ -192,7 +204,7 @@ impl Engine {
             from_name: Some(text(body, "fromName")).filter(|n| !n.is_empty()),
             offer_plain: sdp::offer(&plain),
             offer_srtp: Some(sdp::offer(&srtp)),
-            ring_timeout: RING_TIMEOUT,
+            ring_timeout: device_ring_timeout(body),
         };
         self.legs.insert(
             leg.clone(),

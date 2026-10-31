@@ -276,8 +276,13 @@ engine forks an INVITE to every live binding of it, beside the ring in their tab
   telephone-event; SRTP to a binding over TLS, plain RTP otherwise.
 - The first answer wins, through the call services' state machine: the answering phone's leg is the user's in the call,
   and the other offers end. Their tabs stop ringing, and the other bindings and phones are canceled; a phone that
-  answers after is ACKed and ended with BYE. A tab that answers first cancels the phones the same way; declining in a
-  tab stops them too.
+  answers after is ACKed and ended with BYE. A tab that answers first cancels the phones the same way.
+- A decline on any of them (in a tab, or a phone's reject key: its 486, 600 or 603) declines the user's ring on all of
+  them; a phone that is busy with another call looks the same, as phones send 486 for both.
+- A phone rings as long as the call may ring (`ringSeconds`, from the call's ring expiry; at most 5 minutes). With a
+  voicemail box, tabs and phones ring together for the box's rings; then the call goes to voicemail and every phone
+  still ringing is canceled. A decline that leaves nobody rung sends the call to voicemail at once ([Voicemail, When a
+  call goes to voicemail](Voicemail.md#when-a-call-goes-to-voicemail)).
 - An inbound phone call is answered toward its trunk when the user's phone answers. The phone hears the call's notices
   (recording, captions) as a phone leg does.
 
@@ -419,10 +424,12 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   heard by a browser stand-in; and a desk phone that registers, rings for a colleague's call, answers in G.722 and is
   heard by the colleague's browser.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, prompts queued one after
-  another, and the registrar's settings; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
+  another, the registrar's settings and a phone's ring time; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
   only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.
 - `./moq test framework --spec SipDevice`: the registrar off by default, credentials shown once with only verifiers
   kept, another user refused with the same parameters, rotation and revocation, a phone ringing beside the tabs with
-  the first answer winning (a phone, a tab, one of two phones), and a phone's call to a colleague.
+  the first answer winning (a phone, a tab, one of two phones), a phone call to a user with phones and a voicemail box
+  (all ring until voicemail, which cancels the phones; a decline on a phone goes to voicemail), and a phone's call to a
+  colleague.
