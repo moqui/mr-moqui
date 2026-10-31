@@ -77,7 +77,7 @@ the binary (`speech-local`, Whisper on candle) is not built yet.
 | `call_captions_provider` | `llm` | `llm` (the `transcribe` binding) or `local` (speech-local, which answers "not built in") |
 | `call_captions_chunk_seconds` | `5` | The longest chunk of one speaker's audio sent at once; a pause of 0.6 s ends one sooner |
 | `call_captions_queue` | `6` | Chunks waiting for the provider; past this the oldest is dropped and shown as a gap |
-| `call_captions_workers` | `2` | Chunks transcribed at once, on the service pool |
+| `call_captions_workers` | `2` | Chunks of one call transcribed at once, on the service pool; all calls on a node together use at most half its workers |
 | `call_captions_timeout_seconds` | `20` | How long one chunk may take |
 | `call_captions_language` | empty | An ISO 639-1 code; empty lets the model tell |
 | `call_captions_store` | `false` | `true` keeps each caption as a `CallTranscript` row; by default nothing is kept |

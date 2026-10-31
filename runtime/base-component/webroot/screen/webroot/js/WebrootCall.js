@@ -917,12 +917,7 @@
             reactions() { return ["👍", "👏", "😂", "❤️", "🎉", "🙋"]; },
             // live captions (W6): the last lines of the last ten seconds, and the notice of who hears the audio
             captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
-            captionNotice() {
-                const c = this.call.captions;
-                const who = c.provider || t("the configured provider");
-                return c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
-                    : t("Captions are on: what people say is sent to") + " " + who + " " + t("to be transcribed");
-            },
+            captionNotice() { return captionNotice(this.call.captions); },
             elapsed() { return this.now && elapsedText(this.call.startedAt); }
         },
         watch: {
@@ -1057,10 +1052,7 @@
             '<q-icon v-if="tile.hand" name="sym_o_back_hand" color="warning" class="q-ml-xs"></q-icon></div></div>' + '</div></div>' +
             '<div v-if="inThis && !remotes.length" class="m-muted">{{call.phase === \'connected\' ? t(\'Waiting for the others\') : t(\'Connecting\')}}</div>' +
             // the captions: the notice while they are on, why they are unavailable, and each speaker's last lines
-            '<div v-if="inThis && (call.captions.on || call.captions.unavailable)" class="m-call-captions q-pa-sm rounded-borders" style="background:rgba(0,0,0,.78);color:#fff" aria-live="polite">' +
-            '<div class="text-caption" style="opacity:.85"><q-icon name="sym_o_closed_caption" class="q-mr-xs"></q-icon>{{captionNotice}}</div>' +
-            '<div v-if="call.captions.unavailable" class="text-caption text-warning"><q-icon name="sym_o_warning" class="q-mr-xs"></q-icon>{{t(\'Captions are unavailable\')}}: {{call.captions.unavailable}}</div>' +
-            '<div v-for="line in captionLines" :key="line.key" class="text-body2"><span class="text-weight-bold">{{line.name}}:</span> <span :style="line.gap ? \'opacity:.6\' : \'\'">{{line.text}}</span></div></div>' +
+            captionsBox("inThis", "captionLines") +
             // the bottom bar
             '<div v-if="inThis" class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
@@ -1087,6 +1079,19 @@
     };
     components["m-call"].methods.moquiCall = () => moqui.call;
     components["m-call"].methods.moquiCallMe = () => moqui.call.me;
+    // The captions notice, as m-call and m-call-guest show it: who hears what people say
+    function captionNotice(c) {
+        const who = c.provider || t("the configured provider");
+        return c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
+            : t("Captions are on: what people say is sent to") + " " + who + " " + t("to be transcribed");
+    }
+    // The captions box: the notice while they are on, why they are unavailable, and each speaker's last lines
+    function captionsBox(shown, lines) {
+        return '<div v-if="' + shown + ' && (call.captions.on || call.captions.unavailable)" class="m-call-captions q-pa-sm rounded-borders" style="background:rgba(0,0,0,.78);color:#fff" aria-live="polite">' +
+            '<div class="text-caption" style="opacity:.85"><q-icon name="sym_o_closed_caption" class="q-mr-xs"></q-icon>{{captionNotice}}</div>' +
+            '<div v-if="call.captions.unavailable" class="text-caption text-warning"><q-icon name="sym_o_warning" class="q-mr-xs"></q-icon>{{t(\'Captions are unavailable\')}}: {{call.captions.unavailable}}</div>' +
+            '<div v-for="line in ' + lines + '" :key="line.key" class="text-body2"><span class="text-weight-bold">{{line.name}}:</span> <span :style="line.gap ? \'opacity:.6\' : \'\'">{{line.text}}</span></div></div>';
+    }
     // The page of a call link for a person with no account (basic-comms CallGuest): the link's name, the guest's name, the
     // camera preview, Join or Ask to join, the lobby until someone lets them in, then the call. base is the route's path
     // (/call/<token>): its transitions check the token and take the credential in the body.
@@ -1100,6 +1105,8 @@
         computed: {
             inCall() { return this.call.current && this.call.current === this.callSessionId; },
             remotes() { return Object.values(this.call.remotes); },
+            // live captions (W6): a guest gets the notice and the lines as every leg does, by its socket
+            captionNotice() { return captionNotice(this.call.captions); },
             gridStyle() {
                 const n = this.remotes.length + 1;
                 const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
@@ -1206,6 +1213,7 @@
             '<m-call-audio :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{r.name}}</div></div></div>' +
             '<div class="text-caption m-muted q-mt-xs">{{people.map(p => p.displayName).join(\', \')}}</div>' +
+            captionsBox("true", "call.captions.lines") +
             '<div class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"></q-btn>' +
             '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" @click="moquiCall().toggleCamera()"></q-btn>' +

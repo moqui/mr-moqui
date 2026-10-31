@@ -121,7 +121,7 @@ impl Sim {
             captioner.pipeline.finish(id, result);
         }
         captioner.pipeline.expire(now);
-        for job in captioner.pipeline.start(now) {
+        for job in captioner.pipeline.start(now, usize::MAX) {
             let result = self.fake.transcribe(&job.wav);
             let call = *lock(&self.fake.calls);
             self.started.push((job.leg.clone(), job.seq));
@@ -157,7 +157,7 @@ fn silence_and_a_short_noise_make_no_chunk() {
     for _ in 0..50 {
         captioner.feed(&a, None);
     }
-    assert!(captioner.pipeline.start(Instant::now()).is_empty());
+    assert!(captioner.pipeline.start(Instant::now(), usize::MAX).is_empty());
     assert!(captioner.pipeline.drain().is_empty());
 }
 
@@ -175,7 +175,7 @@ fn a_pause_or_the_longest_chunk_ends_a_chunk_as_16_khz_wav() {
     for _ in 0..30 {
         captioner.feed(&a, None);
     }
-    let jobs = captioner.pipeline.start(Instant::now());
+    let jobs = captioner.pipeline.start(Instant::now(), usize::MAX);
     assert_eq!(jobs.len(), 1);
     let wav = &jobs[0].wav;
     assert_eq!(&wav[..4], b"RIFF");
@@ -186,7 +186,7 @@ fn a_pause_or_the_longest_chunk_ends_a_chunk_as_16_khz_wav() {
     for i in 0..250 {
         captioner.feed(&a, Some(&tone(i, 8_000.0)));
     }
-    let jobs = captioner.pipeline.start(Instant::now());
+    let jobs = captioner.pipeline.start(Instant::now(), usize::MAX);
     assert_eq!(jobs.len(), 2, "two full chunks, the rest still open");
     assert!(jobs.iter().all(|job| job.wav.len() == 44 + 2 * 32_000));
     assert_eq!((jobs[0].seq, jobs[1].seq), (2, 3));
@@ -253,7 +253,7 @@ fn results_wait_for_every_earlier_chunk() {
         pipeline.submit(&b, vec![2]),
         pipeline.submit(&a, vec![3]),
     ];
-    assert_eq!(pipeline.start(now).len(), 3);
+    assert_eq!(pipeline.start(now, usize::MAX).len(), 3);
     pipeline.finish(ids[2], Ok("third".to_string()));
     pipeline.finish(ids[1], Ok("second".to_string()));
     assert!(pipeline.drain().is_empty(), "the first is not back");
@@ -279,7 +279,7 @@ fn a_provider_timeout_makes_captions_unavailable_once_and_a_late_answer_is_ignor
     let t0 = Instant::now();
     let first = pipeline.submit(&a, vec![1]);
     let second = pipeline.submit(&a, vec![2]);
-    assert_eq!(pipeline.start(t0).len(), 1);
+    assert_eq!(pipeline.start(t0, usize::MAX).len(), 1);
     assert_eq!(pipeline.next_deadline(), Some(t0 + Duration::from_millis(500)));
     pipeline.expire(t0 + Duration::from_millis(499));
     assert!(pipeline.drain().is_empty());
@@ -293,13 +293,13 @@ fn a_provider_timeout_makes_captions_unavailable_once_and_a_late_answer_is_ignor
     );
     // the worker is free again; the late answer changes nothing
     pipeline.finish(first, Ok("late".to_string()));
-    let started = pipeline.start(t0 + Duration::from_millis(500));
+    let started = pipeline.start(t0 + Duration::from_millis(500), usize::MAX);
     assert_eq!(started.len(), 1);
     // a second failure says nothing new; a success brings captions back
     pipeline.finish(second, Err(SpeechError::new("failed", "HTTP 500")));
     assert!(pipeline.drain().is_empty());
     let third = pipeline.submit(&a, vec![3]);
-    pipeline.start(t0 + Duration::from_secs(1));
+    pipeline.start(t0 + Duration::from_secs(1), usize::MAX);
     pipeline.finish(third, Ok("back".to_string()));
     assert_eq!(
         pipeline.drain(),
@@ -324,7 +324,7 @@ fn backpressure_drops_the_oldest_waiting_chunk_and_marks_its_gap() {
     let (a, b) = (leg("A"), leg("B"));
     let now = Instant::now();
     let first = pipeline.submit(&a, vec![1]);
-    assert_eq!(pipeline.start(now).len(), 1);
+    assert_eq!(pipeline.start(now, usize::MAX).len(), 1);
     // the worker is busy: B1 and A2 wait, and B2 pushes B1 out
     pipeline.submit(&b, vec![2]);
     pipeline.submit(&a, vec![3]);
@@ -333,7 +333,7 @@ fn backpressure_drops_the_oldest_waiting_chunk_and_marks_its_gap() {
     pipeline.finish(first, Ok("a one".to_string()));
     let mut out = pipeline.drain();
     for _ in 0..2 {
-        let jobs = pipeline.start(now);
+        let jobs = pipeline.start(now, usize::MAX);
         assert_eq!(jobs.len(), 1);
         pipeline.finish(jobs[0].id, Ok(format!("{} {}", jobs[0].leg, jobs[0].seq)));
         out.extend(pipeline.drain());
@@ -557,4 +557,30 @@ fn a_caption_names_its_speaker_and_is_kept_only_when_asked() {
         )
     );
     assert_eq!(*lock(&recorded.stored), vec!["chunk 1".to_string()]);
+}
+
+#[test]
+fn the_node_cap_limits_the_jobs_started_and_frees_a_place_as_each_ends() {
+    let permits = Permits::default();
+    assert_eq!(permits.reserve(3, 4), 3);
+    assert_eq!(permits.reserve(3, 4), 1, "one place left under the cap");
+    assert_eq!(permits.reserve(1, 4), 0);
+    permits.release();
+    assert_eq!(permits.reserve(2, 4), 1, "a place freed is taken again");
+    for _ in 0..10 {
+        permits.release();
+    }
+    assert_eq!(permits.reserve(9, 4), 4, "never below none");
+
+    // a call's pipeline starts only what the node allows; the rest waits its turn
+    let mut pipeline = Pipeline::new(&settings());
+    let a = leg("A");
+    for n in 0..3 {
+        pipeline.submit(&a, vec![n]);
+    }
+    assert_eq!(pipeline.wanted(), 3);
+    assert_eq!(pipeline.start(Instant::now(), 1).len(), 1);
+    assert_eq!(pipeline.wanted(), 2);
+    assert_eq!(pipeline.start(Instant::now(), usize::MAX).len(), 2);
+    assert_eq!(pipeline.wanted(), 0);
 }

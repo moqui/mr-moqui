@@ -16,15 +16,17 @@
 //! CallCaptionServices) checks the policy and sends `startCaptions` through `send#MediaControl`; the node's
 //! `rtc-signal` handler calls [`start`], which attaches a consumer ([`super::media::attach`], audio only) and runs one
 //! thread for the call. Every leg is told captions are on and which provider hears the audio
-//! (`{rtc: 'captions', state: 'on', provider, local}`, the notice); the driver keeps it and sends it to each leg that
-//! joins later, a guest's too ([`super::Command::RoomNotice`]). The thread:
+//! (`{rtc: 'captions', state: 'on', provider, local}`, the notice) before the consumer is attached; the driver keeps it
+//! and sends it to each leg that joins later, a guest's too ([`super::Command::RoomNotice`]). A notice the driver does
+//! not take starts no captions. The thread:
 //!
 //! - every frame goes into an [`AudioRoom`] and every 20 ms the room ticks;
 //! - each leg's own audio ([`AudioRoom::leg_audio`]) is gated by its level ([`SPEECH_DBOV`]) and cut into chunks at a
 //!   pause ([`PAUSE`]) or at `call_captions_chunk_seconds` (5); a chunk with less than [`MIN_SPEECH`] of speech, and
 //!   silence, makes nothing;
 //! - a chunk is resampled to 16 kHz and WAV-encoded, and waits in a bounded queue (`call_captions_queue`, 6) for one
-//!   of `call_captions_workers` (2) jobs on the service pool, each given `call_captions_timeout_seconds` (20);
+//!   of `call_captions_workers` (2) jobs on the service pool, each given `call_captions_timeout_seconds` (20); the
+//!   node's calls together run at most half the pool's workers ([`Permits`]), so a provider that hangs cannot take it;
 //! - the results go out in the order the chunks were cut (so in each speaker's order), as `rtc` frames to every leg of
 //!   the call through the driver ([`super::Command::ToRoom`]): `{rtc: 'caption', leg, participant, name, seq, text}`.
 //!
@@ -316,10 +318,16 @@ impl Pipeline {
         id
     }
 
-    /// The chunks that start now, as workers are free; each must end by `now` plus the timeout.
-    pub(crate) fn start(&mut self, now: Instant) -> Vec<Job> {
+    /// The chunks that could start now: free workers with a chunk waiting for each.
+    pub(crate) fn wanted(&self) -> usize {
+        self.workers.saturating_sub(self.running).min(self.waiting.len())
+    }
+
+    /// The chunks that start now, as workers are free and no more than `limit` (the node's free caption jobs,
+    /// [`Outside::reserve`]); each must end by `now` plus the timeout.
+    pub(crate) fn start(&mut self, now: Instant, limit: usize) -> Vec<Job> {
         let mut started = Vec::new();
-        while self.running < self.workers {
+        while self.running < self.workers && started.len() < limit {
             let Some(job) = self.waiting.pop_front() else { break };
             if let Some(slot) = self.slots.get_mut(&job.id) {
                 slot.2 = Slot::Running(now + self.timeout);
@@ -495,7 +503,35 @@ pub(crate) trait Outside {
     fn send(&mut self, frame: Json);
     fn speaker(&mut self, leg: &str) -> Speaker;
     fn store(&mut self, leg: &str, seq: u64, speaker: &Speaker, text: &str);
+    /// How many of `wanted` jobs may start now; each one started is then given to [`Self::spawn`], which frees its
+    /// place when the job ends. The node caps the jobs of all its calls ([`Permits`]); by default there is no cap.
+    fn reserve(&mut self, wanted: usize) -> usize {
+        wanted
+    }
     fn spawn(&mut self, job: Box<dyn FnOnce() + Send>);
+}
+
+/// The caption jobs running on a node, across its calls, against a cap: a provider that hangs past the timeout keeps
+/// its job (and its service-pool thread) until the call returns, and this keeps those from taking the whole pool.
+#[derive(Default)]
+pub(crate) struct Permits {
+    used: Mutex<usize>,
+}
+
+impl Permits {
+    /// Takes up to `wanted` places under `cap`; how many it took.
+    pub(crate) fn reserve(&self, wanted: usize, cap: usize) -> usize {
+        let mut used = lock(&self.used);
+        let taken = wanted.min(cap.saturating_sub(*used));
+        *used += taken;
+        taken
+    }
+
+    /// Gives one place back.
+    pub(crate) fn release(&self) {
+        let mut used = lock(&self.used);
+        *used = used.saturating_sub(1);
+    }
 }
 
 /// Runs a call's captions until `stop` is set or the events end (the room closed).
@@ -538,7 +574,9 @@ pub(crate) fn run(
             captioner.pipeline.finish(id, result);
         }
         captioner.pipeline.expire(now);
-        for job in captioner.pipeline.start(now) {
+        let wanted = captioner.pipeline.wanted();
+        let allowed = if wanted > 0 { outside.reserve(wanted) } else { 0 };
+        for job in captioner.pipeline.start(now, allowed) {
             let done = done_tx.clone();
             let transcriber = Arc::clone(transcriber);
             outside.spawn(Box::new(move || {
@@ -621,15 +659,25 @@ fn to_room(room: &str, frame: Json) {
     }
 }
 
-/// Starts a call's captions on this node: every leg is told they are on and who transcribes (the notice); then the
-/// thread runs until [`stop`] or the room closes. Already running, the notice goes out again. A start that fails
-/// tells the legs captions are unavailable, with the reason.
+/// Starts a call's captions on this node: every leg is told they are on and who transcribes (the notice), before the
+/// tap is attached, so no audio is taken before the notice is out; then the thread runs until [`stop`] or the room
+/// closes. Already running, the notice goes out again. A start that fails tells the legs captions are unavailable,
+/// with the reason, and takes the notice down.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options: StartOptions) {
     let settings = Settings::from_properties(&moqui_lib::env::get_prop_or_env);
     let notice = json!({"rtc": "captions", "state": "on", "provider": options.provider_label, "local": options.local});
+    // the table stays locked while the notice is sent, so a stop that follows sends its "off" after it
     let mut table = lock(calls_running());
     if table.contains_key(room) {
         set_notice(room, Some(notice));
+        return;
+    }
+    if !set_notice(room, Some(notice)) {
+        // no notice, no captions: the driver is gone or overloaded
+        to_room(
+            room,
+            json!({"rtc": "captions", "state": "unavailable", "reason": "overloaded", "message": "the call's media server is busy"}),
+        );
         return;
     }
     let transcriber: Arc<dyn Transcriber> = if settings.provider == "local" {
@@ -656,10 +704,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
         .spawn(move || {
             match super::media::attach(&room_id, Kinds::Audio, TAP_QUEUE) {
                 Ok(consumer) => {
-                    set_notice(&room_id, Some(notice));
+                    let cap = (factory.service_pools().sizes().0 / 2).max(1);
                     let mut outside = NodeOutside {
                         factory: Arc::clone(&factory),
                         room: room_id.clone(),
+                        cap,
                     };
                     run(&consumer, &mut outside, &transcriber, &settings, &stop);
                     if consumer.dropped() > 0 {
@@ -668,10 +717,15 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
                 }
                 Err(code) => {
                     tracing::warn!("call {room_id} captions did not start: {code}");
-                    to_room(
-                        &room_id,
-                        json!({"rtc": "captions", "state": "unavailable", "reason": code, "message": "the call's audio could not be reached"}),
-                    );
+                    let mut table = lock(calls_running());
+                    if table.get(&room_id).is_some_and(|flag| Arc::ptr_eq(flag, &stop)) {
+                        table.remove(&room_id);
+                        set_notice(&room_id, None);
+                        to_room(
+                            &room_id,
+                            json!({"rtc": "captions", "state": "unavailable", "reason": code, "message": "the call's audio could not be reached"}),
+                        );
+                    }
                 }
             }
             let mut table = lock(calls_running());
@@ -681,7 +735,9 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
         });
     if let Err(err) = spawned {
         tracing::error!("call {room} captions did not start, the thread did not: {err}");
-        lock(calls_running()).remove(room);
+        let mut table = lock(calls_running());
+        table.remove(room);
+        set_notice(room, None);
     }
 }
 
@@ -695,14 +751,24 @@ pub(crate) fn stop(room: &str) {
     to_room(room, json!({"rtc": "captions", "state": "off"}));
 }
 
-/// The notice every leg gets now and each leg gets when it joins; `None` takes it down.
-fn set_notice(room: &str, frame: Option<Json>) {
-    if let Err(code) = super::command(Command::RoomNotice {
+/// The notice every leg gets now and each leg gets when it joins; `None` takes it down. Whether the driver took it.
+fn set_notice(room: &str, frame: Option<Json>) -> bool {
+    match super::command(Command::RoomNotice {
         room: room.to_string(),
         frame,
     }) {
-        tracing::debug!("call captions notice for {room} not set: {code}");
+        Ok(()) => true,
+        Err(code) => {
+            tracing::warn!("call captions notice for {room} not set: {code}");
+            false
+        }
     }
+}
+
+/// The caption jobs of every call on this node.
+fn node_permits() -> &'static Permits {
+    static PERMITS: OnceLock<Permits> = OnceLock::new();
+    PERMITS.get_or_init(Permits::default)
 }
 
 /// The node's side: frames through the driver, speakers and stored captions through the services' entities, jobs on
@@ -710,6 +776,17 @@ fn set_notice(room: &str, frame: Option<Json>) {
 struct NodeOutside {
     factory: Arc<ExecutionContextFactory>,
     room: String,
+    /// The most caption jobs of all calls at once: half the service pool's workers.
+    cap: usize,
+}
+
+/// Gives a job's place back when the job ends, or when it is dropped without running (a full pool queue).
+struct Release;
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        node_permits().release();
+    }
 }
 
 impl Outside for NodeOutside {
@@ -748,8 +825,14 @@ impl Outside for NodeOutside {
         );
     }
 
+    fn reserve(&mut self, wanted: usize) -> usize {
+        node_permits().reserve(wanted, self.cap)
+    }
+
     fn spawn(&mut self, job: Box<dyn FnOnce() + Send>) {
+        let release = Release;
         self.factory.service_pools().spawn("call captions", move || {
+            let _release = release;
             job();
             Ok(())
         });
