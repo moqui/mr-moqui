@@ -911,6 +911,64 @@ wait, and their requirements stay.
 - **Not yet shown:** five parties on real sockets; TWCC under real network loss. W4 and the live checks of §7.3 cover
   those.
 
+**The M0 gate, the audio core (2026-10-31): pure-Rust Opus passed, as `opus-rs`.** M0 is the first part of V1: the
+codecs, the mix-minus mixer and the taps that SIP legs, recording (W5) and captions (W6) share
+(`crates/moqui-rtc/src/audio/`, the host's `src/rtc/media.rs`).
+
+- **Opus candidates**, all BSD-3-Clause with no dependencies of their own, one lineage of libopus ports (`opus-pure`
+  forks `rusty-opus`, which forks `opus-rs`): `opus-rs` 0.1.40 (2026-10-25, the first release 2026-02-28),
+  `rusty-opus` 1.0.2 (2026-10-17), `opus-pure` 0.2.2 (2026-09-28). The reference was libopus 1.6.1, what browsers run,
+  through `opus` 0.4.0 (2026-08-23, MIT OR Apache-2.0) and `opusic-sys` 0.7.6 (2026-10-26, BSD-3-Clause, cmake).
+- **How they were measured** (a scratch crate, release build): mono 48 kHz, 20 ms frames, VoIP, 32 kbit/s, in-band FEC
+  for 10% loss, complexity 9. The inputs were 3 s of a 440 Hz tone and 3 s of a speech-like signal (gliding voiced
+  harmonics through two formants, fricative noise, pauses), and 10% random loss (19 of 200 frames).
+- **Decoding the browsers' Opus** (libopus packets, each decoder against libopus's own output):
+  - `opus-rs`: 142 dB SNR on the speech-like signal and 174 dB on the tone, which is float rounding. Concealment under
+    loss 141 dB, FEC 142 dB, and DTX with comfort noise 142 dB.
+  - `opus-pure`: the same, except DTX at 49.5 dB (its comfort noise differs).
+  - `rusty-opus`: FEC at 24.8 dB and DTX at 49.5 dB.
+- **Encoding** (each decoded by libopus, which is what the browsers hear):
+  - Correlation with the source is within 0.003 of libopus for all three (speech-like 0.9455 against 0.9467).
+  - Rate on speech, against libopus's 24 kbit/s: `opus-pure` 25, `opus-rs` 30, `rusty-opus` 37. On a steady tone
+    `opus-rs` overshoots its 32 kbit/s budget (45).
+  - Encode time per 20 ms frame: libopus 165 µs, `opus-pure` 191, `rusty-opus` 196, `opus-rs` 277. Decoding takes 13
+    to 25 µs for all.
+  - No encoder is byte-identical with libopus (none needs to be).
+- **Robustness:** no decoder panicked on 20,000 random packets.
+- **The choice:** `opus-rs`. Its decoder matches libopus in every case, and decoding is most of the load: every
+  browser leg into the mixer, the recording and captions. It is the most used and most often released of the three,
+  from the authors of `rsipstack` (D-V1). Its encoder only codes the server's audio toward browsers (a SIP leg), where
+  its higher rate on tones costs some bandwidth and nothing in quality. `audio/opus.rs` is the only file that names it;
+  `opus-pure` has the same API and is the next pick.
+- **Build cost:** its release build takes 2.2 s on 24 cores (8 s of CPU), against libopus's 3.0 s (16 s of CPU) plus
+  cmake and a C compiler. An encoder and decoder add 0.80 MiB to a release binary (libopus 0.51 MiB).
+- **G.711 and G.722, in house.** `ezk-g711` and `ezk-g722` (MIT) bring the ezk media framework (`ezk`, `ezk-rtp`,
+  `bytes`, `tokio`, `rand`).
+  - G.711 μ-law and A-law are bit-exact with ITU-T G.191 (through `ezk-g711`) for all 65,536 samples and 256 codes.
+  - G.722 at 64 kbit/s, written from the blocks of ITU-T G.722, is bit-exact with libg722 (through `ezk-g722`) on 5 s of
+    a chirp with noise, encoding and decoding, from the same start state. `ezk-g722` starts its scale factors at 0, not
+    G.722's 32 and 8, so its output differs from the standard's at the start.
+- **Resampling, in house:** a polyphase Kaiser-windowed sinc of 288 taps for the integer ratios 8 and 16 kHz to and
+  from 48 kHz. It is about 70 dB down in the stop band with a 3 ms delay. `rubato` 5.0.1 would bring `audioadapter`,
+  `audioadapter-buffers`, `num-integer`, `num-traits`, `realfft`, `visibility` and `windowfunctions`, for general ratios
+  the calls do not need.
+- **Licenses:** one new crate, `opus-rs` (BSD-3-Clause), with nothing transitive (License-Review).
+  `cargo deny check licenses` passes.
+- **Cases passed** (`cargo test -p moqui-rtc`, 13 new tests, 0.5 s with the W1 and W4 ones):
+  - codec round trips and levels: Opus, G.711, G.722 (and its reference vector), and each codec by its SDP name;
+  - resampling keeps the level and stops aliases more than 50 dB down;
+  - the jitter buffer puts reordered frames back in order, recovers losses from FEC, conceals, drops late frames,
+    stops, and starts again after a pause;
+  - the mixer gives each leg everyone but itself, over three legs, and saturates;
+  - a full queue drops and counts rather than blocks; a stalled consumer drops while forwarding goes on, beside a live
+    one on the same room;
+  - end to end on the in-memory network: tap, decode, mix, encode, and inject, with a third peer hearing both other
+    tones in the injected leg.
+
+  The host's hooks: `rtc::media::tests` (3), with a stand-in driver thread.
+- **Not yet shown:** the mixer on real sockets and real speech, and its CPU cost per room under load. V1's SIP legs and
+  W5's mixed recording will exercise them.
+
 ### 6.3 Signaling
 
 - **Frames.** A new client frame kind on `/notws`, `rtc`, in `crates/moqui-host/src/notws/rtc.rs` beside
@@ -1174,7 +1232,8 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 | W2 | The SFU's active speaker (the audio level extension, held for two looks) and a published track that stops (a screen share ending). In the browser: screen share by the page's own offer, the speaker view and the grid, layers asked by tile size (only the speaker off the call's screen), raised hands, reactions, the participants list, the audio-only notice. `find#Calls`, `count#MissedCalls`, `mark#MissedSeen`; History's All, Missed, Placed and Answered with Call back; Missed calls on Home (BasicComms and IronStone) and in Mantle's shell counts (`calls`) | 45ab9425, ebc570d, mr-mantle 59a57970; with W1 | `moqui-rtc` speaker and share cases; `Calls.spec.js` history; `BasicComms`, `BasicCommsCalls`; BOSS CommsHome, AppStructure, TuiRender; client `CallFlow` (hand and speaker view too); `tui_screens` goldens (the new enumerations) |
 | W3 | `CallLink` and `CallGuest`, `CallSession.callLinkId`. `create#`, `find#`, `revoke#`, `open#CallLink`, `check#CallLinkToken` (the `call` token route), `join#AsGuest`, `get#GuestState`, `bind#GuestConnection`, `leave#AsGuest`, `admit#`/`deny#Guest`, `remove#Participant`; empty meetings and expired guest credentials in `expire#Calls`. The guest socket `/callws` (credential in its first frame, its own call and leg only, checked every 30 s). CallGuest (`m-call-guest` in the public shell); in `m-call` the lobby prompt and Remove; Call links and Meetings in History; the dock's notice of a waiting guest. IronStone's `meetings-source` over its calendar | 027b45ea, 338e41b | `Calls.spec.js` (links, lobby, admission, revocation, straight in, empty meeting); `it rtc::a_guest_by_link…`; `BasicCommsCalls` (Call links, Meetings through both mounts); client `CallGuestFlow` |
 | W4 | `moqui-rtc` `turn/`: the embedded TURN server on `turn-server-proto` (TURN REST credentials, revocation, relay peers only the media nodes, quotas, stream framing). The host: ICE-TCP (`rtc_media_tcp_port`, RFC 4571, `rtc/tcp.rs`), the TURN listeners (UDP, TCP, TLS, 443) and relay sockets (`rtc/turn.rs`), revocation when a leg leaves. `CallMediaNode.turnUrls`; `get#IceServers`, `get#GuestIceServers`, `make#IceServers` (Rust: the credential); the browser fetches its ICE servers before its peer connection. `docs/interfaces/TURN.md` with the coturn profile | this commit | `moqui-rtc` turn (6); `it rtc::ice_tcp_and_a_turn_relay…` (a relay-only peer and a TCP-only peer on a real server); `Calls.spec.js` (ICE servers only for an admitted leg); client `CallFlow`, `CallGuestFlow` |
-| DP | The drive picker in BasicComms: `FilePickerServices` (`get#PickerData` with `hasDrive`, `list#PickerFolder`, `find#PickerFiles`, `get#FileType`) over `FileServices`, its transitions in `template/FilePickerTransitions.xml`; `InboxServices.save#MessageFiles` (mail) and `save#FilesToDrive`; the buttons left out with no drive. IronStone keeps `pickerFolder` (the records drive's titles) and its internal messages' Save to Files, which hands mail to the framework | this commit, 0ae962a | `BasicCommsFiles.spec.js`; BOSS Files, Inbox, RecordFiles, Compose, AppStructure, TuiRender |
+| DP | The drive picker in BasicComms: `FilePickerServices` (`get#PickerData` with `hasDrive`, `list#PickerFolder`, `find#PickerFiles`, `get#FileType`) over `FileServices`, its transitions in `template/FilePickerTransitions.xml`; `InboxServices.save#MessageFiles` (mail) and `save#FilesToDrive`; the buttons left out with no drive. IronStone keeps `pickerFolder` (the records drive's titles) and its internal messages' Save to Files, which hands mail to the framework | fbd4ce43, f1b0a3eb, 0ae962a | `BasicCommsFiles.spec.js`; BOSS Files, Inbox, RecordFiles, Compose, AppStructure, TuiRender |
+| M0 | The audio core of V1, in `moqui-rtc` `audio/`: Opus on `opus-rs` (the §6.2 gate) with concealment and FEC, G.711 μ-law and A-law, G.722, a polyphase resampler, `Codec` by SDP name, `LegDecoder` (a jitter buffer by RTP time), the mix-minus `Mixer` and `AudioRoom`. Taps: several per room (`add_tap`, `remove_tap`), injected frames tapped too, `QueueTap` (bounded, drops and counts). The host's hook points (`src/rtc/media.rs`, off stub in `rtc_off.rs`): `attach` a consumer to a room, `add_pcm_source` for an injected leg, paced on the media thread | this commit | `moqui-rtc` audio (11) and `sfu::audio_tests` (2: a stalled consumer; tap, mix and inject heard by a peer); `rtc::media::tests` (3) |
 
 Left for later:
 - BOSS's own links to its Comms (Chatter, the contact record, the palette and demo services) stay `/qapps/Comms`, its root.
@@ -1263,9 +1322,9 @@ Observed on 2026-10-30 on crates.io, docs.rs and the upstream repositories. Each
 | SIP | [rsipstack][rsipstack] | 0.7.12, MIT | an existing PBX as a trunk | Transactions, dialogs, UDP/TCP/TLS/WS; Tokio. B2BUA and registrar logic is Moqui's |
 | SIP fallback | `rvoip` | 0.4.0, MIT | — | Beta registrar, proxy, B2BUA. `rsiprtp` is UA-only; ezk's media needs OpenSSL |
 | SIP reference | [rustpbx][rustpbx] | MIT (community edition) | — | A Rust PBX on rsipstack. Check each file's license before reuse |
-| Opus | `opus` + `opusic-sys` | 0.4.0, MIT/Apache-2.0; libopus BSD-3-Clause | — | Bundled libopus via cmake. V1 tries pure-Rust `opus-rs`, `rusty-opus` (BSD-3-Clause) |
-| G.711, G.722 | `ezk-g711`, `ezk-g722`, or in house | MIT | — | Pure Rust. Not `audio-codec` defaults |
-| Resampling | `rubato` | 5.0.1, MIT/Apache-2.0 | — | 8 and 16 kHz to and from 48 kHz |
+| Opus | `opus-rs` (M0, §6.2) | 0.1.40, BSD-3-Clause | — | Pure Rust, no dependencies; its decoder matches libopus 1.6.1 to float rounding. `opus-pure` 0.2.2 is the next pick; `opus` 0.4.0 + `opusic-sys` (libopus via cmake) the fallback |
+| G.711, G.722 | in house (M0, `moqui-rtc` `audio/`) | — | — | Bit-exact with ITU-T G.191 and libg722. `ezk-g711` and `ezk-g722` bring the ezk framework and Tokio. Not `audio-codec` defaults |
+| Resampling | in house (M0), a polyphase windowed sinc | — | — | 8 and 16 kHz to and from 48 kHz. `rubato` 5.0.1 brings seven crates for general ratios |
 | Recording files | `ogg`; `webm-iterable` or `mkv-element` | BSD-3-Clause; MIT | ffmpeg, composited export | No transcoding. Not the `webm` crate |
 | Web Push | in house on `p256` 0.14, `hkdf` 0.13, `aes-gcm` 0.11 (P0) | MIT/Apache-2.0 | — | RFC 8291 and 8292 in `moqui-core` `notify/push_crypto.rs`, checked against RFC 8291's example. `web-push-native` 0.5.0 was set aside: it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple. Not `web-push` |
 | XMPP | `xmpp-parsers`, `minidom`, `tokio-xmpp`, `jid`, `sasl`; `rxml` | MPL-2.0 (D-C3); rxml MIT | Prosody (MIT), ejabberd (GPL), with an XEP-0114 component | tokio-xmpp 6 `xmlstream::accept_stream`; no dialback module |

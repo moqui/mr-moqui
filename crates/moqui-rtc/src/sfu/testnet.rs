@@ -27,6 +27,8 @@ use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
 use super::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuEvent, SfuOutput};
+use crate::audio::opus::OpusEncoder;
+use crate::audio::FRAME;
 
 pub const ROOM: &str = "CS1";
 /// The simulated step.
@@ -71,6 +73,11 @@ pub struct Client {
     pub screen_mid: Option<Mid>,
     /// The sending leg of each mid the SFU offered, from the offer's `a=msid` (the stream id is the leg).
     streams: HashMap<String, String>,
+    /// When set, the client sends real Opus: a tone at this frequency (0 for silence), from this encoder.
+    pub tone: Option<(f32, OpusEncoder)>,
+    /// When set, every audio frame received is kept, by sending leg: (RTP time, payload).
+    pub keep_audio: bool,
+    pub audio_frames: HashMap<String, Vec<(u64, Vec<u8>)>>,
 }
 
 pub struct Net {
@@ -177,6 +184,9 @@ impl Net {
             audio_level: -30,
             screen_mid: None,
             streams: HashMap::new(),
+            tone: None,
+            keep_audio: false,
+            audio_frames: HashMap::new(),
         });
         self.pump();
         self.clients.len() - 1
@@ -230,7 +240,13 @@ impl Net {
             return;
         };
         let t = (self.now - self.start).as_millis() as u64 * 48;
-        let payload = format!("audio:{}", c.key.leg).into_bytes();
+        let payload = match c.tone.as_mut() {
+            Some((hz, encoder)) => {
+                let pcm = tone_frame(*hz, t);
+                encoder.encode(&pcm).expect("a tone frame encodes").to_vec()
+            }
+            None => format!("audio:{}", c.key.leg).into_bytes(),
+        };
         let level = c.audio_level;
         let _ =
             writer
@@ -424,6 +440,12 @@ impl Net {
                             if kind == MediaKind::Video {
                                 c.last_video_len.insert(from, d.data.len());
                             } else {
+                                if c.keep_audio {
+                                    c.audio_frames
+                                        .entry(from.clone())
+                                        .or_default()
+                                        .push((d.time.numer(), d.data.to_vec()));
+                                }
                                 c.last_audio.insert(from, d.data.to_vec());
                             }
                         }
@@ -502,6 +524,16 @@ impl Net {
             .accept_answer(pending, SdpAnswer::from_sdp_string(answer).expect("answer"))
             .expect("accepted");
     }
+}
+
+/// A 20 ms frame of a tone at `hz` (silence at 0), starting at sample `t` of 48 kHz, at -12 dBFS.
+pub fn tone_frame(hz: f32, t: u64) -> Vec<i16> {
+    (0..FRAME as u64)
+        .map(|i| {
+            let x = (2.0 * std::f64::consts::PI * f64::from(hz) * (t + i) as f64 / 48_000.0).sin();
+            (x * 8_000.0) as i16
+        })
+        .collect()
 }
 
 /// The stream id of each m-section's mid in an SDP.

@@ -25,6 +25,7 @@
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 
 mod driver;
+pub(crate) mod media;
 mod tcp;
 mod turn;
 
@@ -71,6 +72,8 @@ pub(crate) enum Command {
         from: SocketAddr,
         data: Vec<u8>,
     },
+    /// A consumer attaching or an injected leg (`media.rs`).
+    Media(media::MediaCommand),
     Stop,
 }
 
