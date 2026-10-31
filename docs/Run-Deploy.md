@@ -317,7 +317,9 @@ To load more on a server that already has data, stop it and run `moqui load type
 ...`). On embedded Postgres a second process cannot open the data directory while the server holds it.
 
 By default an entity's create-or-update is UPDATE first, then INSERT. `-D create-or-update=true` switches to Moqui
-Java's read-first form (SELECT, then INSERT or UPDATE).
+Java's read-first form (SELECT, then INSERT or UPDATE). In both, the INSERT does nothing when another transaction has
+created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated, so
+concurrent calls for one new key do not fail on it ([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
 
 ## Database and search
 

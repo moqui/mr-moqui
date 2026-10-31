@@ -23,8 +23,9 @@ use crate::model::EntityModel;
 use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
-    insert, insert_or_update, render_condition, select, select_view, select_view_with, select_with, supports_upsert,
-    update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
+    insert, insert_if_missing, insert_or_update, render_condition, select, select_view, select_view_with, select_with,
+    supports_insert_if_missing, supports_upsert, update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy,
+    PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -302,6 +303,56 @@ fn insert_or_update_is_one_statement_for_each_database_that_has_one() {
     assert!(conflict.contains("ON CONFLICT"), "{conflict}");
     assert!(conflict.contains("DO UPDATE SET"), "{conflict}");
     assert!(conflict.contains("EXCLUDED.\"description\""), "{conflict}");
+}
+
+#[test]
+fn insert_if_missing_does_nothing_on_a_primary_key_conflict() {
+    let (model, dialects) = framework();
+    let preference = model.entity("moqui.security.UserPreference").unwrap();
+    let columns = ["userId", "preferenceKey", "preferenceValue"];
+    let postgres = dialects.get("postgres").unwrap();
+    let sqlite = dialects.get("sqlite").unwrap();
+    let mysql = dialects.get("mysql").unwrap();
+    let mysql8 = dialects.get("mysql8").unwrap();
+    for dialect in [postgres, sqlite, mysql, mysql8] {
+        assert!(supports_insert_if_missing(dialect), "{}", dialect.name);
+    }
+    for name in ["oracle", "mssql", "db2"] {
+        let dialect = dialects.get(name).unwrap();
+        assert!(!supports_insert_if_missing(dialect), "{name}");
+        assert!(insert_if_missing(preference, dialect, &columns).is_err(), "{name}");
+    }
+
+    let insert_sql = insert(preference, postgres, &columns).unwrap();
+    let pg = insert_if_missing(preference, postgres, &columns).unwrap();
+    assert_eq!(
+        pg,
+        format!("{insert_sql} ON CONFLICT (\"userId\", \"preferenceKey\") DO NOTHING"),
+        "{pg}"
+    );
+    let lite = insert_if_missing(preference, sqlite, &columns).unwrap();
+    assert!(
+        lite.starts_with(&insert(preference, sqlite, &columns).unwrap()),
+        "{lite}"
+    );
+    assert!(
+        lite.ends_with(" DO NOTHING") && lite.contains(" ON CONFLICT ("),
+        "{lite}"
+    );
+
+    // MySQL has no DO NOTHING: the key set to itself changes no row, so the statement counts none.
+    let my = insert_if_missing(preference, mysql, &columns).unwrap();
+    assert_eq!(
+        my,
+        format!(
+            "{} ON DUPLICATE KEY UPDATE `userId` = `userId`",
+            insert(preference, mysql, &columns).unwrap()
+        ),
+        "{my}"
+    );
+    // Only primary key columns: still one statement, with nothing to update.
+    let keys_only = insert_if_missing(preference, postgres, &["userId", "preferenceKey"]).unwrap();
+    assert!(keys_only.ends_with("DO NOTHING"), "{keys_only}");
 }
 
 #[test]

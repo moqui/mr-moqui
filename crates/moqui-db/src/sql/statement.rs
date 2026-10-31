@@ -418,6 +418,47 @@ pub fn insert_or_update(entity: &EntityDefinition, dialect: &Dialect, columns: &
     Ok(sql)
 }
 
+/// Whether [`insert_if_missing`] writes one statement for `dialect`: the databases of [`supports_upsert`].
+pub fn supports_insert_if_missing(dialect: &Dialect) -> bool {
+    supports_upsert(dialect)
+}
+
+/// Insert, or do nothing when a row with the same primary key is there, in one statement that does not fail on that
+/// key, so a create-or-update that found no row and races another for the same key loses without aborting its
+/// transaction. The statement affects one row when it inserted and none when the row was there. Postgres and SQLite
+/// write `ON CONFLICT (pk) DO NOTHING`; MySQL `ON DUPLICATE KEY UPDATE pk = pk`, which counts no row when it changes
+/// none (the driver does not set `CLIENT_FOUND_ROWS`), but also matches another unique key. See
+/// [`supports_insert_if_missing`].
+pub fn insert_if_missing(entity: &EntityDefinition, dialect: &Dialect, columns: &[&str]) -> Result<String, Error> {
+    if !supports_insert_if_missing(dialect) {
+        return Err(Error::new(format!(
+            "database {} has no insert-if-missing statement",
+            dialect.name
+        )));
+    }
+    let pk = entity.pk_field_names();
+    if pk.is_empty() {
+        return Err(Error::new(format!(
+            "insert_if_missing needs a primary key on {}",
+            entity.full_name
+        )));
+    }
+    let mut sql = insert(entity, dialect, columns)?;
+    let pk_columns: Vec<&str> = pk.iter().map(|name| column_name(entity, name)).collect();
+    if is_mysql(dialect) {
+        let quoted = quote_column(dialect, pk_columns[0]);
+        sql.push_str(" ON DUPLICATE KEY UPDATE ");
+        sql.push_str(&quoted);
+        sql.push_str(" = ");
+        sql.push_str(&quoted);
+        return Ok(sql);
+    }
+    sql.push_str(" ON CONFLICT (");
+    sql.push_str(&quote_list(dialect, &pk_columns));
+    sql.push_str(") DO NOTHING");
+    Ok(sql)
+}
+
 /// `CREATE TABLE`, plus the full-text column and index of each `text-fts` field ([`fts_index_sql`]) when the
 /// profile is `postgres-tsvector`. MySQL puts `FULLTEXT` on the table and appends `ENGINE`, character set, and
 /// collate when the profile sets them. Primary key columns are `NOT NULL`, and the key constraint is `PK_` plus the

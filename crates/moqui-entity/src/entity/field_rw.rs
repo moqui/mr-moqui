@@ -96,6 +96,29 @@ pub(crate) fn before_write_shared<'a>(
     encrypt_fields(facade, entity, values.into_owned()).map(std::borrow::Cow::Owned)
 }
 
+/// [`before_write_shared`] with no audit log, for a create that may find the row there and write nothing; the caller
+/// audits it with [`audit_write`] once it has inserted.
+pub(crate) fn seal_unaudited<'a>(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    values: std::borrow::Cow<'a, FieldMap>,
+) -> Result<std::borrow::Cow<'a, FieldMap>, Error> {
+    if !has_encrypted(entity) {
+        return Ok(values);
+    }
+    encrypt_fields(facade, entity, values.into_owned()).map(std::borrow::Cow::Owned)
+}
+
+/// The audit log of a write, as [`before_write_shared`] writes it; for [`seal_unaudited`].
+pub(crate) fn audit_write(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    operation: &str,
+    values: &FieldMap,
+) -> Result<(), Error> {
+    audit_log(facade, entity, operation, values, None)
+}
+
 /// Encrypt a row read from the database for a copy of it, with no audit: nothing about it changed.
 pub(crate) fn seal_stored(
     facade: &EntityFacade,

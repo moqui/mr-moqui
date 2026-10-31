@@ -48,7 +48,9 @@ fn entity_auto_store_inserts_then_updates() {
     let sql = tape.lock().unwrap_or_else(|err| err.into_inner()).join("\n");
     assert!(sql.contains("INSERT") && sql.contains("test_entity"), "{sql}");
     assert!(sql.contains("UPDATE") && sql.contains("test_entity"), "{sql}");
-    assert!(!sql.contains("ON CONFLICT"), "{sql}");
+    // A create and an update, not one upsert; the create does nothing when another transaction made the row first.
+    assert!(!sql.contains("DO UPDATE"), "{sql}");
+    assert!(sql.contains("ON CONFLICT") && sql.contains("DO NOTHING"), "{sql}");
 }
 
 /// `delete#moqui.test.TestEntity` removes the row. A following find is empty.

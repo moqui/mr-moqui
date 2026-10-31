@@ -42,6 +42,7 @@ mod backup;
 mod cluster_notify;
 mod collab;
 mod component_load;
+mod create_or_update_race;
 mod devaide;
 mod elfinder;
 mod entity_cache;
