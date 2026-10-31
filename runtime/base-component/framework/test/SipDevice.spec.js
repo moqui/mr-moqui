@@ -277,7 +277,7 @@ feature("a tab's answer wins over the phone, and a phone that answers after anot
     }
 })
 
-feature("with phones and a voicemail box, tabs and phones ring together until voicemail, which cancels every phone; a decline on a phone declines the ring and goes to voicemail", {
+feature("with phones and a voicemail box, tabs and phones ring together until voicemail, which cancels every phone; a decline (603) on a phone declines the ring and goes to voicemail, a busy phone (486) stops only its own ring", {
     when() {
         return on(() => {
             nodesUp()
@@ -317,11 +317,19 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
             const lateAnswer = note(call.callSessionId, rung.find((l) => l.legTypeEnumId === "CltSipDevice").callLegId, "answered")
             const missedLog = logOf(call.callSessionId)
 
-            // declined on one phone: the tab and the other phone stop, and nobody else rings, so voicemail
+            // V3: a phone busy on another call (486) ends only its own ring; the tab and the other phone ring on
+            const busyCall = receive()
+            ended.push(busyCall.callSessionId)
+            const busyPhones = deviceLegs(busyCall.callSessionId)
+            const busyNoted = note(busyCall.callSessionId, busyPhones[0].callLegId, "busy")
+            const afterBusy = legsOfA(busyCall.callSessionId)
+            const busyLog = logOf(busyCall.callSessionId)
+
+            // declined on one phone (603): the tab and the other phone stop, and nobody else rings, so voicemail
             const declinedCall = receive()
             ended.push(declinedCall.callSessionId)
             const phones = deviceLegs(declinedCall.callSessionId)
-            const refused = note(declinedCall.callSessionId, phones[0].callLegId, "busy")
+            const refused = note(declinedCall.callSessionId, phones[0].callLegId, "declined")
             const afterDecline = legsOfA(declinedCall.callSessionId)
             const declinedSession = sessionOf(declinedCall.callSessionId)
             const declinedBegun = internal("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: declinedCall.callSessionId,
@@ -330,7 +338,7 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
 
             // a colleague's call declined on a phone ends, as one declined in a tab does
             const direct = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
-            const directRefused = note(direct.callSessionId, deviceLegs(direct.callSessionId)[0].callLegId, "busy")
+            const directRefused = note(direct.callSessionId, deviceLegs(direct.callSessionId)[0].callLegId, "declined")
             const directSession = sessionOf(direct.callSessionId)
 
             sys(() => {
@@ -341,11 +349,15 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
             })
             as(A, "revoke#SipDevice", {sipDeviceId: second.sipDeviceId})
             return {rings, call, rung, stillRinging, begun, afterVoicemail, lateAnswer, missedLog, phones, refused, afterDecline,
-                declinedSession, declinedBegun, declinedLog, directRefused, directSession}
+                declinedSession, declinedBegun, declinedLog, directRefused, directSession, busyPhones, busyNoted, afterBusy, busyLog}
         })
     },
     then({rings, call, rung, stillRinging, begun, afterVoicemail, lateAnswer, missedLog, phones, refused, afterDecline,
-          declinedSession, declinedBegun, declinedLog, directRefused, directSession}) {
+          declinedSession, declinedBegun, declinedLog, directRefused, directSession, busyPhones, busyNoted, afterBusy, busyLog}) {
+        busyNoted.errors == ""
+        afterBusy.find((l) => l.callLegId == busyPhones[0].callLegId).statusId == "ClsDeclined"
+        afterBusy.filter((l) => l.callLegId != busyPhones[0].callLegId).every((l) => l.statusId == "ClsOffered")
+        busyLog.outcomeEnumId == null
         rings.box.rings == 10
         call.voicemailSeconds == 60
         // the tab's leg and both phones

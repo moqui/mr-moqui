@@ -162,6 +162,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Shell Tray Today Screen (path under the apps root)" enumId="STRT_TRAY_TODAY" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Tray Chat Screen (path under the apps root)" enumId="STRT_TRAY_CHAT" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Tray Notifications Screen (path under the apps root)" enumId="STRT_TRAY_NOTIFICATIONS" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="Shell Tray Dialer Screen (path under the apps root)" enumId="STRT_TRAY_DIALER" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Quick Create Screen (path under the apps root, gets kind)" enumId="STRT_QUICK_CREATE" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Mail Screen (path under the apps root the Mail count links to)" enumId="STRT_MAIL_SCREEN" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Shell Messages Screen (path under the apps root the Messages count links to)" enumId="STRT_MESSAGES_SCREEN" enumTypeId="ScreenThemeResourceType"/>

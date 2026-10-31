@@ -233,3 +233,38 @@ fn a_phone_rings_for_the_call_s_time_left_to_ring() {
         Duration::from_secs(300)
     );
 }
+
+#[test]
+fn a_busy_phone_is_not_a_decline_and_a_decline_is_the_person_s() {
+    use moqui_sip::ua::EndReason;
+    assert_eq!(super::ended_event(EndReason::Busy), ("busy", Some(486)));
+    assert_eq!(super::ended_event(EndReason::Declined), ("declined", Some(603)));
+    assert_eq!(super::ended_event(EndReason::Failed(Some(480))), ("failed", Some(480)));
+    assert_eq!(super::ended_event(EndReason::Bye), ("ended", None));
+    assert_eq!(super::ended_event(EndReason::TimedOut), ("canceled", None));
+}
+
+#[test]
+fn call_handling_refusals_answer_their_sip_status() {
+    assert_eq!(super::refusal_status("anonymous"), 433);
+    assert_eq!(super::refusal_status("declined"), 603);
+    assert_eq!(super::refusal_status("notFound"), 404);
+    assert_eq!(super::refusal_status("busy"), 486);
+    assert_eq!(super::refusal_status("unavailable"), 480);
+}
+
+#[test]
+fn only_a_leg_s_last_ring_timer_moves_its_call_on() {
+    let mut timers = super::RingTimers::default();
+    let first = timers.arm("L1");
+    // the plan's next step rings with a new timer: the first one's end does nothing
+    let second = timers.arm("L1");
+    let other = timers.arm("L2");
+    assert!(!timers.fire("L1", first));
+    assert!(timers.fire("L1", second));
+    // once fired it is gone: a repeat does nothing
+    assert!(!timers.fire("L1", second));
+    // a step with no timer, or a leg that ended, clears it
+    timers.clear("L2");
+    assert!(!timers.fire("L2", other));
+}

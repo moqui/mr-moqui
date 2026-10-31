@@ -21,7 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="storeNumber">
         <service-call name="org.moqui.impl.VoiceServices.store#PhoneNumber" in-map="{phoneNumber:phoneNumber, voiceTrunkId:voiceTrunkId || null,
-                routeTypeEnumId:'PnrUser', routeId:routeId || null, emergencyLocationId:emergencyLocationId || null, description:description || null}"/>
+                routeTypeEnumId:routeTypeEnumId || 'PnrUser',
+                routeId:(routeTypeEnumId == 'PnrRingGroup' ? ringGroupId : routeTypeEnumId == 'PnrVoicemail' ? null : routeId) || null, emergencyLocationId:emergencyLocationId || null, description:description || null}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Number saved</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -36,8 +37,14 @@ along with this software (see the LICENSE.md file). If not, see
         numberList = Array.from(call('find#PhoneNumbers').numberList || [])
         trunkOptions = Array.from(call('find#VoiceTrunks').trunkList || []).map((t) => ({key: t.voiceTrunkId, text: t.name}))
         locationOptions = Array.from(call('find#EmergencyLocations').locationList || []).map((l) => ({key: l.emergencyLocationId, text: l.name || l.emergencyLocationId}))
+        // V3: a number rings a user or a ring group, or is the voicemail access number
+        const groups = ec.service.sync().name('org.moqui.impl.CallHandlingServices.find#RingGroups').requireNewTransaction(true).disableAuthz().call() || {}
+        groupOptions = Array.from(groups.groupList || []).map((g) => ({key: g.ringGroupId, text: g.name}))
+        routeOptions = [{key: 'PnrUser', text: ec.l10n.localize('A user')}, {key: 'PnrRingGroup', text: ec.l10n.localize('A ring group')},
+            {key: 'PnrVoicemail', text: ec.l10n.localize('Voicemail access')}]
+        numberList = numberList.map((n) => Object.assign({}, n, {ringGroupId: n.routeTypeEnumId === 'PnrRingGroup' ? n.routeId : null}))
         ec.message.clearErrors()
-        newNumber = {}
+        newNumber = {routeTypeEnumId: 'PnrUser'}
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-mb-sm">
@@ -47,8 +54,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-single name="NewNumber" transition="storeNumber" map="newNumber" focus-field="phoneNumber">
                     <field name="phoneNumber"><default-field title="Number" tooltip="With its country code, such as +15551234567"><text-line size="20"/></default-field></field>
                     <field name="voiceTrunkId"><default-field title="Trunk"><drop-down allow-empty="true"><list-options list="trunkOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="routeTypeEnumId"><default-field title="Routes to"><drop-down><list-options list="routeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="routeId"><default-field title="Rings">
                         <drop-down allow-empty="true"><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                    <field name="ringGroupId"><default-field title="Ring group"><drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
@@ -67,8 +76,10 @@ along with this software (see the LICENSE.md file). If not, see
                         <form-single name="EditNumber" transition="storeNumber">
                             <field name="phoneNumber" from="phoneNumber"><default-field><hidden/></default-field></field>
                             <field name="voiceTrunkId" from="voiceTrunkId"><default-field title="Trunk"><drop-down allow-empty="true"><list-options list="trunkOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
-                            <field name="routeId" from="routeId"><default-field title="Rings">
+                            <field name="routeTypeEnumId" from="routeTypeEnumId"><default-field title="Routes to"><drop-down><list-options list="routeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="routeId" from="routeTypeEnumId == 'PnrUser' ? routeId : null"><default-field title="Rings">
                                 <drop-down allow-empty="true"><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                            <field name="ringGroupId" from="ringGroupId"><default-field title="Ring group"><drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="emergencyLocationId" from="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="description" from="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                             <field name="submitButton"><default-field title="Save"><submit/></default-field></field>

@@ -250,9 +250,11 @@ enum Command {
         leg: String,
         wait: u32,
     },
-    /// An inbound call rang its box's rings.
+    /// An inbound call rang its box's rings, or its handling plan's step (V3); `generation` is the timer's, so a timer
+    /// a later step replaced does nothing.
     RingTimeout {
         leg: String,
+        generation: u64,
     },
 }
 
@@ -426,6 +428,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         commands: commands_tx,
         voicemail: HashMap::new(),
         voicemail_starting: HashSet::new(),
+        ring_timers: RingTimers::default(),
     };
     runtime.spawn(engine.run(events, commands));
     let stop = Arc::new(AtomicBool::new(false));
@@ -634,6 +637,60 @@ struct Engine {
     /// The legs in voicemail (V2), and those whose `begin#Voicemail` is on its way.
     voicemail: HashMap<String, voicemail::VmCall>,
     voicemail_starting: HashSet<String>,
+    /// Each inbound leg's current ring timer (V3: a handling plan's steps replace it).
+    ring_timers: RingTimers,
+}
+
+/// The ring timers of the inbound legs (V3): a leg has at most one that counts, the one armed last, so a timer a later step
+/// of the call's handling plan replaced does nothing when it ends.
+#[derive(Default)]
+pub(crate) struct RingTimers(HashMap<String, u64>);
+
+impl RingTimers {
+    /// A new timer for the leg, replacing its last: the generation its end reports.
+    pub(crate) fn arm(&mut self, leg: &str) -> u64 {
+        let generation = self.0.get(leg).map_or(1, |g| g + 1);
+        self.0.insert(leg.to_string(), generation);
+        generation
+    }
+
+    /// A timer ended: true (and forgotten) when it is the leg's current one.
+    pub(crate) fn fire(&mut self, leg: &str, generation: u64) -> bool {
+        if self.0.get(leg) != Some(&generation) {
+            return false;
+        }
+        self.0.remove(leg);
+        true
+    }
+
+    /// The leg's timer no longer counts (the leg ended, or its step has no timer).
+    pub(crate) fn clear(&mut self, leg: &str) {
+        self.0.remove(leg);
+    }
+}
+
+/// What `note#PhoneLeg` hears of a leg that ended, and its SIP status: busy (486) is a phone on another call, whose
+/// user's other devices ring on; declined (603, or 600) is the person's refusal, on every device (V3).
+pub(crate) fn ended_event(reason: EndReason) -> (&'static str, Option<u16>) {
+    match reason {
+        EndReason::Bye | EndReason::Hangup => ("ended", None),
+        EndReason::Canceled | EndReason::TimedOut => ("canceled", None),
+        EndReason::Busy => ("busy", Some(486)),
+        EndReason::Declined => ("declined", Some(603)),
+        EndReason::Failed(code) => ("failed", code),
+    }
+}
+
+/// The SIP status an incoming call is refused with, for `receive#PhoneCall`'s reasonCode.
+pub(crate) fn refusal_status(reason_code: &str) -> u16 {
+    match reason_code {
+        "notFound" => 404,
+        "busy" => 486,
+        // V3: the user's call handling rules refused it: an anonymous caller (RFC 5079), or a caller list
+        "anonymous" => 433,
+        "declined" => 603,
+        _ => 480,
+    }
 }
 
 fn text(body: &Json, key: &str) -> String {
@@ -839,13 +896,9 @@ impl Engine {
             }
             UaEvent::Ended { leg, reason } => {
                 self.voicemail.remove(&leg);
+                self.ring_timers.clear(&leg);
                 let Some(entry) = self.legs.remove(&leg) else { return };
-                let (event, code) = match reason {
-                    EndReason::Bye | EndReason::Hangup => ("ended", None),
-                    EndReason::Canceled | EndReason::TimedOut => ("canceled", None),
-                    EndReason::Busy => ("busy", Some(486)),
-                    EndReason::Failed(code) => ("failed", code),
-                };
+                let (event, code) = ended_event(reason);
                 self.note_leg(&entry.room, &leg, event, code, &format!("{reason:?}"));
             }
             UaEvent::Reoffer { leg, offer, reply } => {
@@ -922,11 +975,7 @@ impl Engine {
             }
             Err(err) => {
                 tracing::info!("SIP call from {} to {to} not taken: {err}", call.source);
-                Err(match err.split(':').next().unwrap_or_default() {
-                    "notFound" => 404,
-                    "busy" => 486,
-                    _ => 480,
-                })
+                Err(refusal_status(err.split(':').next().unwrap_or_default()))
             }
         };
         let (room, leg) = match decided {
@@ -1061,7 +1110,10 @@ impl Engine {
             Command::VmIdle { leg, wait } => {
                 self.voicemail_event(&leg, voicemail::Event::Idle(wait));
             }
-            Command::RingTimeout { leg } => {
+            Command::RingTimeout { leg, generation } => {
+                if !self.ring_timers.fire(&leg, generation) {
+                    return;
+                }
                 if self.legs.get(&leg).is_some_and(|entry| !entry.answered) {
                     self.start_voicemail(&leg, "noAnswer");
                 }
@@ -1184,6 +1236,9 @@ impl Engine {
             if !callback.is_empty() {
                 headers.push(("P-Asserted-Identity".to_string(), format!("<tel:{callback}>")));
             }
+        } else if flag(body, "privacy") {
+            // caller-ID blocking (V3): the trunk still sees the number it authorizes, and withholds it (RFC 3323, 3325)
+            headers.push(("Privacy".to_string(), "id".to_string()));
         }
         self.legs.insert(
             leg.clone(),

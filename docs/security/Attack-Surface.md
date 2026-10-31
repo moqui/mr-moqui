@@ -503,6 +503,19 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   the plan's other countries (the Caribbean's, Bermuda's) are international. The engine checks the number's class,
   the emergency trunk and the concurrency limit again before an INVITE goes out. A display name or extra header with
   a line break or a quote is cleaned or left out, so it cannot add headers (a `P-Asserted-Identity`) to the INVITE.
+- **Forwards to outside numbers (V3).** A call that comes in can make the server dial out: a user's forwarding rules,
+  their simultaneous ring to a mobile, and a ring group's fallback number. That is toll fraud's other door (a caller
+  rings in to be bridged to a premium or foreign number), so a forward is a phone leg under the same checks as a call
+  the user places (`VoiceServices` `forwardCheck` and `dialForward`): the user needs outbound calls and
+  `VoiceUserSetting.forwardEnabled` (off by default, set only by a voice admin); international and premium need the
+  deployment's and the user's permission; emergency numbers are never a target; the user's limits at once and per day
+  count forwards; and the engine checks the class again before the INVITE. A ring group's fallback number is set by a
+  voice admin and checked against the deployment's policy. The caller ID of a forward is the number the call came in
+  on, never one the caller supplied. A forward to one of this deployment's numbers is routed inside (no hairpin through
+  the trunk), a forward back to the caller's number is skipped, and a call takes at most `call_forward_max_hops`
+  forwards, with a user or group already in its plan skipped, so rules cannot loop a call or fan it out without bound.
+  Caller lists and rules are the user's own (another user's are "not found"); the rule's target is checked when it is
+  saved and again when a call uses it.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
   allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
 - **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;

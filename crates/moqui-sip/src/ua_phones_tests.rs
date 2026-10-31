@@ -563,6 +563,48 @@ async fn a_call_forks_to_every_binding_and_the_first_answer_wins() {
 }
 
 #[tokio::test]
+async fn a_busy_phone_ends_only_its_ring_and_a_decline_declines() {
+    let mut h = Harness::start(RegistrarLimits::default()).await;
+    let (desk, soft) = (UdpPhone::new().await, UdpPhone::new().await);
+    for (phone, call_id) in [(&desk, "desk"), (&soft, "soft")] {
+        let contact = format!("<sip:p100@{}>", phone.addr);
+        let r = Reg {
+            contact: &contact,
+            call_id,
+            ..Default::default()
+        };
+        assert_eq!(code(&phone.register(h.udp, &r).await.0), 200);
+    }
+    let ended = |leg: &'static str| {
+        move |e: UaEvent| match e {
+            UaEvent::Ended { leg: l, reason } if l == leg => Some(reason),
+            _ => None,
+        }
+    };
+    // both bindings answer 486 (on another call): the leg ends as busy, which is not the person's decline
+    assert_eq!(h.ring("L1"), Ok(2));
+    let to_desk = desk.request(Method::Invite, WAIT).await.expect("the desk phone rings");
+    let to_soft = soft.request(Method::Invite, WAIT).await.expect("the soft phone rings");
+    desk.reply(&to_desk, h.udp, 486, "d1", "").await;
+    soft.reply(&to_soft, h.udp, 486, "s1", "").await;
+    assert_eq!(h.event(ended("L1")).await, EndReason::Busy);
+    // one binding busy, the other's reject key (603): the person declined
+    assert_eq!(h.ring("L2"), Ok(2));
+    let to_desk = desk.request(Method::Invite, WAIT).await.expect("the desk phone rings");
+    let to_soft = soft.request(Method::Invite, WAIT).await.expect("the soft phone rings");
+    desk.reply(&to_desk, h.udp, 486, "d2", "").await;
+    soft.reply(&to_soft, h.udp, 603, "s2", "").await;
+    assert_eq!(h.event(ended("L2")).await, EndReason::Declined);
+    // 600 Busy Everywhere is a decline too
+    assert_eq!(h.ring("L3"), Ok(2));
+    let to_desk = desk.request(Method::Invite, WAIT).await.expect("the desk phone rings");
+    let to_soft = soft.request(Method::Invite, WAIT).await.expect("the soft phone rings");
+    desk.reply(&to_desk, h.udp, 600, "d3", "").await;
+    soft.reply(&to_soft, h.udp, 486, "s3", "").await;
+    assert_eq!(h.event(ended("L3")).await, EndReason::Declined);
+}
+
+#[tokio::test]
 async fn rport_is_honored_and_an_outbound_flow_is_kept_and_used() {
     let mut h = Harness::start(RegistrarLimits::default()).await;
     // over UDP behind a NAT: the Via names a private address the phone cannot be reached at

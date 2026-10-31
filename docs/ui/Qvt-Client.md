@@ -248,7 +248,7 @@ once per page load:
   service, a job), from the apps the current user may open.
 - `shell` are theme values of the user's theme for `STT_INTERNAL_QUASAR`, found as a render finds a theme (the user's `UserScreenTheme`, a
   group's, the type's `enumCode`, a `DEFAULT` theme of the type) and `DEFAULT_QUASAR` when there is none. They are sent here and not in
-  `moqui-config`. `STRT_TRAY_TODAY`, `STRT_TRAY_CHAT`, `STRT_TRAY_NOTIFICATIONS`, `STRT_QUICK_CREATE`, `STRT_MAIL_SCREEN` and
+  `moqui-config`. `STRT_TRAY_TODAY`, `STRT_TRAY_CHAT`, `STRT_TRAY_NOTIFICATIONS`, `STRT_TRAY_DIALER` (a tray tab with no count), `STRT_QUICK_CREATE`, `STRT_MAIL_SCREEN` and
   `STRT_MESSAGES_SCREEN` (the screens the header's Mail and Messages counts link to) are screen paths under the apps root; `STRT_CHATTER_SCREEN` and `STRT_RECORD_FILES_SCREEN` are subscreen
   names that every app root mounts (`Chatter`, `RecordFiles`), loaded as `<current app root>/<name>?recordEntity=&recordId=` so the app's
   authorization applies (R5).

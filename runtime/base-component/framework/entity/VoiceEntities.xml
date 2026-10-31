@@ -59,7 +59,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="PhoneNumber" package="moqui.call" use="configuration" cache="never">
         <description>A number a trunk brings, in E.164 (+15551234567). A call to it goes where routeTypeEnumId and routeId
-            say: PnrUser rings that user (routeId the userId); ring groups, IVR menus and queues come later. A number's
+            say: PnrUser rings that user (routeId the userId) under their call handling rules, PnrRingGroup that ring group
+            (routeId its ringGroupId, V3), PnrVoicemail is the voicemail access number; IVR menus and queues come later. A number's
             emergency location is the one its calls report. messagingBridgeId is its SMS connector (C4).</description>
         <field name="phoneNumber" type="id" is-pk="true"/>
         <field name="voiceTrunkId" type="id"/>
@@ -118,6 +119,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="outboundEnabled" type="text-indicator"/>
         <field name="internationalEnabled" type="text-indicator"/>
         <field name="premiumEnabled" type="text-indicator"/>
+        <field name="forwardEnabled" type="text-indicator"><description>V3: the user's calls may be forwarded to outside
+            numbers (their handling rules and simultaneous ring), within the classes outboundEnabled, internationalEnabled
+            and premiumEnabled allow</description></field>
         <field name="emergencyLocationId" type="id"/>
         <field name="maxConcurrent" type="number-integer"/>
         <field name="maxPerDay" type="number-integer"/>
@@ -176,7 +180,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <entity entity-name="VoicemailBox" package="moqui.call" use="transactional" cache="never">
         <description>A user's voicemail box, made the first time a call to them goes to voicemail or they open its settings
-            (a ring group's box, ringGroupId, comes with V3 and is shared by its members). pinHash is the PIN for phone access
+            (a ring group's box, ringGroupId, V3, is shared by its members: any of them reads it, and a message one of them
+            heard is heard for all). pinHash is the PIN for phone access
             (argon2, salted; empty: no phone access). greetingLocation is the user's own greeting, under
             dbresource://moqui/call/voicemail/greeting/ (empty: the default greeting). notifyEmail: an address told of each new
             voicemail, with a link to it; attachAudio and attachTranscript put the audio and the transcript in that message
@@ -185,7 +190,7 @@ along with this software (see the LICENSE.md file). If not, see
             limit the box refuses PINs until pinBlockedUntil, whatever source tries.</description>
         <field name="voicemailBoxId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
-        <field name="ringGroupId" type="id"><description>A plain id until V3 adds RingGroup</description></field>
+        <field name="ringGroupId" type="id"><description>A ring group's box (V3): its members share it</description></field>
         <field name="pinHash" type="text-medium"/>
         <field name="pinChangedDate" type="date-time"/>
         <field name="greetingLocation" type="text-medium"/>
@@ -199,7 +204,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="pinFailureDate" type="date-time"/>
         <field name="pinBlockedUntil" type="date-time"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" related="moqui.call.RingGroup" short-alias="ringGroup"/>
         <index name="VOICEMAIL_BOX_USER" unique="true"><index-field name="userId"/></index>
+        <index name="VOICEMAIL_BOX_GROUP"><index-field name="ringGroupId"/></index>
     </entity>
 
     <entity entity-name="Voicemail" package="moqui.call" use="transactional" cache="never">
@@ -322,4 +329,198 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.call.SipDevice" short-alias="device"/>
         <index name="SIP_REG_DEVICE"><index-field name="sipDeviceId"/></index>
     </entity>
+
+    <!-- ========== V3: call handling rules, schedules, ring groups (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/SIP.md
+        "Call handling"). The services are org.moqui.impl.CallHandlingServices (CallHandling.js). ========== -->
+
+    <entity entity-name="CommsSchedule" package="moqui.call" use="configuration" cache="never">
+        <description>Business hours: the weekly hours, dated hours and holidays of its CommsScheduleRule rows, read in its
+            timeZone (an IANA name; empty: the server's). A user's own schedule (ownerUserId) is for their call handling
+            rules; one with no owner is the deployment's, kept by voice admins, for ring groups and for anyone's rules. A
+            calendar-based schedule from a provider (BOSS's calendar) is not built yet.</description>
+        <field name="commsScheduleId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="timeZone" type="text-short"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="description" type="text-medium"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.call.CommsScheduleRule" short-alias="rules">
+            <key-map field-name="commsScheduleId"/></relationship>
+        <index name="COMMS_SCHED_OWNER"><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="CommsScheduleRule" package="moqui.call" use="configuration" cache="never">
+        <description>One rule of a schedule. CsrWeekly: open on dayOfWeek (1 Monday to 7 Sunday) from fromTime until thruTime
+            (HH:mm, local; a thruTime at or before fromTime runs past midnight). CsrDate: open on onDate (yyyy-MM-dd) through
+            thruDate (empty: that day) from fromTime until thruTime (empty: all day), in place of the weekly hours. CsrHoliday:
+            closed on onDate through thruDate, whatever the weekly hours say. repeatYearly: the dates are each year's (month and
+            day). A date covered by a dated rule (a holiday or dated hours) is read from those alone.</description>
+        <field name="commsScheduleId" type="id" is-pk="true"/>
+        <field name="ruleSeqId" type="id" is-pk="true"/>
+        <field name="ruleTypeEnumId" type="id"/>
+        <field name="dayOfWeek" type="number-integer"/>
+        <field name="fromTime" type="text-short"/>
+        <field name="thruTime" type="text-short"/>
+        <field name="onDate" type="text-short"/>
+        <field name="thruDate" type="text-short"/>
+        <field name="repeatYearly" type="text-indicator"/>
+        <field name="description" type="text-medium"/>
+        <relationship type="one" related="moqui.call.CommsSchedule" short-alias="schedule"/>
+        <relationship type="one" title="CommsScheduleRuleType" related="moqui.basic.Enumeration" short-alias="ruleType">
+            <key-map field-name="ruleTypeEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Comms Schedule Rule Type" enumTypeId="CommsScheduleRuleType"/>
+            <moqui.basic.Enumeration description="Weekly hours" enumId="CsrWeekly" enumCode="weekly" enumTypeId="CommsScheduleRuleType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Hours on dates" enumId="CsrDate" enumCode="date" enumTypeId="CommsScheduleRuleType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Holiday (closed)" enumId="CsrHoliday" enumCode="holiday" enumTypeId="CommsScheduleRuleType" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="RingGroup" package="moqui.call" use="configuration" cache="never">
+        <description>A ring or hunt group: a number routed to it (PhoneNumber PnrRingGroup) rings its members by strategy:
+            RgsSimultaneous (all at once, their tabs and phones), RgsInOrder (one at a time by sequenceNum, ringSeconds each)
+            or RgsRoundRobin (in order, starting after the member rung first last time: lastMemberUserId). Members in do not
+            disturb, or in a call with call waiting off, are skipped. With nobody answering, or outside its schedule
+            (commsScheduleId, when set), the fallback runs: RgfVoicemail (the group's own box, which its members share),
+            RgfGroup (another group, fallbackId), RgfNumber (an outside number, fallbackId, through the full fraud policy) or
+            RgfNone (the call ends).</description>
+        <field name="ringGroupId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="strategyEnumId" type="id"/>
+        <field name="ringSeconds" type="number-integer"/>
+        <field name="fallbackTypeEnumId" type="id"/>
+        <field name="fallbackId" type="text-medium"/>
+        <field name="commsScheduleId" type="id"/>
+        <field name="lastMemberUserId" type="id"/>
+        <field name="lastRungDate" type="date-time"/>
+        <relationship type="one" title="RingGroupStrategy" related="moqui.basic.Enumeration" short-alias="strategy">
+            <key-map field-name="strategyEnumId"/></relationship>
+        <relationship type="one" title="RingGroupFallback" related="moqui.basic.Enumeration" short-alias="fallbackType">
+            <key-map field-name="fallbackTypeEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.call.CommsSchedule" short-alias="schedule"/>
+        <relationship type="many" related="moqui.call.RingGroupMember" short-alias="members">
+            <key-map field-name="ringGroupId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Ring Group Strategy" enumTypeId="RingGroupStrategy"/>
+            <moqui.basic.Enumeration description="All at once" enumId="RgsSimultaneous" enumCode="simultaneous" enumTypeId="RingGroupStrategy" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="In order" enumId="RgsInOrder" enumCode="inOrder" enumTypeId="RingGroupStrategy" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Round robin" enumId="RgsRoundRobin" enumCode="roundRobin" enumTypeId="RingGroupStrategy" sequenceNum="3"/>
+            <moqui.basic.EnumerationType description="Ring Group Fallback" enumTypeId="RingGroupFallback"/>
+            <moqui.basic.Enumeration description="The group's voicemail" enumId="RgfVoicemail" enumCode="voicemail" enumTypeId="RingGroupFallback" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Another group" enumId="RgfGroup" enumCode="group" enumTypeId="RingGroupFallback" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="An outside number" enumId="RgfNumber" enumCode="number" enumTypeId="RingGroupFallback" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="End the call" enumId="RgfNone" enumCode="none" enumTypeId="RingGroupFallback" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="RingGroupMember" package="moqui.call" use="configuration" cache="never">
+        <description>A user in a ring group, rung in sequenceNum order by the in-order and round-robin strategies.</description>
+        <field name="ringGroupId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="one" related="moqui.call.RingGroup" short-alias="group"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="RING_GROUP_MEMBER_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="CallerList" package="moqui.call" use="configuration" cache="never">
+        <description>A user's list of callers for their selective rules (forward, reject, accept).</description>
+        <field name="callerListId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="name" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="many" related="moqui.call.CallerListEntry" short-alias="entries">
+            <key-map field-name="callerListId"/></relationship>
+        <index name="CALLER_LIST_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="CallerListEntry" package="moqui.call" use="configuration" cache="never">
+        <description>A caller on a list: a number in E.164, or a prefix of one ending in * (+1555*); name is a note.</description>
+        <field name="callerListId" type="id" is-pk="true"/>
+        <field name="phoneNumber" type="text-short" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <relationship type="one" related="moqui.call.CallerList" short-alias="list"/>
+    </entity>
+
+    <entity entity-name="CallHandlingRule" package="moqui.call" use="configuration" cache="never">
+        <description>One of a user's call handling rules (§5.3, Zimbra's call features), read in sequenceNum order for a call
+            to them: ChrAnonymousReject (callers with no number), ChrSelectiveReject, ChrSelectiveAccept (only the callers on
+            its list ring; the others go to the target, voicemail or a refusal), ChrSelectiveForward (the callers on its list go
+            to the target), ChrAlways (every call goes to the target), ChrBusy (when the user is in a call and call waiting is
+            off) and ChrNoAnswer (when nobody answers). The target: ChtNumber (an outside number, targetId; through the fraud
+            policy and the user's forward permission), ChtUser, ChtGroup (targetId), ChtVoicemail or ChtReject. callerListId
+            names the list of a selective rule. With commsScheduleId the rule applies only while the schedule is open
+            (scheduleWhen open, the default) or closed (closed). disabled keeps a rule without it applying.</description>
+        <field name="callHandlingRuleId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="targetTypeEnumId" type="id"/>
+        <field name="targetId" type="text-medium"/>
+        <field name="callerListId" type="id"/>
+        <field name="commsScheduleId" type="id"/>
+        <field name="scheduleWhen" type="text-short"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="CallHandlingKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one" title="CallHandlingTarget" related="moqui.basic.Enumeration" short-alias="targetType">
+            <key-map field-name="targetTypeEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.call.CallerList" short-alias="callerList"/>
+        <relationship type="one-nofk" related="moqui.call.CommsSchedule" short-alias="schedule"/>
+        <index name="CALL_RULE_USER"><index-field name="userId"/><index-field name="sequenceNum"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Handling Kind" enumTypeId="CallHandlingKind"/>
+            <moqui.basic.Enumeration description="Reject anonymous callers" enumId="ChrAnonymousReject" enumCode="anonymousReject" enumTypeId="CallHandlingKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Reject callers on a list" enumId="ChrSelectiveReject" enumCode="selectiveReject" enumTypeId="CallHandlingKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Accept only callers on a list" enumId="ChrSelectiveAccept" enumCode="selectiveAccept" enumTypeId="CallHandlingKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Forward callers on a list" enumId="ChrSelectiveForward" enumCode="selectiveForward" enumTypeId="CallHandlingKind" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Forward all calls" enumId="ChrAlways" enumCode="always" enumTypeId="CallHandlingKind" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="When busy" enumId="ChrBusy" enumCode="busy" enumTypeId="CallHandlingKind" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="When not answered" enumId="ChrNoAnswer" enumCode="noAnswer" enumTypeId="CallHandlingKind" sequenceNum="7"/>
+            <moqui.basic.EnumerationType description="Call Handling Target" enumTypeId="CallHandlingTarget"/>
+            <moqui.basic.Enumeration description="A number" enumId="ChtNumber" enumCode="number" enumTypeId="CallHandlingTarget" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="A person" enumId="ChtUser" enumCode="user" enumTypeId="CallHandlingTarget" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="A ring group" enumId="ChtGroup" enumCode="group" enumTypeId="CallHandlingTarget" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Voicemail" enumId="ChtVoicemail" enumCode="voicemail" enumTypeId="CallHandlingTarget" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Refuse the call" enumId="ChtReject" enumCode="reject" enumTypeId="CallHandlingTarget" sequenceNum="5"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallHandlingSetting" package="moqui.call" use="configuration" cache="never">
+        <description>A user's own phone settings beside their rules (do not disturb is UserStatus's): callWaiting (a call to
+            them while they are in one rings them too; off by default, so it goes to their busy rule or voicemail), their
+            mobile number and ringMobile (it rings at the same time as their tabs and phones, as a call through a trunk under
+            the fraud policy and their forward permission; mobileScheduleId: only while that schedule is open), and
+            hideCallerId (their outbound calls withhold their number: Privacy id, RFC 3323).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="callWaiting" type="text-indicator"/>
+        <field name="mobileNumber" type="text-short"/>
+        <field name="ringMobile" type="text-indicator"/>
+        <field name="mobileScheduleId" type="id"/>
+        <field name="hideCallerId" type="text-indicator"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" title="Mobile" related="moqui.call.CommsSchedule" short-alias="mobileSchedule">
+            <key-map field-name="mobileScheduleId" related="commsScheduleId"/></relationship>
+    </entity>
+
+    <entity entity-name="CallRoute" package="moqui.call" use="transactional" cache="never">
+        <description>The handling plan of an inbound phone call, made when it arrives: its steps (planJson: ring these users
+            and numbers for so long, then the next; a voicemail box; a refusal; the end), the step it is on, and how many
+            forwards it took (hopCount, bounded by call_forward_max_hops). The SIP engine's ring timer and a forward that fails
+            move it on (CallHandlingServices advance, through begin#Voicemail).</description>
+        <field name="callSessionId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="ringGroupId" type="id"/>
+        <field name="toNumber" type="text-short"/>
+        <field name="fromNumber" type="text-short"/>
+        <field name="planJson" type="text-very-long"/>
+        <field name="stepIndex" type="number-integer"/>
+        <field name="hopCount" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="stepDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+    </entity>
+    <!-- ========== end V3 ========== -->
 </entities>

@@ -635,6 +635,16 @@ impl Engine {
                 return;
             }
         };
+        // V3: the call's handling plan rang its next step instead (a ring group's next member, a forward): it rings on,
+        // with a new timer when the step has one
+        if text(&out, "mode") == "ring" {
+            tracing::debug!("SIP leg {leg}: rings its next step ({reason})");
+            match super::number(&out, "ringSeconds").filter(|s| *s > 0) {
+                Some(seconds) => self.ring_timer(&leg, seconds),
+                None => self.ring_timers.clear(&leg),
+            }
+            return;
+        }
         if let Err(err) = self.ua.answer(&leg) {
             tracing::warn!("SIP leg {leg}: not answered for voicemail: {err}");
             self.end_leg(&leg, &room);
@@ -845,11 +855,14 @@ impl Engine {
     }
 
     /// The timer of an inbound call's rings: unanswered by now, it goes to voicemail.
-    pub(super) fn ring_timer(&self, leg: &str, seconds: u64) {
+    /// Starts the leg's ring timer, replacing the one it had: when it ends the call goes on to its next step (V3) or to
+    /// voicemail, through `begin#Voicemail`.
+    pub(super) fn ring_timer(&mut self, leg: &str, seconds: u64) {
+        let generation = self.ring_timers.arm(leg);
         let (commands, leg) = (self.commands.clone(), leg.to_string());
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(seconds)).await;
-            let _ = commands.send(Command::RingTimeout { leg });
+            let _ = commands.send(Command::RingTimeout { leg, generation });
         });
     }
 }

@@ -22,7 +22,8 @@ An inbound call to a user's number (`PhoneNumber` routed `PnrUser`, from `receiv
 - **No answer.** The engine starts a timer when the call rings: the box's `rings` (6 seconds each, 1 to 10), else
   `call_ring_seconds`. Unanswered by then, it goes. The call's ring expiry is set 30 seconds later, so `expire#Calls`
   neither ends it nor stops the user's ringing first when the box rings longer than `call_ring_seconds`.
-- **Busy.** The user is in another call (`UserStatus.inCall`): the call is not rung at all and goes at once.
+- **Busy.** The user is in another call (`UserStatus.inCall`) with call waiting off, or in do not disturb: the call is
+  not rung at all and goes at once (V3: unless their busy rule sends it elsewhere).
 - **Declined.** The user declines it and nobody else is rung for it (`decline#Call`, or the reject key of one of their
   desk or soft phones, sends the engine the control `voicemail`).
 
@@ -34,6 +35,12 @@ Each time the engine asks `begin#Voicemail` first, which moves the call there in
 ring bars close, and the call is active with the phone alone. Someone who answered first wins: `begin#Voicemail`
 refuses (`answered`) and the call goes on as answered. A user's box is made, with the defaults, the first time it is
 needed.
+
+With V3 the box is the last step of the call's handling plan ([SIP, Call handling](SIP.md#call-handling)): a no-answer
+rule, a forward or a ring group's members ring first, and `begin#Voicemail` rings the plan's next step instead
+(`mode: ring`) until none is left. A ring group's fallback is the group's own box (`VoicemailBox.ringGroupId`, made the
+first time), which every member reads: its messages are in each member's Voicemail tab (with the group's name), count in
+their unheard total and Home card, and are told to each of them; one heard by a member is heard for all.
 
 ## Leaving a message
 
@@ -131,7 +138,7 @@ default greeting removes it.
 ## Access
 
 - Only the box's owner lists, plays, downloads, marks heard or unheard, deletes, puts back, empties the trash, and
-  retries a transcript (a ring group's box will be its members', V3). Anything else answers "not found", the same as an
+  retries a transcript (a ring group's box is its members', V3). Anything else answers "not found", the same as an
   id that does not exist.
 - The audio is read only through `get#VoicemailAudio`, from the Calls Voicemail screen's `audio` transition; no route
   serves the `dbresource://moqui/call/voicemail/` locations. A record link from an app goes through the same service.
@@ -163,7 +170,8 @@ transcripts and its row.
   called (moqui-llm has none yet).
 - **The `external` room.** A voicemail is not yet an event in the number pair's `external` room: those rooms come with
   C1.
-- **Ring groups.** A box has `ringGroupId` as a plain id until V3; nothing routes a call to one.
+- **Ring groups.** A group's box has no PIN or greeting of its own to set in the screens yet (the default greeting
+  plays), and no phone access.
 - **Forward and reply by email**, Zimbra's other voicemail actions, are not here; download and Call back are.
 
 ## Tests

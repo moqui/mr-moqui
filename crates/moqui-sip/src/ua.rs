@@ -233,7 +233,10 @@ pub enum EndReason {
     Canceled,
     /// It rang out.
     TimedOut,
+    /// 486 Busy Here: this side is busy (a phone on another call); the call may still be answered elsewhere.
     Busy,
+    /// 603 Decline or 600 Busy Everywhere: the person refused the call, on every device (V3).
+    Declined,
     /// Refused or failed with this status, or with none.
     Failed(Option<u16>),
 }
@@ -1154,7 +1157,8 @@ impl Inner {
                     watcher.abort();
                     race.failed(code);
                     return Ok(Some(match code {
-                        486 | 600 => EndReason::Busy,
+                        486 => EndReason::Busy,
+                        600 | 603 => EndReason::Declined,
                         _ => EndReason::Failed(Some(code)),
                     }));
                 }
@@ -1238,7 +1242,7 @@ impl Inner {
                         TerminatedReason::UacCancel => EndReason::Canceled,
                         TerminatedReason::Timeout => EndReason::Failed(Some(408)),
                         TerminatedReason::UacBusy | TerminatedReason::UasBusy => EndReason::Busy,
-                        TerminatedReason::UasDecline => EndReason::Failed(Some(603)),
+                        TerminatedReason::UasDecline => EndReason::Declined,
                         TerminatedReason::UacOther(code) | TerminatedReason::UasOther(code) => {
                             EndReason::Failed(Some(u16::from(code)))
                         }

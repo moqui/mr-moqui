@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     act#PhoneVoicemail. No Java counterpart.
 
     Access. The owner's services act on the current user's own box and its messages only; anything else is "not found",
-    the same answer as for an id that does not exist (a ring group's box will be its members', V3). The audio is read only
+    the same answer as for an id that does not exist; a ring group's box is its members' (V3). The audio is read only
     through get#VoicemailAudio (the BasicComms Calls Voicemail screen's transition); no route serves its dbresource://
     locations. The engine's services are internal (allow-remote false). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
@@ -240,8 +240,11 @@ along with this software (see the LICENSE.md file). If not, see
             (the access number). The call moves there (CallServices, Calls.js phoneToVoicemail: the users rung missed it) and
             the answer is mode deposit with the box of the user it rang (made with the defaults when they have none): its
             greetingLocation, hasPin, maxSeconds (voicemail_max_seconds), and the caller's fromNumber and fromName; or mode
-            access. Refused (reasonCode) when the call has ended, someone answered it (answered) or it is not an inbound phone
-            call (notFound).</description>
+            access. V3: a call with a handling plan (CallHandlingServices, CallRoute) goes to its next step instead when it has
+            one: mode ring with ringSeconds (a ring group's next member, a forward; the engine rings on with a new timer), or the
+            plan's box (a ring group's shares it among its members); noRoute when the plan ends with no box (the call ends).
+            Refused (reasonCode) when the call has ended, someone answered it (answered) or it is not an inbound phone call
+            (notFound).</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId" required="true"/>
@@ -255,6 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maxSeconds" type="Integer"/>
             <parameter name="fromNumber"/>
             <parameter name="fromName"/>
+            <parameter name="ringSeconds" type="Integer"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('begin', context))</script></actions>

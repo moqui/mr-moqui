@@ -11,7 +11,8 @@ call out as their user.
   `registrar.rs`, and its side of the user agent `ua_phones.rs`.
 - The engine, the listeners and the RTP sockets are in `crates/moqui-host/src/sip/`.
 - The voice services are `org.moqui.impl.VoiceServices` (`framework/service/org/moqui/impl/Voice.js`), with
-  `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.impl.SipDeviceServices` (`SipDevices.js`).
+  `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.impl.SipDeviceServices` (`SipDevices.js`); call
+  handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices` (`CallHandling.js`, V3).
 - Administration is System, Voice (in basic-comms).
 - The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.
 
@@ -44,6 +45,8 @@ Every listener is off until its setting is set.
 | `sip_registrar_min_expires`, `sip_registrar_max_expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
 | `sip_registrar_default_expires` | `600` | The expiry of a binding whose phone asks none |
 | `sip_registrar_nat_expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
+| `call_forward_max_hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
+| `call_forward_ring_seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -156,8 +159,11 @@ Each provider is unverified until its own live check.
 ## Calls
 
 - **Calling a number.** `place#PhoneCall` starts a phone call (`CskPhone`): the user's browser leg, and a phone leg
-  (`CltPstn`) that the engine dials through the caller ID's trunk. BasicComms has "Call a number", with a caller-ID
-  choice from the user's grants. The full dialer is V3.
+  (`CltPstn`) that the engine dials through the caller ID's trunk. BasicComms has the Dialer (Calls, Dialer, and the
+  tray's Dialer tab, V3): a keypad, the search for a person or a number through the apps' `recipient-source` providers
+  (else the framework's users that a number rings), the number in E.164 by the deployment's rules, and a caller-ID
+  choice from the user's grants and their ring groups' numbers. **Hide my number** (the user's setting, or the call's)
+  sends `Privacy: id` (RFC 3323, 3325); the trunk still gets the number it authorizes in From.
 - **Answering.** When the number answers, the call is active. When the user leaves, or the far end hangs up, it
   ends.
 - **Codecs:** G.711 μ-law and A-law, and Opus where the provider offers it. The offer lists PCMU, PCMA and Opus, and
@@ -180,6 +186,62 @@ Each provider is unverified until its own live check.
   - An answer that crosses the CANCEL is ACKed and ended with a BYE, and the call counts as canceled.
   - When a provider forks and several phones answer, the first answer wins; the others are ACKed and ended.
   - An outbound call that rings 60 seconds is canceled.
+
+## Call handling
+
+A call to a number routed to a user (`PnrUser`) or a ring group (`PnrRingGroup`) gets a plan when it arrives
+(`receive#PhoneCall` hands it to `CallHandlingServices` `inbound#PhoneCall`, kept in `CallRoute`): a list of steps, each
+"ring these users and numbers for so long", a voicemail box, a refusal or the end. The engine rings the first step for
+its seconds (`voicemailSeconds`); when its timer ends, when everyone rung declines, or when a forward to a number fails,
+the engine asks `begin#Voicemail` as before, and the plan answers with its next step: `mode: ring` with `ringSeconds`
+(the engine rings on, with a new timer that replaces the last), the plan's box, or nothing (the call ends).
+
+**A user's rules** (Settings, Call handling; `CallHandlingRule`, read in `sequenceNum` order, each while its schedule
+is open or closed):
+
+1. Anonymous rejection: a caller with no number is refused, 433 Anonymity Disallowed.
+2. Selective rejection: a caller on the rule's list is refused, 603 Decline (or goes to its target, such as voicemail).
+3. Selective acceptance: only callers on the lists ring; the others are refused, or go to the rule's target.
+4. Selective forward: a caller on the list goes to the rule's target.
+5. Do not disturb (`UserStatus`, the account menu or the settings): straight to voicemail.
+6. Always forward: every call goes to the target.
+7. Busy: in a call with call waiting off (`CallHandlingSetting.callWaiting`, off by default): the busy rule's target, else
+   voicemail.
+8. The ring: the user's tabs, phones and, with **simultaneous ring**, their mobile (`ringMobile`, `mobileNumber`, under
+   `mobileScheduleId` when set), for their box's rings; then the no-answer rule's target, else voicemail.
+
+A target is an outside number, another user (their rules apply), a ring group, voicemail, or a refusal. Forwards are
+bounded: a user or group already in the plan is skipped (a loop), as is a forward past `call_forward_max_hops`, a
+forward back to the caller's own number, and an emergency number (never a target). A forward to one of this deployment's
+numbers routes inside, to its user or group, never through the trunk.
+
+**Forwards to outside numbers.** A forwarded number is a phone leg of the user's (`CltPstn` under their participant),
+placed through the trunk of the number the call came in on, which is its caller ID. It is under the full fraud policy:
+the user needs outbound calls and the forward permission (`VoiceUserSetting.forwardEnabled`, set by a voice admin);
+international and premium destinations need the deployment's and the user's permission; their limits at once and per
+day count forwards too; and the engine checks the destination again. A forward that is refused is left out of the plan,
+or closed as failed when its turn comes.
+
+**Ring groups** (System, Voice, Ring groups; `RingGroup`, `RingGroupMember`). A group rings its members all at once
+(`RgsSimultaneous`), in order (`RgsInOrder`, `ringSeconds` each) or in round robin (`RgsRoundRobin`: in order, starting
+after the member rung first last time, `lastMemberUserId`). Members in do not disturb, or busy with call waiting off, are
+skipped, when the plan is made and again when their turn comes; each member's mobile rings with them. Every member rung
+gets a `CallUserLog` row (`CurRingGroupMember`): answered, or missed (seen at once when another member answered). With
+nobody answering, or outside the group's schedule, the fallback runs: the group's own voicemail box (its members share
+it, and its heard state), another group, an outside number (set by a voice admin, so the deployment's policy alone
+applies), or the end.
+
+**The first answer wins** across every fork of an inbound call, in one transaction on the call's row: a tab, a desk or
+soft phone, a mobile or a forwarded number. Every other offer ends (the tabs' close, the engine cancels the phones and
+the forwarded numbers) and a late answer is hung up. The caller's leg is answered toward the trunk when the winner
+answers.
+
+**Schedules** (System, Voice, Schedules for the deployment's; a user may keep their own; `CommsSchedule`,
+`CommsScheduleRule`): weekly hours (a span past midnight runs into the next day), hours on dates, and holidays, once or
+each year, read in the schedule's time zone. A date with a dated rule is read from its dated rules alone.
+
+**Presence** comes from the user's answered legs (`UserStatus.inCall`): leaving one of two calls keeps it, whichever
+leg (a tab, a phone, a forwarded number) is left.
 
 ## Voicemail
 
@@ -277,8 +339,10 @@ engine forks an INVITE to every live binding of it, beside the ring in their tab
 - The first answer wins, through the call services' state machine: the answering phone's leg is the user's in the call,
   and the other offers end. Their tabs stop ringing, and the other bindings and phones are canceled; a phone that
   answers after is ACKed and ended with BYE. A tab that answers first cancels the phones the same way.
-- A decline on any of them (in a tab, or a phone's reject key: its 486, 600 or 603) declines the user's ring on all of
-  them; a phone that is busy with another call looks the same, as phones send 486 for both.
+- A decline on any of them declines the user's ring on all of them: in a tab, or a phone's 603 Decline or 600 Busy
+  Everywhere (`EndReason::Declined`, `note#PhoneLeg` `declined`). A phone's 486 Busy Here (on another call) ends only
+  that phone's leg (`busy`): the user's tabs and other phones ring on. A phone whose reject key sends 486 stops only
+  itself; set it to send 603 (most desk phones call it "reject with decline") for a decline everywhere.
 - A phone rings as long as the call may ring (`ringSeconds`, from the call's ring expiry; at most 5 minutes). With a
   voicemail box, tabs and phones ring together for the box's rings; then the call goes to voicemail and every phone
   still ringing is canceled. A decline that leaves nobody rung sends the call to voicemail at once ([Voicemail, When a
@@ -383,6 +447,11 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 
 ## Not yet
 
+- **Call handling.**
+  - A forwarded mobile that its carrier's voicemail answers wins the call: there is no "press 1 to accept" yet.
+  - A forward presents the number the call came in on, not the original caller's.
+  - A calendar-based schedule from a provider (BOSS's calendar) is not built; schedules are hours and dates.
+  - Not checked with a live provider: forwards and simultaneous ring are tested against the services and the fake trunk.
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
   - A phone rings only for calls whose media is on the node it registered with (one node a call, until W7).
@@ -428,8 +497,20 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
   only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.
+- `./moq test framework --spec CallHandling`: anonymous, selective reject, accept and forward by caller list, business
+  hours and holidays across a time zone (the plan read at a given time), forward loops and the hop bound, a forward to
+  the caller skipped and one to our own number routed inside, do not disturb and busy with and without call waiting, the
+  forward permission and international refused, simultaneous ring to a mobile whose answer wins over the tab, and
+  presence with a phone leg and a tab leg.
+- `./moq test framework --spec RingGroup`: admin only; all at once with a member in do not disturb skipped and the
+  first answer canceling the rest; a member's mobile winning; in order step by step to the group's box; the box shared
+  by its members and refused to others; round robin across calls; a schedule and the other fallbacks.
+- `cargo test -p moqui-sip ua::phones::tests::a_busy_phone_ends_only_its_ring_and_a_decline_declines` and
+  `cargo test -p moqui-host --features sip --lib sip::tests`: 486 against 603 and 600, the refusal statuses, and that
+  only a leg's last ring timer moves its call on.
 - `./moq test framework --spec SipDevice`: the registrar off by default, credentials shown once with only verifiers
   kept, another user refused with the same parameters, rotation and revocation, a phone ringing beside the tabs with
   the first answer winning (a phone, a tab, one of two phones), a phone call to a user with phones and a voicemail box
-  (all ring until voicemail, which cancels the phones; a decline on a phone goes to voicemail), and a phone's call to a
+  (all ring until voicemail, which cancels the phones; a decline on a phone goes to voicemail, a busy phone stops only
+  itself), and a phone's call to a
   colleague.

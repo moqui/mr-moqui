@@ -1,0 +1,1 @@
+[{"t": "dynamicContainer", "id": "DialerTui", "url": ${JSON.stringify(sri.buildUrl('../DialerTui').getUrlWithParams())}}]

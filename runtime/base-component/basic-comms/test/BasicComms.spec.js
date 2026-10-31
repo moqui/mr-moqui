@@ -190,10 +190,16 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         voice("store#VoiceUserSetting", {userId: USER, outboundEnabled: "Y"})
         voice("record#AuthFailure", {sourceAddress: "198.51.100.7", username: "render"})
         sys(() => ec.service.sync().name("org.moqui.impl.SipDeviceServices.create#SipDevice").parameters({name: "Render phone"}).call())
+        // V3: a ring group with a member and a schedule with a holiday
+        const handling = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.CallHandlingServices." + name).parameters(parameters).call()) || {}
+        const group = handling("store#RingGroup", {name: "Render group"})
+        handling("store#RingGroupMember", {ringGroupId: group.ringGroupId, userId: USER})
+        const hours = handling("store#CommsSchedule", {name: "Render hours", timeZone: "America/Chicago", shared: true})
+        handling("store#CommsScheduleRule", {commsScheduleId: hours.commsScheduleId, ruleTypeEnumId: "CsrHoliday", onDate: "2026-12-25", repeatYearly: "Y"})
         ec.message.clearErrors()
         const problems = []
         const texts = {Status: "SIP servers", Trunks: "Render trunk", Numbers: "+15550109999", CallerIds: "Let someone call from a number",
-            Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone"}
+            Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone", RingGroups: "Render group", Schedules: "Render hours"}
         for (const [path, text] of Object.entries(texts)) {
             for (const mode of ["qvt", "tui"]) {
                 const shown = render(systemRoot, "Voice/" + path, mode, {})
@@ -203,10 +209,17 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         }
         const history = render(root, "Calls/History", "qvt", {})
         const historyTui = render(root, "Calls/History", "tui", {})
-        return {problems, history, historyTui}
+        // V3: the user's call handling and the dialer, in the terminal
+        const handlingTui = render(root, "Settings/CallHandlingTui", "tui", {})
+        const dialerTui = render(root, "Calls/DialerTui", "tui", {text: "Render"})
+        return {problems, history, historyTui, handlingTui, dialerTui}
     },
-    then({problems, history, historyTui}) {
+    then({problems, history, historyTui, handlingTui, dialerTui}) {
         problems.join("\n") == ""
+        handlingTui.output.includes("Caller lists")
+        !handlingTui.broken
+        dialerTui.output.includes("call from the browser")
+        !dialerTui.broken
         history.output.includes("Call a number")
         historyTui.output.includes("Call a number")
     }

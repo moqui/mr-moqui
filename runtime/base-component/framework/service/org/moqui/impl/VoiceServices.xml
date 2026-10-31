@@ -42,6 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="phoneNumber" required="true"/>
             <parameter name="fromNumber"/>
             <parameter name="idempotencyKey"/>
+            <parameter name="hideCallerId"><description>V3: withhold the number on this call (Privacy id); empty: the
+                user's setting (CallHandlingSetting.hideCallerId)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callSessionId"/>
@@ -167,7 +169,10 @@ along with this software (see the LICENSE.md file). If not, see
             name; the phone is in the call at once (callLegId, its leg). reasonCode notFound (no such number, or it routes
             nowhere: 404), voiceUnavailable (this node takes no phone calls: 480) or busy (the limit of calls at once: 486).
             Voicemail (V2): voicemail busy (the user is in a call: not rung, the engine sends it to voicemail at once) or
-            access (the voicemail access number, PnrVoicemail); voicemailSeconds, how long it rings before voicemail.</description>
+            access (the voicemail access number, PnrVoicemail); voicemailSeconds, how long it rings before voicemail. V3: a
+            number routed to a user is handled by their rules, one routed to a ring group (PnrRingGroup) by its strategy
+            (CallHandlingServices inbound#PhoneCall); voicemailSeconds is then how long its first step rings, and reasonCode
+            anonymous (433) or declined (603) a refusal by the user's rules.</description>
         <in-parameters>
             <parameter name="voiceTrunkId"/>
             <parameter name="toNumber" required="true"/>
@@ -175,6 +180,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromName"/>
             <parameter name="instanceId" required="true"/>
             <parameter name="sipCallId"/>
+            <parameter name="atMs" type="Long"><description>The time the call handling rules are read at (a spec's); now when empty</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callSessionId"/>
@@ -466,12 +472,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="store" noun="VoiceUserSetting">
-        <description>Set a user's phone permissions (outbound, international, premium), limits and emergency location. The VoiceAdmin permission.</description>
+        <description>Set a user's phone permissions (outbound, international, premium, forward to outside numbers), limits and emergency location. The VoiceAdmin permission.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="outboundEnabled"/>
             <parameter name="internationalEnabled"/>
             <parameter name="premiumEnabled"/>
+            <parameter name="forwardEnabled"><description>V3: calls to them may be forwarded to outside numbers</description></parameter>
             <parameter name="emergencyLocationId"/>
             <parameter name="maxConcurrent"/>
             <parameter name="maxPerDay"/>

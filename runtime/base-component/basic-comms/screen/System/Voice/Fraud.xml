@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     default; calls at once and per day; failed sign-ins before a source is blocked, and for how long), each user's phone
     permissions, and the source addresses with failed SIP sign-ins, blocked ones first, with Clear. A block is per source
     address and never locks an account. org.moqui.impl.VoiceServices get# and update#VoicePolicy, find# and
-    store#VoiceUserSetting, find#AuthBlocks and clear#AuthBlock. -->
+    store#VoiceUserSetting (V3: forwardEnabled, calls to them may go to outside numbers), find#AuthBlocks and clear#AuthBlock. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Fraud" default-menu-index="5">
 
@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="storeUserSetting">
         <service-call name="org.moqui.impl.VoiceServices.store#VoiceUserSetting" in-map="{userId:userId, outboundEnabled:outboundEnabled || 'N',
-                internationalEnabled:internationalEnabled || 'N', premiumEnabled:premiumEnabled || 'N', emergencyLocationId:emergencyLocationId || '',
+                internationalEnabled:internationalEnabled || 'N', premiumEnabled:premiumEnabled || 'N', forwardEnabled:forwardEnabled || 'N', emergencyLocationId:emergencyLocationId || '',
                 maxConcurrent:maxConcurrent || '', maxPerDay:maxPerDay || ''}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Phone permissions saved</message></if></actions>
         <default-response url="."/>
@@ -53,6 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
         const yes = (flag) => (flag === 'Y' ? L('Yes') : L('No'))
         settingList = Array.from(call('find#VoiceUserSettings').settingList || []).map((s) => Object.assign({}, s, {
             outboundText: yes(s.outboundEnabled), internationalText: yes(s.internationalEnabled), premiumText: yes(s.premiumEnabled),
+            forwardText: yes(s.forwardEnabled),
             limitsText: (s.maxConcurrent != null ? s.maxConcurrent : L('policy')) + ' / ' + (s.maxPerDay != null ? s.maxPerDay : L('policy')),
             locationName: locationNames.get(s.emergencyLocationId) || ''}))
         const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
@@ -97,6 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="outboundEnabled"><default-field title="Calls out"><check><option key="Y" text="May place phone calls"/></check></default-field></field>
                     <field name="internationalEnabled"><default-field title="International"><check><option key="Y" text="May call abroad"/></check></default-field></field>
                     <field name="premiumEnabled"><default-field title="Premium"><check><option key="Y" text="May call premium numbers"/></check></default-field></field>
+                    <field name="forwardEnabled"><default-field title="Forwards" tooltip="Their calls may go on to outside numbers: their mobile, their forwarding rules"><check><option key="Y" text="Calls to them may go to outside numbers"/></check></default-field></field>
                     <field name="maxConcurrent"><default-field title="Calls at once" tooltip="Empty: the limit above"><text-line size="6"/></default-field></field>
                     <field name="maxPerDay"><default-field title="Calls in a day" tooltip="Empty: the limit above"><text-line size="6"/></default-field></field>
                     <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
@@ -109,6 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="outboundText"><default-field title="Calls out"><display/></default-field></field>
                 <field name="internationalText"><default-field title="International"><display/></default-field></field>
                 <field name="premiumText"><default-field title="Premium"><display/></default-field></field>
+                <field name="forwardText"><default-field title="Forwards"><display/></default-field></field>
                 <field name="limitsText"><default-field title="At once / a day"><display/></default-field></field>
                 <field name="locationName"><default-field title="Emergency location"><display/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
@@ -118,6 +121,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="outboundEnabled" from="outboundEnabled"><default-field title="Calls out"><check><option key="Y" text="May place phone calls"/></check></default-field></field>
                             <field name="internationalEnabled" from="internationalEnabled"><default-field title="International"><check><option key="Y" text="May call abroad"/></check></default-field></field>
                             <field name="premiumEnabled" from="premiumEnabled"><default-field title="Premium"><check><option key="Y" text="May call premium numbers"/></check></default-field></field>
+                            <field name="forwardEnabled" from="forwardEnabled"><default-field title="Forwards"><check><option key="Y" text="Calls to them may go to outside numbers"/></check></default-field></field>
                             <field name="maxConcurrent" from="maxConcurrent"><default-field title="Calls at once"><text-line size="6"/></default-field></field>
                             <field name="maxPerDay" from="maxPerDay"><default-field title="Calls in a day"><text-line size="6"/></default-field></field>
                             <field name="emergencyLocationId" from="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>

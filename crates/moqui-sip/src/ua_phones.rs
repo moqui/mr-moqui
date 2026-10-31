@@ -453,7 +453,11 @@ impl Inner {
                     _ => None,
                 })
                 .collect();
-            if !refused.is_empty() && refused.iter().all(|c| matches!(c, 486 | 600 | 603)) {
+            // a decline (603, or 600 busy everywhere) from any binding is the person's; 486 from every binding is only this
+            // phone being busy, which ends this leg and leaves the person's other devices ringing (V3)
+            if refused.iter().any(|c| matches!(c, 600 | 603)) {
+                super::EndReason::Declined
+            } else if !refused.is_empty() && refused.iter().all(|c| *c == 486) {
                 super::EndReason::Busy
             } else {
                 super::EndReason::Failed(refused.first().copied())

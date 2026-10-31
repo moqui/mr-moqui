@@ -39,10 +39,13 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="recipient" noun="Source" type="interface">
-        <description>recipient-source: people, groups and lists with addresses for a text (recipientList).</description>
+        <description>recipient-source: people, groups and lists with addresses for a text (recipientList), each {itemId (unique in
+            the source), kind, name, and its addresses; for kinds phone (the Dialer, V3), phoneList [{number in E.164, label}]}, at
+            most limit, the source's own page (recipientListCount, its total). Authority is the signed-in user's.</description>
         <in-parameters>
             <parameter name="text"/>
-            <parameter name="kinds"><description>A comma list of person, group and list; empty for all</description></parameter>
+            <parameter name="kinds"><description>A comma list of person, group, list and phone (recipients with phone numbers);
+                empty for all</description></parameter>
             <parameter name="limit" type="Integer" default="10"/>
         </in-parameters>
     </service>

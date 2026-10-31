@@ -20,6 +20,7 @@ const SESSION = 'moqui.call.CallSession'
 const PARTICIPANT = 'moqui.call.CallParticipant'
 const NUMBER = 'moqui.call.PhoneNumber'
 const CALLS = 'component://framework/service/org/moqui/impl/Calls.js'
+const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling.js'
 
 /** Where the audio goes; store#VoicemailFile refuses any other place. */
 const ROOT = 'dbresource://moqui/call/voicemail'
@@ -108,12 +109,34 @@ function boxOf(userId, create) {
   return made
 }
 
-/** The box the current user may read a voicemail of (their own; a ring group's members' with V3), or null. */
+/** The ring groups a user is a member of (V3): their boxes are the user's to read too. */
+function groupsOf(userId) {
+  return userId ? rows('moqui.call.RingGroupMember', { userId }).map((m) => m.ringGroupId) : []
+}
+
+/** The boxes the user reads: their own, and their ring groups' (V3), whose messages and heard state they share. */
+function readableBoxes(userId) {
+  const out = []
+  const own = boxOf(userId, false)
+  if (own) out.push(own)
+  const groups = groupsOf(userId)
+  if (groups.length) for (const box of find(BOX).condition('ringGroupId', 'in', groups).list()) out.push(box)
+  return out
+}
+
+/** The box the current user may read a voicemail of (their own, or a ring group's they are in), or null. */
 function readableBox(voicemail) {
   const me = ec.user.userId
   if (!me || !voicemail) return null
   const box = one(BOX, { voicemailBoxId: voicemail.voicemailBoxId })
-  return box && box.userId === me ? box : null
+  if (!box) return null
+  if (box.userId) return box.userId === me ? box : null
+  return box.ringGroupId && groupsOf(me).includes(box.ringGroupId) ? box : null
+}
+
+/** A ring group's name, for its box's messages. */
+function groupName(ringGroupId) {
+  return ringGroupId ? one('moqui.call.RingGroup', { ringGroupId })?.name || ringGroupId : null
 }
 
 /** A voicemail the current user may act on; the same "not found" for one that is not there and one of someone else. */
@@ -176,10 +199,15 @@ function begin(p) {
     if (local.length || session.statusId === 'CssEnded') return refuse('notFound', 'Call not found')
     return { mode: 'access', maxSeconds: maxSeconds() }
   }
+  // V3: the call's handling plan says where it goes next: another step that rings (the engine rings on), a box, or the end
+  const plan = ec.resource.script(CALL_HANDLING).execute('advance', { callSessionId: p.callSessionId, callLegId: p.callLegId,
+    reason: p.reason }) || {}
+  if (plan.handled && plan.reasonCode) return refuse(plan.reasonCode, plan.reasonCode === 'noRoute' ? 'Nobody takes this call' : 'This call cannot go to voicemail now')
+  if (plan.handled && plan.mode === 'ring') return { mode: 'ring', ringSeconds: plan.ringSeconds || null }
   const moved = ec.resource.script(CALLS).execute('phoneToVoicemail', { callSessionId: p.callSessionId, callLegId: p.callLegId }) || {}
   if (moved.reasonCode) return refuse(moved.reasonCode, 'This call cannot go to voicemail now')
   const userId = Array.from(moved.userIdList || [])[0]
-  const box = boxOf(userId, true)
+  const box = plan.handled ? one(BOX, { voicemailBoxId: plan.voicemailBoxId }) : boxOf(userId, true)
   if (!box) return refuse('noBox', 'This call has no voicemail box')
   const number = moved.phoneNumber || null
   const name = moved.displayName && moved.displayName !== number ? String(moved.displayName).replace(/ \(\+?[0-9]+\)$/, '') : null
@@ -241,7 +269,8 @@ function discardSpool(tempPath) {
 function received(box, voicemail) {
   const from = voicemail.fromName || voicemail.fromNumber || ec.l10n.localize('Unknown number')
   const title = ec.resource.expand('New voicemail from ${from}', '', { from })
-  const userId = box.userId
+  // a ring group's box tells each of its members (V3)
+  const userIds = box.userId ? [box.userId] : box.ringGroupId ? rows('moqui.call.RingGroupMember', { ringGroupId: box.ringGroupId }).map((m) => m.userId) : []
   const safely = (label, fn) => {
     ec.message.pushErrors()
     try {
@@ -253,15 +282,17 @@ function received(box, voicemail) {
       ec.message.popErrors()
     }
   }
-  if (userId) {
-    safely('the push to its owner', () => {
+  for (const userId of userIds) {
+    safely('the push to ' + userId, () => {
       ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({
         topic: 'chatUser:' + userId, userIdList: [userId], message: { kind: 'voicemail', action: 'new', voicemailId: voicemail.voicemailId,
-          from, unheardCount: unheardOf(box) },
+          from, unheardCount: unheardOfUser(userId) },
       }).disableAuthz().call()
     })
+  }
+  if (userIds.length) {
     safely('the Web Push notice', () => {
-      ec.service.special().name('org.moqui.impl.NotificationServices.send#WebPush').parameters({ userIdList: [userId], title,
+      ec.service.special().name('org.moqui.impl.NotificationServices.send#WebPush').parameters({ userIdList: userIds, title,
         link: voicemailPath(voicemail.voicemailId), topic: 'Voicemail', tag: 'voicemail-' + voicemail.voicemailId }).registerOnCommit()
     })
   }
@@ -284,6 +315,12 @@ function received(box, voicemail) {
 
 function unheardOf(box) {
   return find(VOICEMAIL).condition('voicemailBoxId', box.voicemailBoxId).condition('folder', 'inbox').condition('heardDate', null).count()
+}
+
+/** The unheard messages of every box the user reads (their own and their ring groups'). */
+function unheardOfUser(userId) {
+  const ids = readableBoxes(userId).map((b) => b.voicemailBoxId)
+  return ids.length ? find(VOICEMAIL).condition('voicemailBoxId', 'in', ids).condition('folder', 'inbox').condition('heardDate', null).count() : 0
 }
 
 function pendingTranscript(voicemailId) {
@@ -516,31 +553,33 @@ function purge(voicemail) {
 }
 
 function findVoicemails(p) {
-  const box = boxOf(ec.user.userId, false)
-  const empty = { voicemailList: [], voicemailListCount: 0, unheardCount: 0, trashCount: 0, hasBox: !!box }
-  if (!box) return empty
+  const boxes = readableBoxes(ec.user.userId)
+  const empty = { voicemailList: [], voicemailListCount: 0, unheardCount: 0, trashCount: 0, hasBox: boxes.length > 0 }
+  if (!boxes.length) return empty
+  const ids = boxes.map((b) => b.voicemailBoxId)
+  const groupOfBox = new Map(boxes.filter((b) => b.ringGroupId).map((b) => [b.voicemailBoxId, groupName(b.ringGroupId)]))
   const folder = p.folder === 'trash' ? 'trash' : 'inbox'
   const pageSize = clamp(Number(p.pageSize) || 25, 1, PAGE_MAX)
   const pageIndex = Math.max(Number(p.pageIndex) || 0, 0)
   const base = () => {
-    let f = find(VOICEMAIL).condition('voicemailBoxId', box.voicemailBoxId).condition('folder', folder)
+    let f = find(VOICEMAIL).condition('voicemailBoxId', 'in', ids).condition('folder', folder)
     if (p.heard === 'unheard') f = f.condition('heardDate', null)
     else if (p.heard === 'heard') f = f.condition('heardDate', 'is-not-null', null)
     return f
   }
   const list = Array.from(base().orderBy('-receivedDate').offset(pageIndex * pageSize).limit(pageSize).list())
   return {
-    voicemailList: list.map((v) => view(v, false)),
+    voicemailList: list.map((v) => Object.assign(view(v, false), { groupName: groupOfBox.get(v.voicemailBoxId) || null })),
     voicemailListCount: base().count(),
-    unheardCount: unheardOf(box),
-    trashCount: find(VOICEMAIL).condition('voicemailBoxId', box.voicemailBoxId).condition('folder', 'trash').count(),
+    unheardCount: unheardOfUser(ec.user.userId),
+    trashCount: find(VOICEMAIL).condition('voicemailBoxId', 'in', ids).condition('folder', 'trash').count(),
     hasBox: true,
   }
 }
 
 function countUnheard() {
-  const box = boxOf(ec.user.userId, false)
-  return { unheardCount: box ? unheardOf(box) : 0, hasBox: !!box }
+  const boxes = readableBoxes(ec.user.userId)
+  return { unheardCount: boxes.length ? unheardOfUser(ec.user.userId) : 0, hasBox: boxes.length > 0 }
 }
 
 function getVoicemail(p) {

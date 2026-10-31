@@ -1,0 +1,186 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Call handling (plans/Comms-Framework.md §5.3, §5.5, V3), the component CallHandling.xml serves in the qvue render mode: do
+    not disturb, call waiting, the mobile that rings too, Hide my number; the rules in the order they are read, each with Edit,
+    Off and Remove, and Add a rule (what, for which callers, where to, when); the caller lists with their numbers. -->
+<template><div class="m-call-handling q-pa-sm column q-gutter-md" style="max-width:900px">
+    <div class="row items-center">
+        <div class="text-h6">{{t('Call handling')}}</div><q-space></q-space>
+        <q-btn flat dense no-caps color="primary" icon="sym_o_voicemail" :label="t('Phone and voicemail settings')" @click="$root.setUrl(sibling('Phone'))"></q-btn>
+    </div>
+    <q-banner v-if="loaded && !phoneActive" dense rounded class="bg-grey-3 text-black">{{t('Phone calls are not available here yet; these settings apply once they are.')}}</q-banner>
+
+    <q-card flat bordered><q-card-section class="column q-gutter-sm">
+        <q-toggle v-model="s.dnd" :label="t('Do not disturb: calls go straight to voicemail')" @update:model-value="save({dnd: s.dnd})"></q-toggle>
+        <q-toggle v-model="s.callWaiting" :label="t('Call waiting: a call while I am in one rings me too')" @update:model-value="save({callWaiting: s.callWaiting})"></q-toggle>
+        <q-toggle v-model="s.hideCallerId" :label="t('Hide my number on calls I place')" @update:model-value="save({hideCallerId: s.hideCallerId})"></q-toggle>
+        <div class="row items-center q-gutter-sm">
+            <q-toggle v-model="s.ringMobile" :label="t('Ring my mobile too')" @update:model-value="save({ringMobile: s.ringMobile, mobileNumber: s.mobileNumber || ''})"></q-toggle>
+            <q-input dense outlined v-model="s.mobileNumber" :label="t('Mobile number')" style="width:200px" @change="save({mobileNumber: s.mobileNumber || ''})"></q-input>
+            <q-select dense outlined emit-value map-options clearable v-model="s.mobileScheduleId" :options="scheduleOptions" :label="t('Only while open')"
+                style="min-width:180px" @update:model-value="save({mobileScheduleId: s.mobileScheduleId || ''})"></q-select>
+        </div>
+        <div v-if="!s.forwardEnabled" class="text-caption m-muted">{{t('Calls go to outside numbers (your mobile, a forward) only when an administrator allows it for you.')}}</div>
+    </q-card-section></q-card>
+
+    <div class="row items-center"><div class="text-subtitle1">{{t('Rules')}}</div><q-space></q-space>
+        <q-btn unelevated no-caps color="primary" icon="sym_o_add" :label="t('Add a rule')" @click="edit(null)"></q-btn></div>
+    <div class="text-caption m-muted">{{t('Read in this order for each call; the first that applies decides. Without one, calls ring you, then go to voicemail.')}}</div>
+    <div v-if="loaded && !rules.length" class="m-muted">{{t('No rules yet.')}}</div>
+    <q-list bordered separator class="rounded-borders" v-if="rules.length">
+        <q-item v-for="r in rules" :key="r.callHandlingRuleId" :class="r.disabled ? 'm-muted' : ''">
+            <q-item-section avatar><q-icon name="sym_o_rule"></q-icon></q-item-section>
+            <q-item-section>
+                <q-item-label>{{kindText(r.kindEnumId)}}<span v-if="r.callerListName"> · {{r.callerListName}}</span></q-item-label>
+                <q-item-label caption>{{targetText(r)}}<span v-if="r.scheduleName"> · {{r.scheduleWhen === 'closed' ? t('while closed') : t('while open')}}: {{r.scheduleName}}</span>
+                    <span v-if="r.disabled"> · {{t('Off')}}</span></q-item-label>
+            </q-item-section>
+            <q-item-section side><div class="row q-gutter-xs">
+                <q-btn flat dense no-caps icon="sym_o_edit" :label="t('Edit')" @click="edit(r)"></q-btn>
+                <q-btn flat dense no-caps :icon="r.disabled ? 'sym_o_toggle_off' : 'sym_o_toggle_on'" :label="r.disabled ? t('Turn on') : t('Turn off')"
+                    @click="change('storeRule', {callHandlingRuleId: r.callHandlingRuleId, disabled: !r.disabled})"></q-btn>
+                <q-btn flat dense round icon="sym_o_delete" color="negative" :aria-label="t('Remove')" @click="change('deleteRule', {callHandlingRuleId: r.callHandlingRuleId})"></q-btn>
+            </div></q-item-section>
+        </q-item>
+    </q-list>
+
+    <div class="row items-center"><div class="text-subtitle1">{{t('Caller lists')}}</div><q-space></q-space>
+        <q-input dense outlined v-model="newListName" :label="t('New list')" style="width:180px" @keyup.enter="addList"></q-input>
+        <q-btn flat dense no-caps icon="sym_o_add" :label="t('Add')" class="q-ml-xs" @click="addList" :disable="!newListName"></q-btn></div>
+    <q-card flat bordered v-for="l in lists" :key="l.callerListId"><q-card-section>
+        <div class="row items-center"><div class="text-weight-medium">{{l.name}}</div><q-space></q-space>
+            <q-btn flat dense round icon="sym_o_delete" color="negative" :aria-label="t('Remove') + ' ' + l.name" @click="change('deleteList', {callerListId: l.callerListId})"></q-btn></div>
+        <div class="row q-gutter-xs q-my-xs">
+            <q-chip v-for="e in l.entryList" :key="e.phoneNumber" removable dense @remove="change('removeEntry', {callerListId: l.callerListId, phoneNumber: e.phoneNumber})">
+                <span class="text-mono">{{e.phoneNumber}}</span><span v-if="e.name">&nbsp;· {{e.name}}</span></q-chip>
+            <span v-if="!l.entryList.length" class="m-muted text-caption">{{t('No numbers yet.')}}</span>
+        </div>
+        <div class="row items-center q-gutter-sm">
+            <q-input dense outlined v-model="entry[l.callerListId]" :label="t('Number, or a prefix ending in *')" style="width:240px"
+                @keyup.enter="addEntry(l)"></q-input>
+            <q-btn flat dense no-caps icon="sym_o_add" :label="t('Add')" @click="addEntry(l)"></q-btn>
+        </div>
+    </q-card-section></q-card>
+
+    <q-dialog v-model="editing">
+        <q-card style="min-width:360px;max-width:560px">
+            <q-card-section class="text-h6">{{form.callHandlingRuleId ? t('Edit the rule') : t('Add a rule')}}</q-card-section>
+            <q-card-section class="q-gutter-md">
+                <q-select dense outlined emit-value map-options v-model="form.kindEnumId" :options="kindOptions" :label="t('What')"></q-select>
+                <q-select v-if="selective" dense outlined emit-value map-options v-model="form.callerListId" :options="listOptions" :label="t('Callers on')"></q-select>
+                <q-select dense outlined emit-value map-options clearable v-model="form.targetTypeEnumId" :options="targetOptions" :label="t('Where they go')"></q-select>
+                <q-input v-if="form.targetTypeEnumId === 'ChtNumber'" dense outlined v-model="form.targetId" :label="t('Number, with its country code')"></q-input>
+                <m-drop-down v-if="form.targetTypeEnumId === 'ChtUser'" v-model="form.targetId" name="ruleTargetUser" server-search :options-url="url('searchUsers')" :label="t('Person')"></m-drop-down>
+                <q-select v-if="form.targetTypeEnumId === 'ChtGroup'" dense outlined emit-value map-options v-model="form.targetId" :options="groupOptions" :label="t('Ring group')"></q-select>
+                <div class="row q-gutter-sm">
+                    <q-select dense outlined emit-value map-options clearable v-model="form.commsScheduleId" :options="scheduleOptions" :label="t('Schedule')" style="min-width:180px"></q-select>
+                    <q-select v-if="form.commsScheduleId" dense outlined emit-value map-options v-model="form.scheduleWhen" :options="whenOptions" :label="t('Applies')"></q-select>
+                </div>
+            </q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="busy" @click="saveRule"></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const SELECTIVE = ['ChrSelectiveReject', 'ChrSelectiveAccept', 'ChrSelectiveForward'];
+module.exports = {
+    name: 'CallHandling',
+    data() {
+        return { loaded: false, phoneActive: false, rules: [], lists: [], schedules: [], groups: [], kinds: [], targets: [],
+            s: { dnd: false, callWaiting: false, hideCallerId: false, ringMobile: false, mobileNumber: '', mobileScheduleId: null, forwardEnabled: false },
+            editing: false, busy: false, form: {}, newListName: '', entry: {} };
+    },
+    computed: {
+        selective() { return SELECTIVE.indexOf(this.form.kindEnumId) >= 0; },
+        kindOptions() { return this.kinds.map((k) => ({ value: k.enumId, label: k.description })); },
+        targetOptions() { return this.targets.map((k) => ({ value: k.enumId, label: k.description })); },
+        listOptions() { return this.lists.map((l) => ({ value: l.callerListId, label: l.name })); },
+        groupOptions() { return this.groups.map((g) => ({ value: g.ringGroupId, label: g.name })); },
+        scheduleOptions() { return this.schedules.map((s) => ({ value: s.commsScheduleId, label: s.name + (s.timeZone ? ' (' + s.timeZone + ')' : '') })); },
+        whenOptions() { return [{ value: 'open', label: t('While open') }, { value: 'closed', label: t('While closed') }]; }
+    },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        path() { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'CallHandling']).join('/'); },
+        url(name) { return this.path() + '/' + name; },
+        sibling(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'CallHandling']).slice(0, -1).concat(name).join('/'); },
+        kindText(kindEnumId) { return (this.kinds.find((k) => k.enumId === kindEnumId) || {}).description || kindEnumId; },
+        targetText(r) {
+            const target = (this.targets.find((k) => k.enumId === r.targetTypeEnumId) || {}).description;
+            if (!target) return r.kindEnumId === 'ChrAnonymousReject' || r.kindEnumId === 'ChrSelectiveReject' || r.kindEnumId === 'ChrSelectiveAccept' ? t('Refused') : '';
+            return r.targetName ? target + ': ' + r.targetName : target;
+        },
+        load() {
+            return moqui.request(this.url('handling'), { params: {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                this.rules = json.ruleList || [];
+                this.lists = json.callerListList || [];
+                this.schedules = json.scheduleList || [];
+                this.groups = json.groupList || [];
+                this.kinds = json.kindList || [];
+                this.targets = json.targetList || [];
+                this.s = Object.assign({}, this.s, json.settings || {});
+                this.phoneActive = !!json.phoneActive;
+                this.loaded = true;
+            }, (err) => { this.loaded = true; moqui.handleAjaxError(err); });
+        },
+        change(op, params) {
+            return moqui.request(this.url('change'), { method: 'POST', params: Object.assign({ op }, params) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                else if (json.warning) moqui.notifyMessages([{ type: 'warning', message: json.warning }]);
+                this.load();
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        save(params) {
+            const out = {};
+            Object.keys(params).forEach((key) => { out[key] = typeof params[key] === 'boolean' ? String(params[key]) : params[key]; });
+            return this.change('settings', out);
+        },
+        edit(rule) {
+            this.form = rule ? Object.assign({}, rule) : { kindEnumId: 'ChrNoAnswer', targetTypeEnumId: 'ChtVoicemail', scheduleWhen: 'open' };
+            this.editing = true;
+        },
+        saveRule() {
+            const f = this.form;
+            this.busy = true;
+            this.change('storeRule', { callHandlingRuleId: f.callHandlingRuleId || '', kindEnumId: f.kindEnumId, targetTypeEnumId: f.targetTypeEnumId || '',
+                targetId: f.targetId || '', callerListId: this.selective ? (f.callerListId || '') : '', commsScheduleId: f.commsScheduleId || '',
+                scheduleWhen: f.scheduleWhen || 'open' }).then((json) => {
+                this.busy = false;
+                if (!json.errors) this.editing = false;
+            }, () => { this.busy = false; });
+        },
+        addList() {
+            if (!this.newListName) return;
+            this.change('storeList', { name: this.newListName }).then((json) => { if (!json.errors) this.newListName = ''; }, () => null);
+        },
+        addEntry(list) {
+            const number = this.entry[list.callerListId];
+            if (!number) return;
+            this.change('addEntry', { callerListId: list.callerListId, phoneNumber: number }).then((json) => {
+                if (!json.errors) this.entry = Object.assign({}, this.entry, { [list.callerListId]: '' });
+            }, () => null);
+        }
+    }
+};
+</script>

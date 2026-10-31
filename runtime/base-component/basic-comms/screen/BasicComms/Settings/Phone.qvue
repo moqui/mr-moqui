@@ -27,6 +27,8 @@ along with this software (see the LICENSE.md file). If not, see
             <div v-else class="m-muted">{{t('No number rings you yet; an administrator can give you one.')}}</div>
             <div class="m-muted q-mt-sm">{{t('A desk phone or a phone app can ring with your calls too.')}}
                 <q-btn flat dense no-caps color="primary" icon="sym_o_deskphone" :label="t('Desk and soft phones')" @click="$root.setUrl(sibling('PhoneDevices'))"></q-btn></div>
+            <div class="m-muted">{{t('Forwarding, do not disturb, your mobile, caller lists and schedules:')}}
+                <q-btn flat dense no-caps color="primary" icon="sym_o_phone_forwarded" :label="t('Call handling')" @click="$root.setUrl(sibling('CallHandling'))"></q-btn></div>
         </q-card-section>
     </q-card>
 

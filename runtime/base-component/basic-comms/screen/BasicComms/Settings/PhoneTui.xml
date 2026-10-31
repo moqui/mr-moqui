@@ -77,6 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
         <label type="h5" text="Phone"/>
         <label type="p" text="My numbers: ${numbersText}" style="m-muted"/>
         <label type="p" text="Voicemail access number: ${accessText}" condition="accessText" style="m-muted"/>
+        <link url="../CallHandling" text="Call handling: forwarding, do not disturb, your mobile, caller lists" icon="sym_o_phone_forwarded"/>
         <container-box><box-header title="Voicemail greeting"/><box-body>
             <label type="p" text="${greetingText}"/>
             <link url="deleteGreeting" text="Use the default greeting" icon="sym_o_delete" condition="hasGreeting" confirmation="Remove your greeting?"/>

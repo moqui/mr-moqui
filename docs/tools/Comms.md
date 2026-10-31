@@ -5,14 +5,14 @@ MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab)
 settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
 order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); phone calls through SIP trunks are there
-(V1), and voicemail, the full dialer and chat bridges come later.
+(V1), voicemail (V2), call handling, ring groups and the dialer (V3); chat bridges come later.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
 `org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
 `org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
-([SIP](../interfaces/SIP.md)).
+([SIP](../interfaces/SIP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`.
 
 ## For users
 
@@ -57,8 +57,11 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
   they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
   (`call_captions_store`). An end-to-end encrypted call has no captions. See [WebRTC, Captions](../interfaces/WebRTC.md#captions).
-- <a id="phone"></a>**Phone calls.** Calls, Call a number: a phone number (with its country code, or as dialed at
-  home), from one of your numbers. The call opens like any other, audio only; the phone shows as a participant with the
+- <a id="phone"></a>**Phone calls.** Calls, Dialer (also the tray's Dialer tab, in IronStone): type a number or
+  use the keypad, or type a name to find a person with a number (the app's contacts, or here the people one of our
+  numbers rings); the dialer shows the number as it will be called (with its country code), your recent numbers, and
+  which of your numbers (or your ring groups') calls from; Hide my number withholds it. Calls, Call a number does the
+  same from a form: a phone number (with its country code, or as dialed at home), from one of your numbers. The call opens like any other, audio only; the phone shows as a participant with the
   number, and the keypad sends tones (for a menu or a PIN). A call to one of your numbers rings you as a call does, with
   the caller's number. An administrator allows each person to call out and gives them the numbers they call from;
   international and premium numbers stay off until allowed for the server and for you, and there are limits on calls at
@@ -77,12 +80,21 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   message plays, then `7` deletes it, `9` saves it and `#` skips to the next. The email notice has only a link unless you
   turn on the audio or the transcript in it; turning one on warns that mail cannot be recalled. See
   [Voicemail](../interfaces/Voicemail.md).
+- <a id="call-handling"></a>**Call handling.** Settings, Call handling: do not disturb (calls go straight to
+  voicemail; it is your status, the same as the account menu's), call waiting (off: a call while you are in one goes to
+  voicemail or your busy rule), ring my mobile too (with its number, and only while a schedule is open if you choose),
+  Hide my number, and your rules, read in order: reject callers with no number; reject, accept only, or forward the
+  callers on one of your lists; forward all calls; when busy; when not answered. Each goes to a number, a person, a ring
+  group, voicemail or a refusal, and can apply only while a schedule is open or closed (business hours, holidays, in the
+  schedule's time zone). Your caller lists are numbers, or prefixes ending in `*`. Calls go to outside numbers (your
+  mobile, a forward) only when an administrator allows it for you; a forward back to the caller or round in a loop is
+  skipped. See [SIP, Call handling](../interfaces/SIP.md#call-handling).
 - <a id="desk-phones"></a>**Desk and soft phones.** Settings, Desk and soft phones: Add a phone gives a username,
   a password, the domain, the port and the transport, each with a copy button, shown only then; put them in the desk
   phone or in a phone app (Linphone, Zoiper, Groundwire), choosing TLS and SRTP where it has them. Once it registers,
   the list shows it with its address and how long the registration lasts. A call to you rings the phone beside your
-  tabs, and whichever answers first takes it; declining on one declines on all, and a call nobody answers goes to your
-  voicemail after your rings. The phone calls out as you, to a number (with your caller ID and your
+  tabs, and whichever answers first takes it; declining on one declines on all (a phone busy on another call only stops
+  ringing itself), and a call nobody answers goes to your voicemail after your rings. The phone calls out as you, to a number (with your caller ID and your
   limits) or to a colleague by username. New password makes new credentials and stops the old ones at once; Remove
   ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
   until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
@@ -91,11 +103,14 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
   provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
   network allows UDP, TCP or plain RTP, whether it takes emergency calls, and its status and last error. Numbers: each
-  number's trunk, the person it rings (or the voicemail access number) and its emergency location. Caller IDs: who may call from which number. Fraud: the
-  limits, each person's permissions, and the sources blocked after failed SIP sign-ins (a block never locks the account;
+  number's trunk, the person or ring group it rings (or the voicemail access number) and its emergency location. Caller IDs: who may call from which number. Fraud: the
+  limits, each person's permissions (with Forwards: whether their calls may go to outside numbers), and the sources blocked after failed SIP sign-ins (a block never locks the account;
   Clear lifts it). Emergency: the readiness checklist and the emergency locations (address, callback number, who is
   told, the provider's reference and whether it is validated). Phones: everyone's desk and soft phones with their
-  registrations, whether the registrar is on, and Remove. The screens are basic-comms' (`screen/System/`), mounted
+  registrations, whether the registrar is on, and Remove. Ring groups: each group's members in order, how it rings
+  (all at once, in order, round robin), seconds each, its hours, and what happens when nobody answers (the group's
+  voicemail, which its members share; another group; an outside number; the end). Schedules: the business hours, dated
+  hours and holidays (once or each year) with their time zone, and whether each is open now. The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), and rooms with unread.
@@ -136,8 +151,9 @@ records drive's folders by their records.
 | `create-from` | Making a record (a task) from a chat message |
 
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
+| `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
 
-The other hooks (`recipient-source`, `invitation`, `contact-card`, `call-context`, `home-source`,
+The other hooks (`invitation`, `contact-card`, `call-context`, `home-source`,
 `external-conversation`) are declared for the work after this one. A provider runs with the app's authorization and
 entity filters; a read that fails is left out and named, and a mutation that fails is an error.
 
@@ -159,5 +175,7 @@ and premium, the limits, failed sign-ins blocked per source, emergency readiness
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
 and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and
 soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
-after the tabs and phones ring or a phone declines, a phone's own call). IronStone's own parts are in its specs (`Inbox`, `Compose`,
+after the tabs and phones ring or a phone declines, a phone's own call). `./moq test framework --spec CallHandling,RingGroup`:
+the rules, schedules across a time zone, forward loops and permissions, do not disturb and call waiting, simultaneous ring,
+the strategies, the shared box, and the first answer winning. IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

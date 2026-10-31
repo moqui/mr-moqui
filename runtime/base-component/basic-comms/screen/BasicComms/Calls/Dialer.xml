@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls, Dialer (plans/Comms-Framework.md §5.5, V3): a keypad and number field, a search for a person or a number (the apps'
+    recipient-source providers through ShellServices call#Providers, else the framework's users that a number rings), the caller
+    ID (the user's numbers and their ring groups'), Hide my number, recent numbers, and Call (VoiceServices place#PhoneCall, with
+    its fraud policy, caller-ID grants and emergency path). The same component is the tray's Dialer tab (Panel/Dialer). The
+    component is Dialer.qvue next to this file; in the terminal a call is not live, so DialerTui shows the recent numbers and
+    the search, and says to call from the browser. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Dialer" default-menu-index="2" menu-image="sym_o_dialpad" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <transition-include name="dialerData" location="component://basic-comms/template/DialerTransitions.xml"/>
+    <transition-include name="dialSearch" location="component://basic-comms/template/DialerTransitions.xml"/>
+    <transition-include name="dialNumber" location="component://basic-comms/template/DialerTransitions.xml"/>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Calls/Dialer.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Calls/Dialer.tui.json" template="fancy"/></render-mode>
+    </widgets>
+</screen>

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of the Dialer (style-guide §4.8): a call is not live in the terminal, so this shows what the dialer
+    knows: the caller IDs, the recent numbers, and a search for a person or a number (CallHandlingServices search#Dialable:
+    the recipient-source providers, or the framework's users with a number), with what a typed number becomes in E.164. To
+    talk, the user calls from the browser. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Dialer" default-menu-include="false">
+
+    <parameter name="text"/>
+
+    <actions><script><![CDATA[
+        const L = (s) => ec.l10n.localize(s)
+        const data = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#DialerData').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        phoneActive = !!data.phoneActive
+        callerIdText = Array.from(data.callerIdList || []).map((n) => n.phoneNumber + (n.description ? ' (' + n.description + ')' : '')).join(', ')
+            || L('No number to call from; an administrator can give you one.')
+        hideText = data.hideCallerId ? L('Your number is hidden on calls you place (Settings, Call handling).') : ''
+        const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
+        recentList = Array.from(data.recentList || []).map((r) => ({number: r.number, whenText: when(r.whenMs)}))
+        searchText = String(text || '').trim()
+        resultList = []
+        numberText = ''
+        if (searchText) {
+            const found = ec.service.sync().name('org.moqui.impl.CallHandlingServices.search#Dialable').parameters({text: searchText, limit: 10})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            numberText = found.number ? ec.resource.expand('${t} calls ${n}', '', {t: searchText, n: found.number}) : ''
+            for (const r of Array.from(found.resultList || [])) for (const ph of Array.from(r.phoneList || []))
+                resultList.push({name: r.name, number: ph.number, label: ph.label || ''})
+        }
+        searchForm = {text: searchText}
+    ]]></script></actions>
+
+    <widgets>
+        <label type="h5" text="Dialer"/>
+        <label type="p" text="A call is not live in the terminal; call from the browser to talk." style="m-muted"/>
+        <section name="PhoneOff" condition="!phoneActive"><widgets><label type="p" text="Phone calls are not available here." style="text-warning"/></widgets></section>
+        <label type="p" text="Calls from: ${callerIdText}"/>
+        <label type="p" text="${hideText}" condition="hideText" style="m-muted"/>
+        <form-single name="DialSearch" transition="." map="searchForm">
+            <field name="text"><default-field title="Name or number"><text-line size="30"/></default-field></field>
+            <field name="submitButton"><default-field title="Search"><submit/></default-field></field>
+        </form-single>
+        <label type="p" text="${numberText}" condition="numberText"/>
+        <form-list name="Results" list="resultList" skip-form="true" paginate="false">
+            <field name="name"><default-field title="Name"><display/></default-field></field>
+            <field name="number"><default-field title="Number"><display/></default-field></field>
+            <field name="label"><default-field title=""><display/></default-field></field>
+        </form-list>
+        <container-box><box-header title="Recent numbers"/><box-body>
+            <section name="NoRecent" condition="!recentList.length"><widgets><label type="p" text="No phone calls yet." style="m-muted"/></widgets></section>
+            <form-list name="Recent" list="recentList" skip-form="true" paginate="false">
+                <field name="number"><default-field title="Number"><display/></default-field></field>
+                <field name="whenText"><default-field title="When"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

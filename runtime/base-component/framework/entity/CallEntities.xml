@@ -136,6 +136,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Host" enumId="CprHost" enumCode="host" enumTypeId="CallParticipantRole" sequenceNum="1"/>
             <moqui.basic.Enumeration description="Member" enumId="CprMember" enumCode="member" enumTypeId="CallParticipantRole" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Guest" enumId="CprGuest" enumCode="guest" enumTypeId="CallParticipantRole" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Forwarded to (V3: a number a ring group's call went on to)" enumId="CprForward" enumCode="forward" enumTypeId="CallParticipantRole" sequenceNum="4"/>
 
             <moqui.basic.StatusType description="Call Admission" statusTypeId="CallAdmission"/>
             <moqui.basic.StatusItem statusId="CasInvited" statusTypeId="CallAdmission" sequenceNum="1" description="Invited"/>

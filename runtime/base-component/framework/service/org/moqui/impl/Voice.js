@@ -22,6 +22,8 @@ const SETTING = 'moqui.call.VoiceUserSetting'
 const POLICY = 'moqui.call.VoicePolicy'
 const AUTH_FAILURE = 'moqui.call.VoiceAuthFailure'
 const SIP_NODE = 'moqui.call.SipNode'
+const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling.js'
+const PARTICIPANT = 'moqui.call.CallParticipant'
 
 /** The key a phone presses to acknowledge the recording notice (docs/interfaces/Call-Recording.md). */
 const PHONE_ACK_KEY = '1'
@@ -157,12 +159,22 @@ function classify(raw, pol) {
   return { destinationClass: 'domestic', number }
 }
 
-/** The numbers the user may present now. */
+/** The numbers the user may present now: their grants, and the numbers of the ring groups they are in (V3). */
 function grantsOf(userId) {
   if (!userId) return []
   const now = ec.user.nowTimestamp
-  return rows(GRANT, { userId }).filter((g) => ms(g.fromDate) <= ms(now) && (!g.thruDate || ms(g.thruDate) > ms(now)))
+  const granted = rows(GRANT, { userId }).filter((g) => ms(g.fromDate) <= ms(now) && (!g.thruDate || ms(g.thruDate) > ms(now)))
     .map((g) => g.phoneNumber)
+  for (const number of groupNumbersOf(userId)) if (!granted.includes(number)) granted.push(number)
+  return granted
+}
+
+/** The numbers routed to the ring groups the user is a member of. */
+function groupNumbersOf(userId) {
+  const groups = rows('moqui.call.RingGroupMember', { userId }).map((m) => m.ringGroupId)
+  if (!groups.length) return []
+  return Array.from(find(NUMBER).condition('routeTypeEnumId', 'PnrRingGroup').condition('routeId', 'in', groups).list())
+    .map((n) => n.phoneNumber)
 }
 
 // ---------- nodes and trunks ----------
@@ -286,13 +298,19 @@ function countPhoneCalls(fields, sinceMs) {
   return f.count()
 }
 
-function dial(started, trunk, dest, fromNumber, fromName, userId, emergency, location) {
+function dial(started, trunk, dest, fromNumber, fromName, userId, emergency, location, privacy) {
   sipControl(started.mediaNodeId, {
     action: 'dial', callSessionId: started.callSessionId, callLegId: started.phoneLegId, voiceTrunkId: trunk.voiceTrunkId,
     toNumber: dest.number, fromNumber, fromName, destinationClass: dest.destinationClass, emergency: !!emergency,
     callbackNumber: location ? location.callbackNumber : null, locationReference: location ? location.providerReference || null : null,
-    userId,
+    userId, privacy: !!privacy && !emergency,
   })
+}
+
+/** Caller-ID blocking (V3): asked for this call, else the user's setting (CallHandlingSetting.hideCallerId). */
+function hideCallerId(p, userId) {
+  if (p.hideCallerId != null && p.hideCallerId !== '') return yes(p.hideCallerId)
+  return one('moqui.call.CallHandlingSetting', { userId })?.hideCallerId === 'Y'
 }
 
 function userName(userId) {
@@ -359,7 +377,8 @@ function place(p, viaNode) {
   const started = calls('startPhone', { userId: me, direction: 'outbound', phoneNumber: dest.number, displayName: dest.number,
     mediaNodeId: nodes[0].instanceId, idempotencyKey: key })
   started.mediaNodeId = nodes[0].instanceId
-  dial(started, trunk, dest, fromNumber, userName(me), me, false, null)
+  const privacy = hideCallerId(p, me)
+  dial(started, trunk, dest, fromNumber, privacy ? null : userName(me), me, false, null, privacy)
   return { callSessionId: started.callSessionId, callLegId: started.callLegId, phoneLegId: started.phoneLegId, call: started.call,
     voiceTrunkId: trunk.voiceTrunkId, fromNumber, destinationClass: dest.destinationClass }
 }
@@ -371,20 +390,94 @@ function receive(p) {
   if (!number || (p.voiceTrunkId && number.voiceTrunkId && number.voiceTrunkId !== p.voiceTrunkId)) return { reasonCode: 'notFound' }
   // the voicemail access number (V2): the caller gives a box number and its PIN
   const access = number.routeTypeEnumId === 'PnrVoicemail'
-  if (!access && (number.routeTypeEnumId !== 'PnrUser' || blank(number.routeId))) return { reasonCode: 'notFound' }
-  const account = access ? null : one('moqui.security.UserAccount', { userId: number.routeId })
-  if (!access && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
+  const group = number.routeTypeEnumId === 'PnrRingGroup'
+  if (!access && !['PnrUser', 'PnrRingGroup'].includes(number.routeTypeEnumId)) return { reasonCode: 'notFound' }
+  if (!access && blank(number.routeId)) return { reasonCode: 'notFound' }
+  if (group && !one('moqui.call.RingGroup', { ringGroupId: number.routeId })) return { reasonCode: 'notFound' }
+  const account = access || group ? null : one('moqui.security.UserAccount', { userId: number.routeId })
+  if (!access && !group && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
   if (!voiceNodes().some((n) => n.instanceId === p.instanceId)) return { reasonCode: 'voiceUnavailable' }
   if (countPhoneCalls({}) >= pol.maxConcurrentCalls) return { reasonCode: 'busy' }
-  const from = toE164(p.fromNumber, pol.homeCountryCode) || cleanNumber(p.fromNumber) || ec.l10n.localize('Unknown number')
+  const e164 = toE164(p.fromNumber, pol.homeCountryCode)
+  const from = e164 || cleanNumber(p.fromNumber) || ec.l10n.localize('Unknown number')
   const name = blank(p.fromName) || p.fromName === from ? from : String(p.fromName).slice(0, 60) + ' (' + from + ')'
-  // V2: a busy user's caller goes straight to voicemail; otherwise the engine sends it there after the box's rings
-  const routing = access ? {} : (ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailRouting')
-    .parameter('userId', number.routeId).disableAuthz().call() || {})
-  const started = calls('startPhone', { userId: access ? null : number.routeId, direction: 'inbound', phoneNumber: from,
-    displayName: name, mediaNodeId: p.instanceId, silent: !!routing.busy, ringExpireSeconds: routing.ringExpireSeconds || null })
-  return { callSessionId: started.callSessionId, callLegId: started.phoneLegId,
-    voicemail: access ? 'access' : routing.busy ? 'busy' : null, voicemailSeconds: routing.voicemailSeconds || null }
+  if (access) {
+    const started = calls('startPhone', { userId: null, direction: 'inbound', phoneNumber: from, displayName: name, mediaNodeId: p.instanceId })
+    return { callSessionId: started.callSessionId, callLegId: started.phoneLegId, voicemail: 'access', voicemailSeconds: null }
+  }
+  // V3: the user's call handling rules, or the ring group's strategy (CallHandling.js); V2's busy and no-answer
+  // voicemail are its last steps
+  return ec.resource.script(CALL_HANDLING).execute('inbound', { userId: group ? null : number.routeId, ringGroupId: group ? number.routeId : null,
+    toNumber: to, fromNumber: e164, rawFrom: p.fromNumber || null, displayName: name, instanceId: p.instanceId, atMs: p.atMs }) || {}
+}
+
+// ---------- forwards (V3: call handling rules, simultaneous ring, a ring group's fallback) ----------
+
+/**
+ * Whether a call may be forwarded to an outside number for a user (CallHandling.js): number (E.164) and its
+ * destinationClass, and allowed with reasonCode when not. Emergency numbers are never forwarded to; the user needs
+ * outbound calls and forwardEnabled (VoiceUserSetting), and international and premium destinations need the
+ * deployment's and the user's permission, as for a call they place. A ring group's fallback (byAdmin, set by a voice
+ * admin) needs only the deployment's.
+ */
+function forwardCheck(p) {
+  const pol = policy()
+  const dest = classify(p.phoneNumber, pol)
+  if (!dest) return { number: null, allowed: false, reasonCode: 'badNumber' }
+  const out = { number: dest.number, destinationClass: dest.destinationClass, allowed: false }
+  if (dest.destinationClass === 'emergency') return Object.assign(out, { reasonCode: 'emergency' })
+  const setting = p.byAdmin ? {} : userSetting(p.userId)
+  if (!p.byAdmin && !(setting.outboundEnabled === 'Y' && setting.forwardEnabled === 'Y')) return Object.assign(out, { reasonCode: 'forwardNotAllowed' })
+  if (dest.destinationClass === 'international' && !(pol.internationalEnabled === 'Y' && (p.byAdmin || setting.internationalEnabled === 'Y'))) {
+    return Object.assign(out, { reasonCode: 'internationalNotEnabled' })
+  }
+  if (dest.destinationClass === 'premium' && !(pol.premiumEnabled === 'Y' && (p.byAdmin || setting.premiumEnabled === 'Y'))) {
+    return Object.assign(out, { reasonCode: 'premiumNotEnabled' })
+  }
+  return Object.assign(out, { allowed: true, reasonCode: null })
+}
+
+/** The user's forwarded legs since sinceMs (open ones only when sinceMs is null). */
+function forwardLegCount(userId, sinceMs) {
+  const participants = Array.from(find(PARTICIPANT).condition('userId', userId).selectField('callParticipantId')
+    .orderBy('-callParticipantId').limit(500).list()).map((x) => x.callParticipantId)
+  if (!participants.length) return 0
+  let f = find(LEG).condition('callParticipantId', 'in', participants).condition('legTypeEnumId', 'CltPstn')
+  f = sinceMs != null ? f.condition('offeredDate', '>=', new Date(sinceMs)) : f.condition('statusId', 'in', ['ClsOffered', 'ClsAnswered'])
+  return f.count()
+}
+
+/**
+ * Internal (CallHandling.js): dials a forwarded leg (Calls.js made it, offered) through the trunk of the number the call
+ * came in on, which is its caller ID, after forwardCheck and the user's limits at once and per day; the engine checks the
+ * destination again. One refused is closed as failed here (reasonCode), and the call goes on with its other legs.
+ */
+function dialForward(p) {
+  const check = forwardCheck(p)
+  const refused = (reasonCode) => {
+    ec.logger.warn(`Call ${p.callSessionId}: forward to ${check.number || p.phoneNumber} refused: ${reasonCode}`)
+    calls('closeForward', { callLegId: p.callLegId, reasonCode })
+    return { reasonCode }
+  }
+  if (!check.allowed) return refused(check.reasonCode || 'notAllowed')
+  const pol = policy()
+  if (!p.byAdmin && p.userId) {
+    const setting = userSetting(p.userId)
+    const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
+    const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
+    // the leg being dialed is open already
+    if (forwardLegCount(p.userId, null) > perUser) return refused('tooManyCalls')
+    if (forwardLegCount(p.userId, nowMs() - 86400000) > perDay) return refused('dailyLimit')
+  }
+  const fromNumber = toE164(p.fromNumber, pol.homeCountryCode)
+  const number = fromNumber ? one(NUMBER, { phoneNumber: fromNumber }) : null
+  const trunk = number?.voiceTrunkId ? one(TRUNK, { voiceTrunkId: number.voiceTrunkId }) : enabledTrunks()[0]
+  if (!trunk || trunk.disabled === 'Y') return refused('noTrunk')
+  const session = one(SESSION, { callSessionId: p.callSessionId })
+  if (!session?.mediaNodeId) return refused('voiceUnavailable')
+  dial({ mediaNodeId: session.mediaNodeId, callSessionId: p.callSessionId, phoneLegId: p.callLegId }, trunk,
+    { number: check.number, destinationClass: check.destinationClass }, number ? number.phoneNumber : null, null, p.userId || null, false, null, false)
+  return { dialed: true }
 }
 
 function noteLeg(p) {
@@ -449,7 +542,13 @@ function holdOrResume(p, action) {
 
 /** The numbers the current user may call from, for the caller-ID choice. */
 function myCallerIds() {
-  return { numberList: grantsOf(ec.user.userId).map((phoneNumber) => ({ phoneNumber, description: one(NUMBER, { phoneNumber })?.description || null })) }
+  return {
+    numberList: grantsOf(ec.user.userId).map((phoneNumber) => {
+      const number = one(NUMBER, { phoneNumber })
+      const group = number?.routeTypeEnumId === 'PnrRingGroup' ? one('moqui.call.RingGroup', { ringGroupId: number.routeId }) : null
+      return { phoneNumber, description: number?.description || (group ? group.name : null), ringGroupId: group ? group.ringGroupId : null }
+    }),
+  }
 }
 
 // ---------- the SIP engine ----------
@@ -716,7 +815,10 @@ function findNumbers() {
   return {
     numberList: numbers.map((n) => ({
       phoneNumber: n.phoneNumber, voiceTrunkId: n.voiceTrunkId, trunkName: trunks.get(n.voiceTrunkId) || null,
-      routeTypeEnumId: n.routeTypeEnumId, routeId: n.routeId, routeName: n.routeTypeEnumId === 'PnrUser' && n.routeId ? userName(n.routeId) : n.routeId,
+      routeTypeEnumId: n.routeTypeEnumId, routeId: n.routeId,
+      routeName: n.routeTypeEnumId === 'PnrUser' && n.routeId ? userName(n.routeId)
+        : n.routeTypeEnumId === 'PnrRingGroup' && n.routeId ? (one('moqui.call.RingGroup', { ringGroupId: n.routeId })?.name || n.routeId)
+          : n.routeTypeEnumId === 'PnrVoicemail' ? ec.l10n.localize('Voicemail access') : n.routeId,
       emergencyLocationId: n.emergencyLocationId, locationName: locations.get(n.emergencyLocationId) || null, description: n.description,
     })),
   }
@@ -730,11 +832,14 @@ function storeNumber(p) {
   if (!phoneNumber) return refuse('badNumber', 'That is not a phone number')
   if (!blank(p.voiceTrunkId) && !one(TRUNK, { voiceTrunkId: p.voiceTrunkId })) return refuse('notFound', 'Trunk not found')
   const routeTypeEnumId = blank(p.routeTypeEnumId) ? 'PnrUser' : p.routeTypeEnumId
-  if (routeTypeEnumId !== 'PnrUser' && routeTypeEnumId !== 'PnrVoicemail') {
-    return refuse('notSupported', 'A number rings a user, or is the voicemail access number, for now')
+  if (!['PnrUser', 'PnrRingGroup', 'PnrVoicemail'].includes(routeTypeEnumId)) {
+    return refuse('notSupported', 'A number rings a user or a ring group, or is the voicemail access number, for now')
   }
   if (routeTypeEnumId === 'PnrUser' && !blank(p.routeId) && !one('moqui.security.UserAccount', { userId: p.routeId })) {
     return refuse('notFound', 'User not found')
+  }
+  if (routeTypeEnumId === 'PnrRingGroup' && (blank(p.routeId) || !one('moqui.call.RingGroup', { ringGroupId: p.routeId }))) {
+    return refuse('notFound', 'Ring group not found')
   }
   if (!blank(p.emergencyLocationId) && !one(LOCATION, { emergencyLocationId: p.emergencyLocationId })) return refuse('notFound', 'Emergency location not found')
   const fields = { voiceTrunkId: p.voiceTrunkId || null, routeTypeEnumId, routeId: p.routeId || null,
@@ -910,7 +1015,7 @@ function findUserSettings() {
   return {
     settingList: Array.from(find(SETTING).orderBy('userId').list()).map((s) => ({
       userId: s.userId, userName: userName(s.userId), outboundEnabled: s.outboundEnabled || 'N',
-      internationalEnabled: s.internationalEnabled || 'N', premiumEnabled: s.premiumEnabled || 'N',
+      internationalEnabled: s.internationalEnabled || 'N', premiumEnabled: s.premiumEnabled || 'N', forwardEnabled: s.forwardEnabled || 'N',
       emergencyLocationId: s.emergencyLocationId || null, maxConcurrent: s.maxConcurrent ?? null, maxPerDay: s.maxPerDay ?? null,
     })),
   }
@@ -922,7 +1027,7 @@ function storeUserSetting(p) {
   if (!one('moqui.security.UserAccount', { userId: p.userId })) return refuse('notFound', 'User not found')
   if (!blank(p.emergencyLocationId) && !one(LOCATION, { emergencyLocationId: p.emergencyLocationId })) return refuse('notFound', 'Emergency location not found')
   const fields = {}
-  for (const key of ['outboundEnabled', 'internationalEnabled', 'premiumEnabled']) if (p[key] !== undefined && p[key] !== null) fields[key] = flag(p[key])
+  for (const key of ['outboundEnabled', 'internationalEnabled', 'premiumEnabled', 'forwardEnabled']) if (p[key] !== undefined && p[key] !== null) fields[key] = flag(p[key])
   for (const key of ['maxConcurrent', 'maxPerDay']) {
     if (p[key] === undefined || p[key] === null) continue
     if (p[key] === '') fields[key] = null
@@ -939,7 +1044,7 @@ function storeUserSetting(p) {
     row.update()
   } else {
     const created = ec.entity.makeValue(SETTING)
-    created.setFields(Object.assign({ userId: p.userId, outboundEnabled: 'N', internationalEnabled: 'N', premiumEnabled: 'N' }, fields), true, null, null)
+    created.setFields(Object.assign({ userId: p.userId, outboundEnabled: 'N', internationalEnabled: 'N', premiumEnabled: 'N', forwardEnabled: 'N' }, fields), true, null, null)
     created.create()
   }
   return { userId: p.userId }
@@ -987,7 +1092,9 @@ const operations = {
   place: (p) => place(p), receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
   // a registered phone's call (SipDevices.js receiveDeviceCall), on its own SIP engine's node; not a service
   placeFromDevice: (p) => place(p, p.instanceId || null),
-  myCallerIds, registerNode, engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
+  myCallerIds, registerNode,
+  // V3 (CallHandling.js): forwards, and the dialer's country code
+  forwardCheck, dialForward, homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
   deleteTrunk, findNumbers, storeNumber, deleteNumber, findGrants, grantCallerId, revokeCallerId, findLocations,
   storeLocation, deleteLocation, getPolicy, updatePolicy, findUserSettings, storeUserSetting, findAuthBlocks,
   clearAuthBlock,

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Schedules (plans/Comms-Framework.md §5.3, §5.4, V3): the deployment's business hours, for ring groups and for anyone's
+    call handling rules: weekly hours, hours on dates, and holidays (once, or each year), read in the schedule's time zone; with
+    whether each is open now. org.moqui.impl.CallHandlingServices find#CommsSchedules (shared), store#, delete#CommsSchedule,
+    store#, delete#CommsScheduleRule and check#CommsSchedule (the VoiceAdmin permission). A user's own schedules are theirs. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Schedules" default-menu-index="9">
+
+    <transition name="storeSchedule">
+        <service-call name="org.moqui.impl.CallHandlingServices.store#CommsSchedule" in-map="{commsScheduleId:commsScheduleId || null, name:name || '',
+                timeZone:timeZone || '', description:description || '', shared:true}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Schedule saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteSchedule">
+        <service-call name="org.moqui.impl.CallHandlingServices.delete#CommsSchedule" in-map="{commsScheduleId:commsScheduleId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Schedule removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="storeRule">
+        <service-call name="org.moqui.impl.CallHandlingServices.store#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleTypeEnumId:ruleTypeEnumId,
+                dayOfWeek:dayOfWeek || null, fromTime:fromTime || '', thruTime:thruTime || '', onDate:onDate || '', thruDate:thruDate || '',
+                repeatYearly:repeatYearly || 'N', description:description || ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Hours saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteRule">
+        <service-call name="org.moqui.impl.CallHandlingServices.delete#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleSeqId:ruleSeqId}"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const call = (name, parameters) => ec.service.sync().name('org.moqui.impl.CallHandlingServices.' + name).parameters(parameters || {})
+            .requireNewTransaction(true).disableAuthz().call() || {}
+        const DAYS = ['', L('Monday'), L('Tuesday'), L('Wednesday'), L('Thursday'), L('Friday'), L('Saturday'), L('Sunday')]
+        dayOptions = DAYS.slice(1).map((text, i) => ({key: String(i + 1), text}))
+        typeOptions = Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'CommsScheduleRuleType').orderBy('sequenceNum')
+            .disableAuthz().list()).map((e) => ({key: e.enumId, text: L(e.description)}))
+        const schedules = Array.from(call('find#CommsSchedules', {shared: true}).scheduleList || [])
+        ec.message.clearErrors()
+        scheduleOptions = schedules.map((s) => ({key: s.commsScheduleId, text: s.name}))
+        scheduleList = schedules.map((s) => {
+            const now = call('check#CommsSchedule', {commsScheduleId: s.commsScheduleId})
+            ec.message.clearErrors()
+            return Object.assign({}, s, {zoneText: s.timeZone || L('The server\'s'), nowText: now.open ? L('Open now') : L('Closed now'),
+                rulesCount: s.ruleList.length})
+        })
+        ruleList = []
+        for (const s of schedules) for (const r of s.ruleList) ruleList.push({commsScheduleId: s.commsScheduleId, scheduleName: s.name, ruleSeqId: r.ruleSeqId,
+            whatText: r.ruleTypeEnumId === 'CsrWeekly' ? DAYS[r.dayOfWeek] || '' : r.ruleTypeEnumId === 'CsrHoliday' ? L('Holiday') : L('Hours on dates'),
+            datesText: r.onDate ? r.onDate + (r.thruDate ? ' – ' + r.thruDate : '') + (r.repeatYearly ? ' (' + L('each year') + ')' : '') : '',
+            hoursText: r.ruleTypeEnumId === 'CsrHoliday' ? L('Closed') : (r.fromTime || '00:00') + ' – ' + (r.thruTime || '24:00'),
+            description: r.description || ''})
+        newSchedule = {timeZone: ec.user.timeZone || ''}
+        newRule = {ruleTypeEnumId: 'CsrWeekly', dayOfWeek: '1', fromTime: '09:00', thruTime: '17:00'}
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Schedules" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="NewScheduleDialog" button-text="Add a schedule" icon="sym_o_add" width="560" title="Add a schedule" type="primary">
+                <form-single name="NewSchedule" transition="storeSchedule" map="newSchedule" focus-field="name">
+                    <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                    <field name="timeZone"><default-field title="Time zone" tooltip="Such as America/Chicago; empty: the server's"><text-line size="30"/></default-field></field>
+                    <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <container-dialog id="NewRuleDialog" button-text="Add hours or a holiday" icon="sym_o_schedule" width="560" title="Add hours or a holiday">
+                <form-single name="NewRule" transition="storeRule" map="newRule">
+                    <field name="commsScheduleId"><default-field title="Schedule"><drop-down><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="ruleTypeEnumId"><default-field title="Kind"><drop-down><list-options list="typeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="dayOfWeek"><default-field title="Day (weekly)"><drop-down allow-empty="true"><list-options list="dayOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="fromTime"><default-field title="From (HH:mm)"><text-line size="6"/></default-field></field>
+                    <field name="thruTime"><default-field title="Until (HH:mm)"><text-line size="6"/></default-field></field>
+                    <field name="onDate"><default-field title="On (yyyy-MM-dd)"><text-line size="12"/></default-field></field>
+                    <field name="thruDate"><default-field title="Through (yyyy-MM-dd)"><text-line size="12"/></default-field></field>
+                    <field name="repeatYearly"><default-field title="Each year"><check><option key="Y" text="The same dates each year"/></check></default-field></field>
+                    <field name="description"><default-field title="Note"><text-line size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </container>
+        <container-box><box-body-nopad>
+            <form-list name="ScheduleList" list="scheduleList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Schedule"><display style="text-weight-medium"/></default-field></field>
+                <field name="zoneText"><default-field title="Time zone"><display/></default-field></field>
+                <field name="nowText"><default-field title="Now"><display/></default-field></field>
+                <field name="description"><default-field title="Description"><display style="text-caption"/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditScheduleDialog_${commsScheduleId}" button-text="Edit" icon="sym_o_edit" width="560" title="Edit ${name}">
+                        <form-single name="EditSchedule" transition="storeSchedule">
+                            <field name="commsScheduleId" from="commsScheduleId"><default-field><hidden/></default-field></field>
+                            <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                            <field name="timeZone" from="timeZone"><default-field title="Time zone"><text-line size="30"/></default-field></field>
+                            <field name="description" from="description"><default-field title="Description"><text-line size="40"/></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <link url="deleteSchedule" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove the schedule ${name}?" parameter-map="{commsScheduleId:commsScheduleId}"/>
+                </default-field></field>
+            </form-list>
+            <section name="NoSchedules" condition="!scheduleList.length"><widgets>
+                <label type="p" text="No schedules yet. Add one with its time zone, then its weekly hours and holidays." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="Hours and holidays"/><box-body-nopad>
+            <form-list name="RuleList" list="ruleList" skip-form="true" paginate="false">
+                <field name="scheduleName"><default-field title="Schedule"><display/></default-field></field>
+                <field name="whatText"><default-field title="When"><display/></default-field></field>
+                <field name="datesText"><default-field title="Dates"><display/></default-field></field>
+                <field name="hoursText"><default-field title="Hours"><display/></default-field></field>
+                <field name="description"><default-field title="Note"><display style="text-caption"/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="deleteRule" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            parameter-map="{commsScheduleId:commsScheduleId, ruleSeqId:ruleSeqId}"/>
+                </default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

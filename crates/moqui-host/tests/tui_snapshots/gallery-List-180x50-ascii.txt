@@ -12,29 +12,29 @@
      Settings            | Enumerations
      Wizard              | [ View: list v ]  [ New enumeration. ]
      Dialog              | Type . . . . : [                                v] Description  : [____________________]              Find . . . . :
-     Report              |       ID                           Description                     Type                                  State   Code      Seq Parent Changed          >
-     Panel               | -------------------------------------------------------------------------------------------------------------------------------------------------------
-     Widgets             |   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a       3          <today> hh:mm
-     Editor              |   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable 2          <today> hh:mm
-     Message             |   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered           2          <today> hh:mm
-     Views               |   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain                        <today> hh:mm
-     Handheld            |   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                 System <today> hh:mm
- v Home                  |   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain                        <today> hh:mm
-                         |   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent     4          <today> hh:mm
-                         |   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL                  <today> hh:mm
-                         |   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered           1          <today> hh:mm
-                         |   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all       1          <today> hh:mm
-                         |   [ ] AUTHZT_ALLOW                 Allow                           Authorization Type                    Plain                        <today> hh:mm
-                         |   [ ] GmaMerged                    Already in the target           Git Mergeability                      Ordered merged    4          <today> hh:mm
-                         |   [ ] AUTHZT_ALWAYS                Always Allow (overrides Deny)   Authorization Type                    Plain                        <today> hh:mm
-                         |   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered           3          <today> hh:mm
-                         |   [ ] PnrIvr                       An IVR menu                     Phone Number Route                    Ordered ivr       3          <today> hh:mm
-                         |   [ ] AgikAnswer                   Answer                          Agent Run Input Kind                  Ordered answer    2          <today> hh:mm
-                         |   [ ] CuoAnswered                  Answered                        Call Outcome                          Ordered answered  2          <today> hh:mm
-                         |   [ ] ErmAny                       Any condition                   Email Rule Match                      Ordered           2          <today> hh:mm
-                         |   [ ] CrvUsers                     Any user may read and join      Chat Room Visibility                  Ordered users     2          <today> hh:mm
-                         |   [ ] OctApple                     Apple                           OpenID Connect Client Type            Plain                        <today> hh:mm
-                         |   Rows 1-20 of 382 - Page 1/20
+     Report              |       ID                           Description                     Type                                  State   Code            Seq Parent            >
+     Panel               | --------------------------------------------------------------------------------------------------------------------------------------------
+     Widgets             |   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a             3
+     Editor              |   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable       2
+     Message             |   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered                 2
+     Views               |   [ ] ChrSelectiveAccept           Accept only callers on a list   Call Handling Kind                    Ordered selectiveAccept 3
+     Handheld            |   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain
+ v Home                  |   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                       System
+                         |   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain
+                         |   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent           4
+                         |   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL
+                         |   [ ] RgsSimultaneous              All at once                     Ring Group Strategy                   Ordered simultaneous    1
+                         |   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered                 1
+                         |   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all             1
+                         |   [ ] AUTHZT_ALLOW                 Allow                           Authorization Type                    Plain
+                         |   [ ] GmaMerged                    Already in the target           Git Mergeability                      Ordered merged          4
+                         |   [ ] AUTHZT_ALWAYS                Always Allow (overrides Deny)   Authorization Type                    Plain
+                         |   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered                 3
+                         |   [ ] PnrIvr                       An IVR menu                     Phone Number Route                    Ordered ivr             3
+                         |   [ ] RgfGroup                     Another group                   Ring Group Fallback                   Ordered group           2
+                         |   [ ] RgfNumber                    An outside number               Ring Group Fallback                   Ordered number          3
+                         |   [ ] AgikAnswer                   Answer                          Agent Run Input Kind                  Ordered answer          2
+                         |   Rows 1-20 of 406 - Page 1/21
                          | Back to the Landing
                          |
                          |

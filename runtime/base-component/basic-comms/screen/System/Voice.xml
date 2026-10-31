@@ -15,8 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Admin: Voice (plans/Comms-Framework.md §5.5, D-A6): phone calls through SIP trunks, in the tools System app; basic-comms'
     MoquiConf.xml mounts it there, as the demo component changes System's screens. Its tabs: Status (whether phone calls work here,
     the SIP and media servers), Trunks, Numbers, Caller IDs, Fraud (the limits, the users' permissions, blocked sources) and
-    Emergency (locations and the readiness checklist), and Phones (V4: everyone's desk and soft phones and their registrations,
-    through org.moqui.impl.SipDeviceServices). Every read and write goes through org.moqui.impl.VoiceServices, whose
+    Emergency (locations and the readiness checklist), Phones (V4: everyone's desk and soft phones and their registrations,
+    through org.moqui.impl.SipDeviceServices), Ring groups and Schedules (V3: org.moqui.impl.CallHandlingServices). Every read and write goes through org.moqui.impl.VoiceServices, whose
     administration services need the VoiceAdmin permission. These are XML screens, so they render in the terminal (tui) too. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Voice" default-menu-index="20" menu-image="sym_o_call" menu-image-type="icon">
@@ -28,6 +28,8 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Fraud" menu-index="5" location="component://basic-comms/screen/System/Voice/Fraud.xml"/>
         <subscreens-item name="Emergency" menu-index="6" location="component://basic-comms/screen/System/Voice/Emergency.xml"/>
         <subscreens-item name="Phones" menu-index="7" location="component://basic-comms/screen/System/Voice/Phones.xml"/>
+        <subscreens-item name="RingGroups" menu-index="8" location="component://basic-comms/screen/System/Voice/RingGroups.xml"/>
+        <subscreens-item name="Schedules" menu-index="9" location="component://basic-comms/screen/System/Voice/Schedules.xml"/>
     </subscreens>
     <widgets>
         <subscreens-panel id="VoicePanel" type="tab"/>

@@ -1,0 +1,137 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The dialer (plans/Comms-Framework.md §5.5, V3), the component Calls/Dialer.xml and the tray's Panel/Dialer.xml serve in
+    the qvue render mode: a number field with a keypad, the search for a person or a number as it is typed (the apps'
+    recipient-source providers, or the framework's users with a number), what the number becomes in E.164 by the deployment's
+    rules, recent numbers, the caller ID (the user's numbers and their ring groups') with Hide my number, and Call, which
+    places the call (VoiceServices place#PhoneCall) and opens it in the page's call (moqui.call, the LiveCall window). The
+    transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and app mounts it. -->
+<template><div class="m-dialer column q-gutter-sm" :class="compact ? 'q-pa-sm' : 'q-pa-md'" :style="compact ? '' : 'max-width:420px'">
+    <div v-if="!compact" class="text-h6">{{t('Dialer')}}</div>
+    <q-banner v-if="loaded && !data.phoneActive" dense rounded class="bg-warning text-black">{{t('Phone calls are not available here.')}}</q-banner>
+    <q-banner v-else-if="loaded && !data.callerIdList.length" dense rounded class="bg-grey-3 text-black">
+        {{t('You have no number to call from; an administrator can give you one.')}}</q-banner>
+    <q-input outlined v-model="text" :label="t('Name or number')" autofocus clearable class="text-h6" @keyup.enter="call"
+            @update:model-value="search" input-class="text-mono" aria-label="Name or number">
+        <template v-slot:append><q-btn flat dense round icon="sym_o_backspace" :aria-label="t('Delete')" @click="back" v-if="text"></q-btn></template>
+    </q-input>
+    <div class="text-caption m-muted" v-if="number">{{t('Calls')}} <span class="text-mono">{{number}}</span></div>
+    <q-list dense bordered separator class="rounded-borders" v-if="results.length">
+        <template v-for="r in results" :key="r.sourceId + ':' + (r.itemId || r.name)">
+            <q-item v-for="ph in r.phoneList" :key="ph.number" clickable @click="pick(ph.number)">
+                <q-item-section avatar><q-icon name="sym_o_person"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{r.name}}</q-item-label>
+                    <q-item-label caption class="text-mono">{{ph.number}}<span v-if="ph.label"> · {{ph.label}}</span></q-item-label></q-item-section>
+            </q-item>
+        </template>
+    </q-list>
+    <div class="m-dialer-keys" role="group" :aria-label="t('Keypad')">
+        <q-btn v-for="k in keys" :key="k.key" outline no-caps class="m-dialer-key" @click="press(k.key)" :aria-label="k.key">
+            <div class="column items-center"><span class="text-h6">{{k.key}}</span><span class="text-caption m-muted" style="line-height:1">{{k.letters || '\u00a0'}}</span></div>
+        </q-btn>
+    </div>
+    <q-select v-if="data.callerIdList.length > 1" dense outlined emit-value map-options v-model="fromNumber" :options="callerIdOptions" :label="t('Call from')"></q-select>
+    <div v-else-if="data.callerIdList.length === 1" class="text-caption m-muted">{{t('Calls from')}} {{callerIdOptions[0].label}}</div>
+    <q-toggle v-model="hideCallerId" :label="t('Hide my number')" dense></q-toggle>
+    <q-btn unelevated no-caps color="positive" icon="sym_o_call" :label="t('Call')" :loading="busy" :disable="!text || !data.phoneActive" @click="call"></q-btn>
+    <div v-if="data.recentList.length">
+        <div class="text-caption m-muted q-mb-xs">{{t('Recent')}}</div>
+        <div class="row q-gutter-xs"><q-chip v-for="r in data.recentList" :key="r.number" clickable dense icon="sym_o_history" @click="pick(r.number)">
+            <span class="text-mono">{{r.number}}</span></q-chip></div>
+    </div>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const KEYS = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'],
+    ['*', ''], ['0', '+'], ['#', '']].map(([key, letters]) => ({ key, letters }));
+module.exports = {
+    name: 'Dialer',
+    inject: { mScreen: { default: null } },
+    data() {
+        return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
+            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0 };
+    },
+    computed: {
+        base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
+        compact() { return /\/Panel\//.test(this.base); },
+        callerIdOptions() {
+            return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
+        }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
+    methods: {
+        t,
+        url(name) { return this.base + '/' + name; },
+        load() {
+            return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
+                const json = result.json || {};
+                this.data = Object.assign({ callerIdList: [], recentList: [] }, json);
+                this.fromNumber = this.data.callerIdList.length ? this.data.callerIdList[0].phoneNumber : null;
+                this.hideCallerId = !!json.hideCallerId;
+                this.loaded = true;
+            }, (err) => { this.loaded = true; moqui.handleAjaxError(err); });
+        },
+        press(key) {
+            // 00 at the start is read as + by the server's rules; a live call's keys are m-call's keypad
+            this.text = (this.text || '') + key;
+            this.search();
+        },
+        back() { this.text = (this.text || '').slice(0, -1); this.search(); },
+        pick(number) { this.text = number; this.results = []; this.search(); },
+        search() {
+            if (this.timer) clearTimeout(this.timer);
+            const text = (this.text || '').trim();
+            if (!text) { this.results = []; this.number = null; return; }
+            this.timer = setTimeout(() => {
+                const seq = ++this.seq;
+                moqui.request(this.url('dialSearch'), { params: { text } }).then((result) => {
+                    if (seq !== this.seq) return;
+                    const json = result.json || {};
+                    this.number = json.number || null;
+                    this.results = /^[+0-9*#()\-. ]+$/.test(text) && json.number ? [] : (json.resultList || []);
+                }, () => null);
+            }, 250);
+        },
+        call() {
+            if (!this.text || this.busy) return;
+            this.busy = true;
+            const params = { phoneNumber: this.number || this.text, fromNumber: this.fromNumber || '', hideCallerId: this.hideCallerId ? 'true' : 'false',
+                idempotencyKey: 'd' + Date.now() + Math.random().toString(36).slice(2) };
+            moqui.request(this.url('dialNumber'), { method: 'POST', params }).then((result) => {
+                this.busy = false;
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages([], json.errors); return; }
+                if (!json.callSessionId) return;
+                if (moqui.call && json.callLegId) {
+                    if (json.call && moqui.call.remember) moqui.call.remember(json.call);
+                    moqui.call.open(json.callSessionId);
+                    moqui.call.join(json.callSessionId, json.callLegId, { video: false });
+                } else {
+                    this.$root.setUrl(this.base.replace(/\/(Calls\/Dialer|Panel\/Dialer)$/, '/Calls/Call') + '?callSessionId=' + encodeURIComponent(json.callSessionId));
+                }
+                this.text = '';
+                this.number = null;
+                this.load();
+            }, (err) => { this.busy = false; moqui.handleAjaxError(err); });
+        }
+    }
+};
+</script>
+
+<style>
+.m-dialer-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.m-dialer-key { min-height: 52px; }
+</style>
