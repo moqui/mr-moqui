@@ -40,10 +40,12 @@ impl Default for CheckTool {
             "check",
             "Check a Moqui file, saved or as proposed text: schema, references, expressions, and whether an edit there is \
              an upstream edit that belongs in the site component. Each problem names its rule and the skill section with \
-             it. With no file: the problems of the last reloads.",
+             it. With no file: the problems of the last reloads. With project, a file of another Moqui project, checked \
+             on that project's model.",
             object(&[
                 Property::optional("file", "string", "component://<component>/<path>, or root:path"),
                 Property::optional("text", "string", "The proposed text of the file; the saved text when left out"),
+                Property::optional("project", "string", super::artifact::PROJECT_ARG),
             ]),
             Classification::Read,
         )
@@ -68,6 +70,9 @@ impl AgentTool for CheckTool {
 
 fn run(args: &Json) -> Result<Json, ToolError> {
     let context = context(Tier::View)?;
+    if let Some(project) = super::artifact::project_of(&context, args, true)? {
+        return check_in_project(&project, args);
+    }
     let Some(named) = arg(args, "file") else {
         let reports = recent_reports(&context.factory);
         let problems: Vec<&Problem> = reports.iter().take(20).flat_map(|report| report.problems()).collect();
@@ -89,6 +94,31 @@ fn run(args: &Json) -> Result<Json, ToolError> {
         .filter(|problem| problem.severity == Severity::Error)
         .count();
     Ok(json!({"file": named.shown, "errors": errors, "problems": problems}))
+}
+
+/// The checks of a file of another project (`project`), saved or as proposed text, on that project's model. With no
+/// file: the files of the project that did not read.
+fn check_in_project(project: &moqui_devkit::project::cache::ProjectIndex, args: &Json) -> Result<Json, ToolError> {
+    let named = super::artifact::project_json(project);
+    let Some(file) = arg(args, "file") else {
+        let summary = project.summary();
+        return Ok(
+            json!({"project": named, "files": summary.files, "artifacts": summary.artifacts,
+            "notRead": summary.problems.iter().map(|(path, why)| json!({"file": path, "message": why})).collect::<Vec<_>>()}),
+        );
+    };
+    let path = super::artifact::project_file(project, file)?;
+    let shown = project.location_of(&path).unwrap_or_else(|| path.display().to_string());
+    let text = match args.get("text").and_then(Json::as_str) {
+        Some(text) => text.to_string(),
+        None => std::fs::read_to_string(&path).map_err(|err| ToolError::new("not_read", format!("{shown}: {err}")))?,
+    };
+    let problems = project.check(&path, &text);
+    let errors = problems
+        .iter()
+        .filter(|problem| problem.severity == Severity::Error)
+        .count();
+    Ok(json!({"project": named, "file": shown, "errors": errors, "problems": problems}))
 }
 
 /// The checks of `text` as the file at `path`: an XML file's schema, references and expressions.

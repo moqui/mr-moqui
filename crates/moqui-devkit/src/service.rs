@@ -125,6 +125,22 @@ fn with_index<T>(
     }
 }
 
+/// The project a call names in `project` (another Moqui project on this machine, [`crate::project::cache::requested`]):
+/// `Ok(None)` for the server's own runtime. Its error is added as a message and answered `Err`.
+fn project_in(
+    parameters: &BTreeMap<String, Value>,
+    model: bool,
+) -> Result<Option<std::sync::Arc<crate::project::cache::ProjectIndex>>, ()> {
+    let named = text_in(parameters, "project");
+    if named.trim().is_empty() {
+        return Ok(None);
+    }
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory())).ok_or(())?;
+    crate::project::cache::requested(&named, &factory, model).map_err(|err| {
+        ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
+    })
+}
+
 /// `find#Artifacts`: the artifacts whose names match a text (plans/design-dev-aide.md 7.2). Out: `artifacts`.
 fn find_artifacts(
     parameters: &BTreeMap<String, Value>,
@@ -138,6 +154,19 @@ fn find_artifacts(
         .parse::<usize>()
         .unwrap_or(50)
         .clamp(1, 500);
+    let Ok(project) = project_in(parameters, false) else {
+        return Ok(out);
+    };
+    if let Some(project) = project {
+        let found = project.find(
+            &text_in(parameters, "text"),
+            &list_in(parameters, "kinds"),
+            &list_in(parameters, "components"),
+            limit,
+        );
+        out.insert("artifacts".to_string(), json_value(&found));
+        return Ok(out);
+    }
     let found = with_index(|factory| {
         crate::index::find(
             factory,
@@ -162,8 +191,46 @@ fn get_artifact(
     if !allowed_read("The artifact index") {
         return Ok(out);
     }
-    if let Some(found) = with_index(|factory| crate::index::named(factory, &text_in(parameters, "artifactId"))) {
+    let Ok(project) = project_in(parameters, true) else {
+        return Ok(out);
+    };
+    let name = text_in(parameters, "artifactId");
+    let (found, parts, parameters_of) = match &project {
+        Some(project) => {
+            let found = project.named(&name);
+            let parts = found
+                .as_ref()
+                .map(|artifact| project.children(&artifact.id))
+                .unwrap_or_default();
+            let params = found
+                .as_ref()
+                .filter(|artifact| artifact.kind == "service")
+                .and_then(|artifact| project.service_parameters(&artifact.name));
+            (found, parts, params)
+        }
+        None => {
+            let Some(found) = with_index(|factory| crate::index::named(factory, &name)) else {
+                return Ok(out);
+            };
+            let parts = found
+                .as_ref()
+                .and_then(|artifact| with_index(|factory| crate::index::children(factory, &artifact.id)))
+                .unwrap_or_default();
+            let params = found
+                .as_ref()
+                .filter(|artifact| artifact.kind == "service")
+                .and_then(|artifact| moqui_core::service::define::find(&artifact.name))
+                .map(|def| crate::project::cache::parameters_of(&def));
+            (found, parts, params)
+        }
+    };
+    if let Some(found) = found {
         out.insert("artifact".to_string(), json_value(&found));
+        // an entity's fields, a screen's transitions and forms
+        out.insert("parts".to_string(), json_value(&parts));
+        if let Some(params) = parameters_of {
+            out.insert("parameters".to_string(), json_value(&params));
+        }
     }
     Ok(out)
 }
@@ -178,6 +245,18 @@ fn get_artifact_refs(
         return Ok(out);
     }
     let direction = crate::index::Direction::parse(&text_in(parameters, "direction"));
+    let Ok(project) = project_in(parameters, false) else {
+        return Ok(out);
+    };
+    if let Some(project) = project {
+        let found = project.refs(
+            &text_in(parameters, "artifactId"),
+            direction,
+            &list_in(parameters, "kinds"),
+        );
+        out.insert("refs".to_string(), json_value(&found));
+        return Ok(out);
+    }
     let found = with_index(|factory| {
         crate::index::refs(
             factory,
@@ -203,6 +282,26 @@ fn get_artifact_at(
         return Ok(out);
     }
     let line = text_in(parameters, "line").parse::<u32>().unwrap_or(0);
+    let Ok(project) = project_in(parameters, false) else {
+        return Ok(out);
+    };
+    if let Some(project) = project {
+        let Some(path) = project.file(&text_in(parameters, "path")) else {
+            ExecutionContext::with_current(|ec| {
+                ec.message().add_error(format!(
+                    "{} is in no component of the project",
+                    text_in(parameters, "path")
+                ));
+            });
+            return Ok(out);
+        };
+        if let Some((reference, artifact)) = project.at(&path.display().to_string(), line, &text_in(parameters, "word"))
+        {
+            out.insert("reference".to_string(), json_value(&reference));
+            out.insert("artifact".to_string(), json_value(&artifact));
+        }
+        return Ok(out);
+    }
     let found = with_index(|factory| {
         crate::index::at(
             factory,
@@ -228,7 +327,13 @@ fn get_artifact_extensions(
     if !allowed_read("The artifact index") {
         return Ok(out);
     }
-    let found = with_index(|factory| crate::index::extensions(factory, &list_in(parameters, "components")));
+    let Ok(project) = project_in(parameters, false) else {
+        return Ok(out);
+    };
+    let found = match project {
+        Some(project) => Some(project.extensions(&list_in(parameters, "components"))),
+        None => with_index(|factory| crate::index::extensions(factory, &list_in(parameters, "components"))),
+    };
     if let Some(found) = found {
         let broken = found.iter().filter(|extension| !extension.resolved).count();
         out.insert("extensions".to_string(), json_value(&found));
@@ -250,6 +355,22 @@ fn rebuild_artifact_index(
         return Ok(out);
     }
     let full = text_in(parameters, "full") == "true";
+    let named = text_in(parameters, "project");
+    if !named.trim().is_empty() {
+        // another project: a full rebuild boots it again; else its files are looked at now
+        if full {
+            if let Ok(found) = crate::project::requested_dir(&named).and_then(|dir| crate::project::detect(&dir)) {
+                crate::project::cache::forget(&found.root);
+            }
+        }
+        let Ok(project) = project_in(parameters, true) else {
+            return Ok(out);
+        };
+        if let Some(project) = project {
+            out.insert("report".to_string(), json_value(&project.summary()));
+            return Ok(out);
+        }
+    }
     let found = with_index(|factory| crate::index::rebuild(factory, full));
     if let Some(report) = found {
         out.insert("report".to_string(), json_value(&report));

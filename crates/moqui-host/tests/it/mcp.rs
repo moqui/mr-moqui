@@ -856,6 +856,8 @@ fn the_dev_tools_over_mcp() {
     assert!(rules.contains(&"reference.entity"), "{checked}");
     assert!(rules.contains(&"upstream.edit"), "the framework is upstream: {checked}");
 
+    another_project(&ann, address);
+
     // moqui check, refs and lsp with --server: a local file checked by the server, by its component location
     #[cfg(all(feature = "devtools", feature = "tui"))]
     {
@@ -887,4 +889,183 @@ fn the_dev_tools_over_mcp() {
         );
         assert!(!remote.uses("entity:moqui.basic.EnumerationType").is_empty());
     }
+}
+
+/// A Java Moqui checkout in `dir`: Groovy sources in the framework (no component.xml, no conf) with an entity of its
+/// own, and a component with an entity, a service and a screen whose transition calls it.
+#[cfg(feature = "devtools")]
+fn java_checkout_at(dir: &std::path::Path) {
+    let write = |path: &str, text: &str| {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("framework/build.gradle", "");
+    write("framework/src/main/groovy/org/moqui/Moqui.groovy", "class Moqui {}");
+    write(
+        "framework/entity/OlapEntities.xml",
+        r#"<entities><entity entity-name="JavaOnlyFact" package="moqui.olap"><field name="factId" type="id" is-pk="true"/></entity></entities>"#,
+    );
+    write(
+        "runtime/component/fp-core/component.xml",
+        r#"<component name="fp-core"/>"#,
+    );
+    write(
+        "runtime/component/fp-core/entity/PicklistEntities.xml",
+        r#"<entities>
+    <entity entity-name="PicklistBatch" package="fp.picklist">
+        <field name="batchId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+    </entity>
+    <entity entity-name="PicklistItem" package="fp.picklist">
+        <field name="itemId" type="id" is-pk="true"/><field name="batchId" type="id"/>
+    </entity>
+</entities>"#,
+    );
+    write(
+        "runtime/component/fp-core/service/fp/BatchServices.xml",
+        r#"<services>
+    <service verb="close" noun="Batch">
+        <in-parameters><parameter name="batchId" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+        <actions><entity-find-one entity-name="fp.picklist.PicklistBatch" value-field="batch"/></actions>
+    </service>
+</services>"#,
+    );
+    write(
+        "runtime/component/fp-core/screen/Batch/BatchDetails.xml",
+        &batch_screen("update#fp.picklist.PicklistBatch"),
+    );
+}
+
+/// The fixture's screen, its transition calling `service`.
+#[cfg(feature = "devtools")]
+fn batch_screen(service: &str) -> String {
+    format!(
+        r#"<screen>
+    <transition name="updateBatch">
+        <actions><service-call name="{service}" in-map="[batchId:batchId]"/></actions>
+        <default-response url="."/>
+    </transition>
+    <widgets/>
+</screen>"#
+    )
+}
+
+/// The dev tools about another project (plans/design-dev-aide.md 13.6): a Java Moqui checkout named by its directory is
+/// read on first use, answers refs, describe (an entity's fields, a service's parameters) and check, and a file
+/// changed on disk changes the next answer with no restart; a relative or `..` path is refused.
+#[cfg(feature = "devtools")]
+fn another_project(ann: &Caller, address: SocketAddr) {
+    let dir =
+        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("mcp-java-checkout-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    java_checkout_at(&dir);
+    let dir = std::fs::canonicalize(&dir).unwrap();
+    let project = dir.display().to_string();
+    let screen = dir.join("runtime/component/fp-core/screen/Batch/BatchDetails.xml");
+    let answer = |arguments: Json| -> Json {
+        let result = ann.call("artifact", arguments, json!({}));
+        serde_json::from_str(&text(&result)).unwrap_or_else(|_| panic!("{result}"))
+    };
+    let used = |answer: &Json| -> Vec<String> {
+        answer["refs"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .iter()
+            .filter_map(|row| {
+                row["artifact"]["id"]
+                    .as_str()
+                    .map(|id| format!("{} {id}", row["how"].as_str().unwrap_or("")))
+            })
+            .collect()
+    };
+    let refs = || {
+        answer(json!({"action": "refs", "direction": "out", "file": screen.display().to_string(), "project": project}))
+    };
+    let first = refs();
+    assert_eq!(first["project"]["layout"], "java", "{first}");
+    assert!(
+        used(&first).contains(&"service-call entity:fp.picklist.PicklistBatch".to_string()),
+        "{first}"
+    );
+    assert_eq!(
+        first["refs"][0]["file"], "component://fp-core/screen/Batch/BatchDetails.xml",
+        "{first}"
+    );
+    // its artifacts, not the server's
+    let found = answer(json!({"action": "find", "text": "EnumerationType", "kinds": "entity", "project": project}));
+    assert!(found["artifacts"].as_array().unwrap().is_empty(), "{found}");
+    let entity = answer(json!({"action": "describe", "id": "entity:fp.picklist.PicklistBatch", "project": project}));
+    let fields: Vec<&str> = entity["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["name"].as_str())
+        .collect();
+    assert_eq!(fields, ["batchId", "statusId"], "{entity}");
+    assert!(entity.get("side").is_none(), "no side in another project: {entity}");
+    let service =
+        answer(json!({"action": "describe", "id": "service:fp.BatchServices.close#Batch", "project": project}));
+    assert_eq!(service["parameters"]["in"][0]["name"], "batchId", "{service}");
+    assert_eq!(service["parameters"]["in"][0]["required"], true, "{service}");
+    assert_eq!(service["parameters"]["out"][0]["name"], "statusId", "{service}");
+
+    // changed on disk: the next answer has it, no restart
+    std::fs::write(&screen, batch_screen("create#fp.picklist.PicklistItem")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let second = refs();
+    assert!(
+        used(&second).contains(&"service-call entity:fp.picklist.PicklistItem".to_string()),
+        "{second}"
+    );
+    assert!(
+        !used(&second).iter().any(|used| used.ends_with("PicklistBatch")),
+        "{second}"
+    );
+
+    // the checks on the project's model: its entities resolve, the server's do not
+    let checked = ann.call(
+        "check",
+        json!({"project": project, "file": "component://fp-core/entity/PicklistEntities.xml",
+            "text": "<entities><entity entity-name=\"Bad\" package=\"x\"><relationship type=\"one\" related=\"moqui.basic.Enumeration\"/><relationship type=\"one\" related=\"fp.picklist.PicklistBatch\"/></entity></entities>"}),
+        json!({}),
+    );
+    let checked: Json = serde_json::from_str(&text(&checked)).unwrap();
+    let problems = checked["problems"].to_string();
+    assert!(problems.contains("moqui.basic.Enumeration"), "{checked}");
+    assert!(!problems.contains("fp.picklist.PicklistBatch"), "{checked}");
+
+    // a path that is not plain and absolute is refused
+    for bad in ["runtime", "/tmp/../etc"] {
+        let result = ann.call(
+            "artifact",
+            json!({"action": "find", "text": "x", "project": bad}),
+            json!({}),
+        );
+        assert_eq!(result["isError"], true, "{bad}: {result}");
+    }
+
+    // moqui refs --server URL --project DIR: the same answer through the CLI's client
+    #[cfg(feature = "tui")]
+    {
+        std::env::set_var("MOQUI_LOGIN_KEY", &ann.key);
+        let remote = moqui_host::devtools_remote::Remote::connect(&format!("http://{address}"))
+            .unwrap()
+            .with_project(&dir, false);
+        std::env::remove_var("MOQUI_LOGIN_KEY");
+        let answer = remote.file_refs(&screen, "out").unwrap();
+        assert!(
+            used(&answer).contains(&"service-call entity:fp.picklist.PicklistItem".to_string()),
+            "{answer}"
+        );
+        let found = remote.find("PicklistBatch", &["entity".to_string()], 5);
+        assert_eq!(
+            found[0].path,
+            dir.join("runtime/component/fp-core/entity/PicklistEntities.xml"),
+            "{found:?}"
+        );
+    }
+    #[cfg(not(feature = "tui"))]
+    let _ = address;
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -314,6 +314,8 @@ pub struct MemoryIndex {
     pub resolver: Resolver,
     /// Files that did not read or parse, with why.
     pub problems: Vec<(String, String)>,
+    /// Each artifact's position in `artifacts` by id, for [`Self::describe`]; made again by each read.
+    positions: HashMap<String, usize>,
 }
 
 impl MemoryIndex {
@@ -347,7 +349,97 @@ impl MemoryIndex {
         for (_, row) in &mut index.refs {
             index.resolver.resolve(row, &exists);
         }
+        index.position();
         index
+    }
+
+    fn position(&mut self) {
+        self.positions = self
+            .artifacts
+            .iter()
+            .enumerate()
+            .map(|(at, artifact)| (artifact.id.clone(), at))
+            .collect();
+    }
+
+    /// The rows of the files `paths` read again from disk (`files` are the ones there now; a path with none was
+    /// removed), the names resolved again. A file that does not read or parse loses its rows and is listed in
+    /// [`Self::problems`]; the others go on. Answers how many files were read.
+    pub fn replace_files(&mut self, factory: &ExecutionContextFactory, paths: &[String], files: &[Located]) -> usize {
+        let gone: HashSet<&str> = paths.iter().map(String::as_str).collect();
+        self.artifacts.retain(|artifact| !gone.contains(artifact.path.as_str()));
+        self.refs.retain(|(file, _)| !gone.contains(file.as_str()));
+        self.problems.retain(|(file, _)| !gone.contains(file.as_str()));
+        for file in files {
+            let path = file.path.display().to_string();
+            match file.extract() {
+                Ok((_, read)) => {
+                    self.artifacts.extend(read.artifacts);
+                    self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
+                }
+                Err(problem) => {
+                    tracing::error!("Artifact index: {path} not read: {problem}");
+                    self.problems.push((path, problem));
+                }
+            }
+        }
+        let mut resolver = Resolver::default();
+        for artifact in &self.artifacts {
+            resolver.add(artifact);
+        }
+        let exists = |location: &str| location_exists(factory, location);
+        for (_, row) in &mut self.refs {
+            resolver.resolve(row, &exists);
+        }
+        self.resolver = resolver;
+        self.position();
+        files.len()
+    }
+
+    /// [`Self::find`] in `components` when not empty.
+    #[must_use]
+    pub fn find_in(&self, text: &str, kinds: &[String], components: &[String], limit: usize) -> Vec<ArtifactRow> {
+        rank(
+            self.artifacts
+                .iter()
+                .filter(|artifact| kinds.is_empty() || kinds.contains(&artifact.kind))
+                .filter(|artifact| components.is_empty() || components.contains(&artifact.component))
+                .cloned()
+                .collect(),
+            text,
+            limit,
+        )
+    }
+
+    /// The artifacts whose parent is `id` (an entity's fields, a screen's transitions and forms), in file order.
+    #[must_use]
+    pub fn children(&self, id: &str) -> Vec<ArtifactRow> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| artifact.parent.as_deref() == Some(id))
+            .cloned()
+            .collect()
+    }
+
+    /// The artifacts the file `path` defines at its top (no parent): a screen, an entity file's entities, a service
+    /// file's services.
+    #[must_use]
+    pub fn in_file(&self, path: &str) -> Vec<ArtifactRow> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| artifact.path == path && artifact.parent.is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// [`Self::refs`], keeping those whose other side is of `kinds` when not empty, as the database index's [`refs`].
+    #[must_use]
+    pub fn refs_of_kinds(&self, id: &str, direction: Direction, kinds: &[String]) -> Vec<RefEntry> {
+        let mut entries = self.refs(id, direction);
+        if !kinds.is_empty() {
+            entries.retain(|item| item.other.as_ref().is_some_and(|other| kinds.contains(&other.kind)));
+        }
+        entries
     }
 
     /// The artifacts whose names match `text`, best first.
@@ -366,6 +458,14 @@ impl MemoryIndex {
 
     #[must_use]
     pub fn describe(&self, id: &str) -> Option<ArtifactRow> {
+        if let Some(found) = self
+            .positions
+            .get(id)
+            .and_then(|at| self.artifacts.get(*at))
+            .filter(|artifact| artifact.id == id)
+        {
+            return Some(found.clone());
+        }
         self.artifacts.iter().find(|artifact| artifact.id == id).cloned()
     }
 
@@ -450,6 +550,7 @@ impl MemoryIndex {
             resolver.resolve(row, &exists);
         }
         self.resolver = resolver;
+        self.position();
         true
     }
 
@@ -1502,6 +1603,29 @@ pub fn children(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<Vec<
         .values()
         .iter()
         .map(artifact_of)
+        .collect())
+}
+
+/// The artifacts the file `path` defines at its top (no parent), as [`MemoryIndex::in_file`].
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn in_file(factory: &Arc<ExecutionContextFactory>, path: &str) -> Result<Vec<ArtifactRow>, Error> {
+    ensure(factory)?;
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _lifted = fence::lift();
+    let path = canonical(Path::new(path)).display().to_string();
+    Ok(facade
+        .find(ARTIFACT)?
+        .disable_authz()
+        .eq("filePath", Value::string(path))
+        .order_by("sequenceNum", false)
+        .list()?
+        .values()
+        .iter()
+        .map(artifact_of)
+        .filter(|artifact| artifact.parent.is_none())
         .collect())
 }
 

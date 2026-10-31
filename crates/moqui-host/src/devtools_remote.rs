@@ -17,6 +17,10 @@
 //! as the user of the login key `moqui tui --server` keeps for that server (or `MOQUI_LOGIN_KEY`). A local file is the
 //! `component://` location of the nearest directory above it with a `component.xml`, and a location the file of the
 //! runtime's component of that name.
+//!
+//! With a project (`--project DIR`, [`Remote::with_project`]), every call names it, and the server answers about that
+//! Moqui project on its machine instead of its own runtime; a local file is then named by its absolute path, and a
+//! location the file of that project's component.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,6 +51,8 @@ pub struct Remote {
     client: reqwest::blocking::Client,
     /// Component names to their directories here, read once.
     components: Mutex<Option<HashMap<String, PathBuf>>>,
+    /// The project every call names: its directory on the server's machine.
+    project: Option<String>,
 }
 
 impl Remote {
@@ -89,7 +95,55 @@ impl Remote {
             key,
             client,
             components: Mutex::new(None),
+            project: None,
         })
+    }
+
+    /// Ask about the Moqui project at `dir` (a directory on the server's machine) instead of the server's own runtime.
+    /// When `dir` is a project here too, its canonical root is sent, and its components are the ones a location the
+    /// server answers is a file of.
+    #[must_use]
+    pub fn with_project(mut self, dir: &Path, java: bool) -> Self {
+        let found = if java {
+            moqui_devkit::project::detect_java(dir)
+        } else {
+            moqui_devkit::project::detect(dir)
+        };
+        let named = match found {
+            Ok(project) => {
+                let mut dirs = component_dirs_in(&project.runtime);
+                if project.layout == moqui_devkit::project::Layout::Java {
+                    dirs.insert("framework".to_string(), project.root.join("framework"));
+                }
+                *moqui_lib::sync::lock(&self.components) = Some(dirs);
+                project.root
+            }
+            // not here: the server's machine has it, or answers why not
+            Err(_) => std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()),
+        };
+        self.project = Some(named.display().to_string());
+        self
+    }
+
+    /// `arguments` with the project, when one is named.
+    fn with_project_arg(&self, mut arguments: Json) -> Json {
+        if let (Some(project), Some(map)) = (&self.project, arguments.as_object_mut()) {
+            map.insert("project".to_string(), json!(project));
+        }
+        arguments
+    }
+
+    /// How a call names the local file `path`: its absolute path in a project, else its `component://` location.
+    fn file_arg(&self, path: &Path) -> Option<String> {
+        if self.project.is_some() {
+            return Some(
+                std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| path.to_path_buf())
+                    .display()
+                    .to_string(),
+            );
+        }
+        location_of(path)
     }
 
     /// A tool's answer: the JSON of its first text content.
@@ -101,6 +155,7 @@ impl Remote {
         // a stateless call: each names the protocol and the client, as the MCP server asks
         let meta = json!({"io.modelcontextprotocol/protocolVersion": PROTOCOL, "io.modelcontextprotocol/clientCapabilities": {},
             "io.modelcontextprotocol/clientInfo": {"name": "moqui-devtools", "version": env!("CARGO_PKG_VERSION")}});
+        let arguments = self.with_project_arg(arguments);
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": tool, "arguments": arguments, "_meta": meta}});
         let response = self
@@ -150,7 +205,7 @@ impl Remote {
 
     /// The problems of `text` as the file at `path`.
     pub fn check(&self, path: &Path, text: &str) -> Result<Vec<Problem>, Error> {
-        let location = location_of(path).ok_or_else(|| {
+        let location = self.file_arg(path).ok_or_else(|| {
             Error::new(format!(
                 "{} is in no component (no component.xml above it)",
                 path.display()
@@ -200,7 +255,7 @@ impl Remote {
     }
 
     pub fn at(&self, path: &Path, line: u32, word: &str) -> Option<Target> {
-        let location = location_of(path)?;
+        let location = self.file_arg(path)?;
         let answer = self
             .call(
                 "artifact",
@@ -233,6 +288,24 @@ impl Remote {
         self.call(
             "artifact",
             json!({ "action": "refs", "id": id, "direction": direction }),
+        )
+    }
+
+    /// [`Remote::refs`] of every artifact the local file `path` defines.
+    ///
+    /// # Errors
+    ///
+    /// Returns the server's error, or that the file is in no component.
+    pub fn file_refs(&self, path: &Path, direction: &str) -> Result<Json, Error> {
+        let file = self.file_arg(path).ok_or_else(|| {
+            Error::new(format!(
+                "{} is in no component (no component.xml above it)",
+                path.display()
+            ))
+        })?;
+        self.call(
+            "artifact",
+            json!({ "action": "refs", "file": file, "direction": direction }),
         )
     }
 
@@ -291,7 +364,11 @@ pub(crate) fn location_of(path: &Path) -> Option<String> {
 
 /// The components of this runtime by name: the directories of `base-component`, `component` and `dev-component`.
 fn component_dirs() -> HashMap<String, PathBuf> {
-    let (runtime, _) = crate::runtime_framework_dirs();
+    component_dirs_in(&crate::runtime_framework_dirs().0)
+}
+
+/// The components of the runtime `runtime` by name.
+fn component_dirs_in(runtime: &Path) -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
     for kind in ["base-component", "component", "dev-component"] {
         let Ok(entries) = std::fs::read_dir(runtime.join(kind)) else {

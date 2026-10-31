@@ -24,12 +24,61 @@ use moqui_devkit::index::{Direction, MemoryIndex};
 use moqui_devkit::{check, Problem, Severity};
 use moqui_lib::error::Error;
 
+/// `--project DIR` (a Moqui project, its layout found from marker paths, [`moqui_devkit::project::detect`]) or
+/// `--java DIR` (the same, read as a Java Moqui checkout whatever its sources).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectArg {
+    pub dir: PathBuf,
+    pub java: bool,
+}
+
+impl ProjectArg {
+    /// The flag `arg` when it is `--project` or `--java` (taking its value from `rest` when not after `=`): `None` for
+    /// another argument, `Some(None)` for a flag with no value.
+    pub(crate) fn parse<'a>(arg: &str, rest: &mut impl Iterator<Item = &'a String>) -> Option<Option<Self>> {
+        let (java, value) = match arg {
+            "--project" => (false, rest.next().cloned()),
+            "--java" => (true, rest.next().cloned()),
+            other if let Some(dir) = other.strip_prefix("--project=") => (false, Some(dir.to_string())),
+            other if let Some(dir) = other.strip_prefix("--java=") => (true, Some(dir.to_string())),
+            _ => return None,
+        };
+        Some(value.filter(|dir| !dir.is_empty()).map(|dir| Self {
+            dir: PathBuf::from(dir),
+            java,
+        }))
+    }
+
+    /// The project here.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the directory is not one.
+    pub(crate) fn detect(&self) -> Result<moqui_devkit::project::Project, Error> {
+        if self.java {
+            moqui_devkit::project::detect_java(&self.dir)
+        } else {
+            moqui_devkit::project::detect(&self.dir)
+        }
+    }
+}
+
+/// A `--server` connection, naming the project when one is given.
+#[cfg(feature = "tui")]
+pub(crate) fn remote(url: &str, project: Option<&ProjectArg>) -> Result<crate::devtools_remote::Remote, Error> {
+    let remote = crate::devtools_remote::Remote::connect(url)?;
+    Ok(match project {
+        Some(project) => remote.with_project(&project.dir, project.java),
+        None => remote,
+    })
+}
+
 struct CheckArgs {
     paths: Vec<PathBuf>,
     json: bool,
     extensions: bool,
     server: Option<String>,
-    java: Option<PathBuf>,
+    project: Option<ProjectArg>,
 }
 
 fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
@@ -38,7 +87,7 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
         json: false,
         extensions: false,
         server: None,
-        java: None,
+        project: None,
     };
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -53,14 +102,9 @@ fn parse_check(args: &[String]) -> Result<CheckArgs, Error> {
                 );
             }
             other if let Some(url) = other.strip_prefix("--server=") => parsed.server = Some(url.to_string()),
-            "--java" => {
-                parsed.java = Some(
-                    rest.next()
-                        .map(PathBuf::from)
-                        .ok_or_else(|| crate::usage::command_usage("check"))?,
-                );
+            other if let Some(project) = ProjectArg::parse(other, &mut rest) => {
+                parsed.project = Some(project.ok_or_else(|| crate::usage::command_usage("check"))?);
             }
-            other if let Some(dir) = other.strip_prefix("--java=") => parsed.java = Some(PathBuf::from(dir)),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("check")),
             other => parsed.paths.push(PathBuf::from(other)),
         }
@@ -96,7 +140,7 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
                 if args.extensions {
                     return Err(Error::new("moqui check --extensions runs here, not with --server"));
                 }
-                let remote = crate::devtools_remote::Remote::connect(url)?;
+                let remote = remote(url, args.project.as_ref())?;
                 for file in &files {
                     let text = std::fs::read_to_string(file)
                         .map_err(|err| Error::new(format!("{}: {err}", file.display())))?;
@@ -112,7 +156,7 @@ pub(crate) fn dispatch_check(args: &[String]) -> Result<(), Error> {
             )));
         }
         None => {
-            let factory = model_only(args.java.as_deref())?;
+            let factory = model_only(args.project.as_ref())?;
             for file in &files {
                 problems.extend(check::check_file(&factory, file));
             }
@@ -248,27 +292,18 @@ fn collect_xml(dir: &Path, into: &mut Vec<PathBuf>) {
     }
 }
 
-/// Where a model-only boot reads: the runtime, the framework directory (its conf and XSDs), and the framework
-/// component's directory when it is another (a Java Moqui checkout's `framework`).
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ModelDirs {
-    pub runtime: PathBuf,
-    pub framework: PathBuf,
-    pub framework_component: Option<PathBuf>,
-}
+pub(crate) use moqui_devkit::project::ModelDirs;
 
-/// The directories of a model-only boot. `java` names a Java Moqui checkout (`--java`); with none, a Java checkout
-/// is found from `MOQUI_RUNTIME` (its `runtime`) or the working directory (the checkout or a directory in it) when
-/// there is no MR Moqui runtime there; else the MR Moqui runtime as every command finds it.
-pub(crate) fn model_dirs(java: Option<&Path>) -> Result<ModelDirs, Error> {
-    let checkout = match java {
-        Some(dir) => Some(
-            java_checkout(dir)
-                .ok_or_else(|| Error::new(format!("{} is not a Java Moqui checkout: it needs framework/entity and runtime/", dir.display())))?,
-        ),
+/// The directories of a model-only boot. `project` names a Moqui project (`--project`, or `--java` for a Java Moqui
+/// checkout); with none, a Java checkout is found from `MOQUI_RUNTIME` (its `runtime`) or the working directory (the
+/// checkout or a directory in it) when there is no MR Moqui runtime there; else the MR Moqui runtime as every command
+/// finds it.
+pub(crate) fn model_dirs(project: Option<&ProjectArg>) -> Result<ModelDirs, Error> {
+    let found = match project {
+        Some(project) => Some(project.detect()?),
         None => detected_java_checkout(),
     };
-    let Some(checkout) = checkout else {
+    let Some(found) = found else {
         let (runtime, framework) = crate::runtime_framework_dirs();
         return Ok(ModelDirs {
             runtime,
@@ -277,40 +312,28 @@ pub(crate) fn model_dirs(java: Option<&Path>) -> Result<ModelDirs, Error> {
         });
     };
     let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok();
-    let framework = mr_framework_for(std::env::var_os("MOQUI_FRAMEWORK").map(PathBuf::from), exe.as_deref())
-        .ok_or_else(|| {
-            Error::new(format!(
-                "{} is a Java Moqui checkout; its artifacts are read with MR Moqui's framework conf, which was not found \
-                 beside this executable: set MOQUI_FRAMEWORK to an MR Moqui runtime/base-component/framework",
-                checkout.display()
-            ))
-        })?;
+    let dirs = found.model_dirs(|| mr_framework_for(std::env::var_os("MOQUI_FRAMEWORK").map(PathBuf::from), exe.as_deref()))?;
     tracing::info!(
-        "Reading the Java Moqui checkout {} with the framework conf of {}",
-        checkout.display(),
-        framework.display()
+        "Reading the {} Moqui project {} with the framework conf of {}",
+        if found.layout == moqui_devkit::project::Layout::Java { "Java" } else { "MR" },
+        found.root.display(),
+        dirs.framework.display()
     );
-    Ok(ModelDirs {
-        runtime: checkout.join("runtime"),
-        framework,
-        framework_component: Some(checkout.join("framework")),
-    })
+    Ok(dirs)
 }
 
-/// `dir` when it is a Java Moqui checkout: `framework/entity` beside `runtime/`, and no MR Moqui framework in the runtime.
-fn java_checkout(dir: &Path) -> Option<PathBuf> {
-    let is_java = dir.join("framework/entity").is_dir()
-        && dir.join("runtime").is_dir()
-        && !dir.join("runtime/base-component/framework/component.xml").is_file();
-    is_java.then(|| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
+/// `dir` when it is a Java Moqui checkout (or its runtime), by [`moqui_devkit::project::detect`]'s markers.
+fn java_checkout(dir: &Path) -> Option<moqui_devkit::project::Project> {
+    moqui_devkit::project::detect(dir)
+        .ok()
+        .filter(|project| project.layout == moqui_devkit::project::Layout::Java)
 }
 
 /// The Java Moqui checkout `MOQUI_RUNTIME` is the runtime of, or else the one the working directory is in, when the
 /// working directory has no MR Moqui runtime.
-fn detected_java_checkout() -> Option<PathBuf> {
+fn detected_java_checkout() -> Option<moqui_devkit::project::Project> {
     if let Some(runtime) = std::env::var_os("MOQUI_RUNTIME").filter(|dir| !dir.is_empty()) {
-        let runtime = std::fs::canonicalize(&runtime).unwrap_or_else(|_| runtime.into());
-        return runtime.parent().and_then(java_checkout);
+        return java_checkout(Path::new(&runtime));
     }
     let cwd = std::env::current_dir().ok()?;
     if cwd.join("runtime/base-component/framework/component.xml").is_file() {
@@ -334,9 +357,9 @@ fn mr_framework_for(configured: Option<PathBuf>, exe: Option<&Path>) -> Option<P
 }
 
 /// A factory booted on the runtime with an entity facade of the framework's and the components' entities that opens no
-/// database, as `moqui types` boots. `java` names a Java Moqui checkout to read instead ([`model_dirs`]).
-pub(crate) fn model_only(java: Option<&Path>) -> Result<Arc<ExecutionContextFactory>, Error> {
-    model_only_in(model_dirs(java)?)
+/// database, as `moqui types` boots. `project` names another Moqui project to read instead ([`model_dirs`]).
+pub(crate) fn model_only(project: Option<&ProjectArg>) -> Result<Arc<ExecutionContextFactory>, Error> {
+    model_only_in(model_dirs(project)?)
 }
 
 /// [`model_only`] on `dirs`.
@@ -375,7 +398,7 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
     let mut json = false;
     let mut kinds = Vec::new();
     let mut server = None;
-    let mut java = None;
+    let mut project = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -384,8 +407,9 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
             "--json" => json = true,
             "--server" => server = rest.next().cloned(),
             other if let Some(url) = other.strip_prefix("--server=") => server = Some(url.to_string()),
-            "--java" => java = Some(PathBuf::from(rest.next().ok_or_else(|| crate::usage::command_usage("refs"))?)),
-            other if let Some(dir) = other.strip_prefix("--java=") => java = Some(PathBuf::from(dir)),
+            other if let Some(found) = ProjectArg::parse(other, &mut rest) => {
+                project = Some(found.ok_or_else(|| crate::usage::command_usage("refs"))?);
+            }
             "--kind" => kinds.extend(rest.next().cloned()),
             other if let Some(kind) = other.strip_prefix("--kind=") => kinds.push(kind.to_string()),
             other if other.starts_with('-') => return Err(crate::usage::command_usage("refs")),
@@ -396,9 +420,9 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
     let name = name.ok_or_else(|| crate::usage::command_usage("refs"))?;
     crate::logging::install_with_console(Some(tracing::Level::ERROR));
     if let Some(url) = server {
-        return remote_refs(&url, &name, outgoing, json, &kinds);
+        return remote_refs(&url, project.as_ref(), &name, outgoing, json, &kinds);
     }
-    let factory = model_only(java.as_deref())?;
+    let factory = model_only(project.as_ref())?;
     let index = MemoryIndex::build(&factory);
     // a file: every artifact it defines
     let targets: Vec<String> = match Path::new(&name)
@@ -472,11 +496,24 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
 }
 
 /// `moqui refs --server URL`: the references from a running dev instance's artifact index.
-fn remote_refs(url: &str, name: &str, outgoing: bool, json: bool, kinds: &[String]) -> Result<(), Error> {
+fn remote_refs(
+    url: &str,
+    project: Option<&ProjectArg>,
+    name: &str,
+    outgoing: bool,
+    json: bool,
+    kinds: &[String],
+) -> Result<(), Error> {
     #[cfg(feature = "tui")]
     {
-        let remote = crate::devtools_remote::Remote::connect(url)?;
-        let answer = remote.refs(name, if outgoing { "out" } else { "in" })?;
+        let remote = remote(url, project)?;
+        let direction = if outgoing { "out" } else { "in" };
+        // a file: every artifact it defines
+        let answer = if Path::new(name).is_file() {
+            remote.file_refs(Path::new(name), direction)?
+        } else {
+            remote.refs(name, direction)?
+        };
         let mut count = 0;
         for row in answer["refs"].as_array().into_iter().flatten() {
             let kind = row["artifact"]["kind"].as_str().unwrap_or_default();
@@ -509,7 +546,7 @@ fn remote_refs(url: &str, name: &str, outgoing: bool, json: bool, kinds: &[Strin
     }
     #[cfg(not(feature = "tui"))]
     {
-        let _ = (name, outgoing, json, kinds);
+        let _ = (project, name, outgoing, json, kinds);
         Err(Error::new(format!(
             "moqui refs --server {url} needs the tui feature's client"
         )))
@@ -530,8 +567,23 @@ mod tests {
         assert_eq!(parsed.server.as_deref(), Some("https://b.test"));
         assert!(parse_check(&args(&["--serverx"])).is_err());
         let parsed = parse_check(&args(&["--java", "/src/moqui", "a.xml"])).unwrap();
-        assert_eq!(parsed.java, Some(PathBuf::from("/src/moqui")));
+        assert_eq!(
+            parsed.project,
+            Some(ProjectArg {
+                dir: PathBuf::from("/src/moqui"),
+                java: true
+            })
+        );
         assert!(parse_check(&args(&["--java"])).is_err());
+        let parsed = parse_check(&args(&["--project=/src/mr", "a.xml"])).unwrap();
+        assert_eq!(
+            parsed.project,
+            Some(ProjectArg {
+                dir: PathBuf::from("/src/mr"),
+                java: false
+            })
+        );
+        assert!(parse_check(&args(&["--project"])).is_err());
     }
 
     /// A Java Moqui checkout in `dir`: the framework (no component.xml, no conf) with an entity of its own, a view
@@ -543,6 +595,7 @@ mod tests {
             std::fs::write(path, text).unwrap();
         };
         write("framework/build.gradle", "");
+        write("framework/src/main/groovy/org/moqui/Moqui.groovy", "");
         write(
             "framework/entity/OlapEntities.xml",
             r#"<entities>
@@ -592,9 +645,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("moqui-java-checkout-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         java_checkout_at(&dir);
-        let checkout = java_checkout(&dir).expect("a Java checkout");
+        let checkout = java_checkout(&dir).expect("a Java checkout").root;
+        // its runtime names the same checkout
+        assert_eq!(java_checkout(&dir.join("runtime")).map(|found| found.root), Some(checkout.clone()));
         // an MR Moqui runtime is not one
-        assert!(java_checkout(&dir.join("runtime")).is_none());
+        let repo_runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        assert!(java_checkout(&repo_runtime).is_none());
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let framework = repo.join("runtime/base-component/framework");
         assert_eq!(

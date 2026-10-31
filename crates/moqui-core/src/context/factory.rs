@@ -219,6 +219,12 @@ pub struct BootOptions {
     /// on a model-only boot (`moqui refs`, `moqui check`, `moqui lsp`). The conf, XSDs and templates stay the framework
     /// directory's; the framework directory's own entities and services load first, so the component's override them.
     pub framework_component: Option<PathBuf>,
+    /// A boot that only reads another project's artifacts inside a running process (a dev server answering about a
+    /// Moqui checkout that is not its runtime): the process is left as it is. No `runtime/.env` or default property is
+    /// applied, the work runs inline (no worker threads, no scheduler), no tool factory or resource provider of the conf
+    /// is started, no extension's after-boot hook or session hook runs, a `service-type` whose runner is not linked is
+    /// logged and left out, and the factory is not the last booted one that locations fall back to.
+    pub artifacts_only: bool,
 }
 
 /// The hook in [`BootOptions::before_init`].
@@ -231,6 +237,7 @@ impl std::fmt::Debug for BootOptions {
             .field("before_init", &self.before_init.as_ref().map(|_| ".."))
             .field("test_confs", &self.test_confs)
             .field("framework_component", &self.framework_component)
+            .field("artifacts_only", &self.artifacts_only)
             .finish()
     }
 }
@@ -306,9 +313,17 @@ impl ExecutionContextFactory {
         let component_dirs: Vec<_> = components.iter().map(|info| info.location.clone()).collect();
         let conf_node = conf::merge_component_confs(&framework_dir, &runtime_dir, &component_dirs, options.test_confs)?
             .unwrap_or(conf_node);
-        let native = crate::native::NativeRegistry::discover(&components, &conf_node)?;
-        let env_path = runtime_dir.join(".env");
-        let (property_names, mut set_by_boot) = apply_default_properties(&conf_node, &env_path)?;
+        let artifacts_only = options.artifacts_only;
+        let native = crate::native::NativeRegistry::discover(&components, &conf_node, artifacts_only)?;
+        let (property_names, mut set_by_boot) = if artifacts_only {
+            let names = conf_node
+                .named_iter("default-property")
+                .filter_map(|node| node.attribute("name").filter(|name| !name.is_empty()))
+                .collect();
+            (names, PropertyRollback::default())
+        } else {
+            apply_default_properties(&conf_node, &runtime_dir.join(".env"))?
+        };
         if let Some(before_init) = &options.before_init {
             before_init(&conf_node)?;
         }
@@ -320,11 +335,18 @@ impl ExecutionContextFactory {
         tracing::info!("Cache Facade initialized");
         let conf_text = conf_node.write_string();
         let (flush_mode, max_sessions) = crate::user::session::settings_from_conf(&conf_node)?;
-        let pools = match options.executor {
+        let executor = if artifacts_only {
+            Executor::Inline
+        } else {
+            options.executor
+        };
+        let pools = match executor {
             Executor::Threads => crate::service::start_pools(&conf_text)?,
             Executor::Inline => crate::service::ServicePools::inline(),
         };
-        super::locate::remember(&framework_dir, &components);
+        if !artifacts_only {
+            super::locate::remember(&framework_dir, &components);
+        }
         tracing::info!(
             runtime = %runtime_dir.display(),
             framework = %framework_dir.display(),
@@ -346,7 +368,7 @@ impl ExecutionContextFactory {
             entity,
             pools,
             requests: crate::service::RequestPool::idle(),
-            executor: options.executor,
+            executor,
             sessions: std::sync::Mutex::new(crate::user::session::SessionTable::new(flush_mode, max_sessions)),
             cluster_heartbeat: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
@@ -354,6 +376,10 @@ impl ExecutionContextFactory {
             native,
             native_tools: crate::native::ToolSet::default(),
         });
+        if artifacts_only {
+            factory.pools.attach(&factory);
+            return Ok(factory);
+        }
         factory.native.configure(&factory, &conf_node)?;
         for extension in crate::extension::linked() {
             (extension.after_boot)(&factory);
