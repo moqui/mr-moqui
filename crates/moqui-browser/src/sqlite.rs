@@ -355,11 +355,7 @@ fn run_query(
 }
 
 fn collect(statement: &mut rusqlite::Statement<'_>, bound: &[SqlValue]) -> Result<Vec<DbRow>, rusqlite::Error> {
-    let names: Vec<std::sync::Arc<str>> = statement
-        .column_names()
-        .iter()
-        .map(|name| std::sync::Arc::from(*name))
-        .collect();
+    let names: Vec<std::sync::Arc<str>> = statement.column_names().map(std::sync::Arc::from).collect();
     let mut rows = statement.query(rusqlite::params_from_iter(bound.iter()))?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {

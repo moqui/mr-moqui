@@ -319,5 +319,4 @@ turn-client-proto = { version = "0.7.3", default-features = false, features = ["
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the
 # target C compiler, which is emcc for wasm32-unknown-emscripten. SQLite is public domain.
-# 0.38: held there while servo-net (the dropped pdf-servo plan) pinned it. Moving to 0.40 is a change of its own.
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
