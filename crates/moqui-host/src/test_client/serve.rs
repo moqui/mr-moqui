@@ -13,9 +13,9 @@
  */
 
 //! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server their
-//! `test/client/suite.js` declares (`suite([...], { server: { components, specs, conf } })`), and for each group this
-//! binary started as `moqui test <components> --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file <file>`,
-//! with `MOQUI_CONF` set to the declared conf. Its standard input is a pipe this process holds, so the child also stops
+//! `test/client/suite.js` declares (`suite([...], { server: { components, specs, conf, properties } })`), and for each
+//! group this binary started as `moqui test <components> --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file
+//! <file>`, with `MOQUI_CONF` set to the declared conf and the declared properties in its environment. Its standard input is a pipe this process holds, so the child also stops
 //! when the client dies without cleaning up. Once the ready file names the URL the group's specs run against it, then
 //! the pipe closes and the child stops and removes its scratch runtime.
 //!
@@ -216,6 +216,9 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
     if let Some(conf) = &server.conf {
         command.env("MOQUI_CONF", conf);
     }
+    for (name, value) in &server.properties {
+        command.env(name, value);
+    }
     if let Some(browser) = pdf_browser(args) {
         command.env("pdf_chromium_path", browser);
     }
@@ -366,7 +369,7 @@ mod tests {
         let server = SuiteServer {
             components: vec!["mr-mantle".to_string(), "mr-marble".to_string()],
             specs: vec!["A".to_string(), "B".to_string()],
-            conf: None,
+            ..SuiteServer::default()
         };
         assert_eq!(
             child_args(&server, Path::new("/tmp/r.url"), false).join(" "),

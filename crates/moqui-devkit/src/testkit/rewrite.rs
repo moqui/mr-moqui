@@ -256,8 +256,8 @@ pub fn suite_order(source: &str) -> Result<Vec<String>, Error> {
     Err(Error::new("suite.js has no suite([...]) call"))
 }
 
-/// The server a client suite needs (plans/archive/ClientTestHarness.md 6): `suite([...], { server: { components, specs, conf } })`
-/// in `test/client/suite.js`, which `moqui test-client --serve` starts as a child `moqui test ... --serve`.
+/// The server a client suite needs (plans/archive/ClientTestHarness.md 6): `suite([...], { server: { components, specs, conf,
+/// properties } })` in `test/client/suite.js`, which `moqui test-client --serve` starts as a child `moqui test ... --serve`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SuiteServer {
     /// The components whose server specs run, in order; empty means the suite's own component.
@@ -266,6 +266,8 @@ pub struct SuiteServer {
     pub specs: Vec<String>,
     /// The conf the server runs under (`MOQUI_CONF`), relative to the runtime directory.
     pub conf: Option<String>,
+    /// Conf properties the server runs with, set in its environment, such as `mail_capture_sends`.
+    pub properties: Vec<(String, String)>,
 }
 
 /// The server declaration of a `suite.js`, read without running it as [`suite_order`] reads the order: the literals of
@@ -297,13 +299,15 @@ pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
             return Ok(None);
         };
         let Expression::ObjectExpression(server) = server else {
-            return Err(Error::new("suite() server is an object: { components, specs, conf }"));
+            return Err(Error::new(
+                "suite() server is an object: { components, specs, conf, properties }",
+            ));
         };
         let mut declared = SuiteServer::default();
         for property in &server.properties {
             let ObjectPropertyKind::ObjectProperty(property) = property else {
                 return Err(Error::new(
-                    "suite() server is an object of literals: { components, specs, conf }",
+                    "suite() server is an object of literals: { components, specs, conf, properties }",
                 ));
             };
             match property.key.static_name().as_ref().and_then(StaticPropertyName::as_str) {
@@ -317,9 +321,10 @@ pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
                         ))
                     }
                 },
+                Some("properties") => declared.properties = string_object(&property.value)?,
                 other => {
                     return Err(Error::new(format!(
-                        "suite() server takes components, specs and conf, not {}",
+                        "suite() server takes components, specs, conf and properties, not {}",
                         other.unwrap_or("a computed key")
                     )))
                 }
@@ -354,6 +359,37 @@ fn string_array(value: &Expression<'_>, name: &str) -> Result<Vec<String>, Error
         .map(|element| match element.as_expression() {
             Some(Expression::StringLiteral(text)) => Ok(text.value.display().to_string()),
             _ => Err(not_strings()),
+        })
+        .collect()
+}
+
+/// The `properties` of a server: an object of names to string literals.
+fn string_object(value: &Expression<'_>) -> Result<Vec<(String, String)>, Error> {
+    let not_strings = || {
+        Error::new(
+            "suite() server properties is an object of names to strings, such as { mail_capture_sends: \"true\" }",
+        )
+    };
+    let Expression::ObjectExpression(object) = value else {
+        return Err(not_strings());
+    };
+    object
+        .properties
+        .iter()
+        .map(|property| match property {
+            ObjectPropertyKind::ObjectProperty(property) => {
+                let name = property
+                    .key
+                    .static_name()
+                    .as_ref()
+                    .and_then(StaticPropertyName::as_str)
+                    .map(str::to_string);
+                match (name, &property.value) {
+                    (Some(name), Expression::StringLiteral(text)) => Ok((name, text.value.display().to_string())),
+                    _ => Err(not_strings()),
+                }
+            }
+            ObjectPropertyKind::SpreadProperty(_) => Err(not_strings()),
         })
         .collect()
 }
