@@ -46,6 +46,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="summary" type="text-medium"/>
         <field name="parentArtifactId" type="text-medium"><description>A field's entity, a transition's or form's screen</description></field>
         <field name="sequenceNum" type="number-integer"><description>Its order in its file</description></field>
+        <field name="origin" type="text-short"><description>Where it comes from when not a file's definition: derived
+            (an entity-auto service and its parameters, from the entity's fields)</description></field>
         <index name="DEV_ARTIFACT_FILE"><index-field name="filePath"/><index-field name="lineNumber"/></index>
         <index name="DEV_ARTIFACT_KIND"><index-field name="artifactKind"/><index-field name="shortName"/></index>
         <index name="DEV_ARTIFACT_COMP"><index-field name="component"/></index>
@@ -66,9 +68,30 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lineNumber" type="number-integer"/>
         <field name="columnNumber" type="number-integer"/>
         <field name="resolved" type="text-indicator"/>
+        <field name="operation" type="text-short"><description>What it does with its target: call, find, create, update,
+            store, delete or read</description></field>
+        <field name="origin" type="text-short"><description>What it was read from: xml, js, groovy, ai, observed, derived</description></field>
+        <field name="originHash" type="text-short"><description>The hash of the file it was read from</description></field>
         <index name="DEV_AREF_TO"><index-field name="toArtifactId"/><index-field name="refType"/></index>
         <index name="DEV_AREF_FROM"><index-field name="fromArtifactId"/></index>
         <index name="DEV_AREF_NAME"><index-field name="toName"/><index-field name="resolved"/></index>
+    </entity>
+    <entity entity-name="DevArtifactBinding" package="moqui.devtools" use="nontransactional" cache="never">
+        <description>One value flowing into or out of a call's parameter: a service-call's field-map and the like, where it
+            is written and what gives the value.</description>
+        <field name="filePath" type="text-medium" is-pk="true"/>
+        <field name="bindingSeqId" type="id" is-pk="true"/>
+        <field name="fromArtifactId" type="text-medium"><description>The artifact making the call</description></field>
+        <field name="toId" type="text-medium"><description>The parameter: parameter:service:name@in.field</description></field>
+        <field name="direction" type="text-short"><description>in or out</description></field>
+        <field name="sourceKind" type="text-short"><description>literal, parameter, context, expression or unknown</description></field>
+        <field name="sourceText" type="text-long"/>
+        <field name="sourceId" type="text-medium"><description>The caller's parameter the value comes from, when known</description></field>
+        <field name="origin" type="text-short"/>
+        <field name="originHash" type="text-short"/>
+        <field name="lineNumber" type="number-integer"/>
+        <index name="DEV_ABIND_FROM"><index-field name="fromArtifactId"/></index>
+        <index name="DEV_ABIND_TO"><index-field name="toId"/></index>
     </entity>
     <entity entity-name="DevArtifactCall" package="moqui.devtools" use="nontransactional" cache="never">
         <description>Calls observed on the artifact stack of a dev instance: one row per caller and callee, with how often.

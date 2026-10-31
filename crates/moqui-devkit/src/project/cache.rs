@@ -38,7 +38,7 @@ use moqui_lib::sync::{lock, read, write};
 use serde::Serialize;
 
 use super::{ModelDirs, Project};
-use crate::index::{self, ArtifactRow, Direction, Extension, IndexStamp, Located, MemoryIndex, RefEntry};
+use crate::index::{self, ArtifactRow, BindingEntry, Direction, Extension, IndexStamp, Located, MemoryIndex, RefEntry};
 use crate::{ArtifactKind, Problem};
 
 /// How long a look at a project's files holds before the next request looks again.
@@ -259,6 +259,12 @@ impl ProjectIndex {
     #[must_use]
     pub fn refs(&self, id: &str, direction: Direction, kinds: &[String]) -> Vec<RefEntry> {
         self.with_index(|index| index.refs_of_kinds(id, direction, kinds))
+    }
+
+    /// The bindings `from` makes and those into `to` (either left empty to match any).
+    #[must_use]
+    pub fn bindings(&self, from: &str, to: &str) -> Vec<BindingEntry> {
+        self.with_index(|index| index.bindings_of(from, to))
     }
 
     #[must_use]

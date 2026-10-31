@@ -806,6 +806,132 @@ fn the_index_follows_reloads_and_extensions() {
     assert!(to_thing[0]["calls"].as_i64().unwrap() >= 1, "{used}");
 }
 
+const AUTO_ENTITIES: &str = r#"<entities>
+    <entity entity-name="Widget" package="acme">
+        <field name="widgetId" type="id" is-pk="true"/>
+        <field name="widgetName" type="text-medium"/>
+    </entity>
+</entities>
+"#;
+const AUTO_CALLS: &str = r#"<services>
+    <service verb="make" noun="Widget">
+        <in-parameters><parameter name="name"/></in-parameters>
+        <actions>
+            <service-call name="create#acme.Widget"><field-map field-name="widgetName" from="name"/></service-call>
+        </actions>
+    </service>
+</services>
+"#;
+const AUTO_DEFINED: &str = r#"<services>
+    <service verb="create" noun="acme.Widget"><in-parameters><parameter name="only"/></in-parameters></service>
+</services>
+"#;
+
+/// The rows of the derived entity-auto services in the database index: written for a call to an entity-auto name, with
+/// the binding into its parameter; derived again when the entity's fields change; dropped while a file defines the id,
+/// and derived again when that file goes.
+#[test]
+fn the_index_rows_derive_entity_auto_services() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let files = [
+        ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
+        ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        ("component/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
+    ];
+    let gate = crate::common::start_with_files("dev-aide-derived", None, &[("instance_purpose", "dev")], &files);
+    let factory = Arc::clone(gate.server.factory());
+    let site = std::fs::canonicalize(gate.runtime.join("component/acme-site")).unwrap();
+    let entered = factory.new_context();
+    let _enter = entered.enter();
+    let _authz = entered.disable_authz();
+    use moqui_devkit::index;
+    let started = std::time::Instant::now();
+    index::build_files(&factory, index::directory_files("acme-site", &site), false).unwrap();
+    let service = "service:create#acme.Widget";
+    let parameters = |factory: &Arc<ExecutionContextFactory>| -> Vec<String> {
+        let mut ids: Vec<String> = index::children(factory, service)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                row.id
+                    .trim_start_matches("parameter:service:create#acme.Widget@")
+                    .to_string()
+            })
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    // derived for the call, its parameters from the fields, the call and its field-map resolved to them
+    let derived = index::describe(&factory, service).unwrap().expect("derived");
+    assert_eq!(
+        (derived.origin.as_str(), derived.path.as_str()),
+        ("derived", "derived:entity-auto")
+    );
+    assert_eq!(derived.parent.as_deref(), Some("entity:acme.Widget"));
+    assert_eq!(parameters(&factory), ["in.widgetId", "in.widgetName", "out.widgetId"]);
+    let caller = "service:acme.WidgetServices.make#Widget";
+    let used = index::refs(&factory, caller, index::Direction::Out, &[]).unwrap();
+    let call = used.iter().find(|r| r.ref_type == "service-call").expect("the call");
+    assert_eq!(
+        (call.to_id.as_deref(), call.operation.as_str()),
+        (Some(service), "create")
+    );
+    let bound = index::bindings(&factory, Some(caller), None).unwrap();
+    assert_eq!(bound.len(), 1);
+    assert_eq!(
+        bound[0].binding.to_id,
+        "parameter:service:create#acme.Widget@in.widgetName"
+    );
+    assert_eq!(bound[0].binding.source_kind, "parameter");
+    assert_eq!(
+        bound[0].binding.source_id.as_deref(),
+        Some("parameter:service:acme.WidgetServices.make#Widget@in.name")
+    );
+
+    // a field added: the derived rows are made again
+    let entities = site.join("entity/AcmeEntities.xml");
+    std::fs::write(
+        &entities,
+        AUTO_ENTITIES.replace("</entity>", "    <field name=\"color\" type=\"id\"/>\n    </entity>"),
+    )
+    .unwrap();
+    index::update_files(&factory, std::slice::from_ref(&entities)).unwrap();
+    assert_eq!(
+        parameters(&factory),
+        ["in.color", "in.widgetId", "in.widgetName", "out.widgetId"]
+    );
+
+    // a file defining the id: its service and parameters answer, the derived rows are gone
+    let defined = site.join("defs/AutoServices.xml");
+    std::fs::create_dir_all(defined.parent().unwrap()).unwrap();
+    std::fs::write(&defined, AUTO_DEFINED).unwrap();
+    let located = index::Located {
+        path: defined.clone(),
+        component: "acme-site".to_string(),
+        location: "component://acme-site/defs/AutoServices.xml".to_string(),
+        kind: moqui_devkit::ArtifactKind::Service,
+    };
+    index::update_located(&factory, std::slice::from_ref(&located)).unwrap();
+    let own = index::describe(&factory, service).unwrap().expect("defined");
+    assert_eq!(own.origin, "");
+    assert_eq!(own.path, defined.display().to_string());
+    assert_eq!(parameters(&factory), ["in.only"]);
+
+    // and that file gone: derived again
+    std::fs::remove_file(&defined).unwrap();
+    index::update_files(&factory, std::slice::from_ref(&defined)).unwrap();
+    let again = index::describe(&factory, service).unwrap().expect("derived again");
+    assert_eq!(again.origin, "derived");
+    assert_eq!(
+        parameters(&factory),
+        ["in.color", "in.widgetId", "in.widgetName", "out.widgetId"]
+    );
+    eprintln!("derived entity-auto rows: {} ms", started.elapsed().as_millis());
+}
+
 /// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (base-component and
 /// component) and a synthetic corpus ten times their size, each built into the rows, with a per-file update and a find
 /// timed. Run once by hand and the numbers recorded in the design:

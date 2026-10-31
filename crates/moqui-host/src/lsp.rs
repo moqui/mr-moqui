@@ -39,7 +39,7 @@ use crate::devtools_remote::{Remote, Target};
 pub enum Backend {
     Local {
         factory: Arc<ExecutionContextFactory>,
-        index: MemoryIndex,
+        index: Box<MemoryIndex>,
     },
     Remote(Remote),
 }
@@ -738,7 +738,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
         Some(url) => Backend::Remote(crate::devtools_cmd::remote(&url, project.as_ref())?),
         None => {
             let factory = crate::devtools_cmd::model_only(project.as_ref())?;
-            let index = MemoryIndex::build(&factory);
+            let index = Box::new(MemoryIndex::build(&factory));
             Backend::Local { factory, index }
         }
     };

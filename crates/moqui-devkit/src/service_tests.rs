@@ -224,6 +224,7 @@ fn the_seed_splits_the_read_services_from_the_dev_only_ones() {
         "find#Artifacts",
         "get#Artifact",
         "get#ArtifactRefs",
+        "get#ArtifactBindings",
         "get#ArtifactAt",
         "get#ArtifactExtensions",
     ];

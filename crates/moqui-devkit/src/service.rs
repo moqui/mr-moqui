@@ -37,6 +37,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, get_artifact)?;
     rust_service!(map, get_artifact_refs)?;
     rust_service!(map, get_artifact_at)?;
+    rust_service!(map, get_artifact_bindings)?;
     rust_service!(map, get_artifact_extensions)?;
     rust_service!(map, rebuild_artifact_index)?;
     Ok(())
@@ -413,6 +414,32 @@ fn get_artifact_refs(
         };
         if let Some(found) = found {
             out.insert("refs".to_string(), json_value(&found));
+        }
+    }))
+}
+
+/// `get#ArtifactBindings`: the values flowing into calls' parameters, by the artifact making the call
+/// (`fromArtifactId`), the parameter (`toId`) or both. Out: `bindings`, `indexStamp`.
+fn get_artifact_bindings(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let (from, to) = (text_in(parameters, "fromArtifactId"), text_in(parameters, "toId"));
+    if from.trim().is_empty() && to.trim().is_empty() {
+        ExecutionContext::with_current(|ec| ec.message().add_error("fromArtifactId or toId is required".to_string()));
+        return Ok(BTreeMap::new());
+    }
+    Ok(read_index(parameters, facade, false, |project, out| {
+        let found = match project {
+            Some(project) => Some(project.bindings(&from, &to)),
+            None => {
+                let some = |value: &str| (!value.is_empty()).then(|| value.to_string());
+                let (from, to) = (some(&from), some(&to));
+                with_index(|factory| crate::index::bindings(factory, from.as_deref(), to.as_deref()))
+            }
+        };
+        if let Some(found) = found {
+            out.insert("bindings".to_string(), json_value(&found));
         }
     }))
 }

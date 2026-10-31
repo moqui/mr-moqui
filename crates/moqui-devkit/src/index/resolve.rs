@@ -16,10 +16,27 @@
 //! the corpus, so resolving a reference never asks the database: an entity by its full or short name, a field through
 //! its entity, a service or the entity of an entity-auto name, a screen by its location or its path under a `screen`
 //! directory, a transition or anchor of a screen.
+//!
+//! An entity-auto name (`create#moqui.example.Example`) that no file defines a service for gets a derived service
+//! ([`Resolver::derive`], origin `derived`), with the in and out parameters the entity-auto runner takes and gives
+//! (`moqui_core::service::call::run_entity`), so a call's `field-map`s resolve to its parameters as to a defined
+//! service's.
 
 use std::collections::HashMap;
 
-use super::extract::{ArtifactRow, RefRow, ToKind};
+use super::extract::{
+    parameter_id, parameter_name, short_of, ArtifactRow, BindingRow, RefRow, ToKind, DERIVED_PATH, ORIGIN_DERIVED,
+    PK_MARK,
+};
+
+/// A field of an entity, as the entity-auto services take it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AutoField {
+    name: String,
+    /// The field's type (`id`, `text-medium`), or what an alias names.
+    kind: String,
+    pk: bool,
+}
 
 /// The ids of the artifacts known, with what resolving needs besides.
 #[derive(Clone, Debug, Default)]
@@ -30,12 +47,33 @@ pub struct Resolver {
     entities: HashMap<String, Vec<String>>,
     /// A screen's path under its component's `screen` directory to its location.
     screens: HashMap<String, String>,
+    /// An entity's full name to its fields, in the order they are defined (an `extend-entity`'s after).
+    fields: HashMap<String, Vec<AutoField>>,
+    /// The derived services known ([`Self::derive`]): each id with its rows (the service, then its parameters).
+    derived: HashMap<String, Vec<ArtifactRow>>,
 }
 
 impl Resolver {
     /// Know `artifact`.
     pub fn add(&mut self, artifact: &ArtifactRow) {
         *self.ids.entry(artifact.id.clone()).or_insert(0) += 1;
+        if artifact.origin == ORIGIN_DERIVED {
+            let service = match artifact.kind.as_str() {
+                "service" => Some(artifact.id.clone()),
+                _ => artifact
+                    .id
+                    .strip_prefix("parameter:")
+                    .and_then(|rest| rest.rsplit_once('@'))
+                    .map(|(owner, _)| owner.to_string()),
+            };
+            if let Some(service) = service {
+                let rows = self.derived.entry(service).or_default();
+                if !rows.iter().any(|row| row.id == artifact.id) {
+                    rows.push(artifact.clone());
+                }
+            }
+            return;
+        }
         match artifact.kind.as_str() {
             "entity" | "view-entity" => {
                 let full = self.entities.entry(artifact.short_name.clone()).or_default();
@@ -46,6 +84,22 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.insert(tail.to_string(), artifact.name.clone());
+                }
+            }
+            "field" => {
+                if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
+                    let (kind, pk) = match artifact.summary.strip_suffix(PK_MARK) {
+                        Some(kind) => (kind, true),
+                        None => (artifact.summary.as_str(), false),
+                    };
+                    let fields = self.fields.entry(entity.to_string()).or_default();
+                    if !fields.iter().any(|field| field.name == artifact.short_name) {
+                        fields.push(AutoField {
+                            name: artifact.short_name.clone(),
+                            kind: kind.to_string(),
+                            pk,
+                        });
+                    }
                 }
             }
             _ => {}
@@ -65,6 +119,7 @@ impl Resolver {
             column: 0,
             summary: String::new(),
             parent: None,
+            origin: String::new(),
         });
     }
 
@@ -81,6 +136,13 @@ impl Resolver {
             }
             None => false,
         };
+        if artifact.origin == ORIGIN_DERIVED {
+            // forgotten as derived even while a file defines the id too (the file's then answers)
+            if artifact.kind == "service" {
+                self.derived.remove(&artifact.id);
+            }
+            return;
+        }
         if !gone {
             return;
         }
@@ -96,6 +158,16 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.remove(tail);
+                }
+            }
+            "field" => {
+                if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
+                    if let Some(fields) = self.fields.get_mut(entity) {
+                        fields.retain(|field| field.name != artifact.short_name);
+                        if fields.is_empty() {
+                            self.fields.remove(entity);
+                        }
+                    }
                 }
             }
             _ => {}
@@ -168,9 +240,14 @@ impl Resolver {
                 if self.has(&id) {
                     Some(id)
                 } else {
-                    entity_auto(&reference.to_name)
-                        .and_then(|noun| self.entity(noun))
-                        .map(|full| format!("entity:{full}"))
+                    // the derived service of an entity-auto name, else its entity
+                    self.entity_auto_service(&reference.to_name)
+                        .filter(|id| self.has(id))
+                        .or_else(|| {
+                            entity_auto(&reference.to_name)
+                                .and_then(|(_, noun)| self.entity(noun))
+                                .map(|full| format!("entity:{full}"))
+                        })
                 }
             }
             ToKind::Screen => self
@@ -200,14 +277,170 @@ impl Resolver {
                     .or_else(|| self.base_transition(&base, &reference.to_name))
             }),
             ToKind::TransitionAnchor => None,
-            ToKind::Parameter => {
-                let id =
-                    super::extract::parameter_id(&format!("service:{}", reference.to_scope), "in", &reference.to_name);
-                self.has(&id).then_some(id)
-            }
+            ToKind::Parameter => self.service_parameter(&reference.to_scope, "in", &reference.to_name),
         };
         reference.resolved = target.is_some();
         reference.to_id = target;
+    }
+
+    /// The parameter `name` of the service `service` in `direction`: a defined service's, or the derived service's
+    /// of an entity-auto name, when known.
+    fn service_parameter(&self, service: &str, direction: &str, name: &str) -> Option<String> {
+        let id = parameter_id(&format!("service:{service}"), direction, name);
+        if self.has(&id) {
+            return Some(id);
+        }
+        let owner = self.entity_auto_service(service)?;
+        let id = parameter_id(&owner, direction, name);
+        self.has(&id).then_some(id)
+    }
+
+    /// `binding`'s target as the index knows it: the derived service's parameter of an entity-auto name named by the
+    /// entity's short name (`create#Example`). Left as it is otherwise.
+    pub fn resolve_binding(&self, binding: &mut BindingRow) {
+        if self.has(&binding.to_id) {
+            return;
+        }
+        let Some((owner, direction, name)) = super::extract::parse_parameter_id(&binding.to_id) else {
+            return;
+        };
+        if let Some(found) = owner
+            .strip_prefix("service:")
+            .and_then(|service| self.service_parameter(service, direction, name))
+        {
+            binding.to_id = found;
+        }
+    }
+
+    /// The id of the derived service of an entity-auto name, by the entity's full name (`service:create#a.B`), when
+    /// the entity is known.
+    fn entity_auto_service(&self, name: &str) -> Option<String> {
+        let (verb, noun) = entity_auto(name)?;
+        let full = self.entity(noun)?;
+        Some(format!("service:{verb}#{full}"))
+    }
+
+    /// The derived services the service and parameter references of `refs` need: for each entity-auto name
+    /// (`create`, `update`, `store`, `delete` and an entity) of a known entity that no file defines a service for and
+    /// none is derived for yet, the service and its parameters (origin `derived`, in the pseudo file
+    /// [`DERIVED_PATH`]). Not added: the caller adds them, as it adds the files' artifacts.
+    #[must_use]
+    pub fn derive<'a>(&self, refs: impl IntoIterator<Item = &'a RefRow>) -> Vec<ArtifactRow> {
+        let mut made: Vec<String> = Vec::new();
+        let mut rows = Vec::new();
+        for reference in refs {
+            let name = match reference.to_kind {
+                ToKind::Service => &reference.to_name,
+                ToKind::Parameter => &reference.to_scope,
+                _ => continue,
+            };
+            if self.has(&format!("service:{name}")) {
+                continue;
+            }
+            let Some(id) = self.entity_auto_service(name) else {
+                continue;
+            };
+            if self.has(&id) || made.contains(&id) {
+                continue;
+            }
+            rows.extend(self.derived_service(&id));
+            made.push(id);
+        }
+        rows
+    }
+
+    /// The derived services known, by id.
+    #[must_use]
+    pub fn derived_ids(&self) -> Vec<String> {
+        self.derived.keys().cloned().collect()
+    }
+
+    /// The rows of the derived service `id`, as known.
+    #[must_use]
+    pub fn derived_rows(&self, id: &str) -> Vec<ArtifactRow> {
+        self.derived.get(id).cloned().unwrap_or_default()
+    }
+
+    /// The service `id` (`service:<verb>#<entity full name>`) and its parameters as the entity's fields give them now,
+    /// by the rules of the entity-auto runner (`moqui_core::service::call::run_entity`, Java's
+    /// `EntityAutoServiceRunner`), leaving out `lastUpdatedStamp`:
+    /// - create: each primary key field in and out; a single key is optional (sequenced when left out), and of several
+    ///   all but the last are required (the last gets a secondary sequenced id); a `fromDate` key is optional (now);
+    ///   the other fields in, optional.
+    /// - store: as create (a store with its key left out creates).
+    /// - update: the key required in and out, the other fields in, optional.
+    /// - delete: the key required in, nothing else.
+    /// - update and store of an entity with `statusId`: `oldStatusId` and `statusChanged` out.
+    ///
+    /// Empty when `id` is no entity-auto name.
+    #[must_use]
+    pub fn derived_service(&self, id: &str) -> Vec<ArtifactRow> {
+        let Some((verb, full)) = id.strip_prefix("service:").and_then(|name| name.split_once('#')) else {
+            return Vec::new();
+        };
+        if entity_auto(&format!("{verb}#{full}")).is_none() {
+            return Vec::new();
+        }
+        let name = format!("{verb}#{full}");
+        let row =
+            |id: String, kind: &str, name: &str, short_name: String, summary: String, parent: String| ArtifactRow {
+                id,
+                kind: kind.to_string(),
+                name: name.to_string(),
+                short_name,
+                component: String::new(),
+                path: DERIVED_PATH.to_string(),
+                line: 0,
+                column: 0,
+                summary,
+                parent: Some(parent),
+                origin: ORIGIN_DERIVED.to_string(),
+            };
+        let mut rows = vec![row(
+            id.to_string(),
+            "service",
+            &name,
+            short_of("service", &name),
+            format!("entity-auto {verb} of {full}"),
+            format!("entity:{full}"),
+        )];
+        let mut parameter = |direction: &str, field: &str, kind: &str, required: bool| {
+            let parameter_name = parameter_name(id, direction, field);
+            rows.push(row(
+                parameter_id(id, direction, field),
+                "parameter",
+                &parameter_name,
+                short_of("parameter", &parameter_name),
+                format!("{direction} {kind}, required={required}"),
+                id.to_string(),
+            ));
+        };
+        let fields: &[AutoField] = self.fields.get(full).map_or(&[], Vec::as_slice);
+        let keys: Vec<&AutoField> = fields.iter().filter(|field| field.pk).collect();
+        for (at, key) in keys.iter().enumerate() {
+            let required = match verb {
+                "update" | "delete" => true,
+                // create and store: a key left out is sequenced (the last of several by a secondary id)
+                _ => at + 1 < keys.len() && key.name != "fromDate",
+            };
+            parameter("in", &key.name, &key.kind, required);
+        }
+        if verb != "delete" {
+            for field in fields
+                .iter()
+                .filter(|field| !field.pk && field.name != "lastUpdatedStamp")
+            {
+                parameter("in", &field.name, &field.kind, false);
+            }
+            for key in &keys {
+                parameter("out", &key.name, &key.kind, false);
+            }
+            if matches!(verb, "update" | "store") && fields.iter().any(|field| field.name == "statusId") {
+                parameter("out", "oldStatusId", "id", false);
+                parameter("out", "statusChanged", "Boolean", false);
+            }
+        }
+        rows
     }
 
     /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one.
@@ -263,10 +496,10 @@ impl Resolver {
     }
 }
 
-/// The entity noun of an entity-auto service name (`create#moqui.basic.Enumeration`).
-fn entity_auto(name: &str) -> Option<&str> {
+/// The verb and entity noun of an entity-auto service name (`create#moqui.basic.Enumeration`).
+fn entity_auto(name: &str) -> Option<(&str, &str)> {
     let (verb, noun) = name.split_once('#')?;
-    matches!(verb, "create" | "update" | "store" | "delete").then_some(noun)
+    (matches!(verb, "create" | "update" | "store" | "delete") && !noun.is_empty()).then_some((verb, noun))
 }
 
 /// A screen location's path under its component's `screen` directory.

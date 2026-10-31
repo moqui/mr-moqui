@@ -47,6 +47,7 @@ fn artifact(path: &str, id: String, kind: &str, name: &str, summary: String) -> 
         column: 0,
         summary,
         parent: None,
+        origin: String::new(),
     }
 }
 
@@ -61,7 +62,16 @@ fn reference(from: &str, to_kind: ToKind, to_name: &str, to_scope: &str, ref_typ
         column: 0,
         to_id: None,
         resolved: false,
+        operation: String::new(),
+        origin: "db".to_string(),
+        origin_hash: String::new(),
     }
+}
+
+/// A reference of a row with its operation.
+fn doing(mut row: RefRow, operation: &str) -> RefRow {
+    row.operation = operation.to_string();
+    row
 }
 
 /// What reads a source's rows into artifacts and references.
@@ -81,18 +91,18 @@ pub fn read(facade: &EntityFacade) -> Vec<RowSource> {
         let path = format!("db:{entity}");
         match rows_of(facade, entity) {
             Ok(rows) => {
-                let index = reader(&rows, &path);
+                let mut index = reader(&rows, &path);
                 let fingerprint: String = index
                     .artifacts
                     .iter()
                     .map(|artifact| format!("{}|{}|", artifact.id, artifact.summary))
                     .chain(index.refs.iter().map(|row| format!("{}>{}|", row.from, row.to_name)))
                     .collect();
-                sources.push(RowSource {
-                    hash: super::hash_of(&fingerprint),
-                    path,
-                    index,
-                });
+                let hash = super::hash_of(&fingerprint);
+                for row in &mut index.refs {
+                    row.origin_hash.clone_from(&hash);
+                }
+                sources.push(RowSource { hash, path, index });
             }
             Err(err) => tracing::error!("Artifact index: the rows of {entity} were not read: {err}"),
         }
@@ -114,7 +124,9 @@ fn jobs(rows: &[EntityValue], path: &str) -> FileIndex {
             .artifacts
             .push(artifact(path, id.clone(), "job", &name, text(row, "description")));
         if !service.is_empty() {
-            index.refs.push(reference(&id, ToKind::Service, &service, "", "job"));
+            index
+                .refs
+                .push(doing(reference(&id, ToKind::Service, &service, "", "job"), "call"));
         }
     }
     index
@@ -130,13 +142,15 @@ fn documents(rows: &[EntityValue], path: &str) -> FileIndex {
             .push(artifact(path, id.clone(), "document", &name, text(row, "documentName")));
         let entity = text(row, "primaryEntityName");
         if !entity.is_empty() {
-            index.refs.push(reference(&id, ToKind::Entity, &entity, "", "document"));
+            index
+                .refs
+                .push(doing(reference(&id, ToKind::Entity, &entity, "", "document"), "find"));
         }
         let service = text(row, "manualDataServiceName");
         if !service.is_empty() {
             index
                 .refs
-                .push(reference(&id, ToKind::Service, &service, "", "document"));
+                .push(doing(reference(&id, ToKind::Service, &service, "", "document"), "call"));
         }
     }
     index

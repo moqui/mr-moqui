@@ -49,7 +49,18 @@ pub struct ArtifactRow {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Empty for an artifact a file defines; `derived` for one the index makes ([`ORIGIN_DERIVED`]): an entity-auto
+    /// service no file defines, with its parameters from the entity's fields.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub origin: String,
 }
+
+/// The origin of an artifact or reference the index makes rather than reads (an entity-auto service and its
+/// parameters, [`super::resolve::Resolver::derive`]).
+pub const ORIGIN_DERIVED: &str = "derived";
+
+/// The pseudo file of the derived artifacts.
+pub const DERIVED_PATH: &str = "derived:entity-auto";
 
 /// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
@@ -126,6 +137,38 @@ pub struct RefRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_id: Option<String>,
     pub resolved: bool,
+    /// What it does to its target: `call`, `find`, `create`, `update`, `store`, `delete`, `read`, or empty when it
+    /// only names it (a relationship, an extension, a link).
+    pub operation: String,
+    /// Where it was read from: `xml`, `js`, `groovy` (a script file or an inline `<script>`), `db` (a row of the
+    /// database), `observed` (a call on the artifact stack), `ai` or `derived`.
+    pub origin: String,
+    /// The hash of the file it was read from ([`super::hash_of`]).
+    pub origin_hash: String,
+}
+
+/// One value that flows into (`in`) or out of (`out`) a parameter or field at a call site: a `field-map` of a
+/// `service-call` passing a literal, a parameter of the caller, a context value or an expression to the callee's
+/// in-parameter.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingRow {
+    /// The call site: a service, transition, screen, form or script.
+    pub from: String,
+    /// A `parameter:` id ([`parameter_id`]) or a `field:` id.
+    pub to_id: String,
+    /// `in` (passed in) or `out` (read back).
+    pub direction: String,
+    /// `literal`, `parameter`, `context`, `expression` or `unknown`.
+    pub source_kind: String,
+    /// The literal, the name or the expression as written.
+    pub source_text: String,
+    /// The parameter id the value comes from, for a `parameter` source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    pub origin: String,
+    pub origin_hash: String,
+    pub line: u32,
 }
 
 /// What a file defines and refers to.
@@ -133,6 +176,7 @@ pub struct RefRow {
 pub struct FileIndex {
     pub artifacts: Vec<ArtifactRow>,
     pub refs: Vec<RefRow>,
+    pub bindings: Vec<BindingRow>,
 }
 
 /// The file being read: where it is and what kind of file it is.
@@ -172,6 +216,11 @@ pub fn extract(info: &FileInfo<'_>, text: &str) -> Result<FileIndex, String> {
     let mut out = Reader {
         info,
         index: FileIndex::default(),
+        origin: match info.kind {
+            ArtifactKind::Script => script_origin(info.location),
+            _ => "xml",
+        },
+        hash: super::hash_of(text),
     };
     match info.kind {
         ArtifactKind::Script => out.script_file(text),
@@ -188,7 +237,25 @@ pub fn extract(info: &FileInfo<'_>, text: &str) -> Result<FileIndex, String> {
 struct Reader<'a> {
     info: &'a FileInfo<'a>,
     index: FileIndex,
+    /// The origin of the references read: `xml`, or a script file's language.
+    origin: &'static str,
+    /// The file's hash, each reference's `origin_hash`.
+    hash: String,
 }
+
+/// The language of a script at `location`, by its extension: `groovy`, else `js`.
+fn script_origin(location: &str) -> &'static str {
+    if location.ends_with(".groovy") || location.ends_with(".gy") {
+        "groovy"
+    } else {
+        "js"
+    }
+}
+
+/// The value fields an actions block holds (`entity-make-value` and `entity-find-one`), keyed by the block's position
+/// and the field's name: the entity each holds, and the make-value reference whose operation the first
+/// `entity-create`, `entity-update` or `entity-delete` on it sets.
+type ValueFields = std::collections::HashMap<(u32, u32, String), (String, Option<usize>)>;
 
 impl Reader<'_> {
     fn artifact(
@@ -212,6 +279,7 @@ impl Reader<'_> {
             column: node.map_or(1, MNode::column),
             summary,
             parent,
+            origin: String::new(),
         });
     }
 
@@ -236,7 +304,17 @@ impl Reader<'_> {
             column,
             to_id: None,
             resolved: false,
+            operation: default_operation(to_kind, ref_type, to_name).to_string(),
+            origin: self.origin.to_string(),
+            origin_hash: self.hash.clone(),
         });
+    }
+
+    /// Set the operation of the reference just made.
+    fn last_operation(&mut self, operation: &str) {
+        if let Some(last) = self.index.refs.last_mut() {
+            last.operation = operation.to_string();
+        }
     }
 
     fn file_id(&self) -> String {
@@ -304,16 +382,28 @@ impl Reader<'_> {
         };
         let prefix = service_prefix(&location);
         let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        let mut values = ValueFields::new();
         let mut stack = vec![(root.clone(), file_from, String::new())];
+        // in document order: a value field's make-value comes before the create, update or delete on it
         while let Some((node, from, parent)) = stack.pop() {
             let element = node.name();
             let from = self
                 .definition(&node, &element, &parent, &from, &prefix, &mut counts)
                 .unwrap_or(from);
+            let first_ref = self.index.refs.len();
             self.attribute_refs(&node, &element, &from);
+            self.value_operations(&node, &element, &from, first_ref, &mut values);
+            if element == "field-map" {
+                self.field_map_binding(&node, &from);
+            }
             if element == "script" {
                 if let Some(text) = node.text() {
-                    self.script_refs(&from, &text, node.line());
+                    // an inline script is Groovy unless it says it is JavaScript
+                    let origin = match node.attribute("lang").or_else(|| node.attribute("type")) {
+                        Some(lang) if lang.contains("js") || lang.contains("javascript") => "js",
+                        _ => "groovy",
+                    };
+                    self.script_refs(&from, &text, node.line(), origin);
                 }
             }
             let children: Vec<MNode> = node.child_iter().collect();
@@ -366,10 +456,14 @@ impl Reader<'_> {
                     .or_else(|| from.split_once('#').map(|(_, entity)| entity))?
                     .to_string();
                 let name = node.attribute("name")?;
-                let summary = node
+                let mut summary = node
                     .attribute("type")
                     .or_else(|| node.attribute("field").map(|field| format!("alias of {field}")))
                     .unwrap_or_default();
+                // the primary key, which the entity-auto services derived from the fields take (resolve.rs)
+                if node.attribute_is("is-pk", "true") {
+                    summary.push_str(PK_MARK);
+                }
                 let parent_id = format!("entity:{entity}");
                 self.artifact(
                     format!("field:{entity}.{name}"),
@@ -493,6 +587,21 @@ impl Reader<'_> {
             (ArtifactKind::Rest, "entity") if parent == "method" || parent == "resource" => {
                 if let Some(name) = node.attribute("name").filter(|name| refs::is_literal(name)) {
                     self.reference(from, ToKind::Entity, &name, "", "rest", node.line(), node.column());
+                    // a method's entity operation is its HTTP method's, as the REST API runs it
+                    let method = node
+                        .parent()
+                        .filter(|up| up.has_name("method"))
+                        .and_then(|up| up.attribute("type"))
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    self.last_operation(match method.as_str() {
+                        "get" => "find",
+                        "post" => "create",
+                        "put" => "store",
+                        "patch" => "update",
+                        "delete" => "delete",
+                        _ => "",
+                    });
                 }
                 None
             }
@@ -731,11 +840,21 @@ impl Reader<'_> {
         }
     }
 
-    /// The service and entity names in the string literals of a script's calls.
-    fn script_refs(&mut self, from: &str, text: &str, first_line: u32) {
-        for ScriptName { kind, name, offset } in script_names(text) {
+    /// The service and entity names in the string literals of a script's calls, with what each call does.
+    fn script_refs(&mut self, from: &str, text: &str, first_line: u32, origin: &str) {
+        for ScriptName {
+            kind,
+            name,
+            offset,
+            operation,
+        } in script_names(text)
+        {
             let line = first_line + u32::try_from(text[..offset].matches('\n').count()).unwrap_or(0);
             self.reference(from, kind, &name, "", "script", line, 0);
+            if let Some(last) = self.index.refs.last_mut() {
+                last.operation = operation.to_string();
+                last.origin = origin.to_string();
+            }
         }
     }
 
@@ -743,7 +862,106 @@ impl Reader<'_> {
         let location = self.info.location.to_string();
         let id = format!("script:{location}");
         self.artifact(id.clone(), "script", &location, None, String::new(), None);
-        self.script_refs(&id, text, 1);
+        self.script_refs(&id, text, 1, self.origin);
+    }
+
+    /// The operation of an `entity-create`, `entity-update` or `entity-delete` on a value field of the actions block,
+    /// by the entity the field holds (an `entity-make-value`'s or `entity-find-one`'s): set on the make-value's
+    /// reference when it has none yet, else a reference of its own at the element. A value field of no known entity
+    /// (a parameter, a list's entry) gets none.
+    fn value_operations(
+        &mut self,
+        node: &MNode,
+        element: &str,
+        from: &str,
+        first_ref: usize,
+        values: &mut ValueFields,
+    ) {
+        let Some(field) = node.attribute("value-field") else {
+            return;
+        };
+        let (line, column) = actions_block(node);
+        let key = (line, column, field);
+        match element {
+            "entity-make-value" | "entity-find-one" => {
+                let Some(entity) = node.attribute("entity-name").filter(|name| refs::is_literal(name)) else {
+                    values.remove(&key);
+                    return;
+                };
+                let pending = (element == "entity-make-value")
+                    .then(|| {
+                        self.index.refs[first_ref..]
+                            .iter()
+                            .position(|row| row.to_kind == ToKind::Entity)
+                            .map(|at| first_ref + at)
+                    })
+                    .flatten();
+                values.insert(key, (entity, pending));
+            }
+            "entity-create" | "entity-update" | "entity-delete" => {
+                let operation = match element {
+                    "entity-create" if node.attribute_is("or-update", "true") => "store",
+                    "entity-create" => "create",
+                    "entity-update" => "update",
+                    _ => "delete",
+                };
+                let Some((entity, pending)) = values.get_mut(&key) else {
+                    return;
+                };
+                match pending.take().and_then(|at| self.index.refs.get_mut(at)) {
+                    Some(made) => made.operation = operation.to_string(),
+                    None => {
+                        let entity = entity.clone();
+                        self.reference(from, ToKind::Entity, &entity, "", element, node.line(), node.column());
+                        self.last_operation(operation);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The binding a `field-map` of a `service-call` makes: what flows into the callee's in-parameter. `value` is a
+    /// literal, or an expression when it has `${`; `from` (or, with neither, the field's own name, which Moqui reads
+    /// from the context) is a parameter of the artifact the call is in when it declares that name, a context value
+    /// when it is a plain name, else an expression.
+    fn field_map_binding(&mut self, node: &MNode, from: &str) {
+        let Some(service) = refs::service_of(node).filter(|name| refs::is_literal(name)) else {
+            return;
+        };
+        let Some(name) = node.attribute("field-name").filter(|name| refs::is_literal(name)) else {
+            return;
+        };
+        let (source_kind, source_text, source_id) = match node.attribute("value") {
+            Some(value) if refs::is_literal(&value) => ("literal", value, None),
+            Some(value) => ("expression", value, None),
+            None => {
+                let text = node.attribute("from").unwrap_or_else(|| name.clone());
+                if is_identifier(&text) {
+                    let own = ["in", "path"]
+                        .iter()
+                        .map(|direction| parameter_id(from, direction, &text))
+                        .find(|id| self.index.artifacts.iter().any(|artifact| artifact.id == *id));
+                    match own {
+                        Some(id) => ("parameter", text, Some(id)),
+                        None => ("context", text, None),
+                    }
+                } else {
+                    ("expression", text, None)
+                }
+            }
+        };
+        self.index.bindings.push(BindingRow {
+            from: from.to_string(),
+            to_id: parameter_id(&format!("service:{service}"), "in", &name),
+            direction: "in".to_string(),
+            source_kind: source_kind.to_string(),
+            source_text: source_text.trim().to_string(),
+            source_id,
+            origin: self.origin.to_string(),
+            origin_hash: self.hash.clone(),
+            line: node.line(),
+        });
     }
 
     fn skill_file(&mut self, text: &str) {
@@ -778,13 +996,80 @@ impl Reader<'_> {
     }
 }
 
+/// The mark a primary key field's summary ends with (`id, pk`).
+pub const PK_MARK: &str = ", pk";
+
+/// The operation a reference makes by how it refers, before what the element around it says
+/// (plans/design-dev-aide.md 7.1): a find, a delete by condition, a data file's records (stored), a service call (or the
+/// entity-auto operation its name says), the fields a find reads, a script run.
+fn default_operation(kind: ToKind, ref_type: &str, name: &str) -> &'static str {
+    match (kind, ref_type) {
+        (ToKind::Entity, "entity-find" | "entity-find-one" | "entity-find-count" | "document") => "find",
+        (ToKind::Entity, "entity-delete-by-condition") => "delete",
+        (ToKind::Entity, "data") => "store",
+        (ToKind::Service, "service-call" | "rest" | "job" | "document" | "script") => service_operation(name),
+        (ToKind::Field, "econdition" | "select-field" | "order-by") => "read",
+        (ToKind::Location, "script") => "call",
+        _ => "",
+    }
+}
+
+/// The operation of a call to the service `name`: an entity-auto name's verb (`create#moqui.example.Example` is
+/// `create`; `store#` and `createOrUpdate#` are `store`), else `call`.
+#[must_use]
+pub fn service_operation(name: &str) -> &'static str {
+    let Some((verb, noun)) = name.split_once('#') else {
+        return "call";
+    };
+    if noun.is_empty() || verb.contains('.') {
+        return "call";
+    }
+    match verb {
+        "create" => "create",
+        "update" => "update",
+        "store" | "createOrUpdate" => "store",
+        "delete" => "delete",
+        _ => "call",
+    }
+}
+
+/// The position of the actions block `node` is in (`actions`, `pre-actions`, `row-actions`, `always-actions`): a
+/// value field is known within its block only. `(0, 0)` outside any.
+fn actions_block(node: &MNode) -> (u32, u32) {
+    let mut up = node.parent();
+    while let Some(ancestor) = up {
+        if ancestor.name().ends_with("actions") {
+            return (ancestor.line(), ancestor.column());
+        }
+        up = ancestor.parent();
+    }
+    (0, 0)
+}
+
+/// A plain name (`orderId`), not an expression.
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
 static SERVICE_CALL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"service\s*\.\s*(?:sync|async|special|job)\s*\(\s*\)\s*\.\s*name\s*\(\s*["'`]([A-Za-z0-9_.#]+)["'`]"#)
         .expect("service call pattern")
 });
 static ENTITY_CALL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"entity\s*\.\s*(?:find|makeValue|makeFind|fastFindOne)\s*\(\s*["'`]([A-Za-z0-9_.]+)["'`]"#)
+    Regex::new(r#"entity\s*\.\s*(find|makeValue|makeFind|fastFindOne)\s*\(\s*["'`]([A-Za-z0-9_.]+)["'`]"#)
         .expect("entity call pattern")
+});
+/// The name a value is assigned to on the line before a call: `v` of `def v = ec.`.
+static ASSIGNED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_.]*\.)?\s*$").expect("assignment pattern")
+});
+/// A write on an entity value: `.create(`, `.update(`, `.store(`, `.createOrUpdate(`, `.delete(`, `.deleteAll(`.
+static VALUE_WRITE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\.\s*(createOrUpdate|create|update|store|deleteAll|delete)\s*\(").expect("value write pattern")
 });
 
 /// A service or entity name in a string literal of a script.
@@ -794,27 +1079,85 @@ pub struct ScriptName {
     pub name: String,
     /// The byte offset of the name in the script.
     pub offset: usize,
+    /// What the call does ([`RefRow::operation`]): `call` (or an entity-auto verb) for a service; for an entity `find`,
+    /// `delete` for a find's `deleteAll()`, and the write made on a `makeValue` (in its chain, or on the name it is
+    /// assigned to), else empty.
+    pub operation: &'static str,
 }
 
 /// The names in the string literals of a script's service and entity calls (`ec.service.sync().name("…")`,
-/// `ec.entity.find("…")`, `makeValue("…")`), in the order they come.
+/// `ec.entity.find("…")`, `makeValue("…")`), in the order they come, each with its operation as far as the text
+/// shows it: the rest of the call's statement, and for a value assigned to a name the first write on that name.
 #[must_use]
 pub fn script_names(text: &str) -> Vec<ScriptName> {
-    let calls = [(ToKind::Service, &*SERVICE_CALL), (ToKind::Entity, &*ENTITY_CALL)];
-    let mut found: Vec<ScriptName> = calls
-        .into_iter()
-        .flat_map(|(kind, call)| {
-            call.captures_iter(text)
-                .filter_map(|captures| captures.get(1))
-                .map(move |name| ScriptName {
-                    kind,
-                    name: name.as_str().to_string(),
-                    offset: name.start(),
-                })
+    let mut found: Vec<ScriptName> = SERVICE_CALL
+        .captures_iter(text)
+        .filter_map(|captures| captures.get(1))
+        .map(|name| ScriptName {
+            kind: ToKind::Service,
+            name: name.as_str().to_string(),
+            offset: name.start(),
+            operation: service_operation(name.as_str()),
         })
         .collect();
+    for captures in ENTITY_CALL.captures_iter(text) {
+        let (Some(call), Some(name), Some(whole)) = (captures.get(1), captures.get(2), captures.get(0)) else {
+            continue;
+        };
+        let after = &text[whole.end()..];
+        let statement = statement_of(after);
+        let write = VALUE_WRITE
+            .captures(statement)
+            .and_then(|write| write.get(1))
+            .map(|write| write.as_str());
+        let operation = if call.as_str() == "makeValue" {
+            let write = write.or_else(|| {
+                // `def v = ec.entity.makeValue("…")` then `v.create()`
+                let line_start = text[..whole.start()].rfind('\n').map_or(0, |at| at + 1);
+                let assigned = ASSIGNED.captures(&text[line_start..whole.start()])?.get(1)?.as_str();
+                let on_name = Regex::new(&format!(
+                    r"\b{}\s*\.\s*(createOrUpdate|create|update|store|delete)\s*\(",
+                    regex::escape(assigned)
+                ))
+                .ok()?;
+                on_name
+                    .captures(&after[statement.len()..])
+                    .and_then(|write| write.get(1))
+                    .map(|write| write.as_str())
+            });
+            match write {
+                Some("create") => "create",
+                Some("update") => "update",
+                Some("store" | "createOrUpdate") => "store",
+                Some("delete" | "deleteAll") => "delete",
+                _ => "",
+            }
+        } else if write == Some("deleteAll") {
+            "delete"
+        } else {
+            "find"
+        };
+        found.push(ScriptName {
+            kind: ToKind::Entity,
+            name: name.as_str().to_string(),
+            offset: name.start(),
+            operation,
+        });
+    }
     found.sort_by_key(|found| found.offset);
     found
+}
+
+/// The rest of a statement from a call on: to its `;`, a blank line, or the next `ec.` call, at most 400 bytes.
+fn statement_of(after: &str) -> &str {
+    let mut end = after.len().min(400);
+    while !after.is_char_boundary(end) {
+        end -= 1;
+    }
+    let window = &after[..end];
+    let stops = [window.find(';'), window.find("\n\n"), window.find("ec.")];
+    let end = stops.into_iter().flatten().min().unwrap_or(window.len());
+    &window[..end]
 }
 
 /// Whether a screen element is a widget a `screen-extend` may anchor to by its `name` or `id`: inside `widgets` (or

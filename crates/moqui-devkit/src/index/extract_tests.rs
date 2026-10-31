@@ -282,6 +282,9 @@ fn resolving_names_fields_entity_auto_and_anchors() {
             column: 0,
             to_id: None,
             resolved: false,
+            operation: String::new(),
+            origin: String::new(),
+            origin_hash: String::new(),
         };
         resolver.resolve(&mut row, &|_| false);
         row.to_id
