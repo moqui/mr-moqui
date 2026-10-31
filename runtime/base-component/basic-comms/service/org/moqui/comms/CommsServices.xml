@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Screen services of BasicComms that are not about one area (plans/Comms-Framework.md §3.1, D-A3). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="search" noun="Users">
+        <description>The people to share a mail account with, mention or message: active user accounts whose name or username
+            has the term, as {id (the userId), value (the same), label}. Leaves out disabled accounts and the system's own
+            (an agent's or another account whose username starts with _). Any signed-in user may look people up by name, as
+            in a mail client's address book.</description>
+        <in-parameters>
+            <parameter name="term"/>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+        <out-parameters><parameter name="userList" type="List"/></out-parameters>
+        <actions>
+            <set field="termText" from="String(term || '').trim()"/>
+            <set field="pageLimit" from="Math.min(Math.max(Number(limit) || 10, 1), 50)"/>
+            <entity-find entity-name="moqui.security.UserAccount" list="accountList" limit="${pageLimit}" disable-authz="true">
+                <econditions combine="or">
+                    <econdition field-name="username" operator="like" value="%${termText}%" ignore-case="true"/>
+                    <econdition field-name="userFullName" operator="like" value="%${termText}%" ignore-case="true"/>
+                </econditions>
+                <econdition field-name="username" operator="not-like" value="\_%"/>
+                <econdition field-name="disabled" operator="not-equals" value="Y" or-null="true"/>
+                <order-by field-name="^userFullName,^username"/>
+                <select-field field-name="userId,username,userFullName"/>
+            </entity-find>
+            <script><![CDATA[
+                userList = Array.from(accountList).map((account) => ({id: account.userId, value: account.userId,
+                    label: account.userFullName || account.username}))
+            ]]></script>
+        </actions>
+    </service>
+</services>

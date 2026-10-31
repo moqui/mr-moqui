@@ -109,6 +109,8 @@ fn get_providers(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let hook = hook_of(parameters)?;
+    // the apps the user may open, even for a caller that disabled authorization
+    let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
     let declared = crate::screen::shell::declared_providers(&factory_now()?, &hook);
     let list = declared
         .iter()
@@ -145,6 +147,9 @@ fn call_providers(
         Some(Value::Map(map)) => map.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
         _ => BTreeMap::new(),
     };
+    // The apps the user may open, and each provider with that app's authorization and entity filters: checked even for a
+    // caller that disabled authorization, so a provider never reaches past the user.
+    let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
     let declared: Vec<_> = crate::screen::shell::declared_providers(&factory_now()?, &hook)
         .into_iter()
         .filter(|declared| only.as_deref().is_none_or(|only| declared.provider.name == only))

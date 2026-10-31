@@ -509,20 +509,25 @@ pub struct DeclaredProvider {
     pub provider: ProviderDecl,
 }
 
-/// The providers of `hook` that the app roots the current user may open declare, outside a render: from the default
-/// root screen's apps root, in `sequence` order (ties in the apps' menu order). A provider of the same `name` declared
-/// by two apps is the first app's. Empty when there is no apps root or no provider.
+/// The providers of `hook` that the app roots the current user may open declare, in a render or outside one: from the
+/// apps root of the render's root screen, else of the `webroot` webapp's root screen, in `sequence` order (ties in the
+/// apps' menu order). A provider of the same `name` declared by two apps is the first app's. Empty when there is no apps
+/// root or no provider.
 #[must_use]
 pub fn declared_providers(factory: &Arc<crate::context::ExecutionContextFactory>, hook: &str) -> Vec<DeclaredProvider> {
+    let root = super::with_current_render(|state| state.url_info.path_defs.first().map(|def| def.location.clone()))
+        .flatten()
+        .or_else(|| super::info::root_screen_for_host(factory, "", "webroot").ok())
+        .unwrap_or_else(|| super::ROOT_SCREEN.to_string());
     let facade = super::ScreenFacade::of(factory);
     let has_apps_root = facade
-        .screen_def(factory, super::ROOT_SCREEN)
+        .screen_def(factory, &root)
         .is_ok_and(|def| def.subscreens.get(APPS_PATH).is_some());
     if !has_apps_root {
         return Vec::new();
     }
     let mut out: Vec<DeclaredProvider> = Vec::new();
-    for app in apps_under(factory, &facade, super::ROOT_SCREEN, &[APPS_PATH.to_string()]) {
+    for app in apps_under(factory, &facade, &root, &[APPS_PATH.to_string()]) {
         let Some(providers) = app.def.shell_providers.as_ref() else {
             continue;
         };

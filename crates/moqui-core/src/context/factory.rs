@@ -30,7 +30,7 @@ use moqui_lib::env;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::{lock, read, write};
 
-use super::artifact::{ArtifactStack, Authz, AuthzGuard, Tarpit};
+use super::artifact::{ArtifactStack, Authz, AuthzGuard, AuthzRequired, Tarpit};
 
 thread_local! {
     /// The entered contexts, innermost last, one entry per live guard. Each entry is a handle that
@@ -1098,6 +1098,13 @@ impl ExecutionContext {
 
     pub fn disable_authz(&self) -> AuthzGuard {
         self.state.artifacts.borrow().disable_authz()
+    }
+
+    /// Check authorization until the guard drops, even when a caller disabled it: for work done on the user's behalf
+    /// whose reach must be the user's own (the provider hooks of the apps the user may open). The caller's state comes
+    /// back on drop.
+    pub fn require_authz(&self) -> AuthzRequired {
+        self.state.artifacts.borrow().require_authz()
     }
 
     /// Java's `ArtifactExecutionFacade.disableAuthz()` for a script, which has no guard to hold: authorization stays

@@ -55,6 +55,14 @@ const ROOT: &str = r#"<screen require-authentication="false">
         const found = sri.getShellSearch(params.text, params.groups, params.limit)
         if (found != null) ec.web.sendJsonResponse(found)
     ]]></script></actions><default-response type="none"/></transition>
+    <transition name="providers" read-only="true" begin-transaction="false"><actions><script><![CDATA[
+        const params = ec.web.parameters
+        const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: params.hook,
+            mutation: params.mutation == 'true', sourceId: params.sourceId || null, parameters: {text: 'hello'}}).disableAuthz().call() || {}
+        const errors = ec.message.hasError() ? ec.message.errorsString : ''
+        ec.message.clearErrors()
+        ec.web.sendJsonResponse({results: out.results || [], failedParts: out.failedParts || [], unavailable: out.unavailable, errors: errors})
+    ]]></script></actions><default-response type="none"/></transition>
     <subscreens default-item="apps"/>
     <widgets><subscreens-active/></widgets>
 </screen>"#;
@@ -90,6 +98,20 @@ const SERVICES: &str = r#"<services>
         <in-parameters><parameter name="userId"/></in-parameters>
         <out-parameters><parameter name="counts" type="Map"/></out-parameters>
         <actions><script>throw new Error('the counts are down')</script></actions>
+    </service>
+    <service verb="get" noun="InboxOne" authenticate="false">
+        <in-parameters><parameter name="text"/></in-parameters>
+        <out-parameters><parameter name="threadList" type="List"/><parameter name="stack"/></out-parameters>
+        <actions><script>threadList = [{itemId: 'one-1', subject: text}]; stack = ec.artifactExecution.getStackNameString()</script></actions>
+    </service>
+    <service verb="get" noun="InboxDown" authenticate="false">
+        <in-parameters><parameter name="text"/></in-parameters>
+        <actions><script>throw new Error('the inbox is down')</script></actions>
+    </service>
+    <service verb="get" noun="InboxSecret" authenticate="false">
+        <in-parameters><parameter name="text"/></in-parameters>
+        <out-parameters><parameter name="threadList" type="List"/></out-parameters>
+        <actions><script>threadList = [{itemId: 'secret-1'}]</script></actions>
     </service>
     <service verb="search" noun="Records" authenticate="false">
         <in-parameters><parameter name="text"/><parameter name="limit" type="Integer"/><parameter name="docTypes" type="List"/>
@@ -191,6 +213,9 @@ fn tree(name: &str) -> PathBuf {
                     <key keys="g s" label="Secret" screen="secret"/>
                 </keymap>
                 <account-menu-item label="Preferences" icon="sym_o_tune" screen="open/List"/>
+                <inbox-source name="open.one" service="test.Shell.get#InboxOne" sequence="20"/>
+                <inbox-source name="open.down" service="test.Shell.get#InboxDown" sequence="10"/>
+                <inbox-source name="open.nameless" service=""/>
                 <frobnicate/>
             </shell-providers>
             <widgets><subscreens-active/></widgets>
@@ -240,6 +265,7 @@ fn tree(name: &str) -> PathBuf {
             <shell-providers>
                 <palette-type doc-type="SecretDoc"/>
                 <palette-source group="Secret" service="test.Shell.search#Secret"/>
+                <inbox-source name="secret.two" service="test.Shell.get#InboxSecret" sequence="30"/>
             </shell-providers>
             <widgets><label text="secret"/></widgets></screen>"#,
     );
@@ -1434,5 +1460,71 @@ fn renders_under_always_and_the_shell_counts_leave_authorization_as_it_was() {
         refused.map(|out| out.text())
     );
     still_refused("a refused render");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The provider hooks (plans/Comms-Framework.md §3.3): call#Providers calls each provider of the apps the user may open,
+/// as its app; a failing read is left out in failedParts while the others answer; a hook nobody declares is unavailable;
+/// a mutation stops at the first failure; sourceId calls one.
+#[test]
+fn providers_of_the_apps_the_user_may_open_answer_and_a_failing_one_is_left_out() {
+    let dir = tree("hooks");
+    let world = world(&dir);
+    let root = root_of(&dir);
+    let call = |user: &str, query: &[(&str, &str)]| get(&world, &root, Some(user), "/providers", query);
+
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let (status, plain) = tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        call("plain", &[("hook", "inbox-source")])
+    });
+    assert_eq!(status, 200, "{plain}");
+    assert_eq!(names(&plain["results"], "sourceId"), ["open.one"], "{plain}");
+    assert_eq!(plain["results"][0]["threadList"][0]["subject"], "hello");
+    assert!(
+        plain["results"][0]["stack"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Apps/Open.xml"),
+        "a provider runs as its app: {plain}"
+    );
+    assert_eq!(names(&plain["failedParts"], "sourceId"), ["open.down"], "{plain}");
+    assert_eq!(plain["unavailable"], false);
+    let text = logged(&lines);
+    assert!(text.contains("inbox-source provider open.down"), "{text}");
+    assert!(text.contains("needs a name and a service"), "{text}");
+
+    // two apps' providers for one hook both answer, in sequence order, for a user who may open both
+    let (_, admin) = call("admin", &[("hook", "inbox-source")]);
+    assert_eq!(
+        names(&admin["results"], "sourceId"),
+        ["open.one", "secret.two"],
+        "{admin}"
+    );
+
+    // a hook nobody declares is unavailable, which is not the same as no answer
+    let (_, none) = call("plain", &[("hook", "call-context")]);
+    assert_eq!(none["unavailable"], true, "{none}");
+    assert_eq!(none["results"], json!([]));
+
+    // a mutation stops at the first failure, which is an error; sourceId calls that provider alone
+    let (_, mutation) = call("plain", &[("hook", "inbox-source"), ("mutation", "true")]);
+    assert!(
+        mutation["errors"].as_str().unwrap_or("").contains("the inbox is down"),
+        "{mutation}"
+    );
+    assert_eq!(mutation["results"], json!([]), "{mutation}");
+    let (_, one) = call(
+        "plain",
+        &[("hook", "inbox-source"), ("mutation", "true"), ("sourceId", "open.one")],
+    );
+    assert_eq!(names(&one["results"], "sourceId"), ["open.one"], "{one}");
+    assert_eq!(one["errors"], "", "{one}");
+
+    // a hook that is not one is refused
+    let (_, bad) = call("plain", &[("hook", "frobnicate")]);
+    assert!(
+        bad["errors"].as_str().unwrap_or("").contains("not a provider hook"),
+        "{bad}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

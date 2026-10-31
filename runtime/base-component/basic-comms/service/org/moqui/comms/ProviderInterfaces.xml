@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The contracts of the Comms provider hooks (plans/Comms-Framework.md §3.3): an app's provider service implements the
+    interface of its hook (<implements service="org.moqui.comms.ProviderInterfaces.inbox#Source"/>) and is declared in its app
+    root's shell-providers (inbox-source name="..." service="..."). The framework calls the providers through
+    org.moqui.impl.ShellServices.call#Providers, each as the app that declares it, so authority comes from that app and the
+    signed-in user, never from a userId or app passed as data.
+
+    Each answer the framework combines carries provider-qualified ids (the provider's name as sourceId, itemId within it);
+    a source pages itself (the usual page fields) and its pages are never joined with another's. A read answers what it has,
+    or fails, which call#Providers reports in failedParts; a mutation answers an error. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="inbox" noun="Source" type="interface">
+        <description>inbox-source: operation accounts (the accounts and mailboxes it adds to the Inbox's list, as accountList),
+            settings (what it adds to the mail settings, as settingsList) or threads (a page of threads of its sourceId in a
+            folder, with filters, as threadList and the page fields).</description>
+        <in-parameters>
+            <parameter name="operation" required="true"><description>accounts, settings or threads</description></parameter>
+            <parameter name="sourceId"/>
+            <parameter name="folder"/>
+            <parameter name="filters" type="Map"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+    </service>
+    <service verb="recipient" noun="Source" type="interface">
+        <description>recipient-source: people, groups and lists with addresses for a text (recipientList).</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="kinds"><description>A comma list of person, group and list; empty for all</description></parameter>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+    </service>
+    <service verb="record" noun="Lookup" type="interface">
+        <description>record-lookup: record cards {entityName, id, title, status, url} for a text or an id (recordList).</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="recordEntityName"/>
+            <parameter name="recordId"/>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+    </service>
+    <service verb="record" noun="Link" type="interface">
+        <description>record-link: link a message (emailMessageId) or a chat event (chatRoomId, eventSeq) to a record; answers
+            the link (recordUrl).</description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="eventSeq"/>
+            <parameter name="recordEntityName" required="true"/>
+            <parameter name="recordId" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="create" noun="From" type="interface">
+        <description>create-from: make a record of kind from a message or a chat event; answers its url (recordUrl).</description>
+        <in-parameters>
+            <parameter name="kind" required="true"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="eventSeq"/>
+        </in-parameters>
+    </service>
+    <service verb="invitation" noun="Response" type="interface">
+        <description>invitation: answer the calendar invitation a message carries (accept, tentative or decline).</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="response" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="contact" noun="Card" type="interface">
+        <description>contact-card: a card for an address or a number (card), with an add-to-contacts action when there is no
+            contact yet.</description>
+        <in-parameters>
+            <parameter name="address"/>
+            <parameter name="number"/>
+        </in-parameters>
+    </service>
+    <service verb="meetings" noun="Source" type="interface">
+        <description>meetings-source: the user's meetings in a range, each with its call link (meetingList).</description>
+        <in-parameters>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+    </service>
+    <service verb="call" noun="Context" type="interface">
+        <description>call-context: who a caller is and their open records, for a screen pop (contact, recordList).</description>
+        <in-parameters>
+            <parameter name="number"/>
+            <parameter name="address"/>
+        </in-parameters>
+    </service>
+    <service verb="home" noun="Source" type="interface">
+        <description>home-source: the Comms Home cards it adds (cardList, each with its rows and a link to more).</description>
+        <in-parameters>
+            <parameter name="sourceId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="10"/>
+        </in-parameters>
+    </service>
+    <service verb="external" noun="Conversation" type="interface">
+        <description>external-conversation: file a bridged conversation on a record; retried with idempotencyKey, which must
+            not file it twice. Answers the link (recordUrl).</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="chatBridgeId"/>
+            <parameter name="chatActorId"/>
+            <parameter name="idempotencyKey" required="true"/>
+        </in-parameters>
+    </service>
+</services>
