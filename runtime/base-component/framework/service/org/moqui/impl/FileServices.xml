@@ -1983,7 +1983,13 @@ along with this software (see the LICENSE.md file). If not, see
             path = clean(path)
             const access = ec.service.sync().name('org.moqui.impl.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1 || !ec.user.userId) { ec.message.addError(ec.l10n.localize('File not found')); return }
-            const existing = ec.entity.find('moqui.resource.ResourceFavorite').condition('userId', ec.user.userId).condition('driveId', driveId).condition('path', path).one()
+            let existing = ec.entity.find('moqui.resource.ResourceFavorite').condition('userId', ec.user.userId).condition('driveId', driveId).condition('path', path).one()
+            // not starred yet: a lock on a missing row locks nothing, so two stars at once (a double click) would both
+            // create it. Lock the UserAccount row and look again: the second waits for the first, then finds its row.
+            if (favorite && existing == null) {
+                ec.entity.find('moqui.security.UserAccount').condition('userId', ec.user.userId).selectField('userId').forUpdate(true).disableAuthz().one()
+                existing = ec.entity.find('moqui.resource.ResourceFavorite').condition('userId', ec.user.userId).condition('driveId', driveId).condition('path', path).forUpdate(true).one()
+            }
             if (favorite && existing == null) {
                 const row = ec.entity.makeValue('moqui.resource.ResourceFavorite')
                 row.setFields({userId: ec.user.userId, driveId: driveId, path: path, createdDate: ec.user.nowTimestamp}, true, null, null)

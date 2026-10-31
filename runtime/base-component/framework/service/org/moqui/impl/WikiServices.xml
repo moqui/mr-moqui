@@ -640,6 +640,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList">
                     <econdition field-name="wikiSpaceId"/><econdition field-name="pagePath" from="pagePath || null"/></entity-find>
                 <set field="wikiPage" from="wikiPageList?.length ? wikiPageList[0] : null"/>
+                <!-- no page at the path yet: a lock on a missing row locks nothing, so two first saves at once (two tabs, an
+                    autosave beside a save) would both create it. Lock the WikiSpace row and look again: the second waits
+                    for the first to commit, then finds its page and writes a version of it. -->
+                <if condition="wikiPage == null">
+                    <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="lockedSpace" for-update="true" cache="false"/>
+                    <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList" for-update="true">
+                        <econdition field-name="wikiSpaceId"/><econdition field-name="pagePath" from="pagePath || null"/></entity-find>
+                    <set field="wikiPage" from="wikiPageList?.length ? wikiPageList[0] : null"/>
+                </if>
                 <if condition="wikiPage == null">
                     <!-- a new page: the user adds pages to the space (get#WikiPageAccess), under a parent page they may view -->
                     <service-call name="org.moqui.impl.WikiServices.get#WikiPageAccess" out-map="spaceAccess" in-map="{wikiSpaceId:wikiSpaceId}"/>
