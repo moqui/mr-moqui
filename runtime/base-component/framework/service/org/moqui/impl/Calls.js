@@ -1270,6 +1270,19 @@ function phoneControl(session, action) {
   }
 }
 
+/**
+ * A phone leg that answered hears the call's notices, as a browser leg that binds gets their rtc frames: the recording's
+ * (note#CallChange, logged per leg) and, while captions are on, the captions' (VoiceServices.notify#PhoneLeg).
+ */
+function phoneJoined(session, leg) {
+  recordingChange(session.callSessionId, 'legBound', leg.callLegId)
+  const captions = one('moqui.call.CallCaptions', { callSessionId: session.callSessionId })
+  if (captions && captions.captionsOn === 'Y') {
+    ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
+      .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
+  }
+}
+
 function makePhoneParticipant(session, displayName, admission) {
   const p = ec.entity.makeValue(PARTICIPANT)
   p.setSequencedIdPrimary()
@@ -1358,6 +1371,7 @@ function phoneEvent(p) {
     bump(session)
     session.update()
     pushState(session, 'answered', { callLegId: leg.callLegId })
+    phoneJoined(session, leg)
     return {}
   }
   if (p.event === 'failed' || p.event === 'busy') {

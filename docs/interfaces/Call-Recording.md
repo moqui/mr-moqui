@@ -24,6 +24,7 @@ and only the host and the one who recorded it can play or download the files. Th
 | `call_recording_queue_frames` | `4096` | Frames queued from the media thread to the recorder; a recorder further behind fails |
 | `call_recording_segment_mb`, `call_recording_segment_minutes` | `64`, `30` | When a file is cut and the next segment starts |
 | `call_recording_max_mb` | `2048` | A recording's total; it stops there |
+| `call_recording_prompt_audio` | empty | A WAV file a phone leg hears after the recording tone ([SIP, Notices](SIP.md#notices)) |
 
 The policy must meet the deployment's jurisdiction. The notice alone does not.
 
@@ -80,8 +81,15 @@ call goes on.
   `state` is `recording`, `paused`, `stopped` or `failed`; `pauseReason` is `user` (the host paused it), `ack` (a leg has
   not acknowledged) or `withdrawn` (a leg withdrew). The page shows the indicator to everyone, the lobby too
   (`get#RecordingState`).
-- Legs that are not browsers (SIP devices and phone numbers) get the notice through `notify#LegRecording`: a voice
-  prompt, and a key to acknowledge. It does nothing until SIP legs exist (V1 fills it in).
+- Phone legs (phone numbers, and SIP devices later) get the notice through `notify#LegRecording` as a prompt that their
+  SIP engine plays over what the phone hears (`VoiceServices.notify#PhoneLeg`, [SIP, Notices](SIP.md#notices)): a
+  1400 Hz tone, then the audio that `call_recording_prompt_audio` names, if any. A phone that answers later hears it
+  when it answers.
+- **A phone acknowledges by pressing 1.** Under `call_recording_ack_required` its tone plays twice, which asks for the
+  key; set `call_recording_prompt_audio` to a recording that says so ("This call is recorded. Press 1 to accept, or hang
+  up."). The key comes back as the phone's DTMF (`note#PhoneLeg`), and `ack#LegRecordingNotice` logs it in the leg's
+  `CallRecordingConsent` with the method `CamDtmf`. A 1 at any other time is the call's own key. A phone withdraws by
+  hanging up: its leg leaves, and no longer holds the recording.
 - Staying on the call after the notice is consent. With `call_recording_ack_required`, the recording pauses while any
   current leg has not acknowledged (`ack#RecordingNotice`, the Acknowledge button); the host's own leg counts as
   acknowledged when they start it. Any leg can withdraw (`withdraw#RecordingConsent`), which pauses the recording while

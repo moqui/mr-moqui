@@ -43,28 +43,17 @@ use crate::rtc::media::{self, Consumer, Kinds, PcmSource};
 const CONSUMER_QUEUE: usize = 50;
 const TICK: Duration = Duration::from_millis(20);
 
-/// Audio played to the phone over what it hears: the recording notice (D-V5), a tone or recorded speech.
+/// Audio played to the phone over what it hears, 48 kHz mono: a call's notice (`prompt.rs`), its tones and any
+/// recorded speech.
 #[derive(Debug, Clone)]
-pub(crate) enum Prompt {
-    /// A tone of `hz` for `millis`.
-    Tone { hz: f64, millis: u32 },
-    /// 48 kHz mono PCM.
-    #[allow(dead_code, reason = "the recording notice (W5) plays recorded speech")]
-    Pcm(Arc<[i16]>),
-}
+pub(crate) struct Prompt(pub(crate) Arc<[i16]>);
 
-impl Prompt {
-    fn samples(&self) -> Vec<i16> {
-        match self {
-            Prompt::Tone { hz, millis } => {
-                let n = (*millis as usize) * 48;
-                (0..n)
-                    .map(|i| (6000.0 * (2.0 * std::f64::consts::PI * hz * i as f64 / 48_000.0).sin()) as i16)
-                    .collect()
-            }
-            Prompt::Pcm(pcm) => pcm.to_vec(),
-        }
-    }
+/// A prompt after the one playing, if any, so a joiner's notices (the recording's, then the captions') are each heard
+/// whole: what is left of `queue` from `at`, then `next`. The new queue plays from 0.
+pub(crate) fn queue_prompt(queue: &mut Vec<i16>, at: &mut usize, next: &[i16]) {
+    queue.drain(..(*at).min(queue.len()));
+    *at = 0;
+    queue.extend_from_slice(next);
 }
 
 /// What the leg's thread is told.
@@ -291,10 +280,7 @@ impl Worker {
                     media.send_digits(&digits);
                 }
             }
-            LegCommand::Prompt(prompt) => {
-                self.prompt = prompt.samples();
-                self.prompt_at = 0;
-            }
+            LegCommand::Prompt(prompt) => queue_prompt(&mut self.prompt, &mut self.prompt_at, &prompt.0),
             LegCommand::Stop => {}
         }
     }

@@ -48,7 +48,8 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
 - **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
   pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
   consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
-  recording waits until all have. Calls, Recordings lists the recordings you made and those of calls you host: play one
+  recording waits until all have. A phone in the call hears a tone instead, and presses 1 to acknowledge or hangs up to
+  withdraw; it hears another tone when captions turn on. Calls, Recordings lists the recordings you made and those of calls you host: play one
   part with everyone's audio and video together, download each file, and delete your own. The terminal lists them with
   Delete. Recordings are deleted after the server's retention period ([Call recording](../interfaces/Call-Recording.md)).
 - **Captions.** Where the administrator turned them on (`call_captions_enabled`) and a speech to text model is set up,

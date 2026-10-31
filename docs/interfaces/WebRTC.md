@@ -67,8 +67,8 @@ minutes.
 ## Recording
 
 A call's host can record it when `call_recording_enabled` is on: each track as sent (Opus in Ogg, VP8 in WebM) and the
-mixed audio, made on the media node, with a notice to every leg and the `rtc` frame `recording`. See
-[Call recording](Call-Recording.md).
+mixed audio, made on the media node, with a notice to every leg and the `rtc` frame `recording`; a phone leg hears it
+as a prompt ([SIP, Notices](SIP.md#notices)). See [Call recording](Call-Recording.md).
 
 ## Captions
 
@@ -87,6 +87,7 @@ the binary (`speech-local`, Whisper on candle) is not built yet.
 | `call_captions_timeout_seconds` | `20` | How long one chunk may take |
 | `call_captions_language` | empty | An ISO 639-1 code; empty lets the model tell |
 | `call_captions_store` | `false` | `true` keeps each caption as a `CallTranscript` row; by default nothing is kept |
+| `call_captions_prompt_audio` | empty | A WAV file a phone leg hears after the captions tones ([SIP, Notices](SIP.md#notices)) |
 
 How they work:
 
@@ -100,7 +101,8 @@ How they work:
    chunk, resampled to 16 kHz and sent as WAV to the provider (`moqui_core::llm_hooks::transcribe`, through
    `moqui-llm`). The call counts against the quota of the user who turned captions on, and each is an `LlmCall`.
 3. Every leg gets the notice, `{rtc: 'captions', state: 'on', provider, local}`, which names who hears the audio; a leg
-   that joins later gets it when it joins, a guest's too. Captions go to every leg in the order they were spoken:
+   that joins later gets it when it joins, a guest's too. A phone leg hears it as a prompt, when captions turn on or when
+   it answers while they are on ([SIP, Notices](SIP.md#notices)). Captions go to every leg in the order they were spoken:
    `{rtc: 'caption', leg, participant, name, seq, text}`.
 4. A slow provider never holds the call up. When the queue is full the oldest waiting chunk is dropped and its place
    goes out as `{rtc: 'caption', leg, seq, gap: true}`. A provider error or timeout goes out once as

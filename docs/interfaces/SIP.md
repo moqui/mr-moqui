@@ -151,7 +151,8 @@ Each provider is unverified until its own live check.
     plain RTP to private networks.
 - **DTMF** is RFC 4733 telephone-event, both ways.
   - The in-call keypad of `m-call` sends digits (`send#PhoneDtmf`).
-  - The digits a phone sends are noted (`note#PhoneLeg` `dtmf`), for the IVR and queues later.
+  - The digits a phone sends are noted (`note#PhoneLeg` `dtmf`): a 1 acknowledges a recording that asks for it
+    ([Notices](#notices)); the IVR and queues come later.
 - **Hold** is a re-INVITE either way.
   - The provider's `sendonly` or `inactive` is answered `recvonly` or `inactive`, and Moqui stops sending.
   - `hold#PhoneCall` and `resume#PhoneCall` send Moqui's own re-INVITE.
@@ -160,8 +161,26 @@ Each provider is unverified until its own live check.
   - An answer that crosses the CANCEL is ACKed and ended with a BYE, and the call counts as canceled.
   - When a provider forks and several phones answer, the first answer wins; the others are ACKed and ended.
   - An outbound call that rings 60 seconds is canceled.
-- **Recording notice.** Recording (W5) plays its notice to a phone leg through `play_prompt` in `src/sip/mod.rs`, as
-  a tone or recorded speech mixed over what the phone hears.
+
+## Notices
+
+What a browser in the call sees as an `rtc` frame, a phone leg hears as a prompt mixed over the call's audio. The
+services send it with `VoiceServices.notify#PhoneLeg` (`send#SipControl`, action `prompt`) to the engine of the call's
+node, which plays a tone pattern for each notice (`src/sip/prompt.rs`) and then the deployment's audio, when a
+property names a WAV file (16-bit PCM, mono or stereo, 8 to 48 kHz, at most a minute; any resource location). A
+notice that comes while another plays waits for it.
+
+| Notice | When | Tones | Audio |
+| --- | --- | --- | --- |
+| `recording` | A recording starts, or the phone answers while one goes ([Call recording](Call-Recording.md#the-notice-and-consent)) | 1400 Hz, 400 ms | `call_recording_prompt_audio` |
+| `recordingAck` | The same, under `call_recording_ack_required` | 1400 Hz twice | `call_recording_prompt_audio` |
+| `captions` | Captions turn on, or the phone answers while they are on ([WebRTC, Captions](WebRTC.md#captions)) | 900 then 1200 Hz | `call_captions_prompt_audio` |
+
+- **Acknowledging** a recording is pressing 1. The phone's DTMF comes back through `note#PhoneLeg`, and
+  `CallRecordingServices.ack#LegRecordingNotice` logs it with the method `dtmf`. Other keys, and a 1 when nothing asks
+  for it, are the call's own.
+- **Withdrawing** is hanging up.
+- Audio that does not read is logged, and the notice plays its tones only.
 
 ## Fraud controls
 
@@ -270,5 +289,7 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - two phone legs mixed.
 - `cargo test -p moqui-host --test it sip::`: an outbound and an inbound call on a real server, through a fake trunk,
   heard by a browser stand-in.
-- `./moq test framework --spec Voice`: the services' authorization, fraud controls, emergency routing and
-  capabilities.
+- `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, and prompts queued one after
+  another.
+- `./moq test framework --spec Voice`: the services' authorization, fraud controls, emergency routing, a phone leg's
+  notices and its acknowledgement by pressing 1, and capabilities.

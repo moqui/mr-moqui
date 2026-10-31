@@ -5,9 +5,10 @@
 // told by send#MediaControl ({action: 'recording', op: start | pause | resume | stop | notice}) after the commit, and hands
 // back each closed segment file (store#RecordingSegment). Every current leg, and each leg bound later, gets the notice: the
 // rtc 'recording' frame the media node sends to every browser leg of the room (and again to a late joiner), or for a leg
-// that is not a browser notify#LegRecording; each notice is a CallRecordingConsent row. Under the acknowledgement policy
-// the recording pauses while a current leg has not acknowledged, and after any withdraws; resuming starts a new period of
-// segments. Who may do what is in CallRecordingServices.xml.
+// that is not a browser notify#LegRecording, a prompt played to the phone (VoiceServices.notify#PhoneLeg); each notice is
+// a CallRecordingConsent row. Under the acknowledgement policy the recording pauses while a current leg has not
+// acknowledged, and after any withdraws; resuming starts a new period of segments. A phone acknowledges by pressing 1
+// (ack#LegRecordingNotice, from its DTMF) and withdraws by hanging up. Who may do what is in CallRecordingServices.xml.
 
 const SESSION = 'moqui.call.CallSession'
 const PARTICIPANT = 'moqui.call.CallParticipant'
@@ -376,12 +377,37 @@ function withdraw(p) {
   return { recording: recordingView(got.recording) }
 }
 
-/** The hook for legs that are not browsers: SIP and phone legs (V1) play a prompt here. Until then, nothing. */
+/**
+ * The hook for legs that are not browsers: a phone leg hears the notice as a prompt, with the acknowledgement tone (press
+ * 1) under that policy. Browser and guest legs have the rtc frame instead.
+ */
 function notifyLeg(p) {
   const leg = one(LEG, { callLegId: p.callLegId })
   if (!leg || WEB_LEGS.includes(leg.legTypeEnumId || 'CltWeb')) return { notified: false }
-  ec.logger.info(`Call recording ${p.callRecordingId}: leg ${p.callLegId} (${leg.legTypeEnumId}) has no voice prompt yet (V1)`)
-  return { notified: false }
+  const out = ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg').parameters({
+    callLegId: leg.callLegId, notice: p.ackRequired === true || p.ackRequired === 'true' ? 'recordingAck' : 'recording',
+  }).disableAuthz().call() || {}
+  return { notified: !!out.notified }
+}
+
+/**
+ * A phone leg pressed 1 (Voice.js, from its DTMF): it acknowledges the notice of the recording going in its call, logged
+ * with the method dtmf, when that recording asks for acknowledgements and this leg has not given one. Any other time the
+ * key is the call's own (a menu, a PIN), so nothing is recorded and nothing is refused.
+ */
+function legAck(p) {
+  const session = lockSession(p.callSessionId)
+  const leg = session && p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!leg || leg.callSessionId !== session.callSessionId || leg.statusId !== 'ClsAnswered'
+    || WEB_LEGS.includes(leg.legTypeEnumId || 'CltWeb')) return { acknowledged: false }
+  const recording = activeRecording(session.callSessionId)
+  if (!recording || recording.ackRequired !== 'Y') return { acknowledged: false }
+  const consent = notice(recording, leg, false)
+  if (consent.ackDate && !consent.withdrawnDate) return { acknowledged: false, recording: recordingView(recording) }
+  consent.setFields({ ackDate: ec.user.nowTimestamp, ackMethodEnumId: 'CamDtmf', withdrawnDate: null }, true, null, null)
+  consent.update()
+  settle(recording)
+  return { acknowledged: true, recording: recordingView(recording) }
 }
 
 /** A change of the call (Calls.js): tolerant, so the call's own change goes on whatever happens here. */
@@ -678,7 +704,7 @@ function expireItem(p) {
 }
 
 const operations = {
-  state, start, stop, pause, resume, ack, withdraw, notifyLeg, callChange, storeSegment, recorderEnd, find: find_, file, remove,
+  state, start, stop, pause, resume, ack, withdraw, notifyLeg, legAck, callChange, storeSegment, recorderEnd, find: find_, file, remove,
   expire, expireItem,
 }
 

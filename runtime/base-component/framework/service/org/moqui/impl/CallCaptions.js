@@ -6,7 +6,7 @@
 // notice). The checks, in order: the deployment allows captions (call_captions_enabled), the user is in the call (anyone
 // else gets "not found"), the call has not ended, its media is not end-to-end encrypted (the server cannot hear it, and
 // captions never downgrade it), and a speech provider is set up. CallCaptions keeps the state; nothing of the audio is
-// kept, and the text only when call_captions_store is true.
+// kept, and the text only when call_captions_store is true. A phone in the call hears the notice as a prompt instead.
 
 const SESSION = 'moqui.call.CallSession'
 const PARTICIPANT = 'moqui.call.CallParticipant'
@@ -91,6 +91,19 @@ function pushState(session, captions) {
   }
 }
 
+/**
+ * The phones in the call hear the captions notice as a prompt (VoiceServices.notify#PhoneLeg), as browsers get the rtc
+ * frame; a phone that answers later hears it from Calls.js.
+ */
+function noticePhones(session) {
+  const legs = find(LEG).condition({ callSessionId: session.callSessionId, statusId: 'ClsAnswered' })
+    .condition('legTypeEnumId', 'in', ['CltPstn', 'CltSipDevice']).list()
+  for (const leg of legs) {
+    ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
+      .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
+  }
+}
+
 function start({ callSessionId }) {
   const checked = check(callSessionId, true)
   if (checked.refusal) return checked.refusal
@@ -117,7 +130,10 @@ function start({ callSessionId }) {
   control(session, { action: 'startCaptions', userId: row.startedByUserId || userId, provider: speech.providerLabel || '',
     local: !!speech.local })
   const captions = state(session)
-  if (!repeated) pushState(session, captions)
+  if (!repeated) {
+    pushState(session, captions)
+    noticePhones(session)
+  }
   return { captions, repeated }
 }
 

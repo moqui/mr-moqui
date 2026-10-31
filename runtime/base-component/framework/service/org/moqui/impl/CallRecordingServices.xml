@@ -119,7 +119,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="ack" noun="RecordingNotice" authenticate="anonymous-all">
         <description>The current user's leg in the call (a guest's by its credential) acknowledges the recording notice
-            (a click; a phone's key press comes through notify#LegRecording's caller). A withdrawal before is taken back. When
+            (a click; a phone presses 1 instead, ack#LegRecordingNotice). A withdrawal before is taken back. When
             every current leg has acknowledged, a recording held for that resumes.</description>
         <in-parameters>
             <parameter name="callSessionId"/>
@@ -147,10 +147,11 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="notify" noun="LegRecording" authenticate="false" allow-remote="false">
-        <description>Internal: the hook that gives a leg that is not a browser (a SIP device or a phone number, V1) the
-            recording notice: a voice prompt, and with ackRequired a key to press (its answer comes back as ack#RecordingNotice's
-            work for that leg). Browser and guest legs get the rtc recording frame instead, so this does nothing for them.
-            Until SIP legs exist (V1) it does nothing at all; V1 fills it in.</description>
+        <description>Internal: the hook that gives a leg that is not a browser (a phone number or a SIP device) the
+            recording notice: a prompt played to it by its SIP engine (VoiceServices.notify#PhoneLeg: the recording tone, with
+            ackRequired the acknowledgement tone that asks for 1, then call_recording_prompt_audio when set). Its answer comes
+            back as ack#LegRecordingNotice. Browser and guest legs get the rtc recording frame instead, so this does nothing
+            for them.</description>
         <in-parameters>
             <parameter name="callRecordingId" required="true"/>
             <parameter name="callLegId" required="true"/>
@@ -161,6 +162,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="notified" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('notifyLeg', context))</script></actions>
+    </service>
+
+    <service verb="ack" noun="LegRecordingNotice" authenticate="false" allow-remote="false">
+        <description>Internal (VoiceServices.note#PhoneLeg, when a phone leg presses 1): that leg acknowledges the
+            notice of the recording going in its call, logged in its CallRecordingConsent with the method dtmf (CamDtmf); a
+            recording held for acknowledgements resumes when every current leg has one. Only while a recording asks for
+            acknowledgements and the leg has not given one; at any other time the key is the call's (acknowledged false).
+            Withdrawing by phone is hanging up.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acknowledged" type="Boolean"/>
+            <parameter name="recording" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('legAck', context))</script></actions>
     </service>
 
     <!-- ========== Recordings and their files ========== -->

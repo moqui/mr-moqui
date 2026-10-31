@@ -31,10 +31,11 @@
 //!   trunk, and holds the deployment's concurrency limit, whatever asked for the call (§5.2).
 //! - **Media.** Each leg is a [`leg::LegMedia`]: its own thread between its RTP socket and the room (`leg.rs`).
 //!
-//! [`play_prompt`] plays a tone or recorded audio to a phone leg: the hook for the recording notice of non-web legs
-//! (W5, D-V5).
+//! - **Notices.** The control `prompt` plays a call's notice to a phone leg (`prompt.rs`): the recording's (W5, D-V5)
+//!   and the captions' (W6), which browsers get as `rtc` frames; a tone pattern of each, then the deployment's audio.
 
 mod leg;
+mod prompt;
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -59,8 +60,7 @@ use moqui_sip::ua::{
 use serde_json::Value as Json;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-pub(crate) use leg::Prompt;
-use leg::{LegCommand, LegMedia, LegNote, PortRange};
+use leg::{LegCommand, LegMedia, LegNote, PortRange, Prompt};
 
 const CONFIG_SERVICE: &str = "org.moqui.impl.VoiceServices.get#EngineConfig";
 const RECEIVE_SERVICE: &str = "org.moqui.impl.VoiceServices.receive#PhoneCall";
@@ -185,20 +185,6 @@ enum Command {
 fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
     static ENGINE: OnceLock<Mutex<Option<UnboundedSender<Command>>>> = OnceLock::new();
     ENGINE.get_or_init(|| Mutex::new(None))
-}
-
-/// Plays a prompt to a phone leg on this node, over what it hears: the recording notice for a leg with no browser
-/// (W5, D-V5: "a voice prompt on a phone"). Err `noSip` when this node has no SIP engine. A leg that is not here is
-/// skipped (logged).
-#[allow(dead_code, reason = "the recording notice (W5) calls it")]
-pub(crate) fn play_prompt(leg: &str, prompt: Prompt) -> Result<(), &'static str> {
-    let sender = lock(engine()).clone().ok_or("noSip")?;
-    sender
-        .send(Command::Prompt {
-            leg: leg.to_string(),
-            prompt,
-        })
-        .map_err(|_| "noSip")
 }
 
 /// The running engine, stopped when dropped (before the factory: its last act deregisters the node).
@@ -499,6 +485,42 @@ async fn call_service(
     })
     .await
     .map_err(|_| "request worker panicked".to_string())?
+}
+
+/// The recorded audio of a notice, 48 kHz mono, when its property names a WAV file; one that does not read is logged and
+/// the notice plays its tones only.
+async fn notice_audio(factory: &Arc<ExecutionContextFactory>, notice: prompt::Notice) -> Option<Vec<i16>> {
+    let property = notice.audio_property();
+    let location = moqui_lib::env::get_prop_or_env(property).trim().to_string();
+    if location.is_empty() {
+        return None;
+    }
+    let factory = Arc::clone(factory);
+    let read = tokio::task::spawn_blocking(move || {
+        let job = {
+            let (factory, location) = (Arc::clone(&factory), location.clone());
+            move || factory.resource().location_bytes(&location)
+        };
+        let rx = factory
+            .request_pool()
+            .try_submit(Arc::clone(&factory), job)
+            .map_err(|e| e.message().to_string())?;
+        match rx.recv() {
+            Ok(Ok(Some(bytes))) => prompt::wav_pcm48(&bytes).map_err(|e| format!("{location}: {e}")),
+            Ok(Ok(None)) => Err(format!("{location}: no file there")),
+            Ok(Err(err)) => Err(format!("{location}: {}", err.message())),
+            Err(_) => Err("request worker stopped".to_string()),
+        }
+    })
+    .await;
+    match read {
+        Ok(Ok(audio)) => Some(audio),
+        Ok(Err(err)) => {
+            tracing::error!("SIP: the prompt audio of {property} did not load, the notice plays its tones: {err}");
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 /// A trunk as the engine knows it, besides what the user agent has.
@@ -954,12 +976,19 @@ impl Engine {
                 });
             }
             "prompt" => {
-                if let Some(entry) = self.legs.get(&leg) {
-                    entry.media.send(LegCommand::Prompt(Prompt::Tone {
-                        hz: 1400.0,
-                        millis: 400,
-                    }));
+                if !self.legs.contains_key(&leg) {
+                    tracing::debug!("SIP: no leg {leg} here for a prompt");
+                    return;
                 }
+                // the deployment's audio is read on a request worker (a dbresource:// location needs one)
+                let notice = prompt::Notice::from_code(&text(body, "notice"));
+                let factory = Arc::clone(&self.factory);
+                let commands = self.commands.clone();
+                tokio::spawn(async move {
+                    let audio = notice_audio(&factory, notice).await;
+                    let prompt = prompt::notice_prompt(notice, audio.as_deref());
+                    let _ = commands.send(Command::Prompt { leg, prompt });
+                });
             }
             "reload" => self.reload().await,
             other => tracing::debug!("SIP: unknown control {other}"),

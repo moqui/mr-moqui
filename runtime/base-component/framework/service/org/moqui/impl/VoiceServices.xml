@@ -184,7 +184,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="note" noun="PhoneLeg" authenticate="false" allow-remote="false">
         <description>Internal (the SIP engine): what a phone leg did: answered, failed or busy (it
             never answered: the call ends), ended or canceled (the far end hung up), held or resumed (the far end's hold), ringing
-            or dtmf (nothing to record yet). A repeat answers as it is.</description>
+            (nothing to record), or dtmf: a 1 acknowledges the recording notice when the call's recording asks for that
+            (CallRecordingServices.ack#LegRecordingNotice), other keys are the call's own. A repeat answers as it is.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId" required="true"/>
@@ -198,6 +199,23 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repeated" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('noteLeg', context))</script></actions>
+    </service>
+
+    <service verb="notify" noun="PhoneLeg" authenticate="false" allow-remote="false">
+        <description>Internal (CallRecordingServices.notify#LegRecording, CallCaptionServices and Calls.js for a phone
+            that joins later): a call's notice to an answered phone leg, played by the SIP engine of the call's node
+            (send#SipControl, action prompt): notice recording (the recording tone), recordingAck (the recording tone twice:
+            press 1 to acknowledge) or captions (two rising tones), each followed by the deployment's prompt audio when
+            call_recording_prompt_audio or call_captions_prompt_audio names one. Any other leg is skipped (notified false).</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="notice" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notified" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('notifyPhoneLeg', context))</script></actions>
     </service>
 
     <service verb="record" noun="AuthFailure" authenticate="false" allow-remote="false">
@@ -484,7 +502,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: tell the SIP engine of a node (instanceId) what to do: {action: 'dial', callSessionId, callLegId,
             voiceTrunkId, toNumber, fromNumber, fromName, destinationClass, emergency, callbackNumber, locationReference, userId},
             {action: 'answer' | 'hangup' | 'hold' | 'resume', callSessionId, callLegId}, {action: 'dtmf', callSessionId, callLegId,
-            digits} or {action: 'reload'}. It goes to that node only, after the caller's transaction commits; a node that is gone
+            digits}, {action: 'prompt', callSessionId, callLegId, notice} (notify#PhoneLeg) or {action: 'reload'}. It goes to that node only, after the caller's transaction commits; a node that is gone
             is logged and skipped.</description>
         <in-parameters>
             <parameter name="instanceId" required="true"/>

@@ -12,9 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Phone calls when this build has no `sip` feature: nothing starts, a set `sip_port` or `sip_tls_port` is an error in
-//! the log, and a prompt has no leg to play to. The voice services report the feature missing
-//! (`get#VoiceCapabilities` supported false).
+//! Phone calls when this build has no `sip` feature: nothing starts, and a set `sip_port` or `sip_tls_port` is an error
+//! in the log. The voice services report the feature missing (`get#VoiceCapabilities` supported false).
 
 use std::sync::Arc;
 
@@ -32,18 +31,4 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> 
         }
     }
     None
-}
-
-/// Audio played to a phone leg (`sip/leg.rs` has the API).
-#[allow(dead_code, reason = "the recording notice (W5) calls it")]
-#[derive(Debug, Clone)]
-pub(crate) enum Prompt {
-    Tone { hz: f64, millis: u32 },
-    Pcm(Arc<[i16]>),
-}
-
-/// No phone legs without SIP.
-#[allow(dead_code, reason = "the recording notice (W5) calls it")]
-pub(crate) fn play_prompt(_leg: &str, _prompt: Prompt) -> Result<(), &'static str> {
-    Err("noSip")
 }

@@ -23,6 +23,12 @@ const POLICY = 'moqui.call.VoicePolicy'
 const AUTH_FAILURE = 'moqui.call.VoiceAuthFailure'
 const SIP_NODE = 'moqui.call.SipNode'
 
+/** The key a phone presses to acknowledge the recording notice (docs/interfaces/Call-Recording.md). */
+const PHONE_ACK_KEY = '1'
+/** The notices a phone leg hears as a prompt (moqui-host src/sip/prompt.rs). */
+const PHONE_NOTICES = ['recording', 'recordingAck', 'captions']
+/** The legs a SIP engine carries. */
+const PHONE_LEGS = ['CltPstn', 'CltSipDevice']
 /** A node with no heartbeat in this long is not up. */
 const NODE_STALE_MS = 60000
 /** Provider profiles proven by an authorized live check (docs/interfaces/SIP.md); none yet. */
@@ -368,8 +374,35 @@ function receive(p) {
 }
 
 function noteLeg(p) {
-  if (p.event === 'dtmf' || p.event === 'ringing') return {}
+  if (p.event === 'dtmf') return phoneKeys(p)
+  if (p.event === 'ringing') return {}
   return calls('phoneEvent', p)
+}
+
+/**
+ * Keys a phone pressed. PHONE_ACK_KEY acknowledges the recording notice when the call's recording asks for that
+ * (CallRecordingServices.ack#LegRecordingNotice); otherwise keys are the call's own and nothing is kept.
+ */
+function phoneKeys(p) {
+  if (!String(p.digits || '').includes(PHONE_ACK_KEY)) return {}
+  ec.service.sync().name('org.moqui.impl.CallRecordingServices.ack#LegRecordingNotice')
+    .parameters({ callSessionId: p.callSessionId, callLegId: p.callLegId }).disableAuthz().call()
+  return {}
+}
+
+/**
+ * A call's notice to a phone leg, as the SIP engine of its node plays it (docs/interfaces/SIP.md, "Notices"): recording
+ * (the recording tone), recordingAck (the tone that asks for PHONE_ACK_KEY) or captions. One path for every notice a
+ * browser sees as an rtc frame; a leg that is not an answered phone leg here is skipped (notified false).
+ */
+function notifyPhoneLeg(p) {
+  if (!PHONE_NOTICES.includes(p.notice)) return refuse('badNotice', 'Not a phone notice: ' + p.notice)
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!leg || !PHONE_LEGS.includes(leg.legTypeEnumId) || leg.statusId !== 'ClsAnswered') return { notified: false }
+  const session = one(SESSION, { callSessionId: leg.callSessionId })
+  if (!session || !session.mediaNodeId || session.statusId === 'CssEnded') return { notified: false }
+  sipControl(session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
+  return { notified: true }
 }
 
 /** The phone legs of a call the current user is in (an answered leg of theirs). */
@@ -912,7 +945,7 @@ function status() {
 }
 
 const operations = {
-  place, receive, noteLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
+  place, receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
   myCallerIds, registerNode, engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
   deleteTrunk, findNumbers, storeNumber, deleteNumber, findGrants, grantCallerId, revokeCallerId, findLocations,
   storeLocation, deleteLocation, getPolicy, updatePolicy, findUserSettings, storeUserSetting, findAuthBlocks,

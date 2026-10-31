@@ -2,7 +2,8 @@
 // the admin services only for VoiceAdmin, insecure trunks only with a profile that allows them, caller ID from the user's
 // grants, international and premium off until the deployment and the user allow them, the limits at once and per day,
 // failed digest attempts blocked per source without locking the account, emergency calls refused without readiness and
-// routed with it whatever the limits, calls coming in and the phone leg's events, and the capabilities. No SIP engine
+// routed with it whatever the limits, calls coming in and the phone leg's events, a phone leg's recording and captions
+// notices with its acknowledgement by pressing 1, and the capabilities. No SIP engine
 // runs here: fake SipNode and CallMediaNode rows stand in for one, and send#SipControl to them is only logged. Every
 // refusal has its positive case with the same parameters.
 // Run: ./moq test framework --spec Voice
@@ -77,6 +78,12 @@ function clean() {
             ec.entity.find("moqui.call." + entity).deleteAll()
         }
         ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).deleteAll()
+        for (const r of ec.entity.find("moqui.call.CallRecording").condition("ownerUserId", "in", [A, B]).list()) {
+            for (const entity of ["CallRecordingConsent", "CallRecordingTrack", "CallRecordingSegment"]) {
+                ec.entity.find("moqui.call." + entity).condition("callRecordingId", r.callRecordingId).deleteAll()
+            }
+            r.delete()
+        }
         // the calls these users placed today, so the daily limit counts this run's only
         for (const s of ec.entity.find(SESSION).condition("kindEnumId", "CskPhone").condition("startedByUserId", "in", [A, B]).list()) {
             s.set("startedDate", new Date(Date.now() - 3 * 86400000))
@@ -364,6 +371,57 @@ feature("an outbound call is active when the number answers, and ends when the u
         failed.errors == ""
         busyRow.statusId == "CssEnded"
         busyRow.endReasonEnumId == "CerDeclined"
+    }
+})
+
+feature("a phone leg hears the recording notice and acknowledges it by pressing 1; another key is the call's own", {
+    when() {
+        endAll()
+        setProperty("call_recording_enabled", "true")
+        setProperty("call_recording_ack_required", "true")
+        const placed = placeA()
+        const callSessionId = placed.callSessionId
+        const phone = {callSessionId, callLegId: placed.phoneLegId}
+        as(null, "note#PhoneLeg", Object.assign({event: "answered"}, phone))
+        const started = as(A, "org.moqui.impl.CallRecordingServices.start#Recording", {callSessionId})
+        const recId = started.callRecordingId
+        const consent = () => sys(() => ec.entity.find("moqui.call.CallRecordingConsent").condition({callRecordingId: recId, callLegId: placed.phoneLegId}).one())
+        const recording = () => sys(() => ec.entity.find("moqui.call.CallRecording").condition("callRecordingId", recId).one())
+        const noticed = consent()
+        as(null, "note#PhoneLeg", Object.assign({event: "dtmf", digits: "2"}, phone))
+        const otherKey = {consent: consent(), recording: recording()}
+        const pressed = as(null, "note#PhoneLeg", Object.assign({event: "dtmf", digits: "1"}, phone))
+        const acked = {consent: consent(), recording: recording()}
+        const again = as(null, "org.moqui.impl.CallRecordingServices.ack#LegRecordingNotice", phone)
+        const prompted = as(null, "org.moqui.impl.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.phoneLegId, ackRequired: true})
+        const webPrompt = as(null, "org.moqui.impl.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.callLegId})
+        const captions = as(null, "notify#PhoneLeg", {callLegId: placed.phoneLegId, notice: "captions"})
+        const captionsToWeb = as(null, "notify#PhoneLeg", {callLegId: placed.callLegId, notice: "captions"})
+        const badNotice = as(null, "notify#PhoneLeg", {callLegId: placed.phoneLegId, notice: "beep"})
+        // withdrawing by phone is hanging up: the leg is gone, and with it the call and its recording
+        as(null, "note#PhoneLeg", Object.assign({event: "ended"}, phone))
+        return {started, noticed, otherKey, pressed, acked, again, prompted, webPrompt, captions, captionsToWeb, badNotice, ended: recording()}
+    },
+    then({started, noticed, otherKey, pressed, acked, again, prompted, webPrompt, captions, captionsToWeb, badNotice, ended}) {
+        started.errors == ""
+        started.recording.state == "paused"
+        started.recording.pauseReason == "ack"
+        noticed.noticeMethodEnumId == "CnmVoice"
+        noticed.ackRequired == "Y"
+        noticed.ackDate == null
+        otherKey.consent.ackDate == null
+        otherKey.recording.statusId == "CrsPaused"
+        pressed.errors == ""
+        acked.consent.ackDate != null
+        acked.consent.ackMethodEnumId == "CamDtmf"
+        acked.recording.statusId == "CrsRecording"
+        again.acknowledged == false
+        prompted.notified == true
+        webPrompt.notified == false
+        captions.notified == true
+        captionsToWeb.notified == false
+        badNotice.reasonCode == "badNotice"
+        ended.statusId == "CrsStopped"
     }
 })
 
