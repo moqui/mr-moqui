@@ -360,12 +360,13 @@ function place(p, viaNode) {
   }
   // a user's own setting can lower the policy's limits, never raise them
   const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
-  if (countPhoneCalls({ startedByUserId: me }) >= perUser || countPhoneCalls({}) >= pol.maxConcurrentCalls) {
+  // the user's forwards (V3) count with the calls they place
+  if (countPhoneCalls({ startedByUserId: me }) + forwardLegCount(me, null) >= perUser || countPhoneCalls({}) >= pol.maxConcurrentCalls) {
     return refuse('tooManyCalls', 'Too many phone calls at once; try again when one ends')
   }
   const dayStart = nowMs() - 86400000
   const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
-  if (countPhoneCalls({ startedByUserId: me, directionEnumId: 'CdrOutbound' }, dayStart) >= perDay ||
+  if (countPhoneCalls({ startedByUserId: me, directionEnumId: 'CdrOutbound' }, dayStart) + forwardLegCount(me, dayStart) >= perDay ||
     countPhoneCalls({ directionEnumId: 'CdrOutbound' }, dayStart) >= pol.maxCallsPerDay) {
     return refuse('dailyLimit', 'The limit of phone calls for a day is reached')
   }
@@ -461,14 +462,22 @@ function dialForward(p) {
   }
   if (!check.allowed) return refused(check.reasonCode || 'notAllowed')
   const pol = policy()
+  const dayStart = nowMs() - 86400000
   if (!p.byAdmin && p.userId) {
     const setting = userSetting(p.userId)
     const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
     const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
-    // the leg being dialed is open already
-    if (forwardLegCount(p.userId, null) > perUser) return refused('tooManyCalls')
-    if (forwardLegCount(p.userId, nowMs() - 86400000) > perDay) return refused('dailyLimit')
+    // the user's limits count their forwards with the calls they place; the leg being dialed is open already
+    if (forwardLegCount(p.userId, null) + countPhoneCalls({ startedByUserId: p.userId }) > perUser) return refused('tooManyCalls')
+    if (forwardLegCount(p.userId, dayStart) + countPhoneCalls({ startedByUserId: p.userId, directionEnumId: 'CdrOutbound' }, dayStart) > perDay) {
+      return refused('dailyLimit')
+    }
   }
+  // the deployment's calls out in a day, for every forward (a ring group's fallback too): the phone legs offered since,
+  // less the far ends of the calls that came in, are the calls placed and the forwards (with the one being dialed)
+  const outToday = find(LEG).condition('legTypeEnumId', 'CltPstn').condition('offeredDate', '>=', new Date(dayStart)).count() -
+    countPhoneCalls({ directionEnumId: 'CdrInbound' }, dayStart)
+  if (outToday > pol.maxCallsPerDay) return refused('dailyLimit')
   const fromNumber = toE164(p.fromNumber, pol.homeCountryCode)
   const number = fromNumber ? one(NUMBER, { phoneNumber: fromNumber }) : null
   const trunk = number?.voiceTrunkId ? one(TRUNK, { voiceTrunkId: number.voiceTrunkId }) : enabledTrunks()[0]

@@ -622,10 +622,11 @@ function restore(p) {
 }
 
 function emptyTrash() {
-  const box = boxOf(ec.user.userId, false)
-  if (!box) return { deletedCount: 0 }
+  // the trash the user sees: their own box's and their ring groups' (V3), whose trash the members share as they share the inbox
+  const ids = readableBoxes(ec.user.userId).map((b) => b.voicemailBoxId)
+  if (!ids.length) return { deletedCount: 0 }
   let deletedCount = 0
-  for (const voicemail of find(VOICEMAIL).condition('voicemailBoxId', box.voicemailBoxId).condition('folder', 'trash').list()) {
+  for (const voicemail of find(VOICEMAIL).condition('voicemailBoxId', 'in', ids).condition('folder', 'trash').list()) {
     purge(voicemail)
     deletedCount++
   }

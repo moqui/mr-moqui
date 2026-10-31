@@ -117,7 +117,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="empty" noun="VoicemailTrash">
-        <description>Delete everything in the current user's voicemail trash, audio and transcripts too.</description>
+        <description>Delete everything in the current user's voicemail trash (their own box's and, V3, their ring groups' boxes'), audio
+            and transcripts too.</description>
         <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('emptyTrash', context))</script></actions>
     </service>

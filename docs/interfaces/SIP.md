@@ -218,9 +218,10 @@ numbers routes inside, to its user or group, never through the trunk.
 **Forwards to outside numbers.** A forwarded number is a phone leg of the user's (`CltPstn` under their participant),
 placed through the trunk of the number the call came in on, which is its caller ID. It is under the full fraud policy:
 the user needs outbound calls and the forward permission (`VoiceUserSetting.forwardEnabled`, set by a voice admin);
-international and premium destinations need the deployment's and the user's permission; their limits at once and per
-day count forwards too; and the engine checks the destination again. A forward that is refused is left out of the plan,
-or closed as failed when its turn comes.
+international and premium destinations need the deployment's and the user's permission; the user's limits at once and
+per day count their forwards with the calls they place, the deployment's calls in a day count every forward (a ring
+group's fallback too), and the engine checks the destination and its calls at once again. A forward that is refused is
+left out of the plan, or closed as failed when its turn comes; a step left with nothing ringing goes on at once.
 
 **Ring groups** (System, Voice, Ring groups; `RingGroup`, `RingGroupMember`). A group rings its members all at once
 (`RgsSimultaneous`), in order (`RgsInOrder`, `ringSeconds` each) or in round robin (`RgsRoundRobin`: in order, starting
@@ -238,7 +239,8 @@ answers.
 
 **Schedules** (System, Voice, Schedules for the deployment's; a user may keep their own; `CommsSchedule`,
 `CommsScheduleRule`): weekly hours (a span past midnight runs into the next day), hours on dates, and holidays, once or
-each year, read in the schedule's time zone. A date with a dated rule is read from its dated rules alone.
+each year, read in the schedule's time zone (a time zone that is not known is logged and read as the server's). A date
+with a dated rule is read from its dated rules alone.
 
 **Presence** comes from the user's answered legs (`UserStatus.inCall`): leaving one of two calls keeps it, whichever
 leg (a tab, a phone, a forwarded number) is left.

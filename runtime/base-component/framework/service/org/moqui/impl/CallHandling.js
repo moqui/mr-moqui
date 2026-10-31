@@ -121,8 +121,17 @@ function minutesOf(text) {
 
 /** The local date (yyyy-MM-dd), minute of the day and day of the week (1 Monday to 7 Sunday) of atMs in zone. */
 function localTime(atMs, zone) {
-  const name = blank(zone) ? (ec.user.machineTimeZone || 'UTC') : String(zone).trim()
-  const text = ec.l10n.format(Number(atMs), 'yyyy-MM-dd HH:mm EEE', null, name)
+  const machine = ec.user.machineTimeZone || 'UTC'
+  const name = blank(zone) ? machine : String(zone).trim()
+  let text
+  try {
+    text = ec.l10n.format(Number(atMs), 'yyyy-MM-dd HH:mm EEE', null, name)
+  } catch (err) {
+    // a zone that is not known (data loaded around storeSchedule's check) is logged and read as the machine's, so one
+    // schedule does not stop every call that reads it
+    ec.logger.error(`Call handling: time zone ${name} is not known, read as ${machine}: ${err && err.message ? err.message : err}`)
+    text = ec.l10n.format(Number(atMs), 'yyyy-MM-dd HH:mm EEE', null, machine)
+  }
   const [date, time, day] = text.split(' ')
   return { date, minutes: minutesOf(time), dow: DAY_NAMES[day] }
 }
@@ -252,6 +261,10 @@ function numberSteps(raw, ownerUserId, ctx, byAdmin) {
     return null
   }
   const own = one(NUMBER, { phoneNumber: check.number })
+  if (own && own.routeId && ctx.seen.has((own.routeTypeEnumId === 'PnrRingGroup' ? 'g:' : 'u:') + own.routeId)) {
+    trace(ctx, `forward to ${check.number} skipped: a loop`)
+    return null
+  }
   if (own) {
     if (own.routeTypeEnumId === 'PnrUser' && own.routeId) return hop(ctx, `own number ${check.number}`, () => planUser(own.routeId, ctx))
     if (own.routeTypeEnumId === 'PnrRingGroup' && own.routeId) return hop(ctx, `own number ${check.number}`, () => planGroup(own.routeId, ctx))
@@ -487,10 +500,14 @@ function runRing(route, step, displayName) {
   if (!users.length && !numbers.length) return null
   const rung = calls('ringStep', { callSessionId: route.callSessionId, userIdList: users, numberList: numbers, role: step.role,
     ringSeconds: step.seconds + RING_GRACE_SECONDS, displayName })
+  let dialed = 0
   for (const leg of rung.forwardLegList || []) {
-    voice('dialForward', { callSessionId: route.callSessionId, callLegId: leg.callLegId, phoneNumber: leg.number, userId: leg.userId,
-      byAdmin: !!leg.byAdmin, fromNumber: route.toNumber })
+    const out = voice('dialForward', { callSessionId: route.callSessionId, callLegId: leg.callLegId, phoneNumber: leg.number,
+      userId: leg.userId, byAdmin: !!leg.byAdmin, fromNumber: route.toNumber })
+    if (out.dialed) dialed++
   }
+  // only numbers, each refused at its dial (a limit reached): nothing rings, so the plan goes on now, not after the timer
+  if (!users.length && !dialed) return null
   if (step.roundRobin && step.ringGroupId && users.length) {
     const group = find(GROUP).condition('ringGroupId', step.ringGroupId).forUpdate(true).one()
     if (group) {

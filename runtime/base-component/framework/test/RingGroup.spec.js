@@ -283,10 +283,22 @@ feature("the group's box is its members': a message one of them heard is heard f
         const m1After = as(M1, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
         const outsider = as(OUT, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
         const outsiderAudio = as(OUT, "org.moqui.impl.VoicemailServices.get#VoicemailAudio", {voicemailId: stored.voicemailId})
+        // a member who leaves the group loses it; back in, they have it again
+        as(ADMIN, "delete#RingGroupMember", {ringGroupId: groupId, userId: M3})
+        const former = as(M3, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
+        as(ADMIN, "store#RingGroupMember", {ringGroupId: groupId, userId: M3, sequenceNum: 30})
+        // one member deletes it and another empties the trash they share
+        const trashed = as(M2, "org.moqui.impl.VoicemailServices.delete#Voicemail", {voicemailId: stored.voicemailId})
+        const emptied = as(M1, "org.moqui.impl.VoicemailServices.empty#VoicemailTrash", {})
+        const gone = as(M2, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
         endCall(call2.callSessionId)
-        return {stored, m1Before, m1List, heard, m1After, outsider, outsiderAudio}
+        return {stored, m1Before, m1List, heard, m1After, outsider, outsiderAudio, former, trashed, emptied, gone}
     },
-    then({stored, m1Before, m1List, heard, m1After, outsider, outsiderAudio}) {
+    then({stored, m1Before, m1List, heard, m1After, outsider, outsiderAudio, former, trashed, emptied, gone}) {
+        former.reasonCode == "notFound"
+        trashed.errors == ""
+        emptied.deletedCount == 1
+        gone.reasonCode == "notFound"
         stored.errors == ""
         m1Before.unheardCount == 1
         m1Before.hasBox == true

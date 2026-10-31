@@ -419,3 +419,29 @@ feature("the user's settings and rules are their own: another user is refused wi
         badKind.reasonCode == "badRule"
     }
 })
+
+feature("a forward refused at its dial (the user's limit for a day) closes as failed and the call goes on at once, to voicemail", {
+    when() {
+        clearRules(A)
+        voiceSetting(A, {outboundEnabled: "Y", forwardEnabled: "Y", maxPerDay: 0})
+        rule(A, {kindEnumId: "ChrAlways", targetTypeEnumId: "ChtNumber", targetId: "+15558880191"})
+        const plan = evaluate(A)
+        const call = receive(NUMBER_A)
+        const legs = userLegs(call.callSessionId, A)
+        // with the limit back, the same forward is dialed and the call rings it
+        voiceSetting(A, {maxPerDay: null})
+        const dialed = receive(NUMBER_A)
+        const dialedLegs = userLegs(dialed.callSessionId, A)
+        clearRules(A)
+        return {plan, call, legs, dialed, dialedLegs}
+    },
+    then({plan, call, legs, dialed, dialedLegs}) {
+        types(plan) == "ring,voicemail"
+        call.errors == ""
+        call.voicemail == "busy"
+        legs.some((l) => l.legTypeEnumId === "CltPstn" && l.statusId === "ClsFailed")
+        dialed.voicemail == null
+        dialed.voicemailSeconds == 30
+        dialedLegs.some((l) => l.legTypeEnumId === "CltPstn" && l.statusId === "ClsOffered")
+    }
+})

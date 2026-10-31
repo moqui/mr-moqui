@@ -509,7 +509,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   the user places (`VoiceServices` `forwardCheck` and `dialForward`): the user needs outbound calls and
   `VoiceUserSetting.forwardEnabled` (off by default, set only by a voice admin); international and premium need the
   deployment's and the user's permission; emergency numbers are never a target; the user's limits at once and per day
-  count forwards; and the engine checks the class again before the INVITE. A ring group's fallback number is set by a
+  count their forwards with the calls they place, and the deployment's calls in a day count every forward; and the
+  engine checks the class and its calls at once again before the INVITE. A ring group's fallback number is set by a
   voice admin and checked against the deployment's policy. The caller ID of a forward is the number the call came in
   on, never one the caller supplied. A forward to one of this deployment's numbers is routed inside (no hairpin through
   the trunk), a forward back to the caller's number is skipped, and a call takes at most `call_forward_max_hops`
