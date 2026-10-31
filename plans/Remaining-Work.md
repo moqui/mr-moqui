@@ -55,7 +55,7 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 ## Chat and presence
 
 Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
-and acceptance gates in [§7](Comms-Framework.md#7-order). The plan and its review refinements are not yet implemented.
+and acceptance gates in [§7](Comms-Framework.md#7-order). None of it is implemented yet.
 
 | Item | Source |
 |---|---|
