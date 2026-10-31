@@ -1,0 +1,325 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice (plans/Comms-Framework.md §5.2, §5.4, V1): SIP trunks to the phone network, the numbers they bring and where a
+    call to each goes, the numbers a user may present as caller ID, emergency locations, the fraud policy and its state,
+    and the servers whose SIP engine is up. A phone call is a CallSession (CallEntities.xml) with a CltPstn leg; these
+    entities say how it reaches the phone network. The enumerations and status items are in data/VoiceSetupData.xml.
+
+    These are moqui.* entities, which entity filters never apply to: screens reach them only through
+    org.moqui.impl.VoiceServices, whose admin services need the VoiceAdmin permission. No Java counterpart. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="VoiceTrunk" package="moqui.call" use="configuration" cache="never">
+        <description>A SIP trunk: a provider (or a PBX) that carries calls to and from the phone network. TLS signaling
+            (transportEnumId VtrTls) with SRTP media (VmeSrtp) is the default; UDP or TCP signaling, or plain RTP, needs a
+            provider profile that allows it (VppPlainLan), never a silent downgrade (D-V4). authJson holds the digest
+            credentials, encrypted: {username, password, authUsername, realm, algorithms}; a realm, when set, is the only one
+            they answer, and algorithms the only digest algorithms (SHA-256 first). inboundAddresses are the provider's
+            signaling addresses (IPs or CIDRs no wider than a /8, or a /32 for IPv6; comma separated) whose INVITEs need no
+            digest. Only a trunk whose profile is a PBX's (VppPlainLan) takes calls signed with its digest credentials from
+            other addresses; a provider's credentials never sign a call in. statusId is what the SIP
+            engine last reported: registered (or reachable without registering), failed with lastErrorText.</description>
+        <field name="voiceTrunkId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="host" type="text-medium"/>
+        <field name="port" type="number-integer"/>
+        <field name="transportEnumId" type="id"/>
+        <field name="mediaEncryptionEnumId" type="id"/>
+        <field name="providerProfileEnumId" type="id"/>
+        <field name="authJson" type="text-long" encrypt="true"/>
+        <field name="registerFlag" type="text-indicator"/>
+        <field name="emergencyCapable" type="text-indicator"/>
+        <field name="inboundAddresses" type="text-long"/>
+        <field name="fromDomain" type="text-medium"/>
+        <field name="disabled" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="lastErrorText" type="text-long"/>
+        <field name="lastStatusDate" type="date-time"/>
+        <relationship type="one" title="VoiceTransport" related="moqui.basic.Enumeration" short-alias="transport">
+            <key-map field-name="transportEnumId"/></relationship>
+        <relationship type="one" title="VoiceMediaEncryption" related="moqui.basic.Enumeration" short-alias="mediaEncryption">
+            <key-map field-name="mediaEncryptionEnumId"/></relationship>
+        <relationship type="one" title="VoiceProviderProfile" related="moqui.basic.Enumeration" short-alias="profile">
+            <key-map field-name="providerProfileEnumId"/></relationship>
+        <relationship type="one" title="VoiceTrunk" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+    </entity>
+
+    <entity entity-name="PhoneNumber" package="moqui.call" use="configuration" cache="never">
+        <description>A number a trunk brings, in E.164 (+15551234567). A call to it goes where routeTypeEnumId and routeId
+            say: PnrUser rings that user (routeId the userId); ring groups, IVR menus and queues come later. A number's
+            emergency location is the one its calls report. messagingBridgeId is its SMS connector (C4).</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="voiceTrunkId" type="id"/>
+        <field name="messagingBridgeId" type="id"/>
+        <field name="routeTypeEnumId" type="id"/>
+        <field name="routeId" type="id"/>
+        <field name="emergencyLocationId" type="id"/>
+        <field name="description" type="text-medium"/>
+        <relationship type="one" related="moqui.call.VoiceTrunk" short-alias="trunk"/>
+        <relationship type="one" title="PhoneNumberRoute" related="moqui.basic.Enumeration" short-alias="routeType">
+            <key-map field-name="routeTypeEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.call.EmergencyLocation" short-alias="emergencyLocation"/>
+        <index name="PHONE_NUMBER_ROUTE"><index-field name="routeTypeEnumId"/><index-field name="routeId"/></index>
+    </entity>
+
+    <entity entity-name="PhoneNumberUser" package="moqui.call" use="configuration" cache="never">
+        <description>A caller-ID grant: the user may present this number on the calls they place, from fromDate until
+            thruDate. Without a grant a user's call goes out with no number of theirs and is refused.</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="fromDate" type="date-time" is-pk="true"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.PhoneNumber" short-alias="number"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="PHONE_NUMBER_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="EmergencyLocation" package="moqui.call" use="configuration" cache="never">
+        <description>Where a caller is, for emergency calls (§5.2, D-V2): a dispatchable address validated with the trunk
+            provider (providerReference, its id for the address), the callback number emergency services call back, and the
+            notification destination told of each emergency call (notifyEmailAddress; the voice admins are told too). It does
+            not use Mantle's PostalAddress. Only a validated location with a callback number and a notification destination
+            makes emergency calling ready.</description>
+        <field name="emergencyLocationId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="address1" type="text-medium"/>
+        <field name="address2" type="text-medium"/>
+        <field name="city" type="text-medium"/>
+        <field name="stateProvinceGeoId" type="id"/>
+        <field name="postalCode" type="text-short"/>
+        <field name="countryGeoId" type="id"/>
+        <field name="callbackNumber" type="text-short"/>
+        <field name="validationStatusId" type="id"/>
+        <field name="validatedDate" type="date-time"/>
+        <field name="providerReference" type="text-medium"/>
+        <field name="notifyEmailAddress" type="text-medium"/>
+        <relationship type="one" title="EmergencyLocationValidation" related="moqui.basic.StatusItem" short-alias="validation">
+            <key-map field-name="validationStatusId"/></relationship>
+    </entity>
+
+    <entity entity-name="VoiceUserSetting" package="moqui.call" use="configuration" cache="never">
+        <description>A user's phone permissions: outbound calls at all, international and premium destinations (also off
+            until the deployment's VoicePolicy allows them), their registered emergency location, and their own limits
+            (maxConcurrent calls at once, maxPerDay; empty uses the policy's).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="outboundEnabled" type="text-indicator"/>
+        <field name="internationalEnabled" type="text-indicator"/>
+        <field name="premiumEnabled" type="text-indicator"/>
+        <field name="emergencyLocationId" type="id"/>
+        <field name="maxConcurrent" type="number-integer"/>
+        <field name="maxPerDay" type="number-integer"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" related="moqui.call.EmergencyLocation" short-alias="emergencyLocation"/>
+    </entity>
+
+    <entity entity-name="VoicePolicy" package="moqui.call" use="configuration" cache="never">
+        <description>The deployment's fraud policy (§5.2), one row, voicePolicyId DEFAULT; with no row the defaults apply.
+            International and premium destinations are off until enabled here and for the user. The limits bound the calls
+            at once (all and per user) and per day; failed digest attempts from one source address are blocked after
+            authFailureLimit in authFailureWindowSeconds for authBlockSeconds, and the alertUserGroupId hears of each
+            block. homeCountryCode makes national numbers E.164; emergencyNumbers and premiumPrefixes are comma separated.</description>
+        <field name="voicePolicyId" type="id" is-pk="true"/>
+        <field name="internationalEnabled" type="text-indicator"/>
+        <field name="premiumEnabled" type="text-indicator"/>
+        <field name="maxConcurrentCalls" type="number-integer"/>
+        <field name="maxConcurrentPerUser" type="number-integer"/>
+        <field name="maxCallsPerUserPerDay" type="number-integer"/>
+        <field name="maxCallsPerDay" type="number-integer"/>
+        <field name="authFailureLimit" type="number-integer"/>
+        <field name="authFailureWindowSeconds" type="number-integer"/>
+        <field name="authBlockSeconds" type="number-integer"/>
+        <field name="homeCountryCode" type="text-short"/>
+        <field name="emergencyNumbers" type="text-medium"/>
+        <field name="premiumPrefixes" type="text-long"/>
+        <field name="alertUserGroupId" type="id"/>
+    </entity>
+
+    <entity entity-name="VoiceAuthFailure" package="moqui.call" use="transactional" cache="never">
+        <description>Failed SIP digest attempts from one source address, and its block (blockedUntilDate). Blocks are per
+            source and never lock an account: a scanner guessing a user's credentials must not lock that user out.
+            alertedDate is when the admins heard of the current block.</description>
+        <field name="sourceAddress" type="text-medium" is-pk="true"/>
+        <field name="failureCount" type="number-integer"/>
+        <field name="firstFailureDate" type="date-time"/>
+        <field name="lastFailureDate" type="date-time"/>
+        <field name="blockedUntilDate" type="date-time"/>
+        <field name="lastUsername" type="text-medium"/>
+        <field name="alertedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="SipNode" package="moqui.call" use="nontransactional" cache="never">
+        <description>A server whose SIP engine is up: its instance id (the cluster's), the SIP and SIP-over-TLS addresses
+            it listens on, its RTP port range, and the last time it said it was up (every 20 seconds, as a CallMediaNode).
+            A phone call goes to a node that is both a live SipNode and a live CallMediaNode.</description>
+        <field name="instanceId" type="text-medium" is-pk="true"/>
+        <field name="sipAddress" type="text-medium"/>
+        <field name="tlsAddress" type="text-medium"/>
+        <field name="rtpPorts" type="text-short"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="heartbeatDate" type="date-time"/>
+    </entity>
+
+    <!-- ========== V2: voicemail (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/Voicemail.md) ========== -->
+
+    <entity entity-name="VoicemailBox" package="moqui.call" use="transactional" cache="never">
+        <description>A user's voicemail box, made the first time a call to them goes to voicemail or they open its settings
+            (a ring group's box, ringGroupId, comes with V3 and is shared by its members). pinHash is the PIN for phone access
+            (argon2, salted; empty: no phone access). greetingLocation is the user's own greeting, under
+            dbresource://moqui/call/voicemail/greeting/ (empty: the default greeting). notifyEmail: an address told of each new
+            voicemail, with a link to it; attachAudio and attachTranscript put the audio and the transcript in that message
+            (off by default: mail cannot be recalled). rings: how many rings (6 seconds each) before a call goes to
+            voicemail (empty: call_ring_seconds). The pin* fields are the box's failed PIN entries over the phone: past the
+            limit the box refuses PINs until pinBlockedUntil, whatever source tries.</description>
+        <field name="voicemailBoxId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="ringGroupId" type="id"><description>A plain id until V3 adds RingGroup</description></field>
+        <field name="pinHash" type="text-medium"/>
+        <field name="pinChangedDate" type="date-time"/>
+        <field name="greetingLocation" type="text-medium"/>
+        <field name="greetingContentType" type="text-short"/>
+        <field name="greetingDurationMs" type="number-integer"/>
+        <field name="notifyEmail" type="text-medium"/>
+        <field name="attachAudio" type="text-indicator" default="'N'"/>
+        <field name="attachTranscript" type="text-indicator" default="'N'"/>
+        <field name="rings" type="number-integer"/>
+        <field name="pinFailureCount" type="number-integer"/>
+        <field name="pinFailureDate" type="date-time"/>
+        <field name="pinBlockedUntil" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="VOICEMAIL_BOX_USER" unique="true"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="Voicemail" package="moqui.call" use="transactional" cache="never">
+        <description>A message left in a box: the call it came on, the caller's number, when, how long, and the audio (Ogg
+            Opus under dbresource://moqui/call/voicemail/, read only through VoicemailServices get#VoicemailAudio by the
+            box's owner). heardDate is empty until it is played or marked heard (a ring group's box shares it among its
+            members). folder: inbox or trash; trash is emptied after voicemail_trash_days (the audio and its transcripts go
+            too). statusId: VmsStored, or VmsAudioFailed when the audio could not be stored (the message is kept so its
+            owner knows of it). The transcript is a CallTranscript with this voicemailId.</description>
+        <field name="voicemailId" type="id" is-pk="true"/>
+        <field name="voicemailBoxId" type="id"/>
+        <field name="callSessionId" type="id"/>
+        <field name="fromNumber" type="text-short"/>
+        <field name="fromName" type="text-medium"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="audioLocation" type="text-medium"/>
+        <field name="byteSize" type="number-integer"/>
+        <field name="heardDate" type="date-time"/>
+        <field name="folder" type="text-short"/>
+        <field name="trashedDate" type="date-time"/>
+        <field name="noticeSentDate" type="date-time"><description>When the email notice went (sent once)</description></field>
+        <field name="statusId" type="id"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one" related="moqui.call.VoicemailBox" short-alias="box"/>
+        <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one" title="Voicemail" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <index name="VOICEMAIL_BOX_FOLDER"><index-field name="voicemailBoxId"/><index-field name="folder"/>
+            <index-field name="receivedDate"/></index>
+        <index name="VOICEMAIL_TRASHED"><index-field name="folder"/><index-field name="trashedDate"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Voicemail" statusTypeId="Voicemail"/>
+            <moqui.basic.StatusItem statusId="VmsStored" statusTypeId="Voicemail" sequenceNum="1" description="Stored"/>
+            <moqui.basic.StatusItem statusId="VmsAudioFailed" statusTypeId="Voicemail" sequenceNum="2" description="Audio not stored"/>
+            <moqui.security.user.NotificationTopic topic="Voicemail" inboxEnumId="NinUpdates" description="New voicemail"
+                    typeString="info" showAlert="Y" persistOnSend="Y"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="VoicemailPinFailure" package="moqui.call" use="transactional" cache="never">
+        <description>Failed voicemail PIN entries over the phone from one source (the caller's number, which a caller can
+            fake, so the box's own count in VoicemailBox is the real limit), and its block. A box number that has no box is
+            counted here too, under its key, so a refusal never tells whether a box exists.</description>
+        <field name="failureKey" type="text-medium" is-pk="true"/>
+        <field name="failureCount" type="number-integer"/>
+        <field name="firstFailureDate" type="date-time"/>
+        <field name="lastFailureDate" type="date-time"/>
+        <field name="blockedUntilDate" type="date-time"/>
+    </entity>
+    <!-- ========== end V2 ========== -->
+
+    <!-- ========== V4: the registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones",
+        §5.4; docs/interfaces/SIP.md "Registrar"). The services are org.moqui.impl.SipDeviceServices (SipDevices.js). ========== -->
+
+    <entity entity-name="SipDevice" package="moqui.call" use="configuration" cache="never">
+        <description>A user's desk or soft phone that registers with Moqui's registrar: its generated SIP username and the
+            realm its credentials are for, a name, the revision of its credentials (each rotation adds one, which ends the
+            older verifiers and their bindings), its profile (deviceProfile standard: SHA-256 digest only; legacy: MD5 too,
+            for a phone that has no SHA-256), its status (SdsActive, SdsRevoked) and when it last registered. The password is
+            never stored: it is shown once, and only its verifiers are kept (SipDeviceVerifier).</description>
+        <field name="sipDeviceId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="username" type="text-medium"/>
+        <field name="realm" type="text-medium"/>
+        <field name="name" type="text-medium"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <field name="deviceProfile" type="text-short"/>
+        <field name="statusId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="SipDevice" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <relationship type="many" related="moqui.call.SipDeviceVerifier" short-alias="verifiers">
+            <key-map field-name="sipDeviceId"/></relationship>
+        <relationship type="many" related="moqui.call.SipRegistration" short-alias="registrations">
+            <key-map field-name="sipDeviceId"/></relationship>
+        <index name="SIP_DEVICE_USERNAME" unique="true"><index-field name="username"/></index>
+        <index name="SIP_DEVICE_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="SipDeviceVerifier" package="moqui.call" use="configuration" cache="never">
+        <description>A device's digest verifier for one algorithm and realm: HA1, the hash of username:realm:password
+            (RFC 7616 §3.4.2, RFC 8760), encrypted. A standard device has a SHA-256 one only; a legacy device an MD5 one too.
+            credentialRevision is its device's revision when it was made; a rotation deletes the older ones.</description>
+        <field name="sipDeviceId" type="id" is-pk="true"/>
+        <field name="algorithm" type="text-short" is-pk="true"/>
+        <field name="realm" type="text-medium" is-pk="true"/>
+        <field name="ha1" type="text-medium" encrypt="true"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <relationship type="one" related="moqui.call.SipDevice" short-alias="device"/>
+    </entity>
+
+    <entity entity-name="SipRegistration" package="moqui.call" use="nontransactional" cache="never">
+        <description>A binding of a registered device (RFC 3261 §10, RFC 5626), as the SIP engine of instanceId holds it:
+            the Contact URI, the flow it came over (transport, the source address and port as rport gives them; a call to
+            the phone goes back over it), its Call-ID and CSeq, its Outbound instance (+sip.instance) and reg-id when it uses
+            Outbound, when it expires and was last refreshed, and the phone's user agent. Expired or revoked bindings cannot
+            ring; the engine removes a row when its binding ends, and expire#SipRegistrations removes those whose engine
+            went away.</description>
+        <field name="sipRegistrationId" type="id" is-pk="true"/>
+        <field name="sipDeviceId" type="id"/>
+        <field name="instanceId" type="text-medium"/>
+        <field name="contactUri" type="text-medium"/>
+        <field name="transport" type="text-short"/>
+        <field name="sourceAddress" type="text-medium"/>
+        <field name="sourcePort" type="number-integer"/>
+        <field name="sipCallId" type="text-medium"/>
+        <field name="cseq" type="number-integer"/>
+        <field name="instanceKey" type="text-medium"/>
+        <field name="regId" type="number-integer"/>
+        <field name="outboundFlag" type="text-indicator"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <field name="expiresDate" type="date-time"/>
+        <field name="lastRefreshDate" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="userAgent" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.call.SipDevice" short-alias="device"/>
+        <index name="SIP_REG_DEVICE"><index-field name="sipDeviceId"/></index>
+    </entity>
+</entities>

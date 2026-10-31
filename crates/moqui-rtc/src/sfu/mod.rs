@@ -564,6 +564,18 @@ impl Sfu {
         self.drive(now);
     }
 
+    /// Asks every browser publishing video in a room for a keyframe: a tap's consumer (the recorder) starts a file
+    /// only at one, and browsers send one only now and then unless asked.
+    pub fn request_keyframes(&mut self, now: Instant, room: &str) {
+        let Some(r) = self.rooms.get(room) else { return };
+        for id in r.peers.clone() {
+            if let Some(p) = self.peers.get_mut(&id) {
+                p.request_video_keyframes(now);
+            }
+        }
+        self.drive(now);
+    }
+
     /// Adds a tap that sees every frame published in a room, a browser's or an injected source's; a room has as many as
     /// its consumers (recording, captions, the SIP mixer). The room is made when it has no leg yet, and kept while the
     /// tap is there. A tap whose consumer is gone ([`MediaTap::is_closed`]) is dropped at its next frame.

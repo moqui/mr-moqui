@@ -31,6 +31,8 @@ const END_CODES = {
   CerRemoved: 'removed',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
+const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone' }
+const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
 
 /** Seconds a call rings before it is missed. */
 const ringSeconds = () => Math.max(10, Number(System.getProperty('call_ring_seconds') || 45))
@@ -59,6 +61,10 @@ const nowMs = () => ms(ec.user.nowTimestamp)
 const find = (entity) => ec.entity.find(entity).disableAuthz()
 const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields).list())
+/** A desk or soft phone's leg (V4), which the SIP engine rings and answers; a user's own legs in the browser are the others. */
+const isDeviceLeg = (leg) => leg.legTypeEnumId === 'CltSipDevice'
+/** The media node a call from a phone must use: its SIP engine's (startFromDevice), for start to take. */
+let preferredNode = null
 
 /** A refusal: an error for the user and a reason code for the caller. */
 function refuse(reasonCode, text) {
@@ -150,18 +156,22 @@ function view(session, forUserId) {
   const list = participants.map((p) => {
     const own = legs.filter((leg) => leg.callParticipantId === p.callParticipantId)
     if (forUserId && p.userId === forUserId) {
-      myLeg = own.find((leg) => leg.statusId === 'ClsAnswered') || own.find((leg) => leg.statusId === 'ClsOffered') ||
-        own[own.length - 1] || null
+      // the user's leg in a browser: a phone's leg is the SIP engine's, never one a tab answers or joins
+      const tabs = own.filter((leg) => !isDeviceLeg(leg))
+      myLeg = tabs.find((leg) => leg.statusId === 'ClsAnswered') || tabs.find((leg) => leg.statusId === 'ClsOffered') ||
+        tabs[tabs.length - 1] || null
     }
     return {
       callParticipantId: p.callParticipantId,
       userId: p.userId || null,
       displayName: p.displayName || names[p.userId] || p.userId,
       role: p.roleEnumId === 'CprHost' ? 'host' : p.roleEnumId === 'CprGuest' ? 'guest' : 'member',
+      identity: IDENTITY_CODES[p.identityKindEnumId] || 'local',
       admission: ADMISSION_CODES[p.admissionStatusId] || null,
       inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
-      legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null })),
+      legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
+        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web' })),
     }
   })
   return {
@@ -227,6 +237,17 @@ function mediaControl(session, message) {
   ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
     mediaNodeId: session.mediaNodeId, message: Object.assign({ callSessionId: session.callSessionId }, message),
   }).disableAuthz().call()
+}
+
+/**
+ * The call's recording (W5, CallRecordings.js) hears of a leg bound (a late joiner's notice), a leg gone, or the end;
+ * only while one is going. It never fails the call's own change.
+ */
+function recordingChange(callSessionId, change, callLegId) {
+  if (find('moqui.call.CallRecording').condition('callSessionId', callSessionId)
+    .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).count() === 0) return
+  ec.service.sync().name('org.moqui.impl.CallRecordingServices.note#CallChange')
+    .parameters({ callSessionId, change, callLegId: callLegId || null }).disableAuthz().call()
 }
 
 /** Sets UserStatus.inCall from the user's answered legs of calls that have not ended, publishing a change. */
@@ -318,6 +339,7 @@ function closeLeg(leg, status, reason) {
       const total = Number(log?.durationSeconds || 0) + seconds(leg.answeredDate, now)
       setLog(leg.callSessionId, participant.userId, { durationSeconds: total })
     }
+    recordingChange(leg.callSessionId, 'legLeft', leg.callLegId)
   }
 }
 
@@ -325,6 +347,8 @@ function closeLeg(leg, status, reason) {
 function endSession(session, reason) {
   if (session.statusId === 'CssEnded') return
   const now = ec.user.nowTimestamp
+  // a recording stops first, so the legs closing below do not resume it
+  recordingChange(session.callSessionId, 'ended')
   for (const leg of legsOf(session.callSessionId)) {
     if (leg.statusId === 'ClsAnswered') {
       closeLeg(leg, 'ClsLeft', reason)
@@ -358,7 +382,8 @@ function endSession(session, reason) {
 function legOfMine(session, userId, statuses) {
   const participant = participantOf(session.callSessionId, userId)
   if (!participant) return { participant: null, leg: null }
-  const legs = rows(LEG, { callParticipantId: participant.callParticipantId }).filter((leg) => statuses.includes(leg.statusId))
+  const legs = rows(LEG, { callParticipantId: participant.callParticipantId })
+    .filter((leg) => statuses.includes(leg.statusId) && !isDeviceLeg(leg))
   legs.sort((a, b) => (ms(b.offeredDate) || 0) - (ms(a.offeredDate) || 0))
   return { participant, leg: legs[0] || null }
 }
@@ -413,7 +438,7 @@ function start(p) {
   }
   if (invitees.length > MAX_INVITEES) invitees = invitees.slice(0, MAX_INVITEES)
 
-  const nodes = liveMediaNodes().filter((n) => n.draining !== 'Y')
+  const nodes = liveMediaNodes().filter((n) => n.draining !== 'Y' && (!preferredNode || n.instanceId === preferredNode))
   if (!nodes.length) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
 
   const now = ec.user.nowTimestamp
@@ -442,9 +467,9 @@ function start(p) {
 }
 
 /** Rings the invitees' tabs, and their devices by Web Push (expiring with the ring). */
-function ring(session, userIds, fromUserId) {
+function ring(session, userIds, fromUserId, fromName) {
   if (!userIds.length) return
-  const from = { userId: fromUserId, name: userNames([fromUserId])[fromUserId] || fromUserId }
+  const from = { userId: fromUserId || null, name: fromName || userNames([fromUserId])[fromUserId] || fromUserId }
   for (const userId of userIds) {
     push([userId], { action: 'ring', callSessionId: session.callSessionId, revision: Number(session.revision || 1),
       from, video: session.video === 'Y', callKind: KIND_CODES[session.kindEnumId], chatRoomId: session.chatRoomId,
@@ -454,6 +479,54 @@ function ring(session, userIds, fromUserId) {
     userIdList: userIds, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
     topic: 'IncomingCall', tag: 'call-' + session.callSessionId, ttlSeconds: ringSeconds(), urgency: 'high',
   }).call()
+  // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.SipDeviceServices.ring#SipDevices').parameters({ callSessionId: session.callSessionId,
+      userIdList: userIds, fromUserId: fromUserId || null, fromName: from.name }).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`Call ${session.callSessionId}: phones not rung: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`Call ${session.callSessionId}: phones not rung: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
+/** Tells the SIP engine of the call's node about one leg ({action: 'answer' | 'hangup'}), after the commit; logged if not. */
+function sipLegControl(session, callLegId, action) {
+  if (!session.mediaNodeId) return
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
+      instanceId: session.mediaNodeId, message: { action, callSessionId: session.callSessionId, callLegId },
+    }).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${callLegId}: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`SIP engine not told to ${action} leg ${callLegId}: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
+/**
+ * The first answer won for this participant: their other offers end (V4): the tabs' legs close, and each phone that rings
+ * for them is canceled by the SIP engine.
+ */
+function cancelSiblingOffers(session, participant, winningLegId) {
+  for (const other of rows(LEG, { callParticipantId: participant.callParticipantId, statusId: 'ClsOffered' })) {
+    if (other.callLegId === winningLegId) continue
+    closeLeg(other, 'ClsCanceled', 'CerCanceled')
+    if (isDeviceLeg(other)) sipLegControl(session, other.callLegId, 'hangup')
+  }
+}
+
+/** A phone that placed this call (a CltSipDevice leg the caller is in) hears the answer: its INVITE gets its 200. */
+function answerCallerDevices(session) {
+  for (const leg of rows(LEG, { callSessionId: session.callSessionId, legTypeEnumId: 'CltSipDevice', statusId: 'ClsAnswered' })) {
+    sipLegControl(session, leg.callLegId, 'answer')
+  }
 }
 
 function answer(p) {
@@ -471,12 +544,16 @@ function answer(p) {
   offered.participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: now }, true, null, null)
   offered.participant.update()
   setLog(session.callSessionId, me, { outcomeEnumId: 'CuoAnswered' })
+  // the user's phones that ring for this call stop (V4)
+  cancelSiblingOffers(session, offered.participant, offered.leg.callLegId)
   if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
   else if (!session.answeredDate) session.set('answeredDate', now)
   bump(session)
   session.update()
   pushState(session, 'answered', { answeredBy: me, callLegId: offered.leg.callLegId })
   updatePresence([me])
+  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound') phoneControl(session, 'answer')
+  answerCallerDevices(session)
   return { callLegId: offered.leg.callLegId, call: view(session, me) }
 }
 
@@ -487,17 +564,28 @@ function decline(p) {
   if (session.statusId === 'CssEnded') return { call: view(session, me), repeated: true }
   const offered = legOfMine(session, me, ['ClsOffered'])
   if (!offered.leg) return refuse('notRinging', 'This call is not ringing for you')
-  closeLeg(offered.leg, 'ClsDeclined', 'CerDeclined')
-  setLog(session.callSessionId, me, { outcomeEnumId: 'CuoDeclined' })
+  declineRing(session, offered.participant, offered.leg, me)
+  return { call: view(session, me) }
+}
+
+/**
+ * A user declined the call on one of their legs, a tab (decline) or a phone (deviceEvent): their ring ends on every leg
+ * (the tabs' close, the SIP engine cancels each phone, V4) and stays declined. A direct call nobody else is rung for ends;
+ * an inbound phone call nobody else is rung for goes to voicemail (V2: the SIP engine starts it, begin#Voicemail).
+ */
+function declineRing(session, participant, leg, userId) {
+  closeLeg(leg, 'ClsDeclined', 'CerDeclined')
+  cancelSiblingOffers(session, participant, leg.callLegId)
+  setLog(session.callSessionId, userId, { outcomeEnumId: 'CuoDeclined' })
   const stillRinging = find(LEG).condition('callSessionId', session.callSessionId).condition('statusId', 'ClsOffered').count()
   if (session.kindEnumId === 'CskDirect' && !stillRinging) {
     endSession(session, 'CerDeclined')
-  } else {
-    bump(session)
-    session.update()
-    pushState(session, 'declined', { declinedBy: me })
+    return
   }
-  return { call: view(session, me) }
+  bump(session)
+  session.update()
+  pushState(session, 'declined', { declinedBy: userId })
+  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) phoneControl(session, 'voicemail')
 }
 
 function join(p) {
@@ -555,8 +643,9 @@ function leaveLeg(session, leg, reason, userId) {
   const remaining = answeredLegCount(session.callSessionId)
   if (session.statusId === 'CssRinging') {
     endSession(session, 'CerCanceled')
-  } else if (session.kindEnumId === 'CskDirect' || remaining === 0) {
-    endSession(session, remaining === 0 && session.kindEnumId !== 'CskDirect' ? 'CerEmpty' : reason)
+  } else if (session.kindEnumId === 'CskDirect' || remaining === 0 ||
+    (session.kindEnumId === 'CskPhone' && !localAnsweredCount(session.callSessionId))) {
+    endSession(session, remaining === 0 && !['CskDirect', 'CskPhone'].includes(session.kindEnumId) ? 'CerEmpty' : reason)
   } else {
     bump(session)
     session.update()
@@ -613,6 +702,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
     lastHeartbeatDate: now, statusId: 'CcsActive',
   }, true, null, null)
   conn.create()
+  recordingChange(session.callSessionId, 'legBound', leg.callLegId)
   return {
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,
@@ -692,7 +782,9 @@ function expire() {
   const staleSince = new Date(now - HEARTBEAT_STALE_MS)
   const closedSince = new Date(now - RECONNECT_GRACE_MS)
   const answered = Array.from(find(LEG).condition('statusId', 'ClsAnswered').selectField('callLegId')
-    .selectField('answeredDate').limit(2000).list())
+    .selectField('answeredDate').selectField('legTypeEnumId').limit(2000).list())
+    // a phone's leg has no socket here: the SIP engine reports its end
+    .filter((leg) => leg.legTypeEnumId !== 'CltPstn' && leg.legTypeEnumId !== 'CltSipDevice')
   const lost = []
   for (const leg of answered) {
     const conns = rows(CONNECTION, { callLegId: leg.callLegId })
@@ -753,7 +845,10 @@ function expireItem(p) {
   if (!session || session.statusId === 'CssEnded') return { done: false }
   const participant = one(PARTICIPANT, { callParticipantId: current.callParticipantId })
   if (p.itemKind === 'offered' && current.statusId === 'ClsOffered') {
+    // a phone call that rings longer than call_ring_seconds before voicemail (its box's rings, V2) keeps ringing until then
+    if (session.statusId === 'CssRinging' && (ms(session.ringExpireDate) || 0) > nowMs()) return { done: false }
     closeLeg(current, 'ClsTimedOut', 'CerNoAnswer')
+    if (isDeviceLeg(current)) sipLegControl(session, current.callLegId, 'hangup')
     if (participant?.userId) {
       const log = one(USER_LOG, { callSessionId: session.callSessionId, userId: participant.userId })
       if (log && !log.outcomeEnumId) setLog(session.callSessionId, participant.userId, { outcomeEnumId: 'CuoMissed' })
@@ -1217,8 +1312,301 @@ function capabilities() {
   return { supported, configured, active: live.length > 0, reasonCode }
 }
 
+// ---------- phone legs (V1; org.moqui.impl.VoiceServices and Voice.js) ----------
+
+/** The answered legs of people here (browsers), not of phones. */
+function localAnsweredCount(callSessionId) {
+  return find(LEG).condition('callSessionId', callSessionId).condition('statusId', 'ClsAnswered')
+    .condition('legTypeEnumId', 'in', ['CltWeb', 'CltGuest', 'CltSipDevice']).count()
+}
+
+function phoneLegsOf(callSessionId) {
+  return rows(LEG, { callSessionId, legTypeEnumId: 'CltPstn' }).filter((leg) => OPEN_LEG.includes(leg.statusId))
+}
+
+/** Tells the SIP engine on the call's node about its phone legs ({action: 'answer'}), after the commit. */
+function phoneControl(session, action) {
+  if (!session.mediaNodeId) return
+  for (const leg of phoneLegsOf(session.callSessionId)) {
+    // one that cannot be told is logged, as a node that is gone is; the answer stands
+    ec.message.pushErrors()
+    try {
+      ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
+        instanceId: session.mediaNodeId, message: { action, callSessionId: session.callSessionId, callLegId: leg.callLegId },
+      }).disableAuthz().call()
+      if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${ec.message.errorsString}`)
+    } catch (err) {
+      ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${err && err.message ? err.message : err}`)
+    } finally {
+      ec.message.clearErrors()
+      ec.message.popErrors()
+    }
+  }
+}
+
+/**
+ * A phone leg that answered hears the call's notices, as a browser leg that binds gets their rtc frames: the recording's
+ * (note#CallChange, logged per leg) and, while captions are on, the captions' (VoiceServices.notify#PhoneLeg).
+ */
+function phoneJoined(session, leg) {
+  recordingChange(session.callSessionId, 'legBound', leg.callLegId)
+  const captions = one('moqui.call.CallCaptions', { callSessionId: session.callSessionId })
+  if (captions && captions.captionsOn === 'Y') {
+    ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
+      .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
+  }
+}
+
+function makePhoneParticipant(session, displayName, admission) {
+  const p = ec.entity.makeValue(PARTICIPANT)
+  p.setSequencedIdPrimary()
+  p.setFields({
+    callSessionId: session.callSessionId, identityKindEnumId: 'CikPhone', displayName, roleEnumId: 'CprMember',
+    admissionStatusId: admission, admittedDate: admission === 'CasAdmitted' ? ec.user.nowTimestamp : null,
+  }, true, null, null)
+  p.create()
+  return p
+}
+
+/**
+ * Internal (Voice.js place#PhoneCall and receive#PhoneCall, which checked the user, the number and the policy): a phone
+ * call. Outbound: the user is in it at once and the number rings (a CltPstn leg offered until the SIP engine says it
+ * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee; silent (V2: the user is
+ * busy, the call goes straight to voicemail) offers the user's leg without ringing it, and with no userId (V2: the
+ * voicemail access number) nobody is rung and the call is active at once. ringExpireSeconds (V2) keeps an inbound call
+ * ringing past call_ring_seconds while its voicemail waits for more rings.
+ */
+function startPhone(p) {
+  const userId = p.userId
+  const outbound = p.direction !== 'inbound'
+  const key = outbound && p.idempotencyKey ? String(p.idempotencyKey).slice(0, 200) : null
+  if (key) {
+    const prior = Array.from(find(SESSION).condition('startedByUserId', userId).condition('idempotencyKey', key)
+      .orderBy('-startedDate').limit(1).list())[0]
+    if (prior) {
+      const mine = legOfMine(prior, userId, ['ClsAnswered', 'ClsLeft'])
+      const phone = rows(LEG, { callSessionId: prior.callSessionId, legTypeEnumId: 'CltPstn' })[0]
+      return { callSessionId: prior.callSessionId, callLegId: mine.leg?.callLegId || null, phoneLegId: phone?.callLegId || null,
+        call: view(prior, userId), repeated: true }
+    }
+  }
+  const now = ec.user.nowTimestamp
+  const session = ec.entity.makeValue(SESSION)
+  session.setSequencedIdPrimary()
+  const expireSeconds = Math.max(ringSeconds(), Number(p.ringExpireSeconds) || 0)
+  session.setFields({
+    kindEnumId: 'CskPhone', statusId: outbound || userId ? 'CssRinging' : 'CssActive', revision: 1,
+    directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
+    video: 'N', startedByUserId: outbound ? userId : null, idempotencyKey: key, startedDate: now,
+    ringExpireDate: new Date(nowMs() + expireSeconds * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
+    encryptionMode: 'dtls-srtp',
+  }, true, null, null)
+  session.create()
+  const name = p.displayName || p.phoneNumber
+  let userLeg
+  let phoneLeg
+  if (outbound) {
+    const host = makeParticipant(session, userId, 'CprHost', 'CasAdmitted')
+    userLeg = makeLeg(session, host, 'ClsAnswered')
+    const phone = makePhoneParticipant(session, name, 'CasInvited')
+    phoneLeg = makeLeg(session, phone, 'ClsOffered', 'CltPstn')
+    setLog(session.callSessionId, userId, { roleEnumId: 'CurCaller', outcomeEnumId: 'CuoPlaced', logDate: now })
+  } else {
+    const phone = makePhoneParticipant(session, name, 'CasAdmitted')
+    phoneLeg = makeLeg(session, phone, 'ClsAnswered', 'CltPstn')
+    if (userId) {
+      const callee = makeParticipant(session, userId, 'CprMember', 'CasInvited')
+      userLeg = makeLeg(session, callee, 'ClsOffered')
+      setLog(session.callSessionId, userId, { roleEnumId: 'CurCallee', logDate: now })
+    }
+  }
+  phoneLeg.set('phoneNumber', p.phoneNumber)
+  phoneLeg.update()
+  if (outbound) updatePresence([userId])
+  else if (userId && !p.silent) ring(session, [userId], null, name)
+  return { callSessionId: session.callSessionId, callLegId: userLeg ? userLeg.callLegId : null, phoneLegId: phoneLeg.callLegId,
+    call: view(session, userId) }
+}
+
+/**
+ * Internal (the SIP engine, through Voice.js note#PhoneLeg): what a phone leg did. answered: the number picked up;
+ * failed or busy: it never did, and the call ends; ended or canceled: the far end hung up, and the call ends with its last
+ * phone leg. A repeat, or an event for a leg that is closed, answers as it is.
+ */
+function phoneEvent(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  const leg = session && p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (session && leg && leg.callSessionId === session.callSessionId && isDeviceLeg(leg)) return deviceEvent(session, leg, p)
+  if (!session || !leg || leg.callSessionId !== session.callSessionId || leg.legTypeEnumId !== 'CltPstn') {
+    return { reasonCode: 'notFound' }
+  }
+  if (session.statusId === 'CssEnded' || !OPEN_LEG.includes(leg.statusId)) return { repeated: true }
+  const now = ec.user.nowTimestamp
+  const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
+  if (p.event === 'answered') {
+    if (leg.statusId === 'ClsAnswered') return { repeated: true }
+    leg.setFields({ statusId: 'ClsAnswered', answeredDate: now, joinedDate: now }, true, null, null)
+    leg.update()
+    participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: now }, true, null, null)
+    participant.update()
+    if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
+    bump(session)
+    session.update()
+    pushState(session, 'answered', { callLegId: leg.callLegId })
+    phoneJoined(session, leg)
+    answerCallerDevices(session)
+    return {}
+  }
+  if (p.event === 'failed' || p.event === 'busy') {
+    if (leg.statusId === 'ClsAnswered') return phoneEvent(Object.assign({}, p, { event: 'ended' }))
+    const busy = p.event === 'busy'
+    closeLeg(leg, busy ? 'ClsDeclined' : 'ClsFailed', busy ? 'CerDeclined' : 'CerFailed')
+    if (!phoneLegsOf(session.callSessionId).length) endSession(session, busy ? 'CerDeclined' : 'CerFailed')
+    return {}
+  }
+  if (p.event === 'ended' || p.event === 'canceled') {
+    const wasAnswered = leg.statusId === 'ClsAnswered'
+    closeLeg(leg, wasAnswered ? 'ClsLeft' : 'ClsCanceled', wasAnswered ? 'CerHangup' : 'CerCanceled')
+    if (!phoneLegsOf(session.callSessionId).length) {
+      endSession(session, session.statusId === 'CssRinging' ? 'CerCanceled' : 'CerHangup')
+    } else {
+      bump(session)
+      session.update()
+      pushState(session, 'left')
+    }
+    return {}
+  }
+  if (p.event === 'held' || p.event === 'resumed') {
+    pushState(session, p.event, { callLegId: leg.callLegId })
+  }
+  return {}
+}
+
+/**
+ * Internal (VoicemailServices.begin#Voicemail, V2): an inbound phone call goes to voicemail, its phone leg answered by the
+ * SIP engine with no one else in it. The users still rung stop ringing, in their tabs and on their phones (V4), and
+ * missed it (CallUserLog, as a call that rang out; one who declined keeps that); the call is active with the phone alone until it hangs up. Refused (reasonCode) when the
+ * call is not an inbound phone call (notFound), has ended (callEnded) or someone answered it (answered).
+ */
+function phoneToVoicemail(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  const leg = session && p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!session || !leg || leg.callSessionId !== session.callSessionId || leg.legTypeEnumId !== 'CltPstn' ||
+    session.kindEnumId !== 'CskPhone' || session.directionEnumId !== 'CdrInbound') return { reasonCode: 'notFound' }
+  if (session.statusId === 'CssEnded' || leg.statusId !== 'ClsAnswered') return { reasonCode: 'callEnded' }
+  if (localAnsweredCount(session.callSessionId)) return { reasonCode: 'answered' }
+  for (const offered of rows(LEG, { callSessionId: session.callSessionId, statusId: 'ClsOffered' })) {
+    closeLeg(offered, 'ClsTimedOut', 'CerNoAnswer')
+    // a desk or soft phone still ringing for it (V4) is canceled: the call stays up, so its room does not close them
+    if (isDeviceLeg(offered)) sipLegControl(session, offered.callLegId, 'hangup')
+  }
+  const callees = participantsOf(session.callSessionId).filter((x) => x.userId).map((x) => x.userId)
+  const missed = []
+  for (const userId of callees) {
+    const log = one(USER_LOG, { callSessionId: session.callSessionId, userId })
+    if (log && !log.outcomeEnumId) {
+      setLog(session.callSessionId, userId, { outcomeEnumId: 'CuoMissed' })
+      missed.push(userId)
+    }
+  }
+  if (session.statusId === 'CssRinging') session.set('statusId', 'CssActive')
+  bump(session)
+  session.update()
+  pushState(session, 'timedOut')
+  if (missed.length) {
+    ec.service.sync().name('org.moqui.impl.CallServices.publish#MissedCounts').parameter('userIdList', missed)
+      .disableAuthz().call()
+  }
+  return { userIdList: callees, phoneNumber: leg.phoneNumber || null,
+    displayName: one(PARTICIPANT, { callParticipantId: leg.callParticipantId })?.displayName || null }
+}
+
+// ---------- desk and soft phones (V4; org.moqui.impl.SipDeviceServices and SipDevices.js) ----------
+
+/**
+ * Internal (the SIP engine, through note#PhoneLeg): what a phone's leg did. A ringing phone that answers wins only if
+ * none of the user's legs answered first (a tab, or another phone): then the user is in the call on it, their other
+ * offers end, and an inbound phone call's trunk leg and a calling phone are answered; else it is hung up. A phone that
+ * refuses its ring (busy) declines it, as a tab does (declineRing); one that fails or is canceled while it rings just
+ * stops; one in the call that hangs up leaves it, as a tab that leaves.
+ */
+function deviceEvent(session, leg, p) {
+  if (session.statusId === 'CssEnded' || !OPEN_LEG.includes(leg.statusId)) {
+    // the call or the leg ended here first: a late answer is hung up
+    if (p.event === 'answered') sipLegControl(session, leg.callLegId, 'hangup')
+    return { repeated: true }
+  }
+  const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
+  const userId = participant?.userId || null
+  const now = ec.user.nowTimestamp
+  if (p.event === 'answered') {
+    if (leg.statusId === 'ClsAnswered') return { repeated: true }
+    const answeredFirst = rows(LEG, { callParticipantId: leg.callParticipantId, statusId: 'ClsAnswered' }).length > 0
+    if (answeredFirst || !participant) {
+      closeLeg(leg, 'ClsCanceled', 'CerCanceled')
+      sipLegControl(session, leg.callLegId, 'hangup')
+      return { won: false }
+    }
+    leg.setFields({ statusId: 'ClsAnswered', answeredDate: now, joinedDate: now }, true, null, null)
+    leg.update()
+    participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: now }, true, null, null)
+    participant.update()
+    setLog(session.callSessionId, userId, { outcomeEnumId: 'CuoAnswered' })
+    cancelSiblingOffers(session, participant, leg.callLegId)
+    if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
+    else if (!session.answeredDate) session.set('answeredDate', now)
+    bump(session)
+    session.update()
+    pushState(session, 'answered', { answeredBy: userId, callLegId: leg.callLegId, onPhone: true })
+    updatePresence([userId])
+    if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound') phoneControl(session, 'answer')
+    answerCallerDevices(session)
+    phoneJoined(session, leg)
+    return { won: true }
+  }
+  if (p.event === 'ended' || p.event === 'canceled' || p.event === 'failed' || p.event === 'busy') {
+    if (leg.statusId === 'ClsAnswered') return leaveLeg(session, leg, 'CerHangup', userId)
+    // a phone that refuses its ring (busy or decline: phones send either for the reject key) declines it, as a tab does
+    if (p.event === 'busy' && participant && userId) {
+      declineRing(session, participant, leg, userId)
+      return {}
+    }
+    closeLeg(leg, p.event === 'failed' ? 'ClsFailed' : 'ClsCanceled', p.event === 'failed' ? 'CerFailed' : 'CerCanceled')
+    return {}
+  }
+  if (p.event === 'held' || p.event === 'resumed') pushState(session, p.event, { callLegId: leg.callLegId })
+  return {}
+}
+
+/**
+ * Internal (SipDevices.js receiveDeviceCall, as the phone's user): a call from a phone to other users, as start makes it from
+ * a tab, on the media node of the phone's SIP engine, the caller's leg being the phone's.
+ */
+function startFromDevice(p) {
+  preferredNode = p.mediaNodeId || null
+  let out
+  try {
+    out = start({ calleeUserIdList: p.calleeUserIdList, video: false })
+  } finally {
+    preferredNode = null
+  }
+  if (!out.callSessionId || !out.callLegId) return out
+  deviceCaller({ callLegId: out.callLegId, sipDeviceId: p.sipDeviceId })
+  return { callSessionId: out.callSessionId, callLegId: out.callLegId }
+}
+
+/** Internal: the caller's leg of a call placed from a phone is that phone's (a CltSipDevice leg). */
+function deviceCaller(p) {
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!leg) return { reasonCode: 'notFound' }
+  leg.setFields({ legTypeEnumId: 'CltSipDevice', sipDeviceId: p.sipDeviceId, joinedDate: ec.user.nowTimestamp }, true, null, null)
+  leg.update()
+  return {}
+}
+
 const operations = {
-  start, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
+  startFromDevice, deviceCaller,
+  start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
   removeParticipant, iceServers, guestIceServers,

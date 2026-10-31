@@ -105,6 +105,13 @@ mod rtc;
 #[cfg(not(feature = "rtc"))]
 #[path = "rtc_off.rs"]
 mod rtc;
+#[cfg(feature = "rtc")]
+mod speech_local;
+#[cfg(feature = "sip")]
+mod sip;
+#[cfg(not(feature = "sip"))]
+#[path = "sip_off.rs"]
+mod sip;
 #[cfg(feature = "axum")]
 mod source_body;
 #[cfg(feature = "axum")]
@@ -242,6 +249,21 @@ impl Server {
             *lock(&factory.extension(|_| rtc::RtcAddress::default()).0)
         }
         #[cfg(not(feature = "rtc"))]
+        {
+            None
+        }
+    }
+
+    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip_port` or
+    /// `sip_tls_port` is set.
+    #[must_use]
+    pub fn sip_address(&self) -> Option<std::net::SocketAddr> {
+        #[cfg(feature = "sip")]
+        {
+            let factory = self.factory.as_ref()?;
+            *lock(&factory.extension(|_| sip::SipAddress::default()).0)
+        }
+        #[cfg(not(feature = "sip"))]
         {
             None
         }
@@ -1467,6 +1489,7 @@ fn boot_server_factory(
             cluster_edge: None,
             notify_listener: None,
             rtc: None,
+            sip: None,
             factory: Some(factory),
             search,
             facade: Some(facade),
@@ -1529,6 +1552,8 @@ fn boot_server_factory(
     tracing::info!("Integrations installed: {}", integrations());
     // call media (rtc_media_port), after the cluster so the node registers under its instance id
     let rtc = rtc::start(&factory);
+    // phone calls (sip_port, sip_tls_port), beside the call media they join
+    let sip = sip::start(&factory);
     // last, so mail is taken only once everything it runs is up
     let smtpd = start_smtp(&factory);
     // the webapp's listeners and after-startup actions, as Java's MoquiContextListener runs them
@@ -1550,6 +1575,7 @@ fn boot_server_factory(
         cluster_edge: Some(cluster_edge),
         notify_listener,
         rtc,
+        sip,
         factory: Some(factory),
         search,
         facade: Some(facade),
@@ -1578,6 +1604,8 @@ struct ServeProcess {
     notify_listener: Option<crate::cluster_notify::NotifyListener>,
     /// The call media socket, stopped before the factory (its last act deregisters the node).
     rtc: Option<crate::rtc::RtcNode>,
+    /// The SIP engine, stopped before the call media its legs are in.
+    sip: Option<crate::sip::SipNode>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     search: Option<crate::search::SearchStore>,
     facade: Option<moqui_core::entity::EntityFacade>,
@@ -1592,6 +1620,7 @@ impl Drop for ServeProcess {
             // The listener has already waited out its shutdown deadline; a blocking task still running is left.
             runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
         }
+        self.sip.take();
         self.rtc.take();
         if let Some(factory) = &self.factory {
             factory.shutdown();
@@ -1704,6 +1733,8 @@ pub fn build_features() -> Vec<&'static str> {
         ("test-client", cfg!(feature = "test-client")),
         ("devtools", cfg!(feature = "devtools")),
         ("rtc", cfg!(feature = "rtc")),
+        ("speech-local", cfg!(feature = "speech-local")),
+        ("sip", cfg!(feature = "sip")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))
@@ -1712,6 +1743,7 @@ pub fn build_features() -> Vec<&'static str> {
 
 /// Tell the framework this build's package and host features, once.
 fn register_build() {
+    sip::install_crypto();
     moqui_core::build_info::set_host(build_package(), &build_features());
 }
 

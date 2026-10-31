@@ -645,6 +645,24 @@ impl Peer {
         }
     }
 
+    /// Asks this peer for a keyframe of each video track it publishes, every layer it sends (a room's consumer that
+    /// starts a file, the recorder). Each layer keeps its [`KEYFRAME_INTERVAL`].
+    pub fn request_video_keyframes(&mut self, now: Instant) {
+        let mids: Vec<Mid> = self
+            .tracks_in
+            .iter()
+            .filter(|t| t.track.kind == MediaKind::Video && !t.track.injected)
+            .map(|t| t.track.mid)
+            .collect();
+        for mid in mids {
+            // a layer the browser does not send is no stream: str0m refuses that request, and nothing goes out
+            let layers = Layer::ALL.iter().map(|l| Some(Rid::from(l.rid())));
+            for rid in std::iter::once(None).chain(layers) {
+                self.request_keyframe(mid, rid, KeyframeRequestKind::Pli, now);
+            }
+        }
+    }
+
     /// A subscriber's PLI or FIR goes to the publisher, for the layer the subscriber gets.
     fn keyframe_request_from_remote(&mut self, req: KeyframeRequest, propagated: &mut Vec<Propagated>) {
         let Some(o) = self.tracks_out.iter().find(|o| o.mid() == Some(req.mid)) else {

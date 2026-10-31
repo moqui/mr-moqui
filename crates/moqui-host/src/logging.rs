@@ -522,6 +522,11 @@ struct LineSubscriber {
 
 impl Subscriber for LineSubscriber {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        // rsipstack logs each SIP message whole at INFO: SDES keys (a=crypto), digest answers, numbers. Its warnings
+        // and errors carry none of them, so only those are taken, at any level.
+        if metadata.target().starts_with("rsipstack") && *metadata.level() > Level::WARN {
+            return false;
+        }
         *metadata.level() <= self.level
     }
 

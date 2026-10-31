@@ -262,6 +262,16 @@ lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 
 - A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
 - Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
 
+Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
+unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
+`stopCaptions`) need a signed-in user with an answered leg in the call; anyone else gets `notFound`. An end-to-end
+encrypted call is refused. Every leg, a late joiner's and a guest's too, gets the notice naming the provider before its
+audio is captioned. The provider is the `transcribe` model binding, reached through `moqui-llm`'s address guard (a
+private address needs `allow-private-network`), counted against the quota of the user who turned captions on, and kept
+as an `LlmCall`. `org.moqui.impl.SpeechServices.transcribe#Audio` and `get#SpeechProvider` are `allow-remote="false"`:
+`transcribe#Audio` reads any `audioLocation` it is given, so its caller decides what may be sent out. Captions are not
+stored unless `call_captions_store` is `true`.
+
 ## REST
 
 `rest.xml` is `require-authentication="false"` so each transition decides. It does not grant inheritable admin authorization. Rust bodies for this screen are in `screen/dispatch.rs`. A same-named transition on another screen is not wired there.
@@ -405,7 +415,7 @@ The cluster HTTPS listener is separate from the public HTTP and HTTPS listeners.
 
 On whenever the process starts listeners (a normal `moqui` with no command, and `moqui tui --serve`). Empty `cluster_https_port` is **8444**. Empty `cluster_bind_address` is **0.0.0.0**. `0` is ephemeral. Commands that do not serve do not start it. `plans/archive/Cluster.md` still says port 8443. That line is stale. The running default is 8444 (`README.md`, `crates/moqui-host/src/cluster_edge.rs`).
 
-A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, `session-end` or `rtc-signal`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again. `rtc-signal` is sent to one member (`cluster::send_to`, one try from a queue of 1,024 that refuses when full): a call's signaling frames for the node holding its media, its replies for the node holding a leg's socket, and the call services' close messages; a receiver drops one whose `target` is not its instance id (the notify transport reaches every notify member).
+A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, `session-end` or `rtc-signal`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again. `rtc-signal` is sent to one member (`cluster::send_to`, one try from a queue of 1,024 that refuses when full): a call's signaling frames for the node holding its media, its replies for the node holding a leg's socket, the call services' close messages, and the voice services' SIP control (kind `sip`, for the node's SIP engine); a receiver drops one whose `target` is not its instance id (the notify transport reaches every notify member).
 
 Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It needs a Postgres entity database. MySQL refuses startup. It is one connection outside the pool, not a new TCP port. The payload is not authenticated on its own. A payload over 7,900 bytes is a `ClusterMessage` row id. A notification missed while `LISTEN` is down is lost. Reconnect then clears entity caches. The default `cluster_transport` is empty, which means HTTPS POST to `cluster_base_url`.
 
@@ -415,6 +425,19 @@ Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature 
 
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
+
+### Call recording
+
+Off unless `call_recording_enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. Only a
+host of the call starts, pauses, resumes or stops it (`org.moqui.impl.CallRecordingServices`). The recorder runs on the
+media node, takes frames from a bounded queue and spools under `runtime/tmp/call-recording/`. `store#RecordingFile`
+(internal, `allow-remote="false"`) refuses a spool path outside that directory and a location outside
+`dbresource://moqui/call/recording/`. The files are read only through `get#RecordingFile` by segment id, from the
+BasicComms Calls `Recordings` screen's `recordingFile` transition: the one who recorded it and the call's hosts get the
+file, anyone else "not found" (an empty JSON answer) for the same id. No route serves those `dbresource://` locations
+to users, and an app's record links (BOSS) go through the same services. The guest page's `ackRecording` and
+`withdrawRecording` take the guest's credential and act on its own leg only. Every leg gets the notice, and each is
+logged (`CallRecordingConsent`). Retention deletes the files and rows (`expire_Recordings_hourly`).
 
 ### TURN
 
@@ -433,6 +456,97 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
 
 coturn can take its place ([TURN](../interfaces/TURN.md)), with the same secret and a deny-all, allow-media-node
 peer rule.
+
+### SIP
+
+The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a media node, only in a binary with the
+`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip_port` (UDP and TCP on `sip_host`),
+`sip_tls_port` (TLS on `sip_tls_host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
+`sip_rtp_ports` on `sip_rtp_host`. An exposed SIP listener is scanned within hours, so its rules are release gates
+([SIP](../interfaces/SIP.md) "Fraud controls"):
+
+- **Who is answered.** An INVITE from a trunk's host or listed signaling addresses is a trunk's call; any other
+  INVITE or REGISTER is challenged with SIP Digest (SHA-256 and MD5, nonces that expire after 5 minutes and carry
+  random bytes and a MAC under a per-process key, nonce counts that must go up). Only a PBX trunk's credentials
+  (profile "PBX on a private network") answer it: a provider trunk's are the provider account's password, so a digest
+  with them is refused and counted as a failure, and a provider's calls come only from its addresses. A listed address
+  range is at most a /8 (IPv4) or a /32 (IPv6); the services refuse a wider one and the engine ignores it. Other requests from addresses that
+  are not a trunk's are not answered. Without the registrar, REGISTER is refused (403) without a
+  challenge, so it counts no failures. Over UDP a
+  source address can be forged, so a trunk taken by its address is best on TLS (the default) or TCP.
+- **The registrar (V4).** Off unless `sip_registrar_enabled` is true, even with the listeners on. With it, a REGISTER
+  and a phone's INVITE answer the same challenge with a desk or soft phone's credentials: a generated username and a
+  22-character random password that is shown to its user once and never stored. Only its digest verifiers are kept
+  (`SipDeviceVerifier.ha1`, encrypted, per algorithm and realm): SHA-256, and MD5 only for a device of the legacy
+  profile, so an MD5 answer for a standard device fails. A failed or replayed answer counts against its source as any
+  failed digest; no device or account is locked. Each REGISTER or signed INVITE looks the username up once
+  (`get#SipDeviceAuth`), within the per-source rate. Rotation deletes the old verifiers and revocation the device's,
+  and either ends its bindings and its calls on every engine. A binding is the flow the phone opened (its transport
+  and source address and port); calls to the phone go back over it only, never to the address its Contact names, and
+  a stream connection that closes ends its bindings. A device has at most 10 bindings, and expiry is held to
+  `sip_registrar_min_expires`..`sip_registrar_max_expires`. A phone's own call is placed as its user through the same
+  checks as the browser's (`place#PhoneCall`: outbound permission, caller ID, international and premium, limits,
+  emergency first), so a phone's credentials give no more than its user has. Plain RTP from a phone is taken from its
+  SDP's address or the address it signals from (its NAT's), on any port until the first packet latches.
+- **Failed digests block the source.** `authFailureLimit` failures in `authFailureWindowSeconds` from one address
+  block it for `authBlockSeconds` (5 in 10 minutes, for an hour, by default): its datagrams and stream messages are
+  dropped before a transaction is made, nothing is answered, and the block is kept in `VoiceAuthFailure` across
+  restarts (the engine counts failures in memory and writes only the block). An IPv6 source counts as its /64. The
+  engine tracks at most 50,000 sources; when full, the ones not blocked go first, so rotating addresses does not lift
+  the blocks. No account is locked or counted.
+- **What an incoming call reaches.** Only a number in `PhoneNumber` rings anyone, through the call services'
+  ringing; the SDP must be audio with a codec in common, and SRTP when the trunk's profile requires it (488
+  otherwise).
+- **Outbound.** Calls go out only from `send#SipControl` (the `rtc-signal` cluster topic, kind `sip`, to that node),
+  which only the voice services send, after their checks (caller ID grant, outbound enabled, international and
+  premium off by default, concurrency and daily limits, the emergency path). With home country 1, the area codes of
+  the plan's other countries (the Caribbean's, Bermuda's) are international. The engine checks the number's class,
+  the emergency trunk and the concurrency limit again before an INVITE goes out. A display name or extra header with
+  a line break or a quote is cleaned or left out, so it cannot add headers (a `P-Asserted-Identity`) to the INVITE.
+- **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
+  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
+- **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;
+  a packet that fails its tag or replay window is dropped. RTP goes back where the leg's authenticated packets come
+  from. Plain RTP is taken only from the SDP's address and, once the first packet latched, only from that source;
+  anything else is dropped, so a guessed port neither injects audio nor takes the call's audio. RTCP is dropped.
+  rsipstack logs whole SIP messages (SDES keys, digest answers) at INFO, so the host keeps only its warnings.
+- **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests (outside a
+  dialog) to `sip_request_rate` a second per source (`sip_request_burst` at once; 20 and 100 by default, an IPv6
+  source as its /64), drops them while `sip_max_transactions` (2,000) run, and closes TCP and TLS connections past
+  `sip_max_connections` (500), or past `sip_max_connections_per_source` (100) from one source, so one source cannot
+  hold the connections the registrar's phones keep open. What is over is dropped unanswered; requests in a dialog and responses pass, so calls
+  going on are not cut. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
+- **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
+  are cut. The engine registers its node (`SipNode`) every 20 seconds.
+
+### Voicemail
+
+Voicemail ([Voicemail](../interfaces/Voicemail.md)) opens no port: it runs on the SIP engine above, for calls to a
+user's number that nobody answers, and on the access number (`PnrVoicemail`) when an administrator sets one.
+
+- **The PIN over the phone.** A caller who presses `*` in a greeting, or calls the access number, can enter a box
+  number and a PIN. `check#VoicemailPin` (internal) checks it against the box's argon2 hash and limits failures per
+  box (5 in 15 minutes, then 15 minutes refused from any caller) and per source (the caller's number, 10 in an hour,
+  then an hour). The source is a caller ID the caller can fake, so the box's limit is the one that holds: about 240
+  guesses a day, which tries every four-digit PIN in six weeks and every six-digit one in eleven years, so a new PIN
+  has at least `voicemail_pin_min_digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
+  the same words after the same hash work and is counted the same way, so the answers say nothing of which boxes
+  exist. Three refusals end the call. The PIN is never logged, and weak ones (one digit repeated, a run) are refused
+  when set. Accepted, the caller hears only that box's new messages, and its keys act only on them (`act#PhoneVoicemail`
+  checks the box).
+- **The audio route.** Messages and greetings are under `dbresource://moqui/call/voicemail/`, which no route serves.
+  The audio is read only through `get#VoicemailAudio` and `get#VoicemailGreeting`, from the Calls `Voicemail` and
+  Settings `Phone` screens' transitions: the box's owner gets the file, anyone else "not found" (an empty JSON answer),
+  the same as for an id that does not exist. The engine writes only through `store#VoicemailFile` (internal), which
+  takes a spool path only under `runtime/tmp/voicemail` and a location only under the voicemail root.
+- **Uploads.** A greeting upload is at most 10 MB, checked as WAV or Ogg Opus by its first bytes, then decoded and
+  re-encoded by the server (`convert#GreetingAudio`, internal, which reads and writes only under the greetings' root);
+  a minute is kept.
+- **Mail out.** The email notice carries only a link unless the owner turns on the audio or the transcript in it; the
+  screen warns that mail cannot be recalled. Transcription sends the audio to the speech provider only when
+  `voicemail_transcribe` is on.
+- **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
+  under a second is dropped.
 
 ### Database
 

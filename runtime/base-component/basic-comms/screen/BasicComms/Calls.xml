@@ -155,6 +155,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the in-call keypad of a phone call (V1): tones (RFC 4733) to the phones in it, for a user in the call -->
+    <transition name="sendDtmf">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.send#PhoneDtmf').parameters({callSessionId: callSessionId || '', digits: digits || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, sent: !!out.sent})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the leg's ICE servers (TURN with a short-lived credential), for its RTCPeerConnection: an admitted leg only -->
     <transition name="iceServers" method="get" read-only="true">
         <actions><script><![CDATA[
@@ -162,6 +173,106 @@ along with this software (see the LICENSE.md file). If not, see
                 .requireNewTransaction(true).disableAuthz().call() || {}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({iceServers: out.iceServers || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- recording (W5, org.moqui.impl.CallRecordingServices): the policy and the call's recording for the page, the host's
+        start, stop, pause and resume, and each leg's acknowledgement or withdrawal; every answer carries the recording -->
+    <transition name="recordingState" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingState').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, enabled: !!out.enabled, ackRequired: !!out.ackRequired,
+                canRecord: !!out.canRecord, recording: out.recording || null, myConsent: out.myConsent || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="startRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.start#Recording').parameters({callSessionId: callSessionId || '',
+                kind: kind === 'mixed' ? 'mixed' : 'perTrack'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stopRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.stop#Recording').parameters({callSessionId: callSessionId || '',
+                callRecordingId: callRecordingId || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="pauseRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.pause#Recording').parameters({callSessionId: callSessionId || '',
+                callRecordingId: callRecordingId || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="resumeRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.resume#Recording').parameters({callSessionId: callSessionId || '',
+                callRecordingId: callRecordingId || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="ackRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.ack#RecordingNotice').parameters({callSessionId: callSessionId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="withdrawRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.withdraw#RecordingConsent').parameters({callSessionId: callSessionId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- live captions (W6): on and off by someone in the call (CallCaptionServices), and whether the CC button shows -->
+    <transition name="startCaptions">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallCaptionServices.start#Captions').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, captions: out.captions || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stopCaptions">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallCaptionServices.stop#Captions').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, captions: out.captions || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="captionState" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallCaptionServices.get#CaptionState').parameter('callSessionId', callSessionId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, captions: out.captions || {allowed: false, on: false}})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

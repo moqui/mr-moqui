@@ -300,7 +300,7 @@ struct BlockResult {
 pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&CaseResult)) -> SpecResult {
     let host = options.host.clone();
     let _host = HostGuard::set(host.clone());
-    let finish = || match &host {
+    let finish_host = || match &host {
         Some(host) => {
             host.after_spec();
             moqui_core::script::clear_context_stack();
@@ -310,6 +310,11 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             let _ = moqui_core::script::eval_named_value("__moquiTest.restoreDatabase()", PRELUDE_NAME);
             reset_context();
         }
+    };
+    let finish = || {
+        // the process properties the spec changed (setProperty, withProperty), if cleanupSpec did not put them back
+        let _ = moqui_core::script::eval_named_value("__moquiTest.restoreProperties()", PRELUDE_NAME);
+        finish_host();
     };
     let started = Instant::now();
     let mut result = SpecResult {
@@ -880,6 +885,7 @@ fn install_host(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let host = Object::new(ctx.clone())?;
     host.set("parallel", Function::new(ctx.clone(), parallel_host)?)?;
     host.set("uploadedFile", Function::new(ctx.clone(), uploaded_file_host)?)?;
+    host.set("setProperty", Function::new(ctx.clone(), set_property_host)?)?;
     host.set("call", Function::new(ctx.clone(), host_call)?)?;
     // assert.rejects runs the promise's jobs here. QuickJS has no event loop of its own.
     host.set("settle", Function::new(ctx.clone(), settle_promise)?)?;
@@ -1042,8 +1048,6 @@ pub fn run_on_thread(
         })
 }
 
-/// `__moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds)`: run the function source on `n`
-/// threads, each with its own execution context and engine, and return `{results, errors}` as JSON.
 /// `uploadedFile(fileName, text, contentType)` of the prelude: an uploaded file holding the text.
 fn uploaded_file_host<'js>(
     ctx: Ctx<'js>,
@@ -1055,6 +1059,20 @@ fn uploaded_file_host<'js>(
     moqui_core::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
 }
 
+/// `__moquiTestHost.setProperty(name, value)`: a process property (`null` clears it); the property as it was, from the
+/// process table only, or `null`. Under `setProperty` and `withProperty` (server.js), which keep what to put back when
+/// the spec ends (`__moquiTest.restoreProperties`, in cleanupSpec and in [`run_spec`]'s finish).
+fn set_property_host(name: String, value: Option<String>) -> Option<String> {
+    let before = moqui_lib::env::get_property(&name);
+    match value {
+        Some(value) => moqui_lib::env::set_property(&name, value),
+        None => moqui_lib::env::clear_property(&name),
+    }
+    before
+}
+
+/// `__moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds)`: run the function source on `n`
+/// threads, each with its own execution context and engine, and return `{results, errors}` as JSON.
 fn parallel_host(
     ctx: Ctx<'_>,
     count: u32,

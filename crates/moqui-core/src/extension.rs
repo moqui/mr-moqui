@@ -70,6 +70,8 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("moqui_mail::test_server", "smtp"),
     ("moqui_mail::push_remote_changes", "smtp"),
     ("moqui_mail::", "imap"),
+    // the host's SIP engine (moqui-host src/sip/audio.rs), the sip feature
+    ("moqui_host::sip::", "sip"),
 ];
 
 /// The linked framework crates.

@@ -71,7 +71,13 @@
         // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
         lobbyNotice: null,
         settings: readSettings(),
-        capabilities: null
+        capabilities: null,
+        // live captions of the current call (W6): whether the CC button shows (allowed), whether they are on, who
+        // transcribes (the notice), why they are unavailable, and the last lines {key, leg, name, text, gap, at}
+        captions: { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] },
+        // recording (W5), by callSessionId: {enabled, ackRequired, canRecord, recording: {callRecordingId, state, pauseReason,
+        // kind, ackRequired} or null, myConsent: {acknowledged, withdrawn, ackRequired} or null, failed}
+        recordingOf: {}
     });
 
     const call = {
@@ -145,6 +151,7 @@
             if (!data || data.kind !== "call") return;
             if (data.call) call.remember(data.call);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
+            if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
             if (data.action === "guestWaiting") state.lobbyNotice = { callSessionId: data.callSessionId, guestName: data.guestName || "" };
             if (data.action === "admitted" || data.action === "denied" || data.action === "ended") {
                 const view = state.calls[data.callSessionId];
@@ -232,6 +239,49 @@
         },
         open(callSessionId) {
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
+        },
+
+        // ---- recording (W5): the policy, the call's recording and this leg's notice; a guest asks with its credential ----
+        recordingRequest(name, params, method) {
+            if (call.guest && call.guest.recording) return Promise.resolve(call.guest.recording(name));
+            return call.request(name, params, method);
+        },
+        noteRecording(callSessionId, json) {
+            if (!callSessionId || !json) return;
+            const was = state.recordingOf[callSessionId] || {};
+            state.recordingOf[callSessionId] = Object.assign({}, was, {
+                enabled: json.enabled != null ? !!json.enabled : !!was.enabled,
+                ackRequired: json.ackRequired != null ? !!json.ackRequired : !!was.ackRequired,
+                canRecord: json.canRecord != null ? !!json.canRecord : !!was.canRecord,
+                recording: json.recording !== undefined ? json.recording : was.recording || null,
+                myConsent: json.myConsent !== undefined ? json.myConsent : was.myConsent || null
+            });
+        },
+        loadRecording(callSessionId) {
+            if (!callSessionId) return Promise.resolve({});
+            return call.recordingRequest("recordingState", { callSessionId }, "GET").then((json) => {
+                if (json && !json.reasonCode) call.noteRecording(callSessionId, json);
+                return json || {};
+            }, () => ({}));
+        },
+        // the host's startRecording, stopRecording, pauseRecording, resumeRecording; anyone's ackRecording or
+        // withdrawRecording; then the state again (this leg's notice changed)
+        recordingAction(callSessionId, name) {
+            const rec = state.recordingOf[callSessionId] || {};
+            const params = { callSessionId, callRecordingId: rec.recording ? rec.recording.callRecordingId : null };
+            return call.recordingRequest(name, params).then(() => call.loadRecording(callSessionId));
+        },
+        // the media node's recording frame, to every leg and again to one that joins late
+        recordingFrame(frame) {
+            const id = frame.callSessionId;
+            const going = frame.state === "recording" || frame.state === "paused";
+            const was = state.recordingOf[id] || {};
+            const known = was.recording && was.recording.callRecordingId === frame.callRecordingId;
+            call.noteRecording(id, { recording: going ? { callRecordingId: frame.callRecordingId, state: frame.state, pauseReason: frame.pauseReason || null,
+                kind: frame.kind || null, ackRequired: !!frame.ackRequired } : null });
+            state.recordingOf[id].failed = frame.state === "failed";
+            // a new recording: this leg's notice is new too
+            if (going && !known) call.loadRecording(id);
         },
 
         // ---- the media ----
@@ -414,6 +464,13 @@
                 case "quality":
                     state.quality = frame.kbps;
                     break;
+                case "caption":
+                case "captions":
+                    call.onCaption(frame);
+                    break;
+                case "recording":
+                    call.recordingFrame(frame);
+                    break;
                 case "ended":
                     call.hangUp(frame.reason || "ended");
                     break;
@@ -581,6 +638,7 @@
 
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
         hangUp() {
+            if (state.current) delete state.recordingOf[state.current];
             if (call.guest) {
                 call.guest.close();
                 call.guest = null;
@@ -597,6 +655,7 @@
             if (call.screenStream) call.screenStream.getTracks().forEach((track) => track.stop());
             Object.assign(state, { current: null, legId: null, phase: "idle", localStream: null, remotes: {}, muted: false, cameraOff: false,
                 quality: null, startedAt: 0, speaker: null, sharing: false, hand: false, myReaction: null });
+            state.captions = { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] };
             call.trackSources = {};
             call.tracks = {};
             call.sentLayers = {};
@@ -609,6 +668,7 @@
             if (call.guest) call.guest.close();
             const guest = call.openGuestSocket(options.credential);
             guest.iceServers = options.iceServers || null;
+            guest.recording = options.recording || null;
             call.guest = guest;
             return guest.ready.then(() => call.join(options.callSessionId, options.callLegId, { video: options.video, stream: options.stream }));
         },
@@ -665,6 +725,45 @@
             return guest;
         },
 
+        // ---- live captions (W6): the media node transcribes; anyone in the call turns them on or off ----
+        loadCaptions(callSessionId) {
+            if (call.guest || !callSessionId) return Promise.resolve(null);
+            return call.request("captionState", { callSessionId }, "GET").then((json) => {
+                if (state.current !== callSessionId) return json;
+                const c = json.captions || {};
+                Object.assign(state.captions, { allowed: !!c.allowed, on: !!c.on, provider: c.providerLabel || state.captions.provider, local: !!c.local });
+                if (!c.on) Object.assign(state.captions, { unavailable: null, lines: [] });
+                return json;
+            }, () => null);
+        },
+        toggleCaptions() {
+            const id = state.current;
+            if (!id) return Promise.resolve({});
+            return call.request(state.captions.on ? "stopCaptions" : "startCaptions", { callSessionId: id }).then((json) => {
+                if (json.captions && state.current === id) {
+                    state.captions.on = !!json.captions.on;
+                    if (json.captions.providerLabel) state.captions.provider = json.captions.providerLabel;
+                    if (!json.captions.on) Object.assign(state.captions, { unavailable: null, lines: [] });
+                }
+                return json;
+            });
+        },
+        // A caption, a gap where one was dropped, or the captions' state: on (the notice), off, unavailable
+        onCaption(frame) {
+            const c = state.captions;
+            if (frame.rtc === "captions") {
+                if (frame.state === "on") Object.assign(c, { on: true, unavailable: null, provider: frame.provider || c.provider, local: frame.local != null ? !!frame.local : c.local });
+                else if (frame.state === "off") Object.assign(c, { on: false, unavailable: null, lines: [] });
+                else if (frame.state === "unavailable") c.unavailable = frame.message || frame.reason || t("Captions are unavailable");
+                return;
+            }
+            c.on = true;
+            if (!frame.gap) c.unavailable = null;
+            const name = frame.leg === state.legId ? t("You") : frame.name || call.nameOf(frame.leg);
+            c.lines.push({ key: frame.leg + ":" + frame.seq, leg: frame.leg, name, text: frame.gap ? "…" : String(frame.text || ""), gap: !!frame.gap, at: Date.now() });
+            if (c.lines.length > 4) c.lines.splice(0, c.lines.length - 4);
+        },
+
         saveSettings(changes) {
             Object.assign(state.settings, changes || {});
             writeSettings(state.settings);
@@ -706,6 +805,16 @@
         },
         template: '<audio ref="audio" autoplay></audio>'
     };
+
+    // The recording indicator's text (W5): recording, or why it is paused.
+    function recordingText(recording) {
+        if (!recording) return "";
+        if (recording.state === "recording") return t("Recording");
+        if (recording.pauseReason === "ack") return t("Recording paused: waiting for everyone to acknowledge");
+        if (recording.pauseReason === "withdrawn") return t("Recording paused: someone withdrew consent");
+        return t("Recording paused");
+    }
+    moqui.callRecordingText = recordingText;
 
     function elapsedText(since) {
         if (!since) return "";
@@ -846,7 +955,8 @@
                     muted: this.call.muted, hand: this.call.hand, reaction: this.call.myReaction, isMe: true }];
                 for (const r of this.remotes) {
                     list.push({ key: r.legId, legId: r.legId, name: r.name, stream: r.stream && r.stream.getVideoTracks().length && !r.cameraOff ? r.stream : null,
-                        muted: r.muted, hand: r.hand, reaction: r.reaction, audioOnly: r.audioOnly, speaking: this.call.speaker === r.legId });
+                        muted: r.muted, hand: r.hand, reaction: r.reaction, audioOnly: r.audioOnly && !this.phoneLegs.has(r.legId),
+                        phone: this.phoneLegs.has(r.legId), speaking: this.call.speaker === r.legId });
                     if (r.screen) list.push({ key: r.legId + ":screen", legId: r.legId, name: r.name + " · " + t("screen"), stream: r.screen, screen: true });
                 }
                 return list;
@@ -867,7 +977,24 @@
             // guests in the lobby of a call link's meeting, for those in the call to let in
             waiting() { const v = this.known; return v ? (v.participants || []).filter((p) => p.admission === "waiting") : []; },
             reactions() { return ["👍", "👏", "😂", "❤️", "🎉", "🙋"]; },
-            elapsed() { return this.now && elapsedText(this.call.startedAt); }
+            // live captions (W6): the last lines of the last ten seconds, and the notice of who hears the audio
+            captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
+            captionNotice() { return captionNotice(this.call.captions); },
+            elapsed() { return this.now && elapsedText(this.call.startedAt); },
+            // recording (W5): the policy and the call's recording, this leg's notice
+            rec() { return this.call.recordingOf[this.callSessionId] || null; },
+            recording() { return this.rec ? this.rec.recording : null; },
+            recordingText() { return recordingText(this.recording); },
+            canRecord() { return !!(this.rec && this.rec.enabled && this.rec.canRecord && this.inThis); },
+            needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
+            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); },
+            // a phone call (V1): its phone legs are audio only, and the keypad sends tones to them
+            phoneLegs() {
+                const v = this.known;
+                return new Set(v ? (v.participants || []).filter((p) => p.identity === "phone").flatMap((p) => (p.legs || []).map((leg) => leg.callLegId)) : []);
+            },
+            hasPhone() { return this.phoneLegs.size > 0; },
+            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; }
         },
         watch: {
             callSessionId() { this.load(); }
@@ -888,7 +1015,10 @@
                 moqui.call.request("callState", { callSessionId: this.callSessionId }, "GET").then((json) => {
                     this.view = json.call || null;
                     this.loading = false;
+                    if (this.view && this.view.status !== "ended") moqui.call.loadRecording(this.callSessionId);
+                    if (this.view && this.view.kind === "phone") this.video = false;
                     if (this.view && !this.inThis && this.view.status !== "ended") this.startPreview();
+                    if (this.view && this.inThis) moqui.call.loadCaptions(this.callSessionId);
                 }, () => (this.loading = false));
             },
             listDevices() {
@@ -940,6 +1070,8 @@
                 start.then(() => this.load());
             },
             leave() { moqui.call.leave().then(() => this.load()); },
+            recAction(name) { moqui.call.recordingAction(this.callSessionId, name); },
+            dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.callSessionId, digits: key }); },
             endForAll() { moqui.call.endForAll().then(() => this.load()); },
             tileStyle(tile) {
                 const ring = tile.speaking ? ";box-shadow:0 0 0 3px var(--q-positive)" : "";
@@ -962,9 +1094,15 @@
             '<div class="m-call column q-gutter-sm">' +
             '<div class="row items-center"><div class="text-h6 q-mr-md">{{known ? (known.participants || []).filter(p => p.userId !== moquiCallMe()).map(p => p.displayName).join(\', \') || t(\'Call\') : t(\'Call\')}}</div>' +
             '<q-chip dense square :color="known && known.status === \'ended\' ? \'grey-6\' : \'positive\'" text-color="white">{{stateText}}</q-chip>' +
+            '<q-chip v-if="recording" dense square :color="recording.state === \'recording\' ? \'negative\' : \'warning\'" text-color="white" icon="sym_o_fiber_manual_record" class="m-call-recording">{{recordingText}}</q-chip>' +
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
+            '<q-banner v-if="recording && inThis" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" color="negative"></q-icon></template>' +
+            '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
+            '<template v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
+            '<q-btn v-if="!withdrawn" flat no-caps color="negative" :label="t(\'Withdraw consent\')" @click="recAction(\'withdrawRecording\')"></q-btn></template></q-banner>' +
+            '<q-banner v-if="rec && rec.failed && inThis" dense rounded class="m-tonal text-warning">{{t(\'The recording stopped: the recorder failed. The call goes on.\')}}</q-banner>' +
             '<q-banner v-for="p in (inThis || isHost) ? waiting : []" :key="\'w\' + p.callParticipantId" dense rounded class="m-tonal">' +
             '<template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>{{p.displayName}} {{t(\'is waiting to join\')}}' +
             '<template v-slot:action><q-btn flat no-caps color="positive" :label="t(\'Let in\')" @click="admit(p, true)"></q-btn>' +
@@ -985,7 +1123,7 @@
             '<div v-if="inThis && mainTile" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
-            '<div v-else class="fit flex flex-center text-white text-subtitle1">{{tile.name}}</div>' +
+            '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
             '<div v-if="tile.reaction" class="absolute-center text-h3">{{tile.reaction}}</div>' +
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
@@ -993,22 +1131,32 @@
             '<div v-if="inThis" :style="gridStyle">' +
             '<div v-for="tile in stripTiles" :key="tile.key">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
-            '<div v-else class="fit flex flex-center text-white text-subtitle1">{{tile.name}}</div>' +
+            '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
             '<div v-if="tile.reaction" class="absolute-center text-h3">{{tile.reaction}}</div>' +
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
             '<q-icon v-if="tile.hand" name="sym_o_back_hand" color="warning" class="q-ml-xs"></q-icon></div></div>' + '</div></div>' +
             '<div v-if="inThis && !remotes.length" class="m-muted">{{call.phase === \'connected\' ? t(\'Waiting for the others\') : t(\'Connecting\')}}</div>' +
+            // the captions: the notice while they are on, why they are unavailable, and each speaker's last lines
+            captionsBox("inThis", "captionLines") +
             // the bottom bar
             '<div v-if="inThis" class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" :disable="!call.localStream || !call.localStream.getVideoTracks().length" @click="moquiCall().toggleCamera()"><q-tooltip>{{t(\'Camera\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="canShare" round unelevated :color="call.sharing ? \'primary\' : \'grey-8\'" :icon="call.sharing ? \'sym_o_stop_screen_share\' : \'sym_o_present_to_all\'" :aria-label="call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')" @click="call.sharing ? moquiCall().stopShare() : moquiCall().shareScreen()"><q-tooltip>{{call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.hand ? \'warning\' : \'grey-8\'" icon="sym_o_back_hand" :aria-label="t(\'Raise your hand\')" @click="moquiCall().toggleHand()"><q-tooltip>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="call.captions.allowed || call.captions.on" round unelevated :color="call.captions.on ? \'primary\' : \'grey-8\'" icon="sym_o_closed_caption" :aria-label="call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')" @click="moquiCall().toggleCaptions()"><q-tooltip>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_add_reaction" :aria-label="t(\'React\')"><q-menu><div class="row q-pa-xs">' +
             '<q-btn v-for="emoji in reactions" :key="emoji" flat dense size="lg" v-close-popup @click="moquiCall().sendReaction(emoji)">{{emoji}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="grey-8" :icon="call.layout === \'speaker\' ? \'sym_o_grid_view\' : \'sym_o_person\'" :aria-label="call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')" @click="moquiCall().setLayout(call.layout === \'speaker\' ? \'grid\' : \'speaker\')"><q-tooltip>{{call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_group" :aria-label="t(\'Participants\')" @click="call.participantsOpen = !call.participantsOpen"><q-badge v-if="raisedCount" color="warning" floating>{{raisedCount}}</q-badge><q-tooltip>{{t(\'Participants\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canRecord && !recording" round unelevated color="grey-8" icon="sym_o_radio_button_checked" :aria-label="t(\'Record\')" @click="recAction(\'startRecording\')"><q-tooltip>{{t(\'Record the call\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canRecord && recording" round unelevated color="negative" icon="sym_o_radio_button_checked" :aria-label="t(\'Recording\')"><q-tooltip>{{recordingText}}</q-tooltip><q-menu><div class="column q-pa-xs">' +
+            '<q-btn v-if="recording.state === \'recording\'" flat no-caps align="left" icon="sym_o_pause" :label="t(\'Pause recording\')" v-close-popup @click="recAction(\'pauseRecording\')"></q-btn>' +
+            '<q-btn v-if="recording.state === \'paused\' && recording.pauseReason === \'user\'" flat no-caps align="left" icon="sym_o_play_arrow" :label="t(\'Resume recording\')" v-close-popup @click="recAction(\'resumeRecording\')"></q-btn>' +
+            '<q-btn flat no-caps align="left" color="negative" icon="sym_o_stop" :label="t(\'Stop recording\')" v-close-popup @click="recAction(\'stopRecording\')"></q-btn></div></q-menu></q-btn>' +
+            '<q-btn v-if="hasPhone" round unelevated color="grey-8" icon="sym_o_dialpad" :aria-label="t(\'Keypad\')"><q-tooltip>{{t(\'Keypad\')}}</q-tooltip><q-menu>' +
+            '<div class="q-pa-sm" style="display:grid;grid-template-columns:repeat(3,48px);gap:4px"><q-btn v-for="key in keys" :key="key" outline dense size="lg" @click="dtmf(key)">{{key}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"><q-tooltip>{{t(\'Leave\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="isHost && known && known.kind !== \'direct\'" flat no-caps color="negative" :label="t(\'End for everyone\')" @click="endForAll"></q-btn>' +
             '<m-ext-actions v-if="known" slot="call-actions" :item="{callSessionId: callSessionId}"></m-ext-actions></div>' +
@@ -1024,6 +1172,19 @@
     };
     components["m-call"].methods.moquiCall = () => moqui.call;
     components["m-call"].methods.moquiCallMe = () => moqui.call.me;
+    // The captions notice, as m-call and m-call-guest show it: who hears what people say
+    function captionNotice(c) {
+        const who = c.provider || t("the configured provider");
+        return c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
+            : t("Captions are on: what people say is sent to") + " " + who + " " + t("to be transcribed");
+    }
+    // The captions box: the notice while they are on, why they are unavailable, and each speaker's last lines
+    function captionsBox(shown, lines) {
+        return '<div v-if="' + shown + ' && (call.captions.on || call.captions.unavailable)" class="m-call-captions q-pa-sm rounded-borders" style="background:rgba(0,0,0,.78);color:#fff" aria-live="polite">' +
+            '<div class="text-caption" style="opacity:.85"><q-icon name="sym_o_closed_caption" class="q-mr-xs"></q-icon>{{captionNotice}}</div>' +
+            '<div v-if="call.captions.unavailable" class="text-caption text-warning"><q-icon name="sym_o_warning" class="q-mr-xs"></q-icon>{{t(\'Captions are unavailable\')}}: {{call.captions.unavailable}}</div>' +
+            '<div v-for="line in ' + lines + '" :key="line.key" class="text-body2"><span class="text-weight-bold">{{line.name}}:</span> <span :style="line.gap ? \'opacity:.6\' : \'\'">{{line.text}}</span></div></div>';
+    }
     // The page of a call link for a person with no account (basic-comms CallGuest): the link's name, the guest's name, the
     // camera preview, Join or Ask to join, the lobby until someone lets them in, then the call. base is the route's path
     // (/call/<token>): its transitions check the token and take the credential in the body.
@@ -1037,6 +1198,12 @@
         computed: {
             inCall() { return this.call.current && this.call.current === this.callSessionId; },
             remotes() { return Object.values(this.call.remotes); },
+            // live captions (W6): a guest gets the notice and the lines as every leg does, by its socket
+            captionNotice() { return captionNotice(this.call.captions); },
+            rec() { return this.callSessionId ? this.call.recordingOf[this.callSessionId] || null : null; },
+            recording() { return this.rec ? this.rec.recording : null; },
+            needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
+            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); },
             gridStyle() {
                 const n = this.remotes.length + 1;
                 const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
@@ -1080,6 +1247,7 @@
                 this.poll = setInterval(() => this.checkState(), 2000);
             },
             checkState() {
+                this.post("recordingState", { credential: this.credential }).then((json) => call.noteRecording(this.callSessionId, json), () => null);
                 this.post("guestState", { credential: this.credential }).then((json) => {
                     this.people = json.people || [];
                     if (json.admission === "admitted" && this.phase === "waiting") {
@@ -1096,10 +1264,15 @@
                 this.phase = "in";
                 const stream = this.preview;
                 call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream,
-                    iceServers: () => this.post("iceServers", { credential: this.credential }) })
+                    iceServers: () => this.post("iceServers", { credential: this.credential }),
+                    recording: (name) => this.post(name, { credential: this.credential }) })
                     .catch(() => { this.phase = "ended"; });
                 // the names in the call, now and then (a guest hears of no one by push)
                 this.poll = setInterval(() => this.checkState(), 5000);
+            },
+            recAction(name) {
+                this.post(name, { credential: this.credential }).then(() => this.post("recordingState", { credential: this.credential }))
+                    .then((json) => call.noteRecording(this.callSessionId, json), () => null);
             },
             leave() {
                 const credential = this.credential;
@@ -1120,6 +1293,11 @@
             '<div class="m-call-guest column q-gutter-md q-pa-md" style="max-width:1100px;margin:0 auto">' +
             '<div><div class="text-h5">{{link.name || t(\'Call\')}}</div><div v-if="link.ownerName" class="text-caption m-muted">{{t(\'With\')}} {{link.ownerName}}</div></div>' +
             '<q-banner v-if="error" dense rounded class="m-tonal text-negative">{{error}}</q-banner>' +
+            '<q-banner v-if="recording" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" :color="recording.state === \'recording\' ? \'negative\' : \'warning\'"></q-icon></template>' +
+            '<div class="text-weight-medium">{{moquiRecordingText(recording)}}</div>' +
+            '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
+            '<template v-if="phase === \'in\'" v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
+            '<q-btn v-if="!withdrawn" flat no-caps color="negative" :label="t(\'Withdraw consent\')" @click="recAction(\'withdrawRecording\')"></q-btn></template></q-banner>' +
             // the lobby: name, preview, join
             '<div v-if="phase === \'lobby\' || phase === \'waiting\'" class="row q-col-gutter-md">' +
             '<div class="col-12 col-md-7"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
@@ -1143,6 +1321,7 @@
             '<m-call-audio :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{r.name}}</div></div></div>' +
             '<div class="text-caption m-muted q-mt-xs">{{people.map(p => p.displayName).join(\', \')}}</div>' +
+            captionsBox("true", "call.captions.lines") +
             '<div class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"></q-btn>' +
             '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" @click="moquiCall().toggleCamera()"></q-btn>' +
@@ -1154,4 +1333,5 @@
             "</div>"
     };
     components["m-call-guest"].methods.moquiCall = () => moqui.call;
+    components["m-call-guest"].methods.moquiRecordingText = recordingText;
 })(globalThis);

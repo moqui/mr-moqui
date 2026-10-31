@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Emergency (plans/Comms-Framework.md §5.2, D-V2): the readiness checklist (what the system checks: an emergency-capable
+    trunk, validated locations with a callback number and a notification destination, the people and numbers with a location;
+    and what the operator confirms with the provider), and the emergency locations with Add, Edit and Remove. An emergency call
+    without these is refused with a clear message. Never test with a real emergency call: use the provider's test procedure.
+    org.moqui.impl.VoiceServices find#, store# and delete#EmergencyLocation. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Emergency" default-menu-index="6">
+
+    <transition name="storeLocation">
+        <service-call name="org.moqui.impl.VoiceServices.store#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId || null, name:name || '',
+                address1:address1 || '', address2:address2 || '', city:city || '', postalCode:postalCode || '', countryGeoId:countryGeoId || '',
+                callbackNumber:callbackNumber || '', validationStatusId:validationStatusId || null, providerReference:providerReference || '',
+                notifyEmailAddress:notifyEmailAddress || ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Emergency location saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteLocation">
+        <service-call name="org.moqui.impl.VoiceServices.delete#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Emergency location removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        const trunks = Array.from(call('find#VoiceTrunks').trunkList || []).filter((t) => t.disabled !== 'Y')
+        const locations = Array.from(call('find#EmergencyLocations').locationList || [])
+        const numbers = Array.from(call('find#PhoneNumbers').numberList || [])
+        const settings = Array.from(call('find#VoiceUserSettings').settingList || [])
+        ec.message.clearErrors()
+        const done = (ok) => (ok ? L('Done') : L('Missing'))
+        const emergencyTrunks = trunks.filter((t) => t.emergencyCapable === 'Y')
+        const readyLocations = locations.filter((l) => l.ready)
+        const outbound = settings.filter((s) => s.outboundEnabled === 'Y')
+        checkList = [
+            {item: L('A trunk that takes emergency calls'), state: done(emergencyTrunks.some((t) => t.statusId !== 'VtsFailed')),
+                note: emergencyTrunks.map((t) => t.name).join(', ') || L('Mark a trunk under Trunks')},
+            {item: L('Locations validated with the provider, each with a callback number and a notification destination'),
+                state: done(locations.length > 0 && readyLocations.length === locations.length),
+                note: locations.filter((l) => !l.ready).map((l) => (l.name || l.emergencyLocationId) + ': ' + l.missingText).join(' · ')},
+            {item: L('Every person who calls out has a location (their own, or their number\'s)'),
+                state: done(outbound.every((s) => s.emergencyLocationId || numbers.some((n) => n.emergencyLocationId && n.routeId === s.userId))),
+                note: outbound.filter((s) => !s.emergencyLocationId && !numbers.some((n) => n.emergencyLocationId && n.routeId === s.userId))
+                    .map((s) => s.userName).join(', ')},
+            {item: L('Locations and callback numbers provisioned with the provider'), state: L('Confirm with the provider'), note: L('The provider reference of each location')},
+            {item: L('Location updates for people who work remotely or move'), state: L('Confirm'), note: L('Change their location here when it changes')},
+            {item: L('The operator\'s readiness review for this jurisdiction'), state: L('Confirm'), note: L('Kari\'s Law and RAY BAUM\'S Act in the US; others need their own review')},
+            {item: L('Live checks only through the provider\'s test procedure'), state: L('Confirm'), note: L('Never an unarranged emergency call')},
+        ]
+        const statusNames = {ElvUnvalidated: L('Not validated'), ElvValidated: L('Validated'), ElvFailed: L('Validation failed')}
+        locationList = locations.map((l) => Object.assign({}, l, {
+            addressText: [l.address1, l.address2, l.city, l.postalCode, l.countryGeoId].filter((x) => x).join(', '),
+            validationText: statusNames[l.validationStatusId] || '', readyText: l.ready ? L('Ready') : l.missingText}))
+        newLocation = {validationStatusId: 'ElvUnvalidated'}
+    ]]></script></actions>
+    <widgets>
+        <container-box><box-header title="Emergency calling readiness"/><box-body-nopad>
+            <label type="p" style="m-muted q-pa-sm q-mb-none" text="Emergency calls go only through a trunk that takes them, from a validated location with a callback number and a notification destination. Without these an emergency call is refused with what is missing."/>
+            <form-list name="CheckList" list="checkList" skip-form="true" paginate="false">
+                <field name="item"><default-field title="Item"><display/></default-field></field>
+                <field name="state"><default-field title="State"><display style="text-weight-medium"/></default-field></field>
+                <field name="note"><default-field title=""><display style="text-caption m-muted"/></default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+
+        <container-box><box-header title="Emergency locations"/><box-toolbar>
+            <container-dialog id="NewLocationDialog" button-text="Add a location" icon="sym_o_add" width="720" title="Add an emergency location" type="primary">
+                <form-single name="NewLocation" transition="storeLocation" map="newLocation" focus-field="name">
+                    <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                    <field name="address1"><default-field title="Address"><text-line size="40"/></default-field></field>
+                    <field name="address2"><default-field title="Floor, suite or room"><text-line size="40"/></default-field></field>
+                    <field name="city"><default-field title="City"><text-line size="30"/></default-field></field>
+                    <field name="postalCode"><default-field title="Postal code"><text-line size="10"/></default-field></field>
+                    <field name="countryGeoId"><default-field title="Country"><text-line size="6"/></default-field></field>
+                    <field name="callbackNumber"><default-field title="Callback number"><text-line size="20"/></default-field></field>
+                    <field name="notifyEmailAddress"><default-field title="Notify" tooltip="Who hears of each emergency call from here, such as the front desk"><text-line size="30"/></default-field></field>
+                    <field name="providerReference"><default-field title="Provider reference" tooltip="The provider's id for this validated address"><text-line size="30"/></default-field></field>
+                    <field name="validationStatusId"><default-field title="Validation">
+                        <drop-down><option key="ElvUnvalidated" text="Not validated"/><option key="ElvValidated" text="Validated"/><option key="ElvFailed" text="Validation failed"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                    <field-layout>
+                        <field-ref name="name"/>
+                        <field-row><field-ref name="address1"/><field-ref name="address2"/></field-row>
+                        <field-row><field-ref name="city"/><field-ref name="postalCode"/></field-row>
+                        <field-row><field-ref name="countryGeoId"/><field-ref name="callbackNumber"/></field-row>
+                        <field-row><field-ref name="notifyEmailAddress"/><field-ref name="providerReference"/></field-row>
+                        <field-ref name="validationStatusId"/>
+                        <field-ref name="submitButton"/>
+                    </field-layout>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body-nopad>
+            <form-list name="LocationList" list="locationList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Location"><display style="text-weight-medium"/></default-field></field>
+                <field name="addressText"><default-field title="Address"><display/></default-field></field>
+                <field name="callbackNumber"><default-field title="Callback"><display/></default-field></field>
+                <field name="validationText"><default-field title="Validation"><display/></default-field></field>
+                <field name="readyText"><default-field title="Ready"><display style="text-caption"/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditLocationDialog_${emergencyLocationId}" button-text="Edit" icon="sym_o_edit" width="720" title="Edit ${name}">
+                        <form-single name="EditLocation" transition="storeLocation">
+                            <field name="emergencyLocationId" from="emergencyLocationId"><default-field><hidden/></default-field></field>
+                            <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                            <field name="address1" from="address1"><default-field title="Address"><text-line size="40"/></default-field></field>
+                            <field name="address2" from="address2"><default-field title="Floor, suite or room"><text-line size="40"/></default-field></field>
+                            <field name="city" from="city"><default-field title="City"><text-line size="30"/></default-field></field>
+                            <field name="postalCode" from="postalCode"><default-field title="Postal code"><text-line size="10"/></default-field></field>
+                            <field name="countryGeoId" from="countryGeoId"><default-field title="Country"><text-line size="6"/></default-field></field>
+                            <field name="callbackNumber" from="callbackNumber"><default-field title="Callback number"><text-line size="20"/></default-field></field>
+                            <field name="notifyEmailAddress" from="notifyEmailAddress"><default-field title="Notify"><text-line size="30"/></default-field></field>
+                            <field name="providerReference" from="providerReference"><default-field title="Provider reference"><text-line size="30"/></default-field></field>
+                            <field name="validationStatusId" from="validationStatusId"><default-field title="Validation">
+                                <drop-down><option key="ElvUnvalidated" text="Not validated"/><option key="ElvValidated" text="Validated"/><option key="ElvFailed" text="Validation failed"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <link url="deleteLocation" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove the emergency location ${name}?" parameter-map="{emergencyLocationId:emergencyLocationId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="name"/><field-ref name="addressText"/></column>
+                    <column><field-ref name="readyText"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoLocations" condition="!locationList.length"><widgets>
+                <label type="p" text="No emergency locations yet. Add the address each person calls from, as validated with the provider." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

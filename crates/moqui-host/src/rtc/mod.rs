@@ -24,8 +24,10 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 
+pub(crate) mod captions;
 mod driver;
 pub(crate) mod media;
+pub(crate) mod recorder;
 mod tcp;
 mod turn;
 
@@ -67,6 +69,11 @@ pub(crate) enum Command {
     CloseRoom {
         room: String,
     },
+    /// A keyframe of every video track published in the room, asked of the browsers: the recorder waits for one to
+    /// start a file (`recorder.rs`).
+    Keyframes {
+        room: String,
+    },
     /// A datagram from a browser's ICE-TCP connection.
     TcpIn {
         from: SocketAddr,
@@ -74,7 +81,30 @@ pub(crate) enum Command {
     },
     /// A consumer attaching or an injected leg (`media.rs`).
     Media(media::MediaCommand),
+    /// A frame for every leg of a room, from the room's own work on this node (captions).
+    ToRoom {
+        room: String,
+        frame: Json,
+    },
+    /// A notice (an `rtc` frame) for every leg of a room now. With `keep`, the room's notice of that kind: each leg
+    /// that joins later gets it right after its `joined`, with the room's other kinds, until a notice of the same kind
+    /// without `keep` (the recording stopped, captions off) takes it down.
+    RoomNotice {
+        room: String,
+        kind: NoticeKind,
+        frame: Json,
+        keep: bool,
+    },
     Stop,
+}
+
+/// What a room's notice is about. A room keeps one notice of each kind, and a joining leg gets them in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum NoticeKind {
+    /// The `recording` frame (`recorder.rs`, W5).
+    Recording,
+    /// The `captions` frame (`captions.rs`, W6).
+    Captions,
 }
 
 fn media() -> &'static Mutex<Option<SyncSender<Command>>> {
@@ -231,6 +261,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     };
     let (tx, rx) = sync_channel(COMMAND_QUEUE);
     *lock(media()) = Some(tx.clone());
+    recorder::sweep(factory.runtime_dir());
     let stop = Arc::new(AtomicBool::new(false));
     let own = own_node(factory);
     // ICE-TCP, when its port is set: a listener that does not bind is logged, and the UDP media goes on

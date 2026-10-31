@@ -1,0 +1,266 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Recordings (plans/Comms-Framework.md W5, §6.4 "video calls played back by playing the tracks together"), the component
+    Recordings.xml serves in the qvue render mode. The list of recordings the user may read (the recordings transition);
+    choosing one shows its periods (a period is from the start or a resume to the next pause or the end), and a period plays
+    its tracks together: a video element for each video track, an audio element for each audio track, and the mixed audio
+    of the whole call when there is one. The mixed audio (else the first track) is the clock: every other track is put at
+    the clock's time less its startOffsetMs, checked twice a second and moved when it drifts; with the mixed audio, the
+    per-track audio is muted so nothing is heard twice. A track cut into several segments plays them one after another by
+    segmentSeq. Each file downloads (recordingFile); Delete is for the one who recorded it, after a confirmation. -->
+<template><div class="m-call-recordings q-pa-sm column q-gutter-md">
+    <div class="row items-center">
+        <div class="text-h6">{{t('Recordings')}}</div><q-space></q-space>
+        <q-btn flat dense no-caps icon="sym_o_refresh" :label="t('Refresh')" @click="load"></q-btn>
+    </div>
+    <div class="m-muted">{{t('Call recordings you may play: yours, and those of calls you host.')}}</div>
+    <div v-if="loaded && !recordings.length" class="m-muted">{{t('No recordings yet.')}}</div>
+    <div class="row q-col-gutter-md">
+        <div class="col-12 col-md-5">
+            <q-list bordered separator class="rounded-borders">
+                <q-item v-for="r in recordings" :key="r.callRecordingId" clickable :active="r.callRecordingId === selectedId" @click="choose(r)">
+                    <q-item-section avatar><q-icon :name="r.state === 'failed' ? 'sym_o_error' : 'sym_o_radio_button_checked'" :color="stateColor(r)"></q-icon></q-item-section>
+                    <q-item-section>
+                        <q-item-label>{{(r.people || []).join(', ') || t('Call')}}</q-item-label>
+                        <q-item-label caption>{{whenText(r.startedDate)}}<span v-if="r.durationMs"> · {{lengthText(r.durationMs)}}</span> · {{stateText(r)}}</q-item-label>
+                        <q-item-label v-if="r.lastErrorText" caption class="text-warning">{{r.lastErrorText}}</q-item-label>
+                    </q-item-section>
+                    <q-item-section side v-if="r.canDelete">
+                        <q-btn flat dense round size="sm" icon="sym_o_delete" :aria-label="t('Delete')" @click.stop="remove(r)"><q-tooltip>{{t('Delete')}}</q-tooltip></q-btn>
+                    </q-item-section>
+                </q-item>
+            </q-list>
+            <q-btn v-if="hasMore" flat no-caps class="q-mt-sm" :label="t('More')" @click="more"></q-btn>
+        </div>
+        <div class="col-12 col-md-7" v-if="selected">
+            <div class="row items-center q-gutter-sm q-mb-sm">
+                <div class="text-subtitle1">{{(selected.people || []).join(', ') || t('Call')}}</div>
+                <q-chip dense square :color="stateColor(selected)" text-color="white">{{stateText(selected)}}</q-chip>
+                <span class="text-caption m-muted">{{t('Recorded by')}} {{selected.ownerName}}</span>
+            </div>
+            <div v-if="!selected.periods.length" class="m-muted">{{t('Nothing was stored for this recording.')}}</div>
+            <q-tabs v-if="selected.periods.length > 1" v-model="periodNum" dense no-caps align="left" class="q-mb-sm">
+                <q-tab v-for="(p, i) in selected.periods" :key="p.period" :name="p.period" :label="t('Part') + ' ' + (i + 1)"></q-tab>
+            </q-tabs>
+            <div v-if="period">
+                <div v-if="videoTracks.length" :style="gridStyle">
+                    <div v-for="tr in videoTracks" :key="tr.key" style="position:relative;background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">
+                        <video :ref="(el) => setElement(tr.key, el)" playsinline muted preload="auto" style="width:100%;height:100%;object-fit:contain"
+                            @ended="next(tr)"></video>
+                        <div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tr.name}}</div>
+                    </div>
+                </div>
+                <div v-for="tr in audioTracks" :key="tr.key" style="display:none">
+                    <audio :ref="(el) => setElement(tr.key, el)" preload="auto" :muted="!!mixTrack && tr !== mixTrack" @ended="next(tr)"></audio>
+                </div>
+                <div class="row items-center q-gutter-sm q-mt-sm">
+                    <q-btn round unelevated color="primary" :icon="playing ? 'sym_o_pause' : 'sym_o_play_arrow'" :aria-label="playing ? t('Pause') : t('Play')" @click="toggle"></q-btn>
+                    <span class="text-caption">{{clockText(position)}} / {{clockText(total)}}</span>
+                    <q-slider class="col" dense :min="0" :max="Math.max(total, 0.1)" :step="0.1" :model-value="position" :aria-label="t('Position')" @update:model-value="seek"></q-slider>
+                </div>
+                <q-list dense class="q-mt-sm">
+                    <q-item-label header>{{t('Files')}}</q-item-label>
+                    <q-item v-for="s in period.segments" :key="s.callRecordingSegmentId">
+                        <q-item-section avatar><q-icon :name="s.trackKind === 'video' ? 'sym_o_videocam' : s.trackKind === 'mix' ? 'sym_o_groups' : 'sym_o_mic'"></q-icon></q-item-section>
+                        <q-item-section><q-item-label>{{s.name}}<span v-if="s.segmentSeq > 1"> ({{s.segmentSeq}})</span></q-item-label>
+                            <q-item-label caption>{{lengthText(s.durationMs)}} · {{sizeText(s.byteSize)}}</q-item-label></q-item-section>
+                        <q-item-section side><q-btn flat dense no-caps icon="sym_o_download" :label="t('Download')" :href="fileUrl(s, false)" target="_blank"></q-btn></q-item-section>
+                    </q-item>
+                </q-list>
+            </div>
+        </div>
+    </div>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+/** How far a track may drift from the clock, in seconds, before it is moved. */
+const DRIFT = 0.3;
+module.exports = {
+    name: 'Recordings',
+    data() {
+        return { recordings: [], count: 0, page: 0, loaded: false, selectedId: null, periodNum: null, playing: false, position: 0, timer: null };
+    },
+    computed: {
+        selected() { return this.recordings.find((r) => r.callRecordingId === this.selectedId) || null; },
+        period() { return this.selected ? this.selected.periods.find((p) => p.period === this.periodNum) || null : null; },
+        // the period's tracks, each its segments in order: by leg and source, and the mix
+        tracks() {
+            if (!this.period) return [];
+            const byKey = new Map();
+            for (const s of this.period.segments) {
+                const key = s.trackKind + ':' + (s.callLegId || '') + ':' + (s.source || '');
+                if (!byKey.has(key)) byKey.set(key, { key, kind: s.trackKind, name: s.name, segments: [] });
+                byKey.get(key).segments.push(s);
+            }
+            const list = Array.from(byKey.values());
+            for (const tr of list) tr.segments.sort((a, b) => a.segmentSeq - b.segmentSeq);
+            return list;
+        },
+        videoTracks() { return this.tracks.filter((tr) => tr.kind === 'video'); },
+        audioTracks() { return this.tracks.filter((tr) => tr.kind !== 'video'); },
+        mixTrack() { return this.tracks.find((tr) => tr.kind === 'mix') || null; },
+        clock() { return this.mixTrack || this.audioTracks[0] || this.tracks[0] || null; },
+        total() {
+            let end = 0;
+            for (const tr of this.tracks) for (const s of tr.segments) end = Math.max(end, (s.startOffsetMs + s.durationMs) / 1000);
+            return end;
+        },
+        hasMore() { return this.recordings.length < this.count; },
+        gridStyle() {
+            const n = this.videoTracks.length;
+            const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+            return 'display:grid;gap:8px;grid-template-columns:repeat(' + cols + ',1fr)';
+        }
+    },
+    watch: {
+        periodNum() { this.stop(); this.$nextTick(() => this.place(0)); }
+    },
+    created() { this.elements = {}; },
+    mounted() { this.load(); },
+    beforeUnmount() { this.stop(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Calls', 'Recordings']).join('/') + '/' + name; },
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        load() {
+            this.page = 0;
+            const params = { pageIndex: 0, callSessionId: (this.$root.currentParameters || {}).callSessionId || null };
+            return this.request('recordings', params).then((json) => {
+                this.recordings = json.recordingList || [];
+                this.count = json.recordingListCount || 0;
+                this.loaded = true;
+                if (this.selectedId && !this.selected) this.selectedId = null;
+            }, () => { this.loaded = true; });
+        },
+        more() {
+            this.page += 1;
+            this.request('recordings', { pageIndex: this.page }).then((json) => {
+                this.recordings = this.recordings.concat(json.recordingList || []);
+                this.count = json.recordingListCount || 0;
+            }, () => null);
+        },
+        choose(r) {
+            this.stop();
+            this.selectedId = r.callRecordingId;
+            this.periodNum = r.periods.length ? r.periods[0].period : null;
+            this.$nextTick(() => this.place(0));
+        },
+        remove(r) {
+            this.$q.dialog({ title: t('Delete the recording?'), message: t('Its files are deleted for everyone who may play it.'),
+                ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => {
+                    if (this.selectedId === r.callRecordingId) { this.stop(); this.selectedId = null; }
+                    this.request('deleteRecording', { callRecordingId: r.callRecordingId }, 'POST').then(() => this.load(), () => null);
+                });
+        },
+        fileUrl(segment, inline) {
+            return this.url('recordingFile') + '?callRecordingSegmentId=' + encodeURIComponent(segment.callRecordingSegmentId) + (inline ? '&inline=true' : '');
+        },
+        setElement(key, el) {
+            if (el) this.elements[key] = el;
+            else delete this.elements[key];
+        },
+        // the segment of a track at period time `at` (seconds), and the time within it
+        at(track, at) {
+            const millis = at * 1000;
+            for (const s of track.segments) {
+                if (millis < s.startOffsetMs) return null;
+                if (millis < s.startOffsetMs + s.durationMs) return { segment: s, time: (millis - s.startOffsetMs) / 1000 };
+            }
+            return null;
+        },
+        // puts every track at period time `at`: its segment loaded, its time set, playing or not
+        place(at) {
+            this.position = at;
+            for (const tr of this.tracks) {
+                const el = this.elements[tr.key];
+                if (!el) continue;
+                const where = this.at(tr, at);
+                if (!where) {
+                    if (!el.paused) el.pause();
+                    continue;
+                }
+                const src = this.fileUrl(where.segment, true);
+                if (el.dataset.segment !== where.segment.callRecordingSegmentId) {
+                    el.dataset.segment = where.segment.callRecordingSegmentId;
+                    el.src = src;
+                    el.currentTime = where.time;
+                } else if (Math.abs(el.currentTime - where.time) > DRIFT) {
+                    el.currentTime = where.time;
+                }
+                if (this.playing && el.paused) el.play().catch(() => null);
+                if (!this.playing && !el.paused) el.pause();
+            }
+        },
+        // the clock's period time: its segment's offset plus its element's time
+        now() {
+            const clock = this.clock;
+            const el = clock && this.elements[clock.key];
+            if (!el || !el.dataset.segment) return this.position;
+            const s = clock.segments.find((x) => x.callRecordingSegmentId === el.dataset.segment);
+            return s ? s.startOffsetMs / 1000 + el.currentTime : this.position;
+        },
+        tick() {
+            const at = this.playing ? Math.max(this.now(), this.position) : this.position;
+            if (at >= this.total) { this.stop(); this.position = this.total; return; }
+            // while the clock's track has nothing at this time (it starts later), time goes on by the wall clock
+            const clockEl = this.clock && this.elements[this.clock.key];
+            this.place(clockEl && !clockEl.paused ? this.now() : at + 0.5);
+        },
+        toggle() {
+            if (this.playing) { this.stop(); return; }
+            if (this.position >= this.total) this.position = 0;
+            this.playing = true;
+            this.place(this.position);
+            this.timer = setInterval(() => this.tick(), 500);
+        },
+        stop() {
+            this.playing = false;
+            clearInterval(this.timer);
+            this.timer = null;
+            for (const el of Object.values(this.elements || {})) if (el && !el.paused) el.pause();
+        },
+        seek(value) { this.place(Number(value) || 0); },
+        // a track's segment ended: the next one of the track, if it follows at once
+        next() { if (this.playing) this.place(this.now()); },
+        stateText(r) {
+            if (r.state === 'recording') return t('Recording');
+            if (r.state === 'paused') return t('Paused');
+            if (r.state === 'failed') return t('Failed');
+            return t('Done');
+        },
+        stateColor(r) { return r.state === 'failed' ? 'warning' : r.state === 'recording' || r.state === 'paused' ? 'negative' : 'grey-7'; },
+        whenText(millis) { return millis ? new Date(Number(millis)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; },
+        lengthText(millis) {
+            const s = Math.round(Number(millis || 0) / 1000);
+            return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+        },
+        clockText(seconds) {
+            const s = Math.max(0, Math.floor(seconds || 0));
+            return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        },
+        sizeText(bytes) {
+            const n = Number(bytes || 0);
+            return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+        }
+    }
+};
+</script>

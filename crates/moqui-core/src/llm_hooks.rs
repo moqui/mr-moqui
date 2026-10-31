@@ -14,8 +14,8 @@
 
 //! Where the framework reaches the agent runtime (crates/moqui-llm, plans/LLM-A2A-Assist.md). That crate sits on top
 //! of this one and submits one [`LlmHooks`]. A host built without it has none, and each place below acts as a build
-//! without the agents: its services report the feature missing, `ec.llm` is not there, and a skill file is not
-//! synced.
+//! without the agents: its services report the feature missing, `ec.llm` is not there, a skill file is not synced,
+//! and speech to text ([`transcribe`], for call captions, voicemail and recordings) reports `notBuiltIn`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -40,6 +40,10 @@ pub struct LlmHooks {
     pub sync_skills: fn(&ExecutionContextFactory, &EntityFacade) -> Result<SkillsSynced, LibError>,
     /// The `ec.llm` object of a script context.
     pub script_object: for<'js> fn(&rquickjs::Ctx<'js>) -> Result<rquickjs::Object<'js>, Error>,
+    /// Speech to text through the model bound to the `transcribe` feature ([`transcribe`]).
+    pub transcribe: fn(&ExecutionContextFactory, &SpeechRequest<'_>) -> Result<String, SpeechError>,
+    /// The provider [`transcribe`] would use now ([`speech_provider`]).
+    pub speech_provider: fn(&ExecutionContextFactory) -> Result<SpeechProvider, SpeechError>,
 }
 inventory::collect!(LlmHooks);
 
@@ -49,6 +53,91 @@ pub struct SkillsSynced {
     pub changed: usize,
     pub retired: usize,
     pub problems: Vec<String>,
+}
+
+/// Audio to transcribe, for [`transcribe`]: the bytes of one file (WAV, Ogg, WebM, MP3 and the like) with its media
+/// type, and what the caller knows of it. Live captions (plans/Comms-Framework.md §6.4), voicemail and recordings use
+/// this one seam.
+#[derive(Debug, Clone, Default)]
+pub struct SpeechRequest<'a> {
+    pub audio: &'a [u8],
+    /// `audio/wav`, `audio/ogg`, `audio/webm`, ...
+    pub media_type: &'a str,
+    /// An ISO 639-1 code; `None` lets the model tell.
+    pub language: Option<&'a str>,
+    /// Words to expect (names, terms), passed to the model as its prompt.
+    pub prompt: Option<&'a str>,
+    /// The user the call counts against (quotas, the `LlmCall` row): for a server job, the user who turned it on.
+    pub user_id: Option<&'a str>,
+    /// What asked, kept on the `LlmCall` row as its client (`captions:<callSessionId>`, `voicemail:<id>`).
+    pub purpose: &'a str,
+    /// The longest the provider may take; `None` is the provider's own limit.
+    pub timeout: Option<std::time::Duration>,
+}
+
+/// Why audio was not transcribed. `code` is one of `notBuiltIn` (no agent runtime in this binary), `notConfigured`
+/// (no model bound to `transcribe`, or the runtime is off), `invalid` (the audio), `quota`, `failed` (the provider) and
+/// `timeout`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeechError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl SpeechError {
+    #[must_use]
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        SpeechError {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SpeechError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.message, self.code)
+    }
+}
+
+/// Who transcribes: what a consent notice names (`label`: the endpoint and model), and whether the audio stays on
+/// this deployment's own network (`local`: an endpoint marked local).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeechProvider {
+    pub label: String,
+    pub local: bool,
+}
+
+/// Speech to text through the agent runtime: the model bound to the `transcribe` feature on an OpenAI-compatible
+/// endpoint (`/v1/audio/transcriptions`), with the user's quota checked and the call kept as an `LlmCall`.
+///
+/// # Errors
+///
+/// `notBuiltIn` in a binary without the agent runtime (the `llm` feature); the others as [`SpeechError`] says.
+pub fn transcribe(factory: &ExecutionContextFactory, request: &SpeechRequest<'_>) -> Result<String, SpeechError> {
+    match get() {
+        Some(hooks) => (hooks.transcribe)(factory, request),
+        None => Err(not_built_in()),
+    }
+}
+
+/// The provider [`transcribe`] would use now, for a policy check and a notice before any audio goes out.
+///
+/// # Errors
+///
+/// As [`transcribe`], without calling the provider.
+pub fn speech_provider(factory: &ExecutionContextFactory) -> Result<SpeechProvider, SpeechError> {
+    match get() {
+        Some(hooks) => (hooks.speech_provider)(factory),
+        None => Err(not_built_in()),
+    }
+}
+
+fn not_built_in() -> SpeechError {
+    SpeechError::new(
+        "notBuiltIn",
+        "speech to text is not built in: this binary has no agent runtime (the llm feature)",
+    )
 }
 
 /// The agent runtime's hooks, when this binary links it.

@@ -46,6 +46,7 @@ pub mod screen;
 mod script;
 pub(crate) mod services;
 pub mod skills;
+pub mod speech;
 pub mod testkit;
 pub mod tokens;
 pub mod tools;
@@ -67,6 +68,8 @@ moqui_core::llm_hooks::submit! {
         canvas_overlay: ui::screen_xml::canvas_overlay,
         sync_skills,
         script_object: script::llm_object,
+        transcribe: speech::transcribe,
+        speech_provider: speech::provider,
     }
 }
 

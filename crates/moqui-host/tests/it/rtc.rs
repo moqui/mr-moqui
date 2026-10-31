@@ -36,7 +36,7 @@ type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 const CALLEE: &str = "rtc.callee";
 const PASSWORD: &str = "Rtc-callee-77!";
 
-fn open_socket(address: SocketAddr, cookie: &str) -> Ws {
+pub(crate) fn open_socket(address: SocketAddr, cookie: &str) -> Ws {
     let uri: tungstenite::http::Uri = format!("ws://{address}/notws").parse().unwrap();
     let (socket, _) = connect(ClientRequestBuilder::new(uri).with_header("Cookie", cookie)).unwrap();
     if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
@@ -69,7 +69,7 @@ fn read_frames(ws: &mut Ws) -> Vec<Json> {
 }
 
 /// A browser stand-in: a str0m peer on its own UDP socket, signaling over a notification socket.
-struct Peer {
+pub(crate) struct Peer {
     rtc: Rtc,
     udp: UdpSocket,
     ws: Ws,
@@ -79,13 +79,13 @@ struct Peer {
     leg: String,
     pending: Option<SdpPendingOffer>,
     audio: Option<Mid>,
-    received: usize,
-    frames: Vec<Json>,
+    pub(crate) received: usize,
+    pub(crate) frames: Vec<Json>,
     start: Instant,
 }
 
 impl Peer {
-    fn new(ws: Ws, call: &str, leg: &str) -> Self {
+    pub(crate) fn new(ws: Ws, call: &str, leg: &str) -> Self {
         let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
         udp.set_nonblocking(true).unwrap();
         let mut rtc = Rtc::builder()
@@ -109,14 +109,14 @@ impl Peer {
         }
     }
 
-    fn send(&mut self, frame: Json) {
+    pub(crate) fn send(&mut self, frame: Json) {
         let mut frame = frame;
         frame["callSessionId"] = json!(self.call);
         frame["callLegId"] = json!(self.leg);
         self.ws.send(Message::Text(frame.to_string().into())).unwrap();
     }
 
-    fn join(&mut self) {
+    pub(crate) fn join(&mut self) {
         let mut change = self.rtc.sdp_api();
         self.audio = Some(change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None));
         let (offer, pending) = change.apply().unwrap();
@@ -188,12 +188,12 @@ impl Peer {
         }
     }
 
-    fn frame(&self, kind: &str) -> Option<&Json> {
+    pub(crate) fn frame(&self, kind: &str) -> Option<&Json> {
         self.frames.iter().find(|f| f["rtc"] == json!(kind))
     }
 }
 
-fn run_until(peers: &mut [&mut Peer], wait: Duration, done: impl Fn(&[&mut Peer]) -> bool) -> bool {
+pub(crate) fn run_until(peers: &mut [&mut Peer], wait: Duration, done: impl Fn(&[&mut Peer]) -> bool) -> bool {
     let until = Instant::now() + wait;
     let mut sent = vec![Instant::now(); peers.len()];
     while Instant::now() < until {
@@ -208,7 +208,7 @@ fn run_until(peers: &mut [&mut Peer], wait: Duration, done: impl Fn(&[&mut Peer]
     false
 }
 
-fn call(name: &str, parameters: &[(&str, Value)]) -> std::collections::BTreeMap<String, Value> {
+pub(crate) fn call(name: &str, parameters: &[(&str, Value)]) -> std::collections::BTreeMap<String, Value> {
     let parameters = parameters.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect();
     let _authz =
         moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
@@ -219,7 +219,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> std::collections::BTreeMap<
     out
 }
 
-fn text(out: &std::collections::BTreeMap<String, Value>, key: &str) -> String {
+pub(crate) fn text(out: &std::collections::BTreeMap<String, Value>, key: &str) -> String {
     out.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -898,4 +898,182 @@ fn ice_tcp_and_a_turn_relay_carry_a_call_when_udp_does_not() {
         "ICE-TCP audio both ways: john {} callee {}; frames {:?}",
         john.received, again.received, again.frames
     );
+}
+
+/// The `call` helper's map values, for the lists `find#Recordings` gives.
+fn list_of(value: Option<&Value>) -> Vec<std::collections::BTreeMap<String, Value>> {
+    match value {
+        Some(Value::List(list)) => list
+            .iter()
+            .filter_map(|v| match v {
+                Value::Map(m) => Some(m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn a_recorded_call_stores_each_leg_s_track_and_the_mixed_audio_in_segments() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_properties(
+        "rtc-record",
+        None,
+        &[("rtc_media_port", "0"), ("call_recording_enabled", "true")],
+    );
+    let http = gate.server.address();
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let (call_id, caller_leg, callee_leg) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let created = call(
+            "org.moqui.impl.UserServices.create#UserAccount",
+            &[
+                ("username", Value::string(CALLEE)),
+                ("newPassword", Value::string(PASSWORD)),
+                ("newPasswordVerify", Value::string(PASSWORD)),
+                ("userFullName", Value::string("Rtc Callee")),
+            ],
+        );
+        let callee = text(&created, "userId");
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            if call("org.moqui.impl.CallServices.get#Capabilities", &[]).get("active") == Some(&Value::Bool(true)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let started = call(
+            "org.moqui.impl.CallServices.start#Call",
+            &[("calleeUserIdList", Value::List(vec![Value::string(&callee)]))],
+        );
+        let call_id = text(&started, "callSessionId");
+        moqui_core::user::internal_login_user(CALLEE).unwrap();
+        let answered = call(
+            "org.moqui.impl.CallServices.answer#Call",
+            &[("callSessionId", Value::string(&call_id))],
+        );
+        (call_id, text(&started, "callLegId"), text(&answered, "callLegId"))
+    };
+    let john_cookie = crate::common::sign_in(http, "john.doe", "moqui");
+    let callee_cookie = crate::common::sign_in(http, CALLEE, PASSWORD);
+    factory.flush_sessions().unwrap();
+    let mut john = Peer::new(open_socket(http, &john_cookie), &call_id, &caller_leg);
+    let mut callee = Peer::new(open_socket(http, &callee_cookie), &call_id, &callee_leg);
+    john.join();
+    callee.join();
+    assert!(
+        run_until(&mut [&mut john, &mut callee], Duration::from_secs(5), |p| p
+            .iter()
+            .all(|p| p.received >= 5)),
+        "audio both ways first"
+    );
+
+    // john, the host, records; both legs hear of it on their sockets
+    let as_john = |name: &str, parameters: &[(&str, Value)]| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        call(name, parameters)
+    };
+    let started = as_john(
+        "org.moqui.impl.CallRecordingServices.start#Recording",
+        &[("callSessionId", Value::string(&call_id))],
+    );
+    let recording_id = text(&started, "callRecordingId");
+    assert!(!recording_id.is_empty());
+    let noticed = |p: &Peer, state: &str| {
+        p.frames.iter().any(|f| {
+            f["rtc"] == json!("recording") && f["state"] == json!(state) && f["callRecordingId"] == json!(recording_id)
+        })
+    };
+    assert!(
+        run_until(&mut [&mut john, &mut callee], Duration::from_secs(3), |p| {
+            noticed(p[0], "recording") && noticed(p[1], "recording")
+        }),
+        "the notice: john {:?} callee {:?}",
+        john.frames,
+        callee.frames
+    );
+    // a second of audio both ways while recording, then the stop
+    run_until(&mut [&mut john, &mut callee], Duration::from_millis(1_000), |_| false);
+    as_john(
+        "org.moqui.impl.CallRecordingServices.stop#Recording",
+        &[("callSessionId", Value::string(&call_id))],
+    );
+    let mut recordings = Vec::new();
+    let until = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < until {
+        run_until(&mut [&mut john, &mut callee], Duration::from_millis(100), |_| false);
+        let found = as_john(
+            "org.moqui.impl.CallRecordingServices.find#Recordings",
+            &[("callSessionId", Value::string(&call_id))],
+        );
+        recordings = list_of(found.get("recordingList"));
+        let segments = recordings
+            .first()
+            .map(|r| {
+                list_of(r.get("periods"))
+                    .iter()
+                    .map(|p| list_of(p.get("segments")).len())
+                    .sum::<usize>()
+            })
+            .unwrap_or(0);
+        if segments >= 3 {
+            break;
+        }
+    }
+    assert!(
+        noticed(&john, "stopped") || noticed(&callee, "stopped"),
+        "the stop's notice"
+    );
+    let recording = recordings.first().expect("john's recording");
+    assert_eq!(recording.get("state").map(to_plain_string).as_deref(), Some("stopped"));
+    let periods = list_of(recording.get("periods"));
+    assert_eq!(periods.len(), 1, "{periods:?}");
+    let segments = list_of(periods[0].get("segments"));
+    let kind_of =
+        |s: &std::collections::BTreeMap<String, Value>, k: &str| s.get(k).map(to_plain_string).unwrap_or_default();
+    let mut legs: Vec<String> = segments
+        .iter()
+        .filter(|s| kind_of(s, "trackKind") == "audio")
+        .map(|s| kind_of(s, "callLegId"))
+        .collect();
+    legs.sort();
+    let mut expected = vec![caller_leg.clone(), callee_leg.clone()];
+    expected.sort();
+    assert_eq!(legs, expected, "a track per leg: {segments:?}");
+    assert_eq!(
+        segments.iter().filter(|s| kind_of(s, "trackKind") == "mix").count(),
+        1,
+        "the mixed audio"
+    );
+    for segment in &segments {
+        let file = as_john(
+            "org.moqui.impl.CallRecordingServices.get#RecordingFile",
+            &[("callRecordingSegmentId", segment["callRecordingSegmentId"].clone())],
+        );
+        let location = text(&file, "location");
+        let bytes = {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = moqui_core::context::ExecutionContext::with_current(
+                moqui_core::context::ExecutionContext::disable_authz,
+            );
+            factory
+                .resource()
+                .location_bytes(&location)
+                .unwrap()
+                .unwrap_or_default()
+        };
+        assert_eq!(&bytes[..4.min(bytes.len())], b"OggS", "{location}");
+        assert!(bytes.len() > 200, "{location}: {} bytes", bytes.len());
+    }
+    // the spool is empty again, and the call went on
+    let spool = factory.runtime_dir().join("tmp/call-recording").join(&recording_id);
+    assert!(!spool.exists(), "the spool of the recording is gone");
 }

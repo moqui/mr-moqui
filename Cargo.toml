@@ -19,6 +19,7 @@ members = [
     "crates/moqui-report",
     "crates/moqui-collab",
     "crates/moqui-rtc",
+    "crates/moqui-sip",
     "crates/moqui-dav",
     "crates/moqui-devkit",
     "crates/moqui-drivers",
@@ -77,6 +78,9 @@ moqui-collab = { path = "crates/moqui-collab" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
 # links it under its rtc feature and owns the sockets.
 moqui-rtc = { path = "crates/moqui-rtc" }
+# Phone calls: the SIP user agent and B2BUA over moqui-rtc's audio core (plans/Comms-Framework.md §5.2, D-V1); the host
+# links it under its sip feature and owns the RTP sockets.
+moqui-sip = { path = "crates/moqui-sip" }
 # The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
 # host links it in every build.
 moqui-dav = { path = "crates/moqui-dav" }
@@ -321,6 +325,12 @@ turn-client-proto = { version = "0.7.3", default-features = false, features = ["
 # Opus for the call audio core (moqui-rtc audio/, plans/Comms-Framework.md §6.2 "The M0 gate"): a pure-Rust port of
 # libopus 1.6 with no dependencies, chosen over rusty-opus and opus-pure, and over libopus through `opus` and cmake.
 opus-rs = "0.1.40"
+# SIP for phone calls (moqui-sip, plans/Comms-Framework.md §5.2, "The V1 gate"): transactions, dialogs and the UDP, TCP
+# and TLS transports, on Tokio. default-features off leaves out WebSocket (tokio-tungstenite) and SRV lookup
+# (hickory-resolver). Its TLS turns on rustls's ring provider beside aws-lc-rs and builds its configs from the process
+# default, so moqui-sip installs aws-lc-rs as that default before a TLS transport starts.
+rsipstack = { version = "0.7.12", default-features = false, features = ["platform-tokio", "rustls"] }
+tokio-util = { version = "0.7", default-features = false }
 
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the

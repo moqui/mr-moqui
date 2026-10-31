@@ -4,13 +4,15 @@ BasicComms is the framework's Comms app at `/qapps/BasicComms`: the Inbox and Co
 MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab), calls, and the mail, chat and call
 settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
-order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); voice and chat bridges come later
-there.
+order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); phone calls through SIP trunks are there
+(V1), and voicemail, the full dialer and chat bridges come later.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
-`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)).
+`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
+`org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
+([SIP](../interfaces/SIP.md)).
 
 ## For users
 
@@ -43,7 +45,60 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
   or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
   there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
-- **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, and rooms with unread.
+- **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
+  pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
+  consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
+  recording waits until all have. A phone in the call hears a tone instead, and presses 1 to acknowledge or hangs up to
+  withdraw; it hears another tone when captions turn on. Calls, Recordings lists the recordings you made and those of calls you host: play one
+  part with everyone's audio and video together, download each file, and delete your own. The terminal lists them with
+  Delete. Recordings are deleted after the server's retention period ([Call recording](../interfaces/Call-Recording.md)).
+- **Captions.** Where the administrator turned them on (`call_captions_enabled`) and a speech to text model is set up,
+  anyone in a call can press CC. Everyone in the call, including people who join later, sees that captions are on and
+  which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
+  they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
+  (`call_captions_store`). An end-to-end encrypted call has no captions. See [WebRTC, Captions](../interfaces/WebRTC.md#captions).
+- <a id="phone"></a>**Phone calls.** Calls, Call a number: a phone number (with its country code, or as dialed at
+  home), from one of your numbers. The call opens like any other, audio only; the phone shows as a participant with the
+  number, and the keypad sends tones (for a menu or a PIN). A call to one of your numbers rings you as a call does, with
+  the caller's number. An administrator allows each person to call out and gives them the numbers they call from;
+  international and premium numbers stay off until allowed for the server and for you, and there are limits on calls at
+  once and in a day. An emergency number is always tried first: it goes through a trunk that takes emergency calls, from
+  your registered location with its callback number, and tells the location's contact; when any of that is missing the
+  call is refused and says what is missing, so call from another phone.
+- <a id="voicemail"></a>**Voicemail.** A call to your number goes to your voicemail when you don't answer within your
+  rings, when you are in another call, or when you decline it. The caller hears your greeting (or the default one), a
+  beep, and leaves a message of up to two minutes; `#` ends it. You are told at once (here, and on your devices by Web
+  Push), and by email when you ask for it. Calls, History, Voicemail lists them, unheard first in bold, with the Inbox
+  and the Trash; open one to play it, read its transcript (when the server transcribes voicemail), mark it heard or
+  unheard, call back, download or delete it. Deleted messages wait in the Trash for 30 days (`voicemail_trash_days`),
+  then go with their audio. Settings, Phone has your greeting (record it in the browser or upload a WAV or Ogg file),
+  your PIN, the email notice and the number of rings. With a PIN you can listen by phone: call your number and press `*`
+  during your greeting (or call the access number and enter your number and `#`), then the PIN and `#`; each new
+  message plays, then `7` deletes it, `9` saves it and `#` skips to the next. The email notice has only a link unless you
+  turn on the audio or the transcript in it; turning one on warns that mail cannot be recalled. See
+  [Voicemail](../interfaces/Voicemail.md).
+- <a id="desk-phones"></a>**Desk and soft phones.** Settings, Desk and soft phones: Add a phone gives a username,
+  a password, the domain, the port and the transport, each with a copy button, shown only then; put them in the desk
+  phone or in a phone app (Linphone, Zoiper, Groundwire), choosing TLS and SRTP where it has them. Once it registers,
+  the list shows it with its address and how long the registration lasts. A call to you rings the phone beside your
+  tabs, and whichever answers first takes it; declining on one declines on all, and a call nobody answers goes to your
+  voicemail after your rings. The phone calls out as you, to a number (with your caller ID and your
+  limits) or to a colleague by username. New password makes new credentials and stops the old ones at once; Remove
+  ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
+  until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
+  [SIP, Registrar](../interfaces/SIP.md#registrar).
+- <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
+  whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
+  provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
+  network allows UDP, TCP or plain RTP, whether it takes emergency calls, and its status and last error. Numbers: each
+  number's trunk, the person it rings (or the voicemail access number) and its emergency location. Caller IDs: who may call from which number. Fraud: the
+  limits, each person's permissions, and the sources blocked after failed SIP sign-ins (a block never locks the account;
+  Clear lifts it). Emergency: the readiness checklist and the emergency locations (address, callback number, who is
+  told, the provider's reference and whether it is validated). Phones: everyone's desk and soft phones with their
+  registrations, whether the registrar is on, and Remove. The screens are basic-comms' (`screen/System/`), mounted
+  into the tools System app; in the terminal they are the same forms.
+- **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
+  you have a voicemail box), and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
 
@@ -89,13 +144,20 @@ entity filters; a read that fails is left out and named, and a mutation that fai
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is
 `{chatRoomId, eventSeq}`; IronStone adds Create a task, request and event there, each with `hook="create-from"` so a
-user without that provider is not offered it.
+user without that provider is not offered it. Calls, Voicemail's slot is `voicemail-actions`, whose item is
+`{voicemailId, fromNumber, callSessionId}`, for actions such as Create from and Add to contacts.
 
 IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xml` (the mounts and providers) and
 `screen-extend/basic-comms/`.
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui, the mail settings and Inbox of a user with no party, the drive
-picker (`BasicCommsFiles`), chat, the provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), the mail settings and Inbox of a
+user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
+provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
+and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
+phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
+and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and
+soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
+after the tabs and phones ring or a phone declines, a phone's own call). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

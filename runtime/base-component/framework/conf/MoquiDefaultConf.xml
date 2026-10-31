@@ -139,6 +139,22 @@
     <default-property name="rtc_media_host" value="127.0.0.1"/>
     <default-property name="rtc_public_address" value=""/>
     <default-property name="call_ring_seconds" value="45"/>
+    <!-- Live captions (W6; docs/interfaces/WebRTC.md, Captions): off unless call_captions_enabled is true. Someone in a call
+        turns them on; its media node sends each speaker's audio, in chunks of at most call_captions_chunk_seconds, to the
+        speech provider (the model bound to the transcribe feature; call_captions_provider local is speech-local, not built
+        yet), at most call_captions_workers at once, each within call_captions_timeout_seconds; past call_captions_queue
+        waiting chunks the oldest is dropped. call_captions_language: an ISO 639-1 code, empty to let the model tell.
+        call_captions_store true keeps each caption as a CallTranscript (by default nothing is kept).
+        call_captions_prompt_audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
+    <default-property name="call_captions_enabled" value="false"/>
+    <default-property name="call_captions_provider" value="llm"/>
+    <default-property name="call_captions_chunk_seconds" value="5"/>
+    <default-property name="call_captions_queue" value="6"/>
+    <default-property name="call_captions_workers" value="2"/>
+    <default-property name="call_captions_timeout_seconds" value="20"/>
+    <default-property name="call_captions_language" value=""/>
+    <default-property name="call_captions_store" value="false"/>
+    <default-property name="call_captions_prompt_audio" value=""/>
     <!-- ICE-TCP (W4): a TCP port on rtc_media_host for browsers that cannot reach the UDP one; off while empty. -->
     <default-property name="rtc_media_tcp_port" value=""/>
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
@@ -161,6 +177,75 @@
     <default-property name="turn_max_allocations" value="1000"/>
     <default-property name="turn_max_kbps" value="4000"/>
     <default-property name="turn_allowed_peers" value=""/>
+    <!-- Call recording (W5; docs/interfaces/Call-Recording.md, D-V5): off by default. call_recording_enabled lets a call's
+        host record it; every leg gets the notice, logged per leg. call_recording_ack_required: each leg must acknowledge it,
+        and the recording pauses while a current leg has not (or after one withdraws). call_recording_policy_revision is
+        logged with each notice; change it when the policy's wording changes. call_recording_retention_days: recordings are
+        deleted this long after they start (0 keeps them). The recorder's limits: call_recording_queue_frames, the frames
+        queued from the media thread (a recorder further behind fails); call_recording_segment_mb and
+        call_recording_segment_minutes, when a file is cut into the next segment; call_recording_max_mb, a recording's
+        total, where it stops. call_recording_prompt_audio: a WAV file (any resource location) a phone leg hears after the
+        recording tone; under the ack policy it should ask the caller to press 1 (docs/interfaces/SIP.md, Notices). -->
+    <default-property name="call_recording_enabled" value="false"/>
+    <default-property name="call_recording_ack_required" value="false"/>
+    <default-property name="call_recording_policy_revision" value="1"/>
+    <default-property name="call_recording_retention_days" value="90"/>
+    <default-property name="call_recording_queue_frames" value="4096"/>
+    <default-property name="call_recording_segment_mb" value="64"/>
+    <default-property name="call_recording_segment_minutes" value="30"/>
+    <default-property name="call_recording_max_mb" value="2048"/>
+    <default-property name="call_recording_prompt_audio" value=""/>
+    <!-- Phone calls over SIP trunks (the sip feature, V1; plans/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
+        server with call media: sip_port (UDP and TCP, 5060 by convention) and sip_tls_port (TLS, 5061, the certificate from
+        runtime/cert), off while both are empty; sip_host and sip_tls_host the addresses they bind (loopback by default),
+        sip_rtp_ports the UDP range of the phone legs' RTP (one port a leg) on sip_rtp_host (sip_host by default);
+        sip_public_address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
+        a host binds every address); sip_tls_ca_file the CA certificates for TLS to trunks (the system bundle by default).
+        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
+        (0 turns one off): sip_request_rate new requests a second from one source, sip_request_burst of them at once;
+        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once,
+        and sip_max_connections_per_source of them from one source. -->
+    <default-property name="sip_port" value=""/>
+    <default-property name="sip_host" value="127.0.0.1"/>
+    <default-property name="sip_tls_port" value=""/>
+    <default-property name="sip_tls_host" value=""/>
+    <default-property name="sip_rtp_ports" value="20000-20999"/>
+    <default-property name="sip_rtp_host" value=""/>
+    <default-property name="sip_public_address" value=""/>
+    <default-property name="sip_tls_ca_file" value=""/>
+    <default-property name="sip_request_rate" value="20"/>
+    <default-property name="sip_request_burst" value="100"/>
+    <default-property name="sip_max_transactions" value="2000"/>
+    <default-property name="sip_max_connections" value="500"/>
+    <default-property name="sip_max_connections_per_source" value="100"/>
+    <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
+        true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
+        to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's
+        expiry is held between sip_registrar_min_expires and sip_registrar_max_expires seconds (sip_registrar_default_expires
+        when the phone asks none), and to sip_registrar_nat_expires for a phone behind a NAT without Outbound (RFC 5626). -->
+    <default-property name="sip_registrar_enabled" value="false"/>
+    <default-property name="sip_domain" value=""/>
+    <default-property name="sip_registrar_min_expires" value="60"/>
+    <default-property name="sip_registrar_max_expires" value="3600"/>
+    <default-property name="sip_registrar_default_expires" value="600"/>
+    <default-property name="sip_registrar_nat_expires" value="60"/>
+
+    <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
+        box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
+        voicemail_max_seconds: the longest message (10 to 600). voicemail_prompt_location: a folder (any resource location)
+        with the recorded speech played after the prompts' tones: greeting.wav (the default greeting), enter-box.wav,
+        enter-pin.wav, pin-refused.wav, menu.wav, no-messages.wav, goodbye.wav (16-bit PCM WAV); empty plays tones only.
+        voicemail_trash_days: messages in a trash are deleted after this many days (0 keeps them).
+        voicemail_transcribe: true sends each message to the speech provider (the model bound to transcribe) for a
+        transcript; off by default, as the deployment's recording and transcription policy decides it.
+        voicemail_transcribe_language: an ISO 639-1 code, empty to let the model tell. voicemail_pin_min_digits: the fewest
+        digits a new phone-access PIN has (4 to 12; at the box's limit of about 240 guesses a day four digits fall in weeks). -->
+    <default-property name="voicemail_max_seconds" value="120"/>
+    <default-property name="voicemail_prompt_location" value=""/>
+    <default-property name="voicemail_trash_days" value="30"/>
+    <default-property name="voicemail_transcribe" value="false"/>
+    <default-property name="voicemail_transcribe_language" value=""/>
+    <default-property name="voicemail_pin_min_digits" value="6"/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>
@@ -1039,6 +1124,7 @@
         <load-entity location="component://framework/entity/AgentEntities.xml"/>
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
         <load-entity location="component://framework/entity/CallEntities.xml"/>
+        <load-entity location="component://framework/entity/VoiceEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1055,6 +1141,7 @@
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
         <load-data location="component://framework/data/CallSetupData.xml"/>
+        <load-data location="component://framework/data/VoiceSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls, Recordings (plans/Comms-Framework.md W5, §6.4; docs/interfaces/Call-Recording.md): the call recordings the user
+    may read (their own, and those of calls they host), newest first, each with who was in the call, when, how long and its
+    state; a player that plays one period of a recording's tracks together (each person's audio and video, with the mixed
+    audio of the whole call as the clock when there is one); a download of each file; and Delete for the one who recorded it.
+    The rows come from org.moqui.impl.CallRecordingServices find#Recordings, the files from get#RecordingFile by segment id,
+    which refuses anyone who may not read the recording ("not found"), so these transitions run with authorization off as
+    the call transitions do. The component is Recordings.qvue next to this file; the terminal twin (RecordingsTui) lists them
+    with Delete, and has no player. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Recordings" default-menu-index="2" menu-image="sym_o_radio_button_checked" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="callSessionId"/>
+
+    <transition name="recordings" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.find#Recordings').parameters({callSessionId: callSessionId || null,
+                pageIndex: Math.max(Number(pageIndex) || 0, 0), pageSize: 20}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, recordingList: out.recordingList || [], recordingListCount: Number(out.recordingListCount || 0)})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- one file of a recording the user may read: inline for the player, else a download; nothing for anyone else -->
+    <transition name="recordingFile" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingFile').parameter('callRecordingSegmentId', callRecordingSegmentId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const refused = ec.message.hasError() || !out.location
+            ec.message.clearErrors()
+            if (refused) ec.web.sendJsonResponse({})
+            else ec.web.sendResourceResponse(out.location, String(inline) === 'true' && /^(audio|video)\//.test(out.contentType || ''))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="deleteRecording">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.delete#Recording').parameter('callRecordingId', callRecordingId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, deleted: !!out.deleted})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Calls/Recordings.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Calls/Recordings.tui.json" template="fancy"/></render-mode>
+    </widgets>
+</screen>

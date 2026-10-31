@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Settings, Phone (plans/Comms-Framework.md §5.5, §5.3; V2): the user's numbers and, in its Voicemail section, their
+    greeting (recorded in the browser or uploaded, played back, removed), the PIN for phone access (set, changed or removed;
+    how to reach the box by phone), the email notice (an address; the audio and the transcript in it only when turned on,
+    with the warning that mail cannot be recalled) and how many rings before voicemail. The data is
+    org.moqui.impl.VoicemailServices (get# and update#VoicemailSettings, set#VoicemailPin, store#, delete# and
+    get#VoicemailGreeting), which act on the signed-in user's own box only, so these transitions run with authorization off as
+    the call transitions do. The component is Phone.qvue next to this file; the terminal twin (PhoneTui) has the same settings
+    but records no greeting. A section of desk and soft phones (V4) is a screen of its own. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Phone" default-menu-index="8" menu-image="sym_o_voicemail" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <transition name="settings" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailSettings').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            const caps = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, box: out.box || null, myNumberList: out.myNumberList || [], accessNumberList: out.accessNumberList || [],
+                ringSeconds: out.ringSeconds || 45, ringSecondsEach: out.ringSecondsEach || 6, maxRings: out.maxRings || 10,
+                maxSeconds: out.maxSeconds || 120, transcribeOn: !!out.transcribeOn, pinMinDigits: out.pinMinDigits || 6, phoneActive: !!caps.active, phoneSupported: !!caps.supported})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="saveSettings">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.update#VoicemailSettings').parameters({notifyEmail: notifyEmail || '',
+                attachAudio: String(attachAudio) === 'true', attachTranscript: String(attachTranscript) === 'true', rings: rings || null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, box: out.box || null, warning: out.warning || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="setPin">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.set#VoicemailPin').parameters({pin: pin || '',
+                clear: String(clear) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, box: out.box || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="uploadGreeting">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.store#VoicemailGreeting')
+                .parameter('file', ec.web.multiPartParameters.file || null).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, box: out.box || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="deleteGreeting">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#VoicemailGreeting').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, box: out.box || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the user's own greeting, to play it back -->
+    <transition name="greeting" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailGreeting').requireNewTransaction(true).disableAuthz().call() || {}
+            const refused = ec.message.hasError() || !out.location
+            ec.message.clearErrors()
+            if (refused) ec.web.sendJsonResponse({})
+            else ec.web.sendResourceResponse(out.location, true)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Settings/Phone.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Settings/Phone.tui.json" template="fancy"/></render-mode>
+    </widgets>
+</screen>

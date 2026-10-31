@@ -13,7 +13,8 @@
  */
 
 //! The W1 media gate (plans/Comms-Framework.md §6.2) on the in-memory network: two and five parties, simulcast layers
-//! following TWCC, renegotiation both ways and glare, ICE restart, ICE-TCP, generations, and media taken out and put in.
+//! following TWCC, renegotiation both ways and glare, ICE restart, ICE-TCP, generations, media taken out and put in, and
+//! keyframes asked of a room's publishers (the recorder, W5).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -398,4 +399,23 @@ fn a_screen_share_opens_as_its_own_track_and_ends_on_the_others() {
     let video = net.received("B", "A", MediaKind::Video);
     net.run(secs(1));
     assert!(net.received("B", "A", MediaKind::Video) > video);
+}
+
+#[test]
+fn a_room_s_publishers_are_asked_for_keyframes() {
+    let mut net = Net::new();
+    // one without simulcast, one with: each layer is asked
+    net.join("A", false);
+    net.join("B", true);
+    net.run(secs(2));
+    let before = |net: &Net| [net.client("A").keyframe_requests, net.client("B").keyframe_requests];
+    let start = before(&net);
+    net.run(secs(1));
+    assert_eq!(before(&net), start, "nobody asked in a call that goes well");
+    let now = net.now;
+    net.sfu.request_keyframes(now, ROOM);
+    net.sfu.request_keyframes(now, "another room");
+    net.run(Duration::from_millis(300));
+    let after = before(&net);
+    assert!(after[0] > start[0] && after[1] > start[1], "{start:?} then {after:?}");
 }

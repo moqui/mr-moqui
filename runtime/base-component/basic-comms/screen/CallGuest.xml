@@ -57,6 +57,39 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- recording (W5): the call's recording and this guest's notice, and the guest's acknowledgement or withdrawal, by
+        the credential (org.moqui.impl.CallRecordingServices) -->
+    <transition name="recordingState" require-session-token="false" read-only="true">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingState').parameter('credential', credential || '')
+                .requireNewTransaction(true).call() || {} : {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({enabled: !!out.enabled, ackRequired: !!out.ackRequired, canRecord: false, recording: out.recording || null,
+                myConsent: out.myConsent || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="ackRecording" require-session-token="false">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.ack#RecordingNotice').parameter('credential', credential || '')
+                .requireNewTransaction(true).call() || {} : {reasonCode: 'notFound'}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="withdrawRecording" require-session-token="false">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.withdraw#RecordingConsent').parameter('credential', credential || '')
+                .requireNewTransaction(true).call() || {} : {reasonCode: 'notFound'}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, recording: out.recording || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="leaveGuest" require-session-token="false">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.impl.CallServices.leave#AsGuest').parameter('credential', credential || '').requireNewTransaction(true).call()

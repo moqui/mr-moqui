@@ -17,7 +17,8 @@
 //! `reaction` and `leave`, each with `callSessionId` and `callLegId` and an optional `id` that the reply carries. Replies
 //! and the media node's offers and events come back on the topic `rtc:<callSessionId>`: `joined`, `answer`, `offer`,
 //! `ack`, `error` (`code`), `connected`, `mediaLost`, `participant`, `track`, `layer`, `quality`, the relayed `mute`,
-//! `hand` and `reaction`, and `ended`.
+//! `hand` and `reaction`, `ended`, the notices `recording` (W5, `rtc/recorder.rs`) and `captions` (W6), which a leg
+//! that joins later gets right after its `joined`, and the captions' lines, `caption` (`rtc/captions.rs`).
 //!
 //! A `join` runs `CallServices.bind#Connection` as the socket's user on a request worker: the leg must be theirs and in
 //! the call. That claims the leg's next connection generation, which every later frame of this socket carries, so the
@@ -474,6 +475,24 @@ fn deliver_signal(message: &TopicMessage) {
                 Some("closeRoom") => Command::CloseRoom {
                     room: text("callSessionId"),
                 },
+                // captions run beside the driver, not in it (rtc/captions.rs)
+                Some("startCaptions") => {
+                    let options = crate::rtc::captions::StartOptions {
+                        user_id: Some(text("userId")).filter(|id| !id.is_empty()),
+                        provider_label: text("provider"),
+                        local: body.get("local").and_then(Json::as_bool).unwrap_or(false),
+                    };
+                    crate::rtc::captions::start(&factory, &text("callSessionId"), options);
+                    return;
+                }
+                Some("stopCaptions") => {
+                    crate::rtc::captions::stop(&text("callSessionId"));
+                    return;
+                }
+                Some("recording") => {
+                    crate::rtc::recorder::control(&factory, body);
+                    return;
+                }
                 _ => return,
             };
             if let Err(code) = crate::rtc::command(command) {

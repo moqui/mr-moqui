@@ -1,7 +1,8 @@
 // BasicComms Calls (screen/BasicComms/Calls.xml, Calls/History, Calls/Call and its terminal twin; plans/Comms-Framework.md
 // W1): a user with no party calls john.doe through the Calls transitions the page's call store posts to, john.doe answers
 // and both see the call in History; a user who is not in the call is refused the same post that works for john.doe, through
-// either mount (IronStone's /qapps/Comms when it is installed); the terminal twin shows the call and leaves it.
+// either mount (IronStone's /qapps/Comms when it is installed); the terminal twin shows the call and leaves it; a stored
+// recording (W5) plays for the one who recorded it and is nothing for anyone else; so does a voicemail (V2), for its owner.
 // Run: ./moq test basic-comms --spec BasicCommsCalls
 const root = "component://basic-comms/screen/BasicComms.xml"
 const bossRoot = "component://mr-boss/screen/Comms.xml"
@@ -133,5 +134,121 @@ feature("History has Call links, and the Meetings of an app's meetings-source th
         !bossInstalled || meetings.results.map(r => r.sourceId).includes("boss.calendar")
         !bossInstalled || meetings.failedParts.length == 0
         bossInstalled || meetings.unavailable == true
+    }
+})
+
+// W5: a stored recording of the call (rows and a file made here, as the media node's recorder would store them) plays only
+// for the one who recorded it; john.doe, in the call but not its host, and a stranger get nothing for the same file
+feature("Recordings lists a recording for its owner, and its file is nothing for anyone else", {
+    when() {
+        const location = "dbresource://moqui/call/recording/BCC_SPEC_REC/BCC_SPEC_SEG.ogg"
+        sys(() => {
+            ec.resource.getLocationReference(location).putText("OggS-spec")
+            const rows = [
+                ["moqui.call.CallRecording", {callRecordingId: "BCC_SPEC_REC", callSessionId: callId, ownerUserId: CALLER, kindEnumId: "CrkPerTrack",
+                    statusId: "CrsStopped", segmentPeriod: 1, startedDate: new Date(), endedDate: new Date()}],
+                ["moqui.call.CallRecordingTrack", {callRecordingTrackId: "BCC_SPEC_TRK", callRecordingId: "BCC_SPEC_REC", trackKindEnumId: "CrtMix",
+                    codec: "opus", contentType: "audio/ogg"}],
+                ["moqui.call.CallRecordingSegment", {callRecordingSegmentId: "BCC_SPEC_SEG", callRecordingId: "BCC_SPEC_REC",
+                    callRecordingTrackId: "BCC_SPEC_TRK", segmentPeriod: 1, segmentSeq: 1, startOffsetMs: 0, durationMs: 1000,
+                    contentLocation: location, contentType: "audio/ogg", byteSize: 9, processingStatusId: "CrgStored"}]
+            ]
+            for (const [entity, fields] of rows) {
+                const value = ec.entity.makeValue(entity)
+                value.setFields(fields, true, null, null)
+                value.create()
+            }
+        })
+        const file = {callRecordingSegmentId: "BCC_SPEC_SEG"}
+        ec.user.internalLoginUser("basic.comms.caller")
+        const list = request(root, "Calls/Recordings/recordings", {}, null).json
+        const tui = sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/RecordingsTui", {}, null))
+        const tuiText = String(tui.output || "")
+        ec.message.clearErrors()
+        const owner = request(root, "Calls/Recordings/recordingFile", file, null)
+        ec.user.internalLoginUser("basic.comms.call.stranger")
+        const stranger = request(root, "Calls/Recordings/recordingFile", file, null)
+        const strangerList = request(root, "Calls/Recordings/recordings", {}, null).json
+        login("john.doe")
+        const member = request(root, "Calls/Recordings/recordingFile", file, null)
+        return {list, tuiText, owner, stranger, strangerList, member}
+    },
+    then({list, tuiText, owner, stranger, strangerList, member}) {
+        list.recordingList.some(r => r.callRecordingId == "BCC_SPEC_REC" && r.canDelete && r.periods.length == 1)
+        tuiText.includes("They play in the browser")
+        owner.output.includes("OggS-spec")
+        Object.keys(stranger.json || {nothing: true}).length == 0
+        !stranger.output.includes("OggS")
+        Object.keys(member.json || {nothing: true}).length == 0
+        !member.output.includes("OggS")
+        !strangerList.recordingList.some(r => r.callRecordingId == "BCC_SPEC_REC")
+    },
+    cleanup() {
+        sys(() => {
+            for (const entity of ["moqui.call.CallRecordingSegment", "moqui.call.CallRecordingTrack", "moqui.call.CallRecording"])
+                ec.entity.find(entity).condition("callRecordingId", "BCC_SPEC_REC").deleteAll()
+            ec.resource.getLocationReference("dbresource://moqui/call/recording/BCC_SPEC_REC/BCC_SPEC_SEG.ogg").delete()
+            ec.resource.getLocationReference("dbresource://moqui/call/recording/BCC_SPEC_REC").delete()
+        })
+    }
+})
+
+// V2: a voicemail (its rows and file made here, as the SIP engine would store them) is in its owner's Voicemail tab and
+// plays only for them through the audio transition; a stranger gets nothing for the same id. Settings Phone renders.
+feature("Voicemail lists a message for its owner, and its audio is nothing for anyone else", {
+    when() {
+        const location = "dbresource://moqui/call/voicemail/BCC_SPEC_BOX/BCC_SPEC_VM.ogg"
+        sys(() => {
+            ec.resource.getLocationReference(location).putText("OggS-voicemail-spec")
+            const rows = [
+                ["moqui.call.VoicemailBox", {voicemailBoxId: "BCC_SPEC_BOX", userId: CALLER, attachAudio: "N", attachTranscript: "N"}],
+                ["moqui.call.Voicemail", {voicemailId: "BCC_SPEC_VM", voicemailBoxId: "BCC_SPEC_BOX", fromNumber: "+15557770999",
+                    receivedDate: new Date(), durationMs: 3000, audioLocation: location, folder: "inbox", statusId: "VmsStored"}],
+                ["moqui.call.CallTranscript", {callTranscriptId: "BCC_SPEC_VMT", voicemailId: "BCC_SPEC_VM", segment: 1,
+                    statusId: "CtsDone", text: "Call me back about the spec", createdDate: new Date()}]
+            ]
+            for (const [entity, fields] of rows) {
+                const value = ec.entity.makeValue(entity)
+                value.setFields(fields, true, null, null)
+                value.create()
+            }
+        })
+        const file = {voicemailId: "BCC_SPEC_VM"}
+        ec.user.internalLoginUser("basic.comms.caller")
+        const tab = request(root, "Calls/History", {outcome: "voicemail"}, null)
+        const detail = request(root, "Calls/Voicemail/voicemail", file, null).json
+        const tui = sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/VoicemailTui", file, null))
+        const tuiText = String(tui.output || "")
+        const owner = request(root, "Calls/Voicemail/audio", file, null)
+        const phone = request(root, "Settings/Phone/settings", {}, null).json
+        ec.user.internalLoginUser("basic.comms.call.stranger")
+        const stranger = request(root, "Calls/Voicemail/audio", file, null)
+        const strangerDetail = request(root, "Calls/Voicemail/voicemail", file, null).json
+        const strangerTab = request(root, "Calls/History", {outcome: "voicemail"}, null)
+        return {tab, detail, tuiText, owner, phone, stranger, strangerDetail, strangerTab}
+    },
+    then({tab, detail, tuiText, owner, phone, stranger, strangerDetail, strangerTab}) {
+        tab.status == 200
+        tab.output.includes("+15557770999")
+        tab.output.includes("Call me back about the spec")
+        detail.voicemail.transcriptText == "Call me back about the spec"
+        tuiText.includes("Call me back about the spec")
+        owner.output.includes("OggS-voicemail-spec")
+        phone.box.voicemailBoxId == "BCC_SPEC_BOX"
+        phone.box.attachAudio == false
+        Object.keys(stranger.json || {nothing: true}).length == 0
+        !stranger.output.includes("OggS")
+        strangerDetail.voicemail == null
+        strangerDetail.reasonCode == "notFound"
+        !strangerTab.output.includes("+15557770999")
+    },
+    cleanup() {
+        sys(() => {
+            ec.entity.find("moqui.call.CallTranscript").condition("voicemailId", "BCC_SPEC_VM").deleteAll()
+            ec.entity.find("moqui.call.Voicemail").condition("voicemailId", "BCC_SPEC_VM").deleteAll()
+            ec.entity.find("moqui.call.VoicemailBox").condition("voicemailBoxId", "BCC_SPEC_BOX").deleteAll()
+            ec.resource.getLocationReference("dbresource://moqui/call/voicemail/BCC_SPEC_BOX/BCC_SPEC_VM.ogg").delete()
+            ec.resource.getLocationReference("dbresource://moqui/call/voicemail/BCC_SPEC_BOX").delete()
+        })
     }
 })

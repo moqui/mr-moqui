@@ -18,7 +18,7 @@
 //! long). A frame's reply, and the SFU's offers and events for a leg, go to the socket that leg's
 //! last frame came from ([`Route`]): on this node straight to the socket, on another by `rtc-signal`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,7 +34,7 @@ use serde_json::{json, Value as Json};
 
 use super::media::Media;
 use super::tcp::{self, Streams};
-use super::Command;
+use super::{Command, NoticeKind};
 
 /// Revokes a leg's TURN credential (the embedded TURN server, when there is one).
 pub(super) type Revoke = Box<dyn Fn(&str) + Send>;
@@ -68,6 +68,8 @@ struct Driver<'a> {
     revoke: Option<Revoke>,
     /// The consumers' taps and the injected legs.
     media: Media,
+    /// The frames each leg gets when it joins: the rooms' recording and captions notices.
+    notices: RoomNotices,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -94,6 +96,7 @@ pub(super) fn run(
         tcp,
         revoke,
         media: Media::default(),
+        notices: RoomNotices::default(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -198,9 +201,11 @@ impl Driver<'_> {
                     json!({"rtc": "participant", "callLegId": leg, "connected": false}),
                 );
             }
+            Command::Keyframes { room } => self.sfu.request_keyframes(Instant::now(), &room),
             Command::CloseRoom { room } => {
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
+                self.notices.room_closed(&room);
                 let legs: Vec<LegKey> = self
                     .routes
                     .keys()
@@ -221,6 +226,17 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
+            Command::ToRoom { room, frame } => self.to_room(&room, None, frame),
+            Command::RoomNotice {
+                room,
+                kind,
+                frame,
+                keep,
+            } => {
+                // every leg now; kept, each leg that joins later too (a notice not kept takes its kind's down)
+                self.notices.set(&room, kind, keep.then(|| frame.clone()));
+                self.to_room(&room, None, frame);
+            }
             Command::Stop => {}
         }
     }
@@ -307,6 +323,7 @@ impl Driver<'_> {
                 r.route = route.clone();
             }
         }
+        let joined = op == "join" && result.is_ok();
         match result {
             Ok(Some(reply)) => self.reply(&route, room, with_id(reply, &id)),
             Ok(None) if !id.is_null() => self.reply(&route, room, json!({"rtc": "ack", "id": id, "callLegId": leg})),
@@ -316,6 +333,13 @@ impl Driver<'_> {
                 room,
                 json!({"rtc": "error", "id": id, "callLegId": leg, "code": e.code(), "message": e.to_string()}),
             ),
+        }
+        // a leg that joins gets the room's notices (recording, captions) right after its answer, before any media:
+        // late joiners and guests too
+        if joined {
+            for notice in self.notices.of(room) {
+                self.to_leg(&key, generation, notice);
+            }
         }
     }
 
@@ -441,6 +465,43 @@ impl Driver<'_> {
         if let Err(err) = moqui_core::cluster::send_to(&facade, &route.node, RTC_SIGNAL, &message) {
             tracing::debug!("call signaling reply to {} not sent: {}", route.node, err.message());
         }
+    }
+}
+
+/// The notices of each room, one of each [`NoticeKind`], for the legs that join later.
+#[derive(Default)]
+pub(super) struct RoomNotices {
+    rooms: HashMap<String, BTreeMap<NoticeKind, Json>>,
+}
+
+impl RoomNotices {
+    /// The room's notice of this kind, or with `None` none.
+    pub(super) fn set(&mut self, room: &str, kind: NoticeKind, frame: Option<Json>) {
+        match frame {
+            Some(frame) => {
+                self.rooms.entry(room.to_string()).or_default().insert(kind, frame);
+            }
+            None => {
+                if let Some(kinds) = self.rooms.get_mut(room) {
+                    kinds.remove(&kind);
+                    if kinds.is_empty() {
+                        self.rooms.remove(room);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The room's current notices, in kind order.
+    pub(super) fn of(&self, room: &str) -> Vec<Json> {
+        self.rooms
+            .get(room)
+            .map(|kinds| kinds.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn room_closed(&mut self, room: &str) {
+        self.rooms.remove(room);
     }
 }
 
