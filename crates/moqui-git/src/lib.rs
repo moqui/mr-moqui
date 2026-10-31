@@ -177,6 +177,15 @@ pub(crate) struct Definition {
     pub archived: bool,
 }
 
+/// The repository rows changing in transactions not yet ended (an open repository of one is not kept, as each thread
+/// reads the row its own transaction sees), and how many times an open repository was forgotten: an open that read
+/// its row before a forget is not kept, as the row it read can be the one from before a change just committed.
+#[derive(Debug, Default)]
+struct Changing {
+    rows: HashMap<String, usize>,
+    forgets: u64,
+}
+
 /// An open repository.
 #[derive(Debug)]
 struct Repo {
@@ -195,6 +204,8 @@ struct Inner {
     entity: Arc<RwLock<Option<EntityFacade>>>,
     runtime_dir: PathBuf,
     repos: RwLock<HashMap<String, Arc<Repo>>>,
+    /// The repository rows changing in transactions not yet ended, and a count of forgets (see [`Changing`]).
+    changing: Mutex<Changing>,
     /// Writers of a repository in this process take turns; across processes the ref compare-and-set keeps refs
     /// consistent. Kept apart from `repos`, so a refresh that reopens a repository does not give it a second lock.
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -275,6 +286,7 @@ impl GitProvider {
                 entity,
                 runtime_dir,
                 repos: RwLock::new(HashMap::new()),
+                changing: Mutex::new(Changing::default()),
                 locks: Mutex::new(HashMap::new()),
                 event_locks: Mutex::new(HashMap::new()),
                 updated: Mutex::new(HashMap::new()),
@@ -363,13 +375,63 @@ impl GitProvider {
         if let Some(repo) = moqui_lib::sync::read(&self.inner.repos).get(repository_id) {
             return Ok(Arc::clone(repo));
         }
+        let forgets = moqui_lib::sync::lock(&self.inner.changing).forgets;
         let repo = Arc::new(self.open(self.definition(repository_id)?)?);
-        moqui_lib::sync::write(&self.inner.repos).insert(repository_id.to_string(), Arc::clone(&repo));
+        // kept only when no row changed since the row was read and none is changing now; the changing lock is held
+        // while it is kept, so a forget cannot come between the check and the insert
+        let changing = moqui_lib::sync::lock(&self.inner.changing);
+        if changing.forgets == forgets && !changing.rows.contains_key(repository_id) {
+            moqui_lib::sync::write(&self.inner.repos).insert(repository_id.to_string(), Arc::clone(&repo));
+        }
         Ok(repo)
     }
 
     /// Forget an open repository, so its row is read again: after the row changed, or a service replaced its storage.
+    /// In a transaction the row's change is seen by other threads only once it commits, and one of them can read
+    /// the row before that and keep it open as it was (a default branch switched for a commit, then the commit made
+    /// on the old one): until the transaction ends the repository is not kept open, and it is forgotten again then.
     pub fn refresh(&self, repository_id: &str) {
+        let transactions = self
+            .entity()
+            .ok()
+            .and_then(|entity| entity.transactions_for(GIT_REPOSITORY).ok())
+            .filter(|transactions| transactions.in_transaction());
+        {
+            let mut changing = moqui_lib::sync::lock(&self.inner.changing);
+            changing.forgets += 1;
+            if transactions.is_some() {
+                *changing.rows.entry(repository_id.to_string()).or_insert(0) += 1;
+            }
+            moqui_lib::sync::write(&self.inner.repos).remove(repository_id);
+        }
+        let Some(transactions) = transactions else {
+            return;
+        };
+        let (committed, rolled_back) = (self.clone(), self.clone());
+        let (commit_id, rollback_id) = (repository_id.to_string(), repository_id.to_string());
+        // only one of the two runs; a hook that cannot be added leaves the repository uncached (slower, not wrong)
+        let added = transactions.on_commit(move || committed.ended(&commit_id)).is_ok()
+            && transactions
+                .on_rollback(move || rolled_back.ended(&rollback_id))
+                .is_ok();
+        if !added {
+            tracing::warn!(
+                repository = repository_id,
+                "git repository row change: no transaction end hook"
+            );
+        }
+    }
+
+    /// A transaction that changed the row of `repository_id` ended: forget the repository once more.
+    fn ended(&self, repository_id: &str) {
+        let mut changing = moqui_lib::sync::lock(&self.inner.changing);
+        if let Some(count) = changing.rows.get_mut(repository_id) {
+            *count -= 1;
+            if *count == 0 {
+                changing.rows.remove(repository_id);
+            }
+        }
+        changing.forgets += 1;
         moqui_lib::sync::write(&self.inner.repos).remove(repository_id);
     }
 
