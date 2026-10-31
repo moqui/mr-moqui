@@ -465,7 +465,7 @@ impl Reader<'_> {
                     self.artifact(
                         parameter_id(&id, "path", &name),
                         "parameter",
-                        &name,
+                        &parameter_name(&id, "path", &name),
                         Some(node),
                         "path String, required".to_string(),
                         Some(id.clone()),
@@ -519,7 +519,7 @@ impl Reader<'_> {
                 self.artifact(
                     parameter_id(owner, direction, &name),
                     "parameter",
-                    &name,
+                    &parameter_name(owner, direction, &name),
                     Some(node),
                     summary.join(", "),
                     Some(parent_id),
@@ -550,7 +550,7 @@ impl Reader<'_> {
                 self.artifact(
                     parameter_id(&owner, direction, &name),
                     "parameter",
-                    &name,
+                    &parameter_name(&owner, direction, &name),
                     Some(node),
                     summary.join(", "),
                     Some(owner),
@@ -878,6 +878,14 @@ fn rest_path(node: &MNode) -> String {
 #[must_use]
 pub fn parameter_id(owner: &str, direction: &str, name: &str) -> String {
     format!("parameter:{owner}@{direction}.{name}")
+}
+
+/// The name of a parameter artifact: its owner's name, the direction and its own (`a.B.save#Order@in.quantity`), so a
+/// find of a bare name such as `orderId` matches it by its short name (the last part) only, after an entity's field.
+#[must_use]
+pub fn parameter_name(owner: &str, direction: &str, name: &str) -> String {
+    let owner = owner.split_once(':').map_or(owner, |(_, name)| name);
+    format!("{owner}@{direction}.{name}")
 }
 
 /// The owner id, direction and name of a [`parameter_id`]: the text after the last `@` (a parameter's name has none)

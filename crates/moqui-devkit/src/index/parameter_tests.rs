@@ -302,3 +302,53 @@ fn transition_extension_anchor_still_resolves_with_method_ids() {
         Some("transition:component://c/screen/A.xml#save:any")
     );
 }
+
+/// A parameter is named for its owner, so a find of a bare name gives an entity's field first, and the refs of a
+/// service list each caller once, not once more for each of its field-maps.
+#[test]
+fn a_field_comes_before_parameters_of_its_name_and_field_maps_stay_out_of_service_refs() {
+    let entities = read(
+        ArtifactKind::Entity,
+        "component://c/entity/A.xml",
+        r#"<entities><entity entity-name="Order" package="a"><field name="quantity" type="number-decimal"/></entity></entities>"#,
+    );
+    let mut services = read(
+        ArtifactKind::Service,
+        "component://c/service/a/B.xml",
+        r#"<services>
+      <service verb="save" noun="Order"><in-parameters><parameter name="quantity"/></in-parameters></service>
+      <service verb="first"><actions><service-call name="a.B.save#Order"><field-map field-name="quantity" from="1"/>
+      </service-call></actions></service>
+      <service verb="second"><actions><service-call name="a.B.save#Order"><field-map field-name="quantity" from="2"/>
+      </service-call></actions></service>
+    </services>"#,
+    );
+    let mut index = MemoryIndex::default();
+    for artifact in entities.artifacts.iter().chain(&services.artifacts) {
+        index.resolver.add(artifact);
+    }
+    for row in &mut services.refs {
+        index.resolver.resolve(row, &|_| false);
+    }
+    let parameter = "parameter:service:a.B.save#Order@in.quantity";
+    index.artifacts = entities.artifacts.into_iter().chain(services.artifacts).collect();
+    index.refs = services.refs.into_iter().map(|row| ("x".into(), row)).collect();
+
+    let named = index.describe(parameter).unwrap();
+    assert_eq!(named.name, "a.B.save#Order@in.quantity");
+    assert_eq!(named.short_name, "quantity");
+    assert_eq!(index.named("quantity").unwrap().id, "field:a.Order.quantity");
+    let found: Vec<String> = index.find("quantity", &[], 5).into_iter().map(|row| row.kind).collect();
+    assert_eq!(found, ["field", "parameter"]);
+
+    let callers = index.refs("service:a.B.save#Order", Direction::In);
+    assert_eq!(callers.len(), 2, "{callers:?}");
+    assert!(
+        callers.iter().all(|entry| entry.ref_type == "service-call"),
+        "{callers:?}"
+    );
+    let used = index.refs("service:a.B.first", Direction::Out);
+    assert_eq!(used.len(), 1, "{used:?}");
+    // the parameter's own refs are its field-maps
+    assert_eq!(index.refs(parameter, Direction::In).len(), 2);
+}

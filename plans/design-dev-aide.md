@@ -704,7 +704,7 @@ the command until then.
   artifact and each of its extensions is on.
 - **Ids**: `entity:mantle.order.OrderHeader`, `field:mantle.order.OrderHeader.statusId`,
   `service:mantle.order.OrderServices.place#Order`,
-  `screen:component://mr-marble/screen/SimpleScreens/Order/OrderDetail.xml`, `transition:<screen>#<name>`,
+  `screen:component://mr-marble/screen/SimpleScreens/Order/OrderDetail.xml`, `transition:<screen>#<name>:<method>`,
   `form:<screen>#<name>`, `seca:<file>#<id or position>` (and `eeca`, `emeca`, `giteca`), `rest:/mantle/orders`,
   `job:<jobName>`, `document:<dataDocumentId>`, `file:<root>/<path>`.
 - **References**, each with its source position and how it refers (`entity-find`, `entity-auto create`, `service-call`,
@@ -1427,7 +1427,11 @@ are independent of P4 and may run beside it.
   their resource; path variables appear as `{name}` and are indexed as each method’s `@path` parameters. Transitions are
   `transition:<screen>#<name>:<method>` (lowercase, default `any`). Unknown-method transition references reach every
   overload; explicit methods prefer their overload then `any`. Field maps reference the called service's input
-  parameter; missing declarations remain unresolved. Service parameters are not copied to REST methods or transitions;
+  parameter; missing declarations remain unresolved, and so do the field maps to a service whose inputs are not
+  written out in it (entity-auto, `auto-parameters`, `implements`), for now. A parameter's name is its owner's with the
+  direction (`a.B.save#Order@in.quantity`), so a find of `quantity` gives an entity's field first; refs of a service or a
+  caller leave out the field maps, which refs of the parameter list. An observed call names a transition without its
+  method and counts on its `any` overload, else its first. Service parameters are not copied to REST methods or transitions;
   implicit parameter passing (REST to service, transition to service, and `in-map="context"`) is a later gap. Relative
   screen paths and artifact group patterns are not indexed yet. Screen anchors are every named widget outside a form,
   as `check --extensions` read them before.

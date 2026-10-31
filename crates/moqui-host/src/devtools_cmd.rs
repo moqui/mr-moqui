@@ -312,10 +312,15 @@ pub(crate) fn model_dirs(project: Option<&ProjectArg>) -> Result<ModelDirs, Erro
         });
     };
     let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok();
-    let dirs = found.model_dirs(|| mr_framework_for(std::env::var_os("MOQUI_FRAMEWORK").map(PathBuf::from), exe.as_deref()))?;
+    let dirs = found
+        .model_dirs(|| mr_framework_for(std::env::var_os("MOQUI_FRAMEWORK").map(PathBuf::from), exe.as_deref()))?;
     tracing::info!(
         "Reading the {} Moqui project {} with the framework conf of {}",
-        if found.layout == moqui_devkit::project::Layout::Java { "Java" } else { "MR" },
+        if found.layout == moqui_devkit::project::Layout::Java {
+            "Java"
+        } else {
+            "MR"
+        },
         found.root.display(),
         dirs.framework.display()
     );
@@ -345,7 +350,8 @@ fn detected_java_checkout() -> Option<moqui_devkit::project::Project> {
 /// MR Moqui's framework directory for reading a Java checkout: `MOQUI_FRAMEWORK`, else the one of the runtime beside
 /// the executable (an installed runtime, `runtime/` beside it, or a source checkout above a `target` build).
 fn mr_framework_for(configured: Option<PathBuf>, exe: Option<&Path>) -> Option<PathBuf> {
-    let is_framework = |dir: &Path| dir.join("component.xml").is_file() && dir.join("conf/MoquiDefaultConf.xml").is_file();
+    let is_framework =
+        |dir: &Path| dir.join("component.xml").is_file() && dir.join("conf/MoquiDefaultConf.xml").is_file();
     if let Some(dir) = configured.filter(|dir| !dir.as_os_str().is_empty()) {
         // One that is not a framework directory is passed over, so the error says what was not found.
         if is_framework(&dir) {
@@ -360,7 +366,12 @@ fn mr_framework_for(configured: Option<PathBuf>, exe: Option<&Path>) -> Option<P
     let exe_dir = exe?.parent()?;
     exe_dir
         .ancestors()
-        .flat_map(|dir| [dir.join("base-component/framework"), dir.join("runtime/base-component/framework")])
+        .flat_map(|dir| {
+            [
+                dir.join("base-component/framework"),
+                dir.join("runtime/base-component/framework"),
+            ]
+        })
         .find(|dir| is_framework(dir))
 }
 
@@ -617,8 +628,14 @@ mod tests {
     </view-entity>
 </entities>"#,
         );
-        write("runtime/base-component/tools/component.xml", r#"<component name="tools"/>"#);
-        write("runtime/component/fp-core/component.xml", r#"<component name="fp-core"/>"#);
+        write(
+            "runtime/base-component/tools/component.xml",
+            r#"<component name="tools"/>"#,
+        );
+        write(
+            "runtime/component/fp-core/component.xml",
+            r#"<component name="fp-core"/>"#,
+        );
         write(
             "runtime/component/fp-core/entity/PicklistEntities.xml",
             r#"<entities>
@@ -655,20 +672,21 @@ mod tests {
         java_checkout_at(&dir);
         let checkout = java_checkout(&dir).expect("a Java checkout").root;
         // its runtime names the same checkout
-        assert_eq!(java_checkout(&dir.join("runtime")).map(|found| found.root), Some(checkout.clone()));
+        assert_eq!(
+            java_checkout(&dir.join("runtime")).map(|found| found.root),
+            Some(checkout.clone())
+        );
         // an MR Moqui runtime is not one
         let repo_runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
         assert!(java_checkout(&repo_runtime).is_none());
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let framework = repo.join("runtime/base-component/framework");
         assert_eq!(
-            mr_framework_for(None, Some(&repo.join("target/develop/moqui"))).map(|dir| std::fs::canonicalize(dir).unwrap()),
+            mr_framework_for(None, Some(&repo.join("target/develop/moqui")))
+                .map(|dir| std::fs::canonicalize(dir).unwrap()),
             Some(std::fs::canonicalize(&framework).unwrap())
         );
-        assert_eq!(
-            mr_framework_for(Some(framework.clone()), None),
-            Some(framework.clone())
-        );
+        assert_eq!(mr_framework_for(Some(framework.clone()), None), Some(framework.clone()));
         let factory = model_only_in(ModelDirs {
             runtime: checkout.join("runtime"),
             framework,
@@ -679,8 +697,15 @@ mod tests {
             factory.framework_component_dir(),
             std::fs::canonicalize(checkout.join("framework")).unwrap()
         );
-        let names: Vec<&str> = factory.components().iter().map(|component| component.name.as_str()).collect();
-        assert!(names.contains(&"framework") && names.contains(&"fp-core") && names.contains(&"tools"), "{names:?}");
+        let names: Vec<&str> = factory
+            .components()
+            .iter()
+            .map(|component| component.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"framework") && names.contains(&"fp-core") && names.contains(&"tools"),
+            "{names:?}"
+        );
         let facade = factory.entity().expect("an entity facade");
         facade.with_model(|model| {
             assert!(model.entity("moqui.olap.JavaOnlyFact").is_ok());
@@ -693,7 +718,7 @@ mod tests {
             assert!(problems.contains("moqui.olap.NoSuchDimension"), "{problems}");
         });
         let index = MemoryIndex::build(&factory);
-        let screen = "transition:component://fp-core/screen/Batch/BatchDetails.xml#updateBatch";
+        let screen = "transition:component://fp-core/screen/Batch/BatchDetails.xml#updateBatch:any";
         let used: Vec<Option<String>> = index
             .refs(screen, Direction::Out)
             .into_iter()
@@ -702,11 +727,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(used, [Some("entity:fp.picklist.PicklistBatch".to_string())]);
         assert!(index.describe("entity:moqui.olap.JavaOnlyFact").is_some());
-        assert!(
-            index
-                .refs("entity:moqui.olap.JavaOnlyFact", Direction::In)
-                .iter()
-                .any(|found| found.from == "entity:fp.picklist.BatchFact"),
-        );
+        assert!(index
+            .refs("entity:moqui.olap.JavaOnlyFact", Direction::In)
+            .iter()
+            .any(|found| found.from == "entity:fp.picklist.BatchFact"),);
     }
 }

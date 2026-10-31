@@ -231,7 +231,8 @@ impl Resolver {
                 "transition" => {
                     names.push(artifact.name.clone());
                     if let Some((_, target)) = artifact.id.rsplit_once('#') {
-                        names.push(target.to_string());
+                        // the id ends with the method (`#save:post`); a reference names the transition only
+                        names.push(target.rsplit_once(':').map_or(target, |(name, _)| name).to_string());
                     }
                 }
                 "form" | "anchor" => names.push(artifact.name.clone()),

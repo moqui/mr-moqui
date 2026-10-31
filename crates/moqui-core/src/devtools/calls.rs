@@ -59,7 +59,9 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// The index id of a frame on the artifact stack, for the kinds the index has.
+/// The index id of a frame on the artifact stack, for the kinds the index has. A transition's frame names its screen
+/// and name, not the method its index id ends with (`transition:<screen>#<name>:<method>`), so it is kept without one
+/// and the index's refs find the transition it was.
 #[must_use]
 pub fn artifact_id(artifact_type: &str, name: &str) -> Option<String> {
     Some(match artifact_type {
