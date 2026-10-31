@@ -98,7 +98,7 @@ moqui-devkit = { workspace = true }
 moqui-drivers = { workspace = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
-tungstenite = { version = "0.29", default-features = false, features = ["handshake"], optional = true }
+tungstenite = { workspace = true, optional = true }
 tracing = { workspace = true }
 # `moqui lsp` (plans/design-dev-aide.md 13.6, F13): the Language Server Protocol's messages and its stdio transport, as
 # rust-analyzer uses them; under devtools.
@@ -161,8 +161,7 @@ example = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }
 image = { workspace = true }
-# Same 0.29 handshake set axum's ws feature already links. No native-tls and no rustls.
-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+tungstenite = { workspace = true }
 # A browser editor's Yjs document in tests/it/collab.rs.
 yrs = { workspace = true }
 

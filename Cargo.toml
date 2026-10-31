@@ -285,6 +285,9 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio", "
 # with axum's (0.30 would be a second tungstenite).
 # chromiumoxide was the plan; its untagged-enum message parsing fails under serde_json arbitrary_precision.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+# The tui remote client's /notws socket and the test client: the same 0.29 handshake set axum's ws feature links. No
+# native-tls and no rustls.
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 # SSH client and server. ring, des, and dsa stay off. aws-lc-rs matches the other TLS crates.
 russh = { version = "0.65", default-features = false, features = ["aws-lc-rs", "flate2", "rsa"] }
