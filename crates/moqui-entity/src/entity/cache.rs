@@ -158,6 +158,22 @@ struct SimSession {
     poisoned: Option<String>,
     /// The transactions (frame tokens) with a rollback hook for this sim, Java's `trackedTransactions`.
     tracked: HashSet<u64>,
+    /// Step savepoints open on this sim ([`super::sim_step`]). While one is, a rolled-back transaction fails the step
+    /// instead of ending the sim: the step's savepoint undoes what it wrote.
+    steps: usize,
+}
+
+/// What a step savepoint restores of a sim session ([`super::sim_step`]): which tables, rows, replicas and tombstones
+/// the sim has, and whether it is poisoned. Not the sequence banks: an id a rolled-back step took is not given out
+/// again, so an id names one step's row over the whole run.
+#[derive(Clone)]
+pub(super) struct SimState {
+    tables: HashSet<String>,
+    tombstones: HashMap<String, HashSet<String>>,
+    written: HashSet<String>,
+    replicas: HashSet<String>,
+    copied: usize,
+    poisoned: Option<String>,
 }
 
 impl SimSession {
@@ -172,13 +188,70 @@ impl SimSession {
             copied: 0,
             poisoned: None,
             tracked: HashSet::new(),
+            steps: 0,
         }
     }
+}
+
+/// The innermost sim session's state, for a step savepoint to restore; none without a session.
+pub(super) fn sim_state() -> Option<SimState> {
+    SIM.with(|slot| {
+        slot.borrow().last().map(|session| SimState {
+            tables: session.tables.clone(),
+            tombstones: session.tombstones.clone(),
+            written: session.written.clone(),
+            replicas: session.replicas.clone(),
+            copied: session.copied,
+            poisoned: session.poisoned.clone(),
+        })
+    })
+}
+
+/// Put back the innermost sim session's state as [`sim_state`] took it, after its step was rolled back to the savepoint.
+pub(super) fn restore_sim_state(state: SimState) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            session.tables = state.tables;
+            session.tombstones = state.tombstones;
+            session.written = state.written;
+            session.replicas = state.replicas;
+            session.copied = state.copied;
+            session.poisoned = state.poisoned;
+        }
+    });
+}
+
+/// Count a step savepoint opened (`true`) or ended (`false`) on the innermost sim session.
+pub(super) fn note_sim_step(open: bool) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            session.steps = if open {
+                session.steps + 1
+            } else {
+                session.steps.saturating_sub(1)
+            };
+        }
+    });
+}
+
+/// Poison the innermost sim session with `reason` unless it is poisoned already.
+pub(super) fn poison_sim(reason: &str) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            if session.poisoned.is_none() {
+                tracing::warn!("Sim overlay terminated: {reason}");
+                session.poisoned = Some(reason.to_string());
+            }
+        }
+    });
 }
 
 const SIM_ROLLED_BACK: &str =
     "A transaction that wrote to the sim was rolled back, and sim writes are not undone, so the sim \
      state can no longer be trusted. The sim has been terminated. Start a new sim to continue testing.";
+
+/// The poison of a sim inside a step savepoint: the step fails and its savepoint undoes what it wrote.
+const SIM_STEP_ROLLED_BACK: &str = "A transaction that wrote to the sim was rolled back, so the step was rolled back.";
 
 /// [`sim_check_open`] for a find of `entity_name`, which finds call first, since a failed overlay read otherwise falls
 /// back to production. The entities a sim leaves on production ([`SIM_PRODUCTION_ENTITIES`]) are not the sim's, as Java's
@@ -249,8 +322,13 @@ fn end_sim_tracking(schema: &str, token: u64, poison: Option<&str>) {
         };
         session.tracked.remove(&token);
         if let (Some(reason), None) = (poison, &session.poisoned) {
-            tracing::warn!("Sim overlay terminated: {reason}");
-            session.poisoned = Some(reason.to_string());
+            if session.steps > 0 {
+                tracing::info!("Sim step failed: {reason}");
+                session.poisoned = Some(SIM_STEP_ROLLED_BACK.to_string());
+            } else {
+                tracing::warn!("Sim overlay terminated: {reason}");
+                session.poisoned = Some(reason.to_string());
+            }
         }
     });
 }
@@ -1293,14 +1371,40 @@ pub(super) fn query_sim(facade: &EntityFacade, schema: &str, sql: &str, params: 
     let sim = facade
         .sim_transactions()
         .ok_or_else(|| Error::new("sim transactions are not configured"))?;
+    let held = sim.in_transaction();
+    // Held (super::sim_step): a failed read would abort the held transaction and mark it rollback-only, so it runs
+    // under a savepoint of its own and its error is returned past `with_connection`.
     sim.with_connection(|conn| {
-        query_conn(
-            conn,
-            "SELECT set_config('search_path', ?, false)",
-            &[Value::string(schema)],
-        )?;
-        query_conn(conn, sql, params)
-    })
+        if !held {
+            return Ok(read_overlay(conn, schema, sql, params));
+        }
+        conn.savepoint(SIM_STATEMENT_SAVEPOINT)?;
+        let result = read_overlay(conn, schema, sql, params);
+        end_statement_savepoint(conn, result.is_ok())?;
+        Ok(result)
+    })?
+}
+
+fn read_overlay(conn: &mut dyn DbConnection, schema: &str, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
+    query_conn(
+        conn,
+        "SELECT set_config('search_path', ?, false)",
+        &[Value::string(schema)],
+    )?;
+    query_conn(conn, sql, params)
+}
+
+/// The savepoint one overlay read or write runs under while the overlay transaction is held.
+const SIM_STATEMENT_SAVEPOINT: &str = "moqui_sim_statement";
+
+/// Release the statement savepoint, or roll back to it after a failure, which leaves the held transaction usable.
+fn end_statement_savepoint(conn: &mut dyn DbConnection, ok: bool) -> Result<(), Error> {
+    if ok {
+        conn.release_savepoint(SIM_STATEMENT_SAVEPOINT)
+    } else {
+        conn.rollback_to_savepoint(SIM_STATEMENT_SAVEPOINT)?;
+        conn.release_savepoint(SIM_STATEMENT_SAVEPOINT)
+    }
 }
 
 /// End every sim session this thread still has open, dropping its schema, and clear the sim flag. A failed drop is
@@ -1469,17 +1573,26 @@ fn run_overlay(
     ddl: Option<&str>,
     statements: &[(String, Vec<Value>)],
 ) -> Result<(), Error> {
+    // Held (super::sim_step): the write is part of the held transaction, under a savepoint of its own so a failed
+    // statement leaves the rest; otherwise each write commits on its own.
+    let held = sim.in_transaction();
     sim.with_connection(|conn| {
+        if held {
+            conn.savepoint(SIM_STATEMENT_SAVEPOINT)?;
+            let result = apply_overlay(conn, schema, ddl, statements);
+            end_statement_savepoint(conn, result.is_ok())?;
+            return Ok(result);
+        }
         conn.begin()?;
         let result = apply_overlay(conn, schema, ddl, statements);
-        match result {
+        Ok(match result {
             Ok(()) => conn.commit(),
             Err(err) => {
                 let _ = conn.rollback();
                 Err(err)
             }
-        }
-    })
+        })
+    })?
 }
 
 fn apply_overlay(

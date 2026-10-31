@@ -1145,6 +1145,17 @@ pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen
   adds `likely: <intent>` to the stored tail of a new message. A model's `max-tool-calls` (12 for the small variant, 30
   otherwise) caps a run's calls, the same failing call twice answers `repeated`, and arguments the deterministic repair
   cannot fit get one schema-constrained call when the model's `json-schema` verdict is yes.
+- **Sim steps.** `org.moqui.impl.SimServices.run#Steps` (`moqui_llm::approval::steps`) previews several service calls
+  as one sim run, as the approval preview does: logged in as the calling user, each call under the sim fence and its
+  own authorization. In: `steps` (a list of `{serviceName, parameters}`), an optional `read` call, `readAfterEachStep`
+  and a `label`. Out: `available` (false without the overlay; nothing ran), one entry per step with `ok`, `error`,
+  `rows` (the preview's row shape, only what that step changed, `before` being the value before that step),
+  `createdKeys` (`[{entity, key}]`, the sim's negative ids) and, with `readAfterEachStep`, `readResult`; and the
+  `readResult` of the read after all steps (`readError` when a read failed, `moreRows` past 50 rows). The run holds one
+  overlay transaction (`moqui_core::entity::sim_step`) and puts each step under a savepoint: a step that fails, is
+  refused an outside effect or rolls back a transaction it wrote in is rolled back to its savepoint with the sim
+  session's state, and the next step runs. The read runs under a savepoint that is always rolled back; its entity
+  values and lists come back as plain maps.
 
 ## Chat members, triggers and AI tasks
 

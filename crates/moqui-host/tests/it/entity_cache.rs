@@ -21,7 +21,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::driver::{DbDriver, DbRow};
-use moqui_core::entity::cache::{enter_sim, exit_sim, sim_poisoned};
+use moqui_core::entity::cache::{enter_sim, exit_sim, sim_changes, sim_poisoned};
+use moqui_core::entity::sim_step;
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::transaction::{PoolConfig, TransactionManager};
 use moqui_lib::object::Value;
@@ -145,6 +146,93 @@ fn first_enter_sim_starts_the_overlay_and_stop_removes_it() {
     drop(overlay);
     assert!(!sim_dir.exists(), "{} is still there", sim_dir.display());
     drop(main_cluster);
+}
+
+/// Steps of one sim run under savepoints of a held overlay transaction (moqui_core::entity::sim_step): a step whose
+/// transaction rolled back poisons the sim only until its savepoint is rolled back, which undoes its rows and puts back
+/// the session's state, so the steps before and after it stand.
+#[test]
+fn a_rolled_back_sim_step_leaves_the_steps_around_it() {
+    let _lock = crate::common::shared();
+    let main_dir = temp_cluster_dir("simstep");
+    let overlay_dir = temp_cluster_dir("simstep-overlay");
+    let _main_guard = DirGuard(main_dir.clone());
+    let _overlay_guard = DirGuard(overlay_dir.clone());
+    let (main_cluster, main_driver) = EmbeddedCluster::start(&main_dir, 20).unwrap();
+    let (overlay_cluster, overlay_driver) = EmbeddedCluster::start(&overlay_dir, 20).unwrap();
+    let main_driver: Arc<dyn DbDriver> = Arc::new(main_driver);
+    let overlay_driver: Arc<dyn DbDriver> = Arc::new(overlay_driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(&framework, Arc::clone(&main_driver), test_pool()).unwrap();
+    facade.set_sim_transactions(Some(TransactionManager::new(overlay_driver, test_pool()).unwrap()));
+    facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
+    create_test(&facade, "SP0", "production");
+    const TEST: &str = "moqui.test.TestEntity";
+    let medium = |id: &str| find_one(&facade, TEST, "testId", id).map(|row| text(&row, "testMedium"));
+
+    // Without a held transaction there is no savepoint.
+    enter_sim(&facade).unwrap();
+    assert!(sim_step::savepoint(&facade).is_err());
+    let hold = sim_step::hold(&facade).unwrap();
+
+    // Step 1 is kept.
+    let step = sim_step::savepoint(&facade).unwrap();
+    create_test(&facade, "SP1", "one");
+    step.release().unwrap();
+
+    // Step 2 writes in a transaction that rolls back: the sim fails only the step, and its savepoint undoes the
+    // create and the update, in the overlay and in the session.
+    let step = sim_step::savepoint(&facade).unwrap();
+    facade.begin(TEST, None).unwrap();
+    create_test(&facade, "SP2", "two");
+    let mut production = find_one(&facade, TEST, "testId", "SP0").unwrap();
+    production.set("testMedium", Value::string("changed"));
+    production.update(&facade).unwrap();
+    facade.rollback(TEST).unwrap();
+    let reason = sim_poisoned().unwrap();
+    assert!(reason.contains("step"), "{reason}");
+    step.rollback().unwrap();
+    assert_eq!(sim_poisoned(), None);
+    assert_eq!(medium("SP0").as_deref(), Some("production"));
+    assert_eq!(medium("SP1").as_deref(), Some("one"));
+    assert_eq!(medium("SP2"), None);
+    let changed: Vec<String> = sim_changes(&facade)
+        .unwrap()
+        .into_iter()
+        .map(|change| change.key[0].1.clone())
+        .collect();
+    assert_eq!(changed, ["SP1"]);
+
+    // Step 3 runs on what step 1 left: the id step 2 used is free again, and a failed statement inside the step
+    // leaves the held transaction usable.
+    let step = sim_step::savepoint(&facade).unwrap();
+    create_test(&facade, "SP2", "three");
+    let mut again = facade.make_value(TEST).unwrap();
+    again.set("testId", Value::string("SP1"));
+    assert!(again.create(&facade).is_err());
+    step.release().unwrap();
+    assert_eq!(medium("SP2").as_deref(), Some("three"));
+
+    // A step dropped without an end rolls back too.
+    {
+        let _step = sim_step::savepoint(&facade).unwrap();
+        create_test(&facade, "SP4", "four");
+    }
+    assert_eq!(medium("SP4"), None);
+
+    // The held transaction commits at its end, so the sim keeps what the steps left; production never saw it.
+    hold.end().unwrap();
+    assert_eq!(sim_poisoned(), None);
+    assert_eq!(medium("SP1").as_deref(), Some("one"));
+    assert_eq!(medium("SP2").as_deref(), Some("three"));
+    exit_sim(&facade).unwrap();
+    assert_eq!(medium("SP1"), None);
+    assert_eq!(medium("SP2"), None);
+    assert_eq!(medium("SP0").as_deref(), Some("production"));
+
+    drop(facade);
+    drop(main_cluster);
+    drop(overlay_cluster);
 }
 
 /// As Java's copy-on-read for views: a view read in a sim sees the sim's creates, updates and deletes, joined to

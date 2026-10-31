@@ -61,6 +61,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     super::gateway::register(map)?;
     super::ai_task::register(map)?;
     super::remote::register(map)?;
+    super::approval::steps::register(map)?;
     super::skills::services::register(map)
 }
 

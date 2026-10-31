@@ -40,6 +40,7 @@ mod schema;
 mod search_form;
 mod sequence;
 mod share;
+pub mod sim_step;
 mod sim_view;
 mod sql_cache;
 mod value;
