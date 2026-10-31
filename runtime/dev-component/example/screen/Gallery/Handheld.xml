@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Gallery screen for the handheld density and the scan-input element (style guide 7 and 8.2; WH-SCAN and WH-HANDHELD of the
+    Warehouse design): density="handheld" gives 48 px controls, 18 px text, no drawer and a header of the title and the account,
+    over the user's density preference. The first form scans anything (an asset, a lot, a bin or a product, a GS1 code too) and
+    submits at once; the second scans a bin and waits for an explicit Confirm. The resolver is example.ExampleServices
+    resolve#GalleryScan over an inline list: try A-100, B-01-07, DUP-1 (two matches: the chooser), NOPE (no match) and
+    (01)04006381333931(10)LOT-7. The transitions name the scan id a real one would pass on as its operation key. Nothing is
+    written. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Handheld" default-menu-index="18" menu-image="sym_o_barcode_scanner" menu-image-type="icon"
+        density="handheld">
+
+    <!-- each answers its message as JSON (the QuickNote pattern), which the background submit shows -->
+    <transition name="scanned"><actions><script><![CDATA[
+        const text = `Scanned ${itemId_type || '?'} ${itemId || ''} from ${itemId_scanText || ''}, operation ${scanId || '-'}` +
+            ' (gallery demo: nothing is written)'
+        ec.web.sendJsonResponse({messageInfos: [{message: text, type: 'success'}]})
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="putAway"><actions><script><![CDATA[
+        const text = `Put away to ${binId || ''}, operation ${binScanId || '-'} (gallery demo: nothing is written)`
+        ec.web.sendJsonResponse({messageInfos: [{message: text, type: 'success'}]})
+    ]]></script></actions><default-response type="none"/></transition>
+
+    <actions><set field="facilityId" value="ZIRET_WH"/></actions>
+    <widgets>
+        <container-box id="ScanAnythingBox"><box-header title="Scan anything"/><box-body>
+            <form-single name="ScanAnything" transition="scanned" background-submit="true">
+                <field name="itemId"><default-field title="Code">
+                    <scan-input resolver="example.ExampleServices.resolve#GalleryScan" allowed-types="asset,lot,location,product">
+                        <parameter name="facilityId" from="facilityId"/>
+                    </scan-input>
+                </default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box id="PutAwayBox"><box-header title="Put away: scan the bin, then confirm"/><box-body>
+            <form-single name="PutAway" transition="putAway" background-submit="true">
+                <field name="binId"><default-field title="Bin">
+                    <scan-input resolver="example.ExampleServices.resolve#GalleryScan" allowed-types="location" confirm="true"
+                            scan-id-field="binScanId" placeholder="Scan a bin">
+                        <parameter name="facilityId" from="facilityId"/>
+                    </scan-input>
+                </default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

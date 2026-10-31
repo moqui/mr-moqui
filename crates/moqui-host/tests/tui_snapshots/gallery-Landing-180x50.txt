@@ -18,8 +18,8 @@
      Editor              │                          ┌─ Entity Comparison O─┐
      Message             │                          │ 14                   │
      Views               │                          └──────────────────────┘
- ▾ Home                  │                          ┌─ Geo Type ───────────┐
-                         │                          │ 13                   │
+     Handheld            │                          ┌─ Geo Type ───────────┐
+ ▾ Home                  │                          │ 13                   │
                          │                          └──────────────────────┘
                          │ ┌─ Assigned to me ─────────────────────────────────────────────────────────────────────┐ ┌─ Shortcuts ────────────────────────────────────────────────┐
                          │ │ All enumerations                                                                     │ │ New enumeration  Find enumerations  Theme type detail      │

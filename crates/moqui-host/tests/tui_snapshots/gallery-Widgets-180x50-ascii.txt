@@ -18,8 +18,8 @@
      Editor              | | date-time type=time . . . : [09:30_____________]                          date-time type=date-time  : [2026-10-18 09:30__]                           |
      Message             | | date-period . . . . . . . : [___________] - [___________]                 date-find type=date . . . : [___________] - [___________]                  |
      Views               | | range-find  . . . . . . . : [________] - [________]                       text-find . . . . . . . . : [____________________]                         |
- v Home                  | | check (single)  . . . . . : [x] Active                                    check with options  . . . : [ ] Email  [ ] SMS  [ ] Push  [x] ["email"]    |
-                         | | radio . . . . . . . . . . : (*) Task  ( ) Call  ( ) Event                 file  . . . . . . . . . . : [ choose. ]  upload in the browser             |
+     Handheld            | | check (single)  . . . . . : [x] Active                                    check with options  . . . : [ ] Email  [ ] SMS  [ ] Push  [x] ["email"]    |
+ v Home                  | | radio . . . . . . . . . . : (*) Task  ( ) Call  ( ) Event                 file  . . . . . . . . . . : [ choose. ]  upload in the browser             |
                          | | display (label-wrapper) . : A read-only value with a label                display-entity Enumerati. : Screen Theme Type                              |
                          | | password  . . . . . . . . : [______________________________]              Hid . . . . . . . . . . . :                                                |
                          | | < Save >                                                                                                                                             |

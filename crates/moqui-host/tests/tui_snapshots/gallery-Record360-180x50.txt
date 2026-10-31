@@ -18,8 +18,8 @@
      Editor              │ ┌─ Overview ──────────────────────────────────────────────────────────────┐ ┌─ Chatter ────────────────────────────────────────────────────────────────┐
      Message             │ │ User ID . . . . . . . . . : EX_JOHN_DOE                                 │ │ Message  : │                                                             │
      Views               │ │ User name . . . . . . . . : john.doe                                    │ │            │                                                             │
- ▾ Home                  │ │ Full name . . . . . . . . : John Doe                                    │ │ < Post >                                                                 │
-                         │ │ Email . . . . . . . . . . : john.doe@moqui.org                          │ │ ●   Signed in from nowhere yet                                           │
+     Handheld            │ │ Full name . . . . . . . . : John Doe                                    │ │ < Post >                                                                 │
+ ▾ Home                  │ │ Email . . . . . . . . . . : john.doe@moqui.org                          │ │ ●   Signed in from nowhere yet                                           │
                          │ │ Locale  . . . . . . . . . : en_US                                       │ │ ● 2010-02-03  Added to Administrators (full access)                      │
                          │ │ Time zone . . . . . . . . : US/Central                                  │ │ ● Seed data  Note: demo account of the framework                         │
                          │ │ Disabled  . . . . . . . . : N                                           │ └──────────────────────────────────────────────────────────────────────────┘

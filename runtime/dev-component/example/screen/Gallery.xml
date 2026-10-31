@@ -37,6 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
         <subscreens-item name="Editor" menu-title="Editor" menu-index="15" location="component://example/screen/Gallery/Editor.xml"/>
         <subscreens-item name="Message" menu-title="Message" menu-index="16" location="component://example/screen/Gallery/Message.xml"/>
         <subscreens-item name="Views" menu-title="Views" menu-index="17" location="component://example/screen/Gallery/Views.xml"/>
+        <!-- density="handheld" and the scan-input element (style guide 8.2) -->
+        <subscreens-item name="Handheld" menu-title="Handheld" menu-index="18" location="component://example/screen/Gallery/Handheld.xml"/>
         <subscreens-item name="QuickNote" menu-include="false" location="component://example/screen/Gallery/QuickNote.xml"/>
         <subscreens-item name="QuickTask" menu-include="false" location="component://example/screen/Gallery/QuickTask.xml"/>
         <!-- an edit form whose save is refused with validation errors: what Assist's Edit in screen hands to the user -->

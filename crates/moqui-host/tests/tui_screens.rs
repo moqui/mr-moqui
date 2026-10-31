@@ -60,6 +60,7 @@ const GALLERY: &[&str] = &[
     "Chatter",
     "RecordFiles",
     "Search",
+    "Handheld",
 ];
 
 #[test]

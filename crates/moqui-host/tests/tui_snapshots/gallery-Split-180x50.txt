@@ -18,8 +18,8 @@
      Editor              │   Anguilla               AI              └─────────────────────────────────────────────────────┘
      Message             │   Antarctica             AQ
      Views               │   Antigua And Barbuda    AG
- ▾ Home                  │   Argentina              AR
-                         │   Armenia                AM
+     Handheld            │   Argentina              AR
+ ▾ Home                  │   Armenia                AM
                          │   Aruba                  AW
                          │   Australia              AU
                          │   Austria                AT

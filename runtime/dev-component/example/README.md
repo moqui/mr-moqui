@@ -34,6 +34,7 @@ out with an error line, so the gallery works and the rust services and tool do n
 | `data/ExampleSecurityData.xml` | Seed authorization: the gallery for the ADMIN group. |
 | `entity/ExampleEntities.xml`, `data/ExampleDemoData.xml` | `moqui.example.Example` (a type, a status flow, a size, a start and end) with seed and demo data, for the gallery's `Views` screen: one form-list as a board, a calendar and a tree. |
 | `test/Gallery.spec.js` | Renders every gallery screen in its render mode through `ec.screen.makeTest()` (`./moq test example`). |
+| `test/client/HandheldScan.spec.js` | The Handheld screen (`density="handheld"`, `scan-input` over `resolve#GalleryScan`) at 390 px: the density over the compact preference, one match, the chooser, no match, and Confirm (`moqui test-client example --serve --spec HandheldScan`). |
 | `test/client/GallerySmoke.spec.js` | Loads each gallery screen in the `/qapps` shell at 1280 with a clean console and no render error (`moqui test-client example --serve --spec GallerySmoke`). |
 
 ## Rust in your own component
