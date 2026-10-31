@@ -19,5 +19,6 @@ An app adds to these screens without copying them: it mounts them under its own 
 IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms_app_root` to `/qapps/Comms`.
 
 Test: `./moq test basic-comms`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
-`rtc` feature (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); recordings, Calls/Recordings:
+`rtc` feature (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
+[docs/interfaces/Voicemail.md](../../../docs/interfaces/Voicemail.md); recordings, Calls/Recordings:
 [docs/interfaces/Call-Recording.md](../../../docs/interfaces/Call-Recording.md)).

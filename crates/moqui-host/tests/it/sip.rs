@@ -366,3 +366,177 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
     assert_eq!(status_of(&state).as_deref(), Some("ended"));
     let _ = john;
 }
+
+/// Voicemail (V2) on a real server: the trunk calls john, who is in another call, so the call goes straight to his box.
+/// The engine answers it, plays the greeting and the beep, records what the caller says until `#`, says goodbye and hangs
+/// up; the message is stored as Ogg Opus in john's inbox, and john missed the call.
+#[test]
+fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let trunk = Trunk::new();
+    let gate = crate::common::start_with_properties(
+        "sip-voicemail",
+        None,
+        &[
+            ("rtc_media_port", "0"),
+            ("sip_port", "0"),
+            ("sip_rtp_ports", "42400-42499"),
+        ],
+    );
+    let sip_at = gate.server.sip_address().expect("the SIP listener is up");
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
+            if up("sipNodeList") && up("mediaNodeList") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let trunk_id = text(
+            &call(
+                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                &[
+                    ("name", Value::string("Fake trunk")),
+                    ("host", Value::string("127.0.0.1")),
+                    ("port", Value::I32(i32::from(trunk.addr().port()))),
+                    ("transportEnumId", Value::string("VtrUdp")),
+                    ("mediaEncryptionEnumId", Value::string("VmePlain")),
+                    ("providerProfileEnumId", Value::string("VppPlainLan")),
+                    ("username", Value::string("acct")),
+                    ("password", Value::string("pw-of-acct")),
+                    ("registerFlag", Value::string("Y")),
+                ],
+            ),
+            "voiceTrunkId",
+        );
+        let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
+        call(
+            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            &[
+                ("phoneNumber", Value::string(NUMBER)),
+                ("voiceTrunkId", Value::string(&trunk_id)),
+                ("routeTypeEnumId", Value::string("PnrUser")),
+                ("routeId", Value::string(&john)),
+            ],
+        );
+        // john is in another call
+        call(
+            "store#moqui.security.UserStatus",
+            &[("userId", Value::string(&john)), ("inCall", Value::string("Y"))],
+        );
+    }
+    let (register, from) = trunk.request("REGISTER");
+    let contact = values(&register.headers, "Contact")[0].clone();
+    trunk.reply(&register, from, 200, &format!("Contact: {contact};expires=300\r\n"), "");
+
+    let started = Instant::now();
+    let phone_local = trunk.local_media();
+    let offer = sdp::offer(&phone_local);
+    let invite = format!(
+        "INVITE sip:{NUMBER}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-vm1\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=vm1\r\nTo: <sip:{NUMBER}@{sip_at}>\r\nCall-ID: vm-call-1\r\nCSeq: 1 INVITE\r\n\
+         Contact: <sip:trunk@{}>\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{offer}",
+        trunk.addr(),
+        trunk.addr(),
+        offer.len()
+    );
+    trunk.send(&invite, sip_at);
+    // no ringing for a busy user: the engine answers for voicemail
+    let ok = trunk.response(200);
+    let settled = sdp::accept(&phone_local, &sdp::parse(&String::from_utf8_lossy(&ok.body)).unwrap()).unwrap();
+    let to = ok.to_header().unwrap().value().to_string();
+    let ack = format!(
+        "ACK sip:{NUMBER}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-vmack\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=vm1\r\nTo: {to}\r\nCall-ID: vm-call-1\r\nCSeq: 1 ACK\r\nContent-Length: 0\r\n\r\n",
+        trunk.addr()
+    );
+    trunk.send(&ack, sip_at);
+    let mut phone = PhoneMedia::new(&settled).unwrap();
+
+    // the caller talks over the greeting and the beep (1.4 s) and after it, then presses #
+    let mut buf = vec![0u8; 2048];
+    let mut heard = 0;
+    let mut tick = 0;
+    let mut next = Instant::now();
+    let hash_at = Instant::now() + Duration::from_millis(3000);
+    let until = Instant::now() + Duration::from_millis(3600);
+    let mut pressed = false;
+    while Instant::now() < until {
+        if Instant::now() >= next {
+            next += Duration::from_millis(20);
+            if !pressed && Instant::now() >= hash_at {
+                phone.send_digits("#");
+                pressed = true;
+            }
+            if let Some(packet) = phone.send(&tone(tick)) {
+                trunk.rtp.send_to(&packet, phone.remote()).unwrap();
+            }
+            tick += 1;
+        }
+        while let Ok((len, from)) = trunk.rtp.recv_from(&mut buf) {
+            phone.receive(from, &buf[..len]);
+            heard += 1;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        heard >= 50,
+        "the caller hears the greeting and the beep: {heard} packets"
+    );
+    // goodbye, then the engine hangs up
+    let (bye, from) = trunk.request("BYE");
+    trunk.reply(&bye, from, 200, "", "");
+
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    let voicemail = loop {
+        let found = call("org.moqui.impl.VoicemailServices.find#Voicemails", &[]);
+        if let Some(Value::List(list)) = found.get("voicemailList") {
+            if let Some(Value::Map(first)) = list.first() {
+                break first.clone();
+            }
+        }
+        assert!(Instant::now() < until, "the voicemail is stored: {found:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let duration: u64 = voicemail
+        .get("durationMs")
+        .map(to_plain_string)
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or(0);
+    assert!(
+        (1000..=2600).contains(&duration),
+        "about 1.6 s recorded after the beep: {duration} ms"
+    );
+    assert_eq!(
+        voicemail.get("fromNumber").map(to_plain_string).as_deref(),
+        Some(OUTSIDE)
+    );
+    let voicemail_id = voicemail.get("voicemailId").map(to_plain_string).unwrap_or_default();
+    let file = call(
+        "org.moqui.impl.VoicemailServices.get#VoicemailAudio",
+        &[("voicemailId", Value::string(&voicemail_id))],
+    );
+    let _authz =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    let bytes = factory
+        .resource()
+        .location_bytes(&text(&file, "location"))
+        .unwrap()
+        .expect("the audio is stored");
+    assert!(bytes.starts_with(b"OggS"), "Ogg Opus");
+    let missed = call("org.moqui.impl.CallServices.count#MissedCalls", &[]);
+    assert_eq!(text(&missed, "missedCount"), "1", "john missed the call");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+}

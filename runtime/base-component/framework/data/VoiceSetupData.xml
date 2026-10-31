@@ -44,6 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration description="A ring group" enumId="PnrRingGroup" enumCode="ringGroup" enumTypeId="PhoneNumberRoute" sequenceNum="2"/>
     <moqui.basic.Enumeration description="An IVR menu" enumId="PnrIvr" enumCode="ivr" enumTypeId="PhoneNumberRoute" sequenceNum="3"/>
     <moqui.basic.Enumeration description="A queue" enumId="PnrQueue" enumCode="queue" enumTypeId="PhoneNumberRoute" sequenceNum="4"/>
+    <moqui.basic.Enumeration description="Voicemail access (V2): a caller enters their box number and PIN" enumId="PnrVoicemail" enumCode="voicemail" enumTypeId="PhoneNumberRoute" sequenceNum="5"/>
 
     <moqui.basic.StatusType description="Emergency Location Validation" statusTypeId="EmergencyLocationValidation"/>
     <moqui.basic.StatusItem statusId="ElvUnvalidated" statusTypeId="EmergencyLocationValidation" sequenceNum="1" description="Not validated"/>

@@ -171,4 +171,84 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="startedDate" type="date-time"/>
         <field name="heartbeatDate" type="date-time"/>
     </entity>
+
+    <!-- ========== V2: voicemail (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/Voicemail.md) ========== -->
+
+    <entity entity-name="VoicemailBox" package="moqui.call" use="transactional" cache="never">
+        <description>A user's voicemail box, made the first time a call to them goes to voicemail or they open its settings
+            (a ring group's box, ringGroupId, comes with V3 and is shared by its members). pinHash is the PIN for phone access
+            (argon2, salted; empty: no phone access). greetingLocation is the user's own greeting, under
+            dbresource://moqui/call/voicemail/greeting/ (empty: the default greeting). notifyEmail: an address told of each new
+            voicemail, with a link to it; attachAudio and attachTranscript put the audio and the transcript in that message
+            (off by default: mail cannot be recalled). rings: how many rings (6 seconds each) before a call goes to
+            voicemail (empty: call_ring_seconds). The pin* fields are the box's failed PIN entries over the phone: past the
+            limit the box refuses PINs until pinBlockedUntil, whatever source tries.</description>
+        <field name="voicemailBoxId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="ringGroupId" type="id"><description>A plain id until V3 adds RingGroup</description></field>
+        <field name="pinHash" type="text-medium"/>
+        <field name="pinChangedDate" type="date-time"/>
+        <field name="greetingLocation" type="text-medium"/>
+        <field name="greetingContentType" type="text-short"/>
+        <field name="greetingDurationMs" type="number-integer"/>
+        <field name="notifyEmail" type="text-medium"/>
+        <field name="attachAudio" type="text-indicator" default="'N'"/>
+        <field name="attachTranscript" type="text-indicator" default="'N'"/>
+        <field name="rings" type="number-integer"/>
+        <field name="pinFailureCount" type="number-integer"/>
+        <field name="pinFailureDate" type="date-time"/>
+        <field name="pinBlockedUntil" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="VOICEMAIL_BOX_USER" unique="true"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="Voicemail" package="moqui.call" use="transactional" cache="never">
+        <description>A message left in a box: the call it came on, the caller's number, when, how long, and the audio (Ogg
+            Opus under dbresource://moqui/call/voicemail/, read only through VoicemailServices get#VoicemailAudio by the
+            box's owner). heardDate is empty until it is played or marked heard (a ring group's box shares it among its
+            members). folder: inbox or trash; trash is emptied after voicemail_trash_days (the audio and its transcripts go
+            too). statusId: VmsStored, or VmsAudioFailed when the audio could not be stored (the message is kept so its
+            owner knows of it). The transcript is a CallTranscript with this voicemailId.</description>
+        <field name="voicemailId" type="id" is-pk="true"/>
+        <field name="voicemailBoxId" type="id"/>
+        <field name="callSessionId" type="id"/>
+        <field name="fromNumber" type="text-short"/>
+        <field name="fromName" type="text-medium"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="audioLocation" type="text-medium"/>
+        <field name="byteSize" type="number-integer"/>
+        <field name="heardDate" type="date-time"/>
+        <field name="folder" type="text-short"/>
+        <field name="trashedDate" type="date-time"/>
+        <field name="noticeSentDate" type="date-time"><description>When the email notice went (sent once)</description></field>
+        <field name="statusId" type="id"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one" related="moqui.call.VoicemailBox" short-alias="box"/>
+        <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one" title="Voicemail" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <index name="VOICEMAIL_BOX_FOLDER"><index-field name="voicemailBoxId"/><index-field name="folder"/>
+            <index-field name="receivedDate"/></index>
+        <index name="VOICEMAIL_TRASHED"><index-field name="folder"/><index-field name="trashedDate"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Voicemail" statusTypeId="Voicemail"/>
+            <moqui.basic.StatusItem statusId="VmsStored" statusTypeId="Voicemail" sequenceNum="1" description="Stored"/>
+            <moqui.basic.StatusItem statusId="VmsAudioFailed" statusTypeId="Voicemail" sequenceNum="2" description="Audio not stored"/>
+            <moqui.security.user.NotificationTopic topic="Voicemail" inboxEnumId="NinUpdates" description="New voicemail"
+                    typeString="info" showAlert="Y" persistOnSend="Y"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="VoicemailPinFailure" package="moqui.call" use="transactional" cache="never">
+        <description>Failed voicemail PIN entries over the phone from one source (the caller's number, which a caller can
+            fake, so the box's own count in VoicemailBox is the real limit), and its block. A box number that has no box is
+            counted here too, under its key, so a refusal never tells whether a box exists.</description>
+        <field name="failureKey" type="text-medium" is-pk="true"/>
+        <field name="failureCount" type="number-integer"/>
+        <field name="firstFailureDate" type="date-time"/>
+        <field name="lastFailureDate" type="date-time"/>
+        <field name="blockedUntilDate" type="date-time"/>
+    </entity>
+    <!-- ========== end V2 ========== -->
 </entities>

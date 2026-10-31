@@ -369,16 +369,22 @@ function receive(p) {
   const to = toE164(p.toNumber, pol.homeCountryCode)
   const number = to ? one(NUMBER, { phoneNumber: to }) : null
   if (!number || (p.voiceTrunkId && number.voiceTrunkId && number.voiceTrunkId !== p.voiceTrunkId)) return { reasonCode: 'notFound' }
-  if (number.routeTypeEnumId !== 'PnrUser' || blank(number.routeId)) return { reasonCode: 'notFound' }
-  const account = one('moqui.security.UserAccount', { userId: number.routeId })
-  if (!account || account.disabled === 'Y') return { reasonCode: 'notFound' }
+  // the voicemail access number (V2): the caller gives a box number and its PIN
+  const access = number.routeTypeEnumId === 'PnrVoicemail'
+  if (!access && (number.routeTypeEnumId !== 'PnrUser' || blank(number.routeId))) return { reasonCode: 'notFound' }
+  const account = access ? null : one('moqui.security.UserAccount', { userId: number.routeId })
+  if (!access && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
   if (!voiceNodes().some((n) => n.instanceId === p.instanceId)) return { reasonCode: 'voiceUnavailable' }
   if (countPhoneCalls({}) >= pol.maxConcurrentCalls) return { reasonCode: 'busy' }
   const from = toE164(p.fromNumber, pol.homeCountryCode) || cleanNumber(p.fromNumber) || ec.l10n.localize('Unknown number')
   const name = blank(p.fromName) || p.fromName === from ? from : String(p.fromName).slice(0, 60) + ' (' + from + ')'
-  const started = calls('startPhone', { userId: number.routeId, direction: 'inbound', phoneNumber: from, displayName: name,
-    mediaNodeId: p.instanceId })
-  return { callSessionId: started.callSessionId, callLegId: started.phoneLegId }
+  // V2: a busy user's caller goes straight to voicemail; otherwise the engine sends it there after the box's rings
+  const routing = access ? {} : (ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailRouting')
+    .parameter('userId', number.routeId).disableAuthz().call() || {})
+  const started = calls('startPhone', { userId: access ? null : number.routeId, direction: 'inbound', phoneNumber: from,
+    displayName: name, mediaNodeId: p.instanceId, silent: !!routing.busy, ringExpireSeconds: routing.ringExpireSeconds || null })
+  return { callSessionId: started.callSessionId, callLegId: started.phoneLegId,
+    voicemail: access ? 'access' : routing.busy ? 'busy' : null, voicemailSeconds: routing.voicemailSeconds || null }
 }
 
 function noteLeg(p) {
@@ -724,8 +730,12 @@ function storeNumber(p) {
   if (!phoneNumber) return refuse('badNumber', 'That is not a phone number')
   if (!blank(p.voiceTrunkId) && !one(TRUNK, { voiceTrunkId: p.voiceTrunkId })) return refuse('notFound', 'Trunk not found')
   const routeTypeEnumId = blank(p.routeTypeEnumId) ? 'PnrUser' : p.routeTypeEnumId
-  if (routeTypeEnumId !== 'PnrUser') return refuse('notSupported', 'A number rings a user for now')
-  if (!blank(p.routeId) && !one('moqui.security.UserAccount', { userId: p.routeId })) return refuse('notFound', 'User not found')
+  if (routeTypeEnumId !== 'PnrUser' && routeTypeEnumId !== 'PnrVoicemail') {
+    return refuse('notSupported', 'A number rings a user, or is the voicemail access number, for now')
+  }
+  if (routeTypeEnumId === 'PnrUser' && !blank(p.routeId) && !one('moqui.security.UserAccount', { userId: p.routeId })) {
+    return refuse('notFound', 'User not found')
+  }
   if (!blank(p.emergencyLocationId) && !one(LOCATION, { emergencyLocationId: p.emergencyLocationId })) return refuse('notFound', 'Emergency location not found')
   const fields = { voiceTrunkId: p.voiceTrunkId || null, routeTypeEnumId, routeId: p.routeId || null,
     emergencyLocationId: p.emergencyLocationId || null, description: p.description || null }

@@ -216,6 +216,20 @@
     <default-property name="sip_request_burst" value="100"/>
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
+    <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
+        box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
+        voicemail_max_seconds: the longest message (10 to 600). voicemail_prompt_location: a folder (any resource location)
+        with the recorded speech played after the prompts' tones: greeting.wav (the default greeting), enter-box.wav,
+        enter-pin.wav, pin-refused.wav, menu.wav, no-messages.wav, goodbye.wav (16-bit PCM WAV); empty plays tones only.
+        voicemail_trash_days: messages in a trash are deleted after this many days (0 keeps them).
+        voicemail_transcribe: true sends each message to the speech provider (the model bound to transcribe) for a
+        transcript; off by default, as the deployment's recording and transcription policy decides it.
+        voicemail_transcribe_language: an ISO 639-1 code, empty to let the model tell. -->
+    <default-property name="voicemail_max_seconds" value="120"/>
+    <default-property name="voicemail_prompt_location" value=""/>
+    <default-property name="voicemail_trash_days" value="30"/>
+    <default-property name="voicemail_transcribe" value="false"/>
+    <default-property name="voicemail_transcribe_language" value=""/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>

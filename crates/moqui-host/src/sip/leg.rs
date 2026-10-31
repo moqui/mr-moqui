@@ -22,6 +22,9 @@
 //!   leg, other phone legs included) goes back to the phone, resampled to 8 kHz and encoded, or as RFC 4733 events
 //!   while digits are sent. A prompt ([`Prompt`]) is mixed in over it.
 //!
+//! - **Voicemail** (V2, `voicemail.rs`): a prompt played in place of the rest ([`LegCommand::Play`], told when it ends),
+//!   and the phone's decoded audio written as Ogg Opus while a recording goes ([`LegCommand::Record`]).
+//!
 //! None of this needs a browser in the room. The thread ends when the leg is stopped, when the room closes (the call
 //! ended) or when the media node drops the leg; the last two are reported, so the SIP side hangs up.
 
@@ -36,6 +39,8 @@ use moqui_rtc::audio::room::AudioRoom;
 use moqui_rtc::audio::{saturate, FRAME};
 use moqui_sip::media::{PhoneMedia, Received};
 use moqui_sip::sdp::Negotiated;
+
+use super::voicemail::{RecordPlan, Recorded, Recording};
 
 use crate::rtc::media::{self, Consumer, Kinds, PcmSource};
 
@@ -62,6 +67,14 @@ pub(crate) enum LegCommand {
     Settled(Box<Negotiated>),
     Digits(String),
     Prompt(Prompt),
+    /// Voicemail (V2, `voicemail.rs`): play this in place of any prompt, and say `Played` with its tag when it ends.
+    Play {
+        tag: u32,
+        prompt: Prompt,
+    },
+    /// Voicemail: record the phone's audio from now (`Recorded` when it ends).
+    Record(Box<RecordPlan>),
+    StopRecording,
     Stop,
 }
 
@@ -75,6 +88,16 @@ pub(crate) enum LegNote {
     Digit {
         leg: String,
         digit: char,
+    },
+    /// A voicemail prompt ([`LegCommand::Play`]) played to its end.
+    Played {
+        leg: String,
+        tag: u32,
+    },
+    /// A voicemail recording ended: stopped, full, failed, or the leg ended.
+    Recorded {
+        leg: String,
+        recorded: Box<Recorded>,
     },
 }
 
@@ -166,6 +189,8 @@ impl LegMedia {
             room: AudioRoom::new(Default::default()),
             prompt: Vec::new(),
             prompt_at: 0,
+            play_tag: None,
+            recording: None,
             notes,
         };
         let thread = std::thread::Builder::new()
@@ -201,6 +226,10 @@ struct Worker {
     room: AudioRoom,
     prompt: Vec<i16>,
     prompt_at: usize,
+    /// The tag of the voicemail prompt playing, told when it ends.
+    play_tag: Option<u32>,
+    /// A voicemail being recorded.
+    recording: Option<Recording>,
     notes: tokio::sync::mpsc::UnboundedSender<LegNote>,
 }
 
@@ -251,18 +280,43 @@ impl Worker {
             let mut out = mixer.minus(&self.leg).to_vec();
             out.resize(FRAME, 0);
             self.mix_prompt(&mut out);
+            if let Some(tag) = self.play_tag.filter(|_| self.prompt_at >= self.prompt.len()) {
+                self.play_tag = None;
+                let _ = self.notes.send(LegNote::Played {
+                    leg: self.leg.clone(),
+                    tag,
+                });
+            }
             let Some(media) = self.media.as_mut() else { continue };
             if let Some(packet) = media.send(&out) {
                 if let Err(err) = self.socket.send_to(&packet, media.remote()) {
                     tracing::debug!("SIP leg {}: RTP not sent: {err}", self.leg);
                 }
             }
-            if media.pull(&mut pcm) {
+            let pulled = media.pull(&mut pcm);
+            // a voicemail records every tick, a missing packet as silence, so its length is the call's time
+            if let Some(recording) = self.recording.as_mut() {
+                let frame: &[i16] = if pulled { &pcm } else { &[0; FRAME] };
+                if !recording.push(frame) {
+                    self.end_recording();
+                }
+            }
+            if pulled {
                 if let Err("closed") = self.source.push(&pcm) {
                     self.gone();
                     return;
                 }
             }
+        }
+    }
+
+    /// Ends the voicemail recording, if one is going, and reports it.
+    fn end_recording(&mut self) {
+        if let Some(recording) = self.recording.take() {
+            let _ = self.notes.send(LegNote::Recorded {
+                leg: self.leg.clone(),
+                recorded: Box::new(recording.finish()),
+            });
         }
     }
 
@@ -281,6 +335,24 @@ impl Worker {
                 }
             }
             LegCommand::Prompt(prompt) => queue_prompt(&mut self.prompt, &mut self.prompt_at, &prompt.0),
+            LegCommand::Play { tag, prompt } => {
+                self.prompt = prompt.0.to_vec();
+                self.prompt_at = 0;
+                self.play_tag = Some(tag);
+            }
+            LegCommand::Record(plan) => {
+                self.end_recording();
+                match Recording::start(plan) {
+                    Ok(recording) => self.recording = Some(recording),
+                    Err(recorded) => {
+                        let _ = self.notes.send(LegNote::Recorded {
+                            leg: self.leg.clone(),
+                            recorded: Box::new(recorded),
+                        });
+                    }
+                }
+            }
+            LegCommand::StopRecording => self.end_recording(),
             LegCommand::Stop => {}
         }
     }
@@ -298,6 +370,13 @@ impl Worker {
 
     fn gone(&self) {
         let _ = self.notes.send(LegNote::Gone { leg: self.leg.clone() });
+    }
+}
+
+impl Drop for Worker {
+    /// A leg that ends while a voicemail records (the caller hung up) keeps what was said.
+    fn drop(&mut self) {
+        self.end_recording();
     }
 }
 

@@ -1,0 +1,232 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Settings, Phone (plans/Comms-Framework.md §5.5, V2), the component Phone.xml serves in the qvue render mode. My numbers;
+    then Voicemail: the greeting (Record with the microphone through MediaRecorder, then the browser decodes what it recorded
+    and sends it as a 48 kHz mono WAV, which the server keeps as Ogg Opus; or Upload a WAV or Ogg Opus file; Play; Use the
+    default), the PIN (set or change, remove) with how to reach the box by phone, the email notice (the audio and the
+    transcript in it each off unless turned on, with the warning that mail cannot be recalled), and the rings before
+    voicemail. -->
+<template><div class="m-phone-settings q-pa-sm column q-gutter-md" style="max-width:760px">
+    <div class="text-h6">{{t('Phone')}}</div>
+    <q-banner v-if="loaded && !phoneSupported" dense rounded class="m-tonal">{{t('Phone calls are not built into this server; these settings take effect where they are.')}}</q-banner>
+    <q-card flat bordered>
+        <q-card-section>
+            <div class="text-subtitle1">{{t('My numbers')}}</div>
+            <div v-if="myNumbers.length">{{myNumbers.join(', ')}}</div>
+            <div v-else class="m-muted">{{t('No number rings you yet; an administrator can give you one.')}}</div>
+        </q-card-section>
+    </q-card>
+
+    <div class="text-subtitle1 q-mt-md">{{t('Voicemail')}}</div>
+    <q-card flat bordered>
+        <q-card-section>
+            <div class="text-subtitle2">{{t('Greeting')}}</div>
+            <div class="m-muted q-mb-sm">{{box.hasGreeting ? t('Callers hear your own greeting, then a beep.') : t('Callers hear the default greeting, then a beep.')}}</div>
+            <audio v-if="box.hasGreeting" controls preload="none" style="width:100%" :src="greetingUrl"></audio>
+            <div class="row q-gutter-sm items-center q-mt-sm">
+                <q-btn v-if="!recording" unelevated no-caps color="primary" icon="sym_o_mic" :label="t('Record')" :disable="busy" @click="startRecording"></q-btn>
+                <q-btn v-else unelevated no-caps color="negative" icon="sym_o_stop" :label="t('Stop') + ' (' + recordSeconds + ' s)'" @click="stopRecording"></q-btn>
+                <q-btn flat no-caps icon="sym_o_upload" :label="t('Upload a file')" :disable="busy || recording" @click="$refs.file.click()"></q-btn>
+                <input ref="file" type="file" accept=".wav,.ogg,.opus,audio/wav,audio/ogg" style="display:none" @change="fileChosen">
+                <q-btn v-if="box.hasGreeting" flat no-caps icon="sym_o_delete" :label="t('Use the default greeting')" :disable="busy" @click="deleteGreeting"></q-btn>
+            </div>
+            <div class="text-caption m-muted q-mt-xs">{{t('A WAV or Ogg Opus file of up to a minute.')}}</div>
+        </q-card-section>
+        <q-separator></q-separator>
+        <q-card-section>
+            <div class="text-subtitle2">{{t('PIN')}}</div>
+            <div class="m-muted q-mb-sm">
+                <span v-if="box.hasPin">{{t('Call your own number and press * during your greeting, then your PIN and #.')}}
+                    <span v-if="accessNumbers.length">{{t('Or call')}} {{accessNumbers.join(', ')}}, {{t('enter your number and #, then your PIN and #.')}}</span>
+                    {{t('Then 7 deletes a message, 9 saves it, # skips to the next.')}}</span>
+                <span v-else>{{t('Set a PIN to listen to your voicemail by phone.')}}</span>
+            </div>
+            <div class="row q-gutter-sm items-center">
+                <q-input v-model="pin" dense outlined type="password" inputmode="numeric" autocomplete="new-password" maxlength="12"
+                    :label="box.hasPin ? t('New PIN') : t('PIN (4 to 12 digits)')" style="width:200px"></q-input>
+                <q-btn unelevated no-caps color="primary" :label="box.hasPin ? t('Change PIN') : t('Set PIN')" :disable="!pin" @click="savePin"></q-btn>
+                <q-btn v-if="box.hasPin" flat no-caps icon="sym_o_lock_open" :label="t('Remove the PIN')" @click="clearPin"></q-btn>
+            </div>
+        </q-card-section>
+        <q-separator></q-separator>
+        <q-card-section>
+            <div class="text-subtitle2">{{t('Notices')}}</div>
+            <div class="m-muted q-mb-sm">{{t('You are told of each new voicemail here and on your devices. An email is optional.')}}</div>
+            <q-input v-model="form.notifyEmail" dense outlined type="email" :label="t('Email me at')" style="max-width:400px"></q-input>
+            <q-toggle v-model="form.attachAudio" :disable="!form.notifyEmail" :label="t('Attach the audio')"></q-toggle>
+            <q-toggle v-model="form.attachTranscript" :disable="!form.notifyEmail" :label="t('Put the transcript in it')"></q-toggle>
+            <div v-if="form.attachAudio || form.attachTranscript" class="text-caption text-warning">
+                {{t('Email cannot be recalled: what you attach stays in that mailbox, wherever it is kept.')}}</div>
+            <div v-if="form.attachTranscript && !transcribeOn" class="text-caption m-muted">{{t('Transcription is off here, so there is no transcript to send.')}}</div>
+            <div class="text-subtitle2 q-mt-md">{{t('Rings before voicemail')}}</div>
+            <q-select v-model="form.rings" dense outlined emit-value map-options :options="ringOptions" style="max-width:260px"></q-select>
+            <q-btn class="q-mt-md" unelevated no-caps color="primary" :label="t('Save')" @click="saveSettings"></q-btn>
+        </q-card-section>
+    </q-card>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+/** The longest greeting recorded here. */
+const MAX_RECORD_SECONDS = 60;
+/** The rate the recorded greeting is sent at. */
+const RATE = 48000;
+
+/** 48 kHz mono 16-bit PCM samples (a Float32Array) as a WAV file. */
+function wavBlob(samples) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    const text = (at, s) => { for (let i = 0; i < s.length; i++) view.setUint8(at + i, s.charCodeAt(i)); };
+    text(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE');
+    text(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, RATE, true); view.setUint32(28, RATE * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    text(36, 'data'); view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 0x7fff, true);
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+
+module.exports = {
+    name: 'PhoneSettings',
+    data() {
+        return { loaded: false, box: {}, myNumbers: [], accessNumbers: [], ringSeconds: 45, ringSecondsEach: 6, maxRings: 10,
+            transcribeOn: false, phoneSupported: true, form: { notifyEmail: '', attachAudio: false, attachTranscript: false, rings: '' },
+            pin: '', recording: false, recordSeconds: 0, busy: false, stamp: Date.now() };
+    },
+    computed: {
+        ringOptions() {
+            const list = [{ value: '', label: t('Default') + ' (' + this.ringSeconds + ' s)' }];
+            for (let n = 1; n <= this.maxRings; n++) list.push({ value: String(n), label: n + ' (' + n * this.ringSecondsEach + ' s)' });
+            return list;
+        },
+        greetingUrl() { return this.url('greeting') + '?v=' + this.stamp; }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { this.release(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Phone']).join('/') + '/' + name; },
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        apply(box) {
+            if (!box) return;
+            this.box = box;
+            this.form = { notifyEmail: box.notifyEmail || '', attachAudio: !!box.attachAudio, attachTranscript: !!box.attachTranscript,
+                rings: box.rings ? String(box.rings) : '' };
+            this.stamp = Date.now();
+        },
+        load() {
+            return this.request('settings').then((json) => {
+                this.apply(json.box || {});
+                this.myNumbers = json.myNumberList || [];
+                this.accessNumbers = json.accessNumberList || [];
+                this.ringSeconds = json.ringSeconds; this.ringSecondsEach = json.ringSecondsEach; this.maxRings = json.maxRings;
+                this.transcribeOn = !!json.transcribeOn;
+                this.phoneSupported = !!json.phoneSupported;
+                this.loaded = true;
+            }, () => { this.loaded = true; });
+        },
+        saveSettings() {
+            this.request('saveSettings', { notifyEmail: this.form.notifyEmail || '', attachAudio: String(!!this.form.attachAudio),
+                attachTranscript: String(!!this.form.attachTranscript), rings: this.form.rings || '' }, 'POST').then((json) => {
+                if (json.errors) return;
+                this.apply(json.box);
+                if (json.warning) moqui.notifyMessages([{ message: json.warning, type: 'warning' }]);
+                else moqui.notifyMessages(t('Voicemail settings saved'));
+            }, () => null);
+        },
+        savePin() {
+            this.request('setPin', { pin: this.pin }, 'POST').then((json) => {
+                this.pin = '';
+                if (!json.errors) { this.apply(json.box); moqui.notifyMessages(t('PIN saved')); }
+            }, () => null);
+        },
+        clearPin() {
+            this.$q.dialog({ title: t('Remove the PIN?'), message: t('Your voicemail can no longer be reached by phone.'),
+                ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.request('setPin', { clear: 'true' }, 'POST').then((json) => this.apply(json.box), () => null));
+        },
+        deleteGreeting() {
+            this.request('deleteGreeting', {}, 'POST').then((json) => this.apply(json.box), () => null);
+        },
+        upload(blob, name) {
+            const body = new FormData();
+            body.append('file', blob, name);
+            this.busy = true;
+            return moqui.request(this.url('uploadGreeting'), { method: 'POST', params: body }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                else { this.apply(json.box); moqui.notifyMessages(t('Greeting saved')); }
+            }, (err) => moqui.handleAjaxError(err)).finally(() => { this.busy = false; });
+        },
+        fileChosen(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (file) this.upload(file, file.name);
+        },
+        startRecording() {
+            if (!navigator.mediaDevices || !window.MediaRecorder) { moqui.notifyMessages(null, t('This browser cannot record audio')); return; }
+            navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+                this.stream = stream;
+                this.chunks = [];
+                this.recorder = new MediaRecorder(stream);
+                this.recorder.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+                this.recorder.onstop = () => this.recorded();
+                this.recorder.start();
+                this.recording = true;
+                this.recordSeconds = 0;
+                this.timer = setInterval(() => {
+                    this.recordSeconds += 1;
+                    if (this.recordSeconds >= MAX_RECORD_SECONDS) this.stopRecording();
+                }, 1000);
+            }, () => moqui.notifyMessages(null, t('The microphone is not available')));
+        },
+        stopRecording() {
+            clearInterval(this.timer);
+            this.recording = false;
+            if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
+        },
+        release() {
+            clearInterval(this.timer);
+            if (this.stream) this.stream.getTracks().forEach((track) => track.stop());
+            this.stream = null;
+        },
+        // what MediaRecorder made (WebM or Ogg, by browser) decoded here and sent as WAV, which every browser can make
+        recorded() {
+            const blob = new Blob(this.chunks || [], { type: (this.recorder && this.recorder.mimeType) || 'audio/webm' });
+            this.release();
+            this.busy = true;
+            blob.arrayBuffer().then((bytes) => {
+                const context = new (window.AudioContext || window.webkitAudioContext)();
+                return context.decodeAudioData(bytes).finally(() => context.close());
+            }).then((decoded) => {
+                const length = Math.ceil(decoded.duration * RATE);
+                const offline = new OfflineAudioContext(1, Math.max(length, 1), RATE);
+                const source = offline.createBufferSource();
+                source.buffer = decoded;
+                source.connect(offline.destination);
+                source.start();
+                return offline.startRendering();
+            }).then((rendered) => this.upload(wavBlob(rendered.getChannelData(0)), 'greeting.wav'), () => {
+                this.busy = false;
+                moqui.notifyMessages(null, t('The recording could not be read'));
+            });
+        }
+    }
+};
+</script>

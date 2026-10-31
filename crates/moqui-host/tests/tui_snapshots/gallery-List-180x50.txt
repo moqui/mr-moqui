@@ -34,7 +34,7 @@
                          │   [ ] ErmAny                       Any condition                   Email Rule Match                      Ordered           2          <today> hh:mm
                          │   [ ] CrvUsers                     Any user may read and join      Chat Room Visibility                  Ordered users     2          <today> hh:mm
                          │   [ ] OctApple                     Apple                           OpenID Connect Client Type            Plain                        <today> hh:mm
-                         │   Rows 1–20 of 381 · Page 1/20
+                         │   Rows 1–20 of 382 · Page 1/20
                          │ Back to the Landing
                          │
                          │

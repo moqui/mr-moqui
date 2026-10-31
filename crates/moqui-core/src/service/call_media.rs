@@ -20,7 +20,8 @@
 //! goes the same way to a node's SIP engine (moqui-host's sip module), with kind `sip`.
 //!
 //! `org.moqui.impl.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
-//! recordings' `dbresource://` root.
+//! recordings' `dbresource://` root, and `org.moqui.impl.VoicemailServices.store#VoicemailFile` (V2) a message the SIP
+//! engine recorded into the voicemail root.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,7 @@ pub(in crate::service) fn register(
     rust_service!(map, send_media_control)?;
     rust_service!(map, make_ice_servers)?;
     rust_service!(map, store_recording_file)?;
+    rust_service!(map, store_voicemail_file)?;
     rust_service!(map, send_sip_control)?;
     Ok(())
 }
@@ -55,6 +57,32 @@ fn store_recording_file(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    store_spooled(parameters, RECORDING_SPOOL, RECORDING_ROOT, "call recording", false)
+}
+
+/// Where the SIP engine spools a voicemail it records (`SPOOL` in moqui-host `src/sip/voicemail.rs`).
+const VOICEMAIL_SPOOL: &str = "tmp/voicemail";
+/// Where voicemail audio is kept.
+const VOICEMAIL_ROOT: &str = "dbresource://moqui/call/voicemail/";
+
+/// `store#VoicemailFile`: a message the SIP engine spooled (`tempPath`, under [`VOICEMAIL_SPOOL`]) to `contentLocation`
+/// (under [`VOICEMAIL_ROOT`]), as `store#RecordingFile`; an empty `contentLocation` only deletes the spooled file.
+fn store_voicemail_file(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    store_spooled(parameters, VOICEMAIL_SPOOL, VOICEMAIL_ROOT, "voicemail", true)
+}
+
+/// A spooled file under `spool` (in the runtime directory) to a location under `root`, then the spooled file deleted;
+/// with `discard`, an empty location only deletes it.
+fn store_spooled(
+    parameters: &BTreeMap<String, Value>,
+    spool: &str,
+    root: &str,
+    what: &str,
+    discard: bool,
+) -> Result<BTreeMap<String, Value>, LibError> {
     let text = |key: &str| {
         parameters
             .get(key)
@@ -63,39 +91,43 @@ fn store_recording_file(
             .unwrap_or_default()
     };
     let (temp_path, location) = (text("tempPath"), text("contentLocation"));
-    let rest = location.strip_prefix(RECORDING_ROOT).unwrap_or_default();
-    if rest.is_empty()
-        || rest
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+    let rest = location.strip_prefix(root).unwrap_or_default();
+    let only_discard = discard && location.is_empty();
+    if !only_discard
+        && (rest.is_empty()
+            || rest
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == ".."))
     {
-        return Err(LibError::new(format!("{location} is not a call recording location")));
+        return Err(LibError::new(format!("{location} is not a {what} location")));
     }
     let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
-        .ok_or_else(|| LibError::new("store#RecordingFile needs an execution context"))?;
-    let spool = factory.runtime_dir().join(RECORDING_SPOOL);
+        .ok_or_else(|| LibError::new(format!("storing a {what} file needs an execution context")))?;
+    let spool = factory.runtime_dir().join(spool);
     let path = std::path::Path::new(&temp_path);
     let inside = match (path.canonicalize(), spool.canonicalize()) {
         (Ok(file), Ok(root)) => file.starts_with(&root) && file.is_file(),
         _ => false,
     };
     if !inside {
-        return Err(LibError::new(format!("{temp_path} is not a call recording spool file")));
+        return Err(LibError::new(format!("{temp_path} is not a {what} spool file")));
     }
-    // streamed: a segment is up to call_recording_segment_mb, never read into memory whole
-    let mut file =
-        std::fs::File::open(path).map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?;
-    let size = file
-        .metadata()
-        .map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?
-        .len();
-    factory
-        .resource()
-        .write_from(&location, &mut file, Some(size))
-        .map_err(|e| LibError::new(format!("the recording file {location} was not stored: {}", e.message())))?;
-    drop(file);
+    let mut size = 0;
+    if !only_discard {
+        // streamed: a segment is up to call_recording_segment_mb, never read into memory whole
+        let mut file =
+            std::fs::File::open(path).map_err(|e| LibError::new(format!("the spooled {what} {temp_path}: {e}")))?;
+        size = file
+            .metadata()
+            .map_err(|e| LibError::new(format!("the spooled {what} {temp_path}: {e}")))?
+            .len();
+        factory
+            .resource()
+            .write_from(&location, &mut file, Some(size))
+            .map_err(|e| LibError::new(format!("the {what} file {location} was not stored: {}", e.message())))?;
+    }
     if let Err(err) = std::fs::remove_file(path) {
-        tracing::warn!("the spooled recording {temp_path} was not removed: {err}");
+        tracing::warn!("the spooled {what} {temp_path} was not removed: {err}");
     }
     let mut out = BTreeMap::new();
     out.insert(

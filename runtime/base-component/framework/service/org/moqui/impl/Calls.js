@@ -515,6 +515,8 @@ function decline(p) {
     bump(session)
     session.update()
     pushState(session, 'declined', { declinedBy: me })
+    // a phone call nobody else is rung for goes to voicemail (V2): the SIP engine starts it (VoicemailServices.begin#Voicemail)
+    if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) phoneControl(session, 'voicemail')
   }
   return { call: view(session, me) }
 }
@@ -1297,7 +1299,10 @@ function makePhoneParticipant(session, displayName, admission) {
 /**
  * Internal (Voice.js place#PhoneCall and receive#PhoneCall, which checked the user, the number and the policy): a phone
  * call. Outbound: the user is in it at once and the number rings (a CltPstn leg offered until the SIP engine says it
- * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee.
+ * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee; silent (V2: the user is
+ * busy, the call goes straight to voicemail) offers the user's leg without ringing it, and with no userId (V2: the
+ * voicemail access number) nobody is rung and the call is active at once. ringExpireSeconds (V2) keeps an inbound call
+ * ringing past call_ring_seconds while its voicemail waits for more rings.
  */
 function startPhone(p) {
   const userId = p.userId
@@ -1316,10 +1321,12 @@ function startPhone(p) {
   const now = ec.user.nowTimestamp
   const session = ec.entity.makeValue(SESSION)
   session.setSequencedIdPrimary()
+  const expireSeconds = Math.max(ringSeconds(), Number(p.ringExpireSeconds) || 0)
   session.setFields({
-    kindEnumId: 'CskPhone', statusId: 'CssRinging', revision: 1, directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
+    kindEnumId: 'CskPhone', statusId: outbound || userId ? 'CssRinging' : 'CssActive', revision: 1,
+    directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
     video: 'N', startedByUserId: outbound ? userId : null, idempotencyKey: key, startedDate: now,
-    ringExpireDate: new Date(nowMs() + ringSeconds() * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
+    ringExpireDate: new Date(nowMs() + expireSeconds * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
     encryptionMode: 'dtls-srtp',
   }, true, null, null)
   session.create()
@@ -1335,15 +1342,17 @@ function startPhone(p) {
   } else {
     const phone = makePhoneParticipant(session, name, 'CasAdmitted')
     phoneLeg = makeLeg(session, phone, 'ClsAnswered', 'CltPstn')
-    const callee = makeParticipant(session, userId, 'CprMember', 'CasInvited')
-    userLeg = makeLeg(session, callee, 'ClsOffered')
-    setLog(session.callSessionId, userId, { roleEnumId: 'CurCallee', logDate: now })
+    if (userId) {
+      const callee = makeParticipant(session, userId, 'CprMember', 'CasInvited')
+      userLeg = makeLeg(session, callee, 'ClsOffered')
+      setLog(session.callSessionId, userId, { roleEnumId: 'CurCallee', logDate: now })
+    }
   }
   phoneLeg.set('phoneNumber', p.phoneNumber)
   phoneLeg.update()
   if (outbound) updatePresence([userId])
-  else ring(session, [userId], null, name)
-  return { callSessionId: session.callSessionId, callLegId: userLeg.callLegId, phoneLegId: phoneLeg.callLegId,
+  else if (userId && !p.silent) ring(session, [userId], null, name)
+  return { callSessionId: session.callSessionId, callLegId: userLeg ? userLeg.callLegId : null, phoneLegId: phoneLeg.callLegId,
     call: view(session, userId) }
 }
 
@@ -1399,8 +1408,45 @@ function phoneEvent(p) {
   return {}
 }
 
+/**
+ * Internal (VoicemailServices.begin#Voicemail, V2): an inbound phone call goes to voicemail, its phone leg answered by the
+ * SIP engine with no one else in it. The users still rung stop ringing and missed it (CallUserLog, as a call that rang out;
+ * one who declined keeps that); the call is active with the phone alone until it hangs up. Refused (reasonCode) when the
+ * call is not an inbound phone call (notFound), has ended (callEnded) or someone answered it (answered).
+ */
+function phoneToVoicemail(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  const leg = session && p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!session || !leg || leg.callSessionId !== session.callSessionId || leg.legTypeEnumId !== 'CltPstn' ||
+    session.kindEnumId !== 'CskPhone' || session.directionEnumId !== 'CdrInbound') return { reasonCode: 'notFound' }
+  if (session.statusId === 'CssEnded' || leg.statusId !== 'ClsAnswered') return { reasonCode: 'callEnded' }
+  if (localAnsweredCount(session.callSessionId)) return { reasonCode: 'answered' }
+  for (const offered of rows(LEG, { callSessionId: session.callSessionId, statusId: 'ClsOffered' })) {
+    closeLeg(offered, 'ClsTimedOut', 'CerNoAnswer')
+  }
+  const callees = participantsOf(session.callSessionId).filter((x) => x.userId).map((x) => x.userId)
+  const missed = []
+  for (const userId of callees) {
+    const log = one(USER_LOG, { callSessionId: session.callSessionId, userId })
+    if (log && !log.outcomeEnumId) {
+      setLog(session.callSessionId, userId, { outcomeEnumId: 'CuoMissed' })
+      missed.push(userId)
+    }
+  }
+  if (session.statusId === 'CssRinging') session.set('statusId', 'CssActive')
+  bump(session)
+  session.update()
+  pushState(session, 'timedOut')
+  if (missed.length) {
+    ec.service.sync().name('org.moqui.impl.CallServices.publish#MissedCounts').parameter('userIdList', missed)
+      .disableAuthz().call()
+  }
+  return { userIdList: callees, phoneNumber: leg.phoneNumber || null,
+    displayName: one(PARTICIPANT, { callParticipantId: leg.callParticipantId })?.displayName || null }
+}
+
 const operations = {
-  start, startPhone, phoneEvent, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
+  start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
   removeParticipant, iceServers, guestIceServers,

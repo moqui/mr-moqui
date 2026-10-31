@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     state machine's (Calls.js startPhone and phoneEvent). The SIP engine is the host's (crates/moqui-host/src/sip/, the sip
     feature): it reads its trunks and policy with get#EngineConfig, registers itself with register#SipNode, hands a call that
     came in to receive#PhoneCall and reports each phone leg with note#PhoneLeg; the services tell it what to do with
-    send#SipControl ({action: dial, answer, dtmf, hold, resume, reload}), after the commit. No Java counterpart.
+    send#SipControl ({action: dial, answer, dtmf, hold, resume, prompt, voicemail (V2), reload}), after the commit. No Java counterpart.
 
     Access. place#PhoneCall, send#PhoneDtmf, hold#PhoneCall, resume#PhoneCall, find#MyCallerIds and get#VoiceCapabilities are
     the current user's; the administration services need the VoiceAdmin permission (ADMIN has it) and refuse others with
@@ -165,7 +165,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (the SIP engine): a call came in on a trunk to toNumber. Its
             PhoneNumber routes it to a user, who is rung as for any call (the ring bar, Web Push), from the caller's number and
             name; the phone is in the call at once (callLegId, its leg). reasonCode notFound (no such number, or it routes
-            nowhere: 404), voiceUnavailable (this node takes no phone calls: 480) or busy (the limit of calls at once: 486).</description>
+            nowhere: 404), voiceUnavailable (this node takes no phone calls: 480) or busy (the limit of calls at once: 486).
+            Voicemail (V2): voicemail busy (the user is in a call: not rung, the engine sends it to voicemail at once) or
+            access (the voicemail access number, PnrVoicemail); voicemailSeconds, how long it rings before voicemail.</description>
         <in-parameters>
             <parameter name="voiceTrunkId"/>
             <parameter name="toNumber" required="true"/>
@@ -178,6 +180,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callSessionId"/>
             <parameter name="callLegId"/>
             <parameter name="reasonCode"/>
+            <parameter name="voicemail"/>
+            <parameter name="voicemailSeconds" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('receive', context))</script></actions>
     </service>

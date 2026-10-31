@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of Voicemail (style-guide §4.8): one of the user's messages (org.moqui.impl.VoicemailServices
+    get#Voicemail): who, when, how long, its transcript or the transcript's state, with Mark heard or unheard, Delete or Put
+    back, and Retry for a failed transcript. There is no player in the terminal: the message plays in the browser. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Voicemail" default-menu-include="false">
+
+    <parameter name="voicemailId"/>
+
+    <transition name="mark">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+                heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="voicemailId"/></default-response>
+        <error-response url="."><parameter name="voicemailId"/></error-response>
+    </transition>
+    <transition name="delete">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.deleted ? 'Voicemail deleted' : 'Voicemail moved to the Trash'), 'success')
+        ]]></script></actions>
+        <default-response url="../History"><parameter name="outcome" value="voicemail"/></default-response>
+        <error-response url="."><parameter name="voicemailId"/></error-response>
+    </transition>
+    <transition name="restore">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="voicemailId"/></default-response>
+        <error-response url="."><parameter name="voicemailId"/></error-response>
+    </transition>
+    <transition name="retry">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.retry#VoicemailTranscript').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Transcribing again'), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="voicemailId"/></default-response>
+        <error-response url="."><parameter name="voicemailId"/></error-response>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#Voicemail').parameter('voicemailId', voicemailId || '')
+            .requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const v = out.voicemail
+        found = !!v
+        if (v) {
+            const s = Math.round(Number(v.durationMs || 0) / 1000)
+            fromText = v.fromName + (v.fromNumber && v.fromNumber !== v.fromName ? ' (' + v.fromNumber + ')' : '')
+            whenText = v.receivedDate ? ec.l10n.format(new Date(Number(v.receivedDate)), 'MMM d, h:mm a') : ''
+            lengthText = s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'
+            heardText = v.heard ? L('Heard') : L('New')
+            isHeard = !!v.heard
+            inTrash = v.folder === 'trash'
+            audioNote = v.status === 'audioFailed' ? L('The audio was not stored.') : L('It plays in the browser.')
+            transcriptText = v.transcriptStatus === 'done' ? (v.transcriptText || L('(nothing was said)'))
+                : v.transcriptStatus === 'pending' ? L('Transcribing...')
+                : v.transcriptStatus === 'failed' ? L('The transcript could not be made') + (v.transcriptError ? ': ' + v.transcriptError : '')
+                : v.transcribeOn ? L('No transcript') : L('Transcription is off here')
+            canRetry = !!v.canRetryTranscript
+        }
+    ]]></script></actions>
+
+    <widgets>
+        <section name="NotFound" condition="!found"><widgets><label type="p" text="Voicemail not found."/></widgets></section>
+        <section name="Found" condition="found"><widgets>
+            <label type="h5" text="Voicemail from ${fromText}"/>
+            <label type="p" text="${whenText} · ${lengthText} · ${heardText}" style="m-muted"/>
+            <label type="p" text="${audioNote}" style="m-muted"/>
+            <container-box><box-header title="Transcript"/><box-body><label type="p" text="${transcriptText}"/></box-body></container-box>
+            <container style="q-gutter-xs">
+                <link url="mark" text="Mark heard" icon="sym_o_done" condition="!isHeard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="true"/></link>
+                <link url="mark" text="Mark unheard" icon="sym_o_markunread" condition="isHeard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="false"/></link>
+                <link url="retry" text="Retry the transcript" icon="sym_o_refresh" condition="canRetry"><parameter name="voicemailId"/></link>
+                <link url="restore" text="Put back" icon="sym_o_restore_from_trash" condition="inTrash"><parameter name="voicemailId"/></link>
+                <link url="delete" text="Delete" icon="sym_o_delete" condition="!inTrash"><parameter name="voicemailId"/></link>
+                <link url="delete" text="Delete for good" icon="sym_o_delete_forever" condition="inTrash" confirmation="Delete this voicemail for good?"><parameter name="voicemailId"/></link>
+                <link url="../History" text="All voicemail" icon="sym_o_voicemail"><parameter name="outcome" value="voicemail"/></link>
+            </container>
+        </widgets></section>
+    </widgets>
+</screen>

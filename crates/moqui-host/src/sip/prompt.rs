@@ -69,7 +69,7 @@ impl Notice {
     }
 }
 
-fn tone(hz: f64, millis: u32, out: &mut Vec<i16>) {
+pub(crate) fn tone(hz: f64, millis: u32, out: &mut Vec<i16>) {
     let n = millis as usize * (RATE as usize / 1000);
     if hz <= 0.0 {
         out.resize(out.len() + n, 0);

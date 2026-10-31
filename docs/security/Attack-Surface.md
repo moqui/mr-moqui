@@ -503,6 +503,35 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
 
+### Voicemail
+
+Voicemail ([Voicemail](../interfaces/Voicemail.md)) opens no port: it runs on the SIP engine above, for calls to a
+user's number that nobody answers, and on the access number (`PnrVoicemail`) when an administrator sets one.
+
+- **The PIN over the phone.** A caller who presses `*` in a greeting, or calls the access number, can enter a box
+  number and a PIN. `check#VoicemailPin` (internal) checks it against the box's argon2 hash and limits failures per
+  box (5 in 15 minutes, then 15 minutes refused from any caller) and per source (the caller's number, 10 in an hour,
+  then an hour). The source is a caller ID the caller can fake, so the box's limit is the one that holds: about 240
+  guesses a day, which tries every four-digit PIN in six weeks and every six-digit one in eleven years (the Phone
+  settings ask for 4 to 12 digits; six or more is the advice). A box that does not exist, has no PIN, or is blocked is refused in
+  the same words after the same hash work and is counted the same way, so the answers say nothing of which boxes
+  exist. Three refusals end the call. The PIN is never logged, and weak ones (one digit repeated, a run) are refused
+  when set. Accepted, the caller hears only that box's new messages, and its keys act only on them (`act#PhoneVoicemail`
+  checks the box).
+- **The audio route.** Messages and greetings are under `dbresource://moqui/call/voicemail/`, which no route serves.
+  The audio is read only through `get#VoicemailAudio` and `get#VoicemailGreeting`, from the Calls `Voicemail` and
+  Settings `Phone` screens' transitions: the box's owner gets the file, anyone else "not found" (an empty JSON answer),
+  the same as for an id that does not exist. The engine writes only through `store#VoicemailFile` (internal), which
+  takes a spool path only under `runtime/tmp/voicemail` and a location only under the voicemail root.
+- **Uploads.** A greeting upload is at most 10 MB, checked as WAV or Ogg Opus by its first bytes, then decoded and
+  re-encoded by the server (`convert#GreetingAudio`, internal, which reads and writes only under the greetings' root);
+  a minute is kept.
+- **Mail out.** The email notice carries only a link unless the owner turns on the audio or the transcript in it; the
+  screen warns that mail cannot be recalled. Transcription sends the audio to the speech provider only when
+  `voicemail_transcribe` is on.
+- **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
+  under a second is dropped.
+
 ### Database
 
 `entity_ds_db_conf` default `h2` (and an empty name) selects the embedded Postgres cluster. There is no H2 driver and no H2 TCP server.

@@ -515,7 +515,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="callLegId" type="id"/>
         <field name="callRecordingId" type="id"><description>The recording transcribed; its transcripts are deleted with it
             (delete#Recording, expire#Recordings)</description></field>
-        <field name="voicemailId" type="id"><description>The voicemail transcribed (V2 adds the relationship)</description></field>
+        <field name="voicemailId" type="id"><description>The voicemail transcribed; its transcripts are deleted with it
+            (VoicemailServices delete#Voicemail, empty#VoicemailTrash, expire#VoicemailTrash)</description></field>
         <field name="segment" type="number-integer"/>
         <field name="speaker" type="text-medium"/>
         <field name="statusId" type="id"/>
@@ -525,6 +526,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
         <relationship type="one-nofk" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one-nofk" related="moqui.call.Voicemail" short-alias="voicemail"/>
         <relationship type="one" title="CallTranscript" related="moqui.basic.StatusItem" short-alias="status">
             <key-map field-name="statusId"/></relationship>
         <index name="CALL_TRANSCRIPT_SESSION"><index-field name="callSessionId"/><index-field name="segment"/></index>

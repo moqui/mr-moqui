@@ -21,12 +21,52 @@ along with this software (see the LICENSE.md file). If not, see
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
     org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
     the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
-    item: callSessionId). -->
+    item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
+    find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
+    in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
+    put back; Empty trash. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
 
     <parameter name="outcome"/>
     <parameter name="pageIndex"/>
+    <parameter name="folder"/>
+    <parameter name="heard"/>
+
+    <!-- voicemail (V2): each the owner's own, refused for anyone else by the services -->
+    <transition name="markVoicemail">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+                heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></error-response>
+    </transition>
+    <transition name="deleteVoicemail">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.deleted ? 'Voicemail deleted' : 'Voicemail moved to the Trash'), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></error-response>
+    </transition>
+    <transition name="restoreVoicemail">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></error-response>
+    </transition>
+    <transition name="emptyVoicemailTrash">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.empty#VoicemailTrash').requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('${n} deleted for good', '', {n: out.deletedCount || 0}), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></error-response>
+    </transition>
 
     <transition name="newCall">
         <actions><script><![CDATA[
@@ -143,12 +183,32 @@ along with this software (see the LICENSE.md file). If not, see
 
         // the history, by outcome; the Missed tab marks them seen
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
-        shownOutcome = ['missed', 'placed', 'answered'].includes(outcome) ? outcome : ''
+        shownOutcome = ['missed', 'placed', 'answered', 'voicemail'].includes(outcome) ? outcome : ''
+        // voicemail (V2): the tab's unheard count, and its list when it is the tab shown
+        const unheardOut = ec.service.sync().name('org.moqui.impl.VoicemailServices.count#UnheardVoicemails').requireNewTransaction(true).disableAuthz().call() || {}
+        voicemailText = unheardOut.unheardCount ? L('Voicemail') + ' (' + unheardOut.unheardCount + ')' : L('Voicemail')
+        shownFolder = folder === 'trash' ? 'trash' : 'inbox'
+        shownHeard = ['heard', 'unheard'].includes(heard) ? heard : ''
+        voicemailList = []
+        trashCount = 0
+        if (shownOutcome === 'voicemail') {
+            const vm = ec.service.sync().name('org.moqui.impl.VoicemailServices.find#Voicemails').parameters({folder: shownFolder,
+                heard: shownHeard || null, pageIndex: Math.max(Number(pageIndex) || 0, 0), pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            trashCount = Number(vm.trashCount || 0)
+            const seconds = (millis) => { const s = Math.round(Number(millis || 0) / 1000); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s' }
+            const TRANSCRIPTS = {pending: L('Transcribing'), done: '', failed: L('Transcript failed')}
+            voicemailList = Array.from(vm.voicemailList || []).map((v) => ({voicemailId: v.voicemailId, fromName: v.fromName,
+                fromNumber: v.fromNumber && v.fromNumber !== v.fromName ? v.fromNumber : '', whenText: when(v.receivedDate),
+                lengthText: seconds(v.durationMs), stateText: v.heard ? L('Heard') : L('New'), heard: !!v.heard,
+                note: v.status === 'audioFailed' ? L('The audio was not stored') : (v.transcriptSnippet || TRANSCRIPTS[v.transcriptStatus] || ''),
+                inTrash: shownFolder === 'trash'}))
+        }
         if (shownOutcome === 'missed') ec.service.sync().name('org.moqui.impl.CallServices.mark#MissedSeen').requireNewTransaction(true).disableAuthz().call()
         const missedOut = ec.service.sync().name('org.moqui.impl.CallServices.count#MissedCalls').requireNewTransaction(true).disableAuthz().call() || {}
         missedText = missedOut.missedCount ? L('Missed') + ' (' + missedOut.missedCount + ')' : L('Missed')
         historyPage = Math.max(Number(pageIndex) || 0, 0)
-        const found = ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
+        const found = shownOutcome === 'voicemail' ? {} : ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
             pageIndex: historyPage, pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const minutes = (seconds) => !seconds ? '' : seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
@@ -236,9 +296,42 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Placed" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'placed'"/>
                 <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default"><parameter name="outcome" value="answered"/></link>
                 <label text="Answered" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'answered'"/>
+                <link url="." text="${voicemailText}" icon="sym_o_voicemail" condition="shownOutcome != 'voicemail'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                <label text="${voicemailText}" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'voicemail'"/>
                 <link url="../Recordings" text="Recordings" icon="sym_o_radio_button_checked" btn-type="default"/>
             </container>
-            <section name="NoHistory" condition="!historyList.length"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
+            <section name="VoicemailTab" condition="shownOutcome == 'voicemail'"><widgets>
+                <container style="q-gutter-xs q-mb-sm">
+                    <link url="." text="Inbox" condition="shownFolder != 'inbox'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                    <label text="Inbox" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'inbox'"/>
+                    <link url="." text="Trash (${trashCount})" condition="shownFolder != 'trash'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></link>
+                    <label text="Trash (${trashCount})" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'trash'"/>
+                    <link url="." text="All" condition="shownHeard" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/></link>
+                    <link url="." text="Unheard" condition="shownHeard != 'unheard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="unheard"/></link>
+                    <link url="." text="Heard" condition="shownHeard != 'heard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="heard"/></link>
+                    <link url="emptyVoicemailTrash" text="Empty trash" icon="sym_o_delete_forever" condition="shownFolder == 'trash' &amp;&amp; trashCount" btn-type="danger"
+                        confirmation="Delete everything in the voicemail trash for good?"/>
+                    <link url="../../Settings/Phone" text="Voicemail settings" icon="sym_o_settings" btn-type="default"/>
+                </container>
+                <section name="NoVoicemail" condition="!voicemailList.length"><widgets><label type="p" text="No voicemail here." style="m-muted"/></widgets></section>
+                <form-list name="VoicemailList" list="voicemailList" skip-form="true">
+                    <field name="stateText"><default-field title=""><display style="${heard ? 'm-muted' : 'text-weight-bold text-primary'}"/></default-field></field>
+                    <field name="fromName"><default-field title="From"><link url="../Voicemail" text="${fromName}" link-type="anchor"><parameter name="voicemailId"/></link></default-field></field>
+                    <field name="fromNumber"><default-field title="Number"><display/></default-field></field>
+                    <field name="whenText"><default-field title="When"><display/></default-field></field>
+                    <field name="lengthText"><default-field title="Length"><display/></default-field></field>
+                    <field name="note"><default-field title="Transcript"><display style="text-caption"/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <link url="../Voicemail" text="Play" icon="sym_o_play_arrow"><parameter name="voicemailId"/></link>
+                        <link url="markVoicemail" text="Mark heard" icon="sym_o_done" condition="!heard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="true"/></link>
+                        <link url="markVoicemail" text="Mark unheard" icon="sym_o_markunread" condition="heard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="false"/></link>
+                        <link url="restoreVoicemail" text="Put back" icon="sym_o_restore_from_trash" condition="inTrash"><parameter name="voicemailId"/></link>
+                        <link url="deleteVoicemail" text="Delete" icon="sym_o_delete" condition="!inTrash"><parameter name="voicemailId"/><parameter name="folder" value="inbox"/></link>
+                        <link url="deleteVoicemail" text="Delete for good" icon="sym_o_delete_forever" condition="inTrash" confirmation="Delete this voicemail for good?"><parameter name="voicemailId"/><parameter name="folder" value="trash"/></link>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+            <section name="NoHistory" condition="!historyList.length &amp;&amp; shownOutcome != 'voicemail'"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
             <form-list name="CallHistory" list="historyList" skip-form="true">
                 <field name="outcomeText"><default-field title=""><display/></default-field></field>
                 <field name="who"><default-field title="With"><display/></default-field></field>

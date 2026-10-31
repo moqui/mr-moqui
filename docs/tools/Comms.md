@@ -65,16 +65,29 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   once and in a day. An emergency number is always tried first: it goes through a trunk that takes emergency calls, from
   your registered location with its callback number, and tells the location's contact; when any of that is missing the
   call is refused and says what is missing, so call from another phone.
+- <a id="voicemail"></a>**Voicemail.** A call to your number goes to your voicemail when you don't answer within your
+  rings, when you are in another call, or when you decline it. The caller hears your greeting (or the default one), a
+  beep, and leaves a message of up to two minutes; `#` ends it. You are told at once (here, and on your devices by Web
+  Push), and by email when you ask for it. Calls, History, Voicemail lists them, unheard first in bold, with the Inbox
+  and the Trash; open one to play it, read its transcript (when the server transcribes voicemail), mark it heard or
+  unheard, call back, download or delete it. Deleted messages wait in the Trash for 30 days (`voicemail_trash_days`),
+  then go with their audio. Settings, Phone has your greeting (record it in the browser or upload a WAV or Ogg file),
+  your PIN, the email notice and the number of rings. With a PIN you can listen by phone: call your number and press `*`
+  during your greeting (or call the access number and enter your number and `#`), then the PIN and `#`; each new
+  message plays, then `7` deletes it, `9` saves it and `#` skips to the next. The email notice has only a link unless you
+  turn on the audio or the transcript in it; turning one on warns that mail cannot be recalled. See
+  [Voicemail](../interfaces/Voicemail.md).
 - <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
   whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
   provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
   network allows UDP, TCP or plain RTP, whether it takes emergency calls, and its status and last error. Numbers: each
-  number's trunk, the person it rings and its emergency location. Caller IDs: who may call from which number. Fraud: the
+  number's trunk, the person it rings (or the voicemail access number) and its emergency location. Caller IDs: who may call from which number. Fraud: the
   limits, each person's permissions, and the sources blocked after failed SIP sign-ins (a block never locks the account;
   Clear lifts it). Emergency: the readiness checklist and the emergency locations (address, callback number, who is
   told, the provider's reference and whether it is validated). The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
-- **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, and rooms with unread.
+- **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
+  you have a voicemail box), and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
 
@@ -120,7 +133,8 @@ entity filters; a read that fails is left out and named, and a mutation that fai
 **Declared actions and panels.** `<ext-action>` and `<ext-panel>` in a screen-extend add items to a slot of a screen
 ([Qvt-Client](../ui/Qvt-Client.md#declared-actions-and-panels)). Chat's slot is `chat-message-actions`, whose item is
 `{chatRoomId, eventSeq}`; IronStone adds Create a task, request and event there, each with `hook="create-from"` so a
-user without that provider is not offered it.
+user without that provider is not offered it. Calls, Voicemail's slot is `voicemail-actions`, whose item is
+`{voicemailId, fromNumber, callSessionId}`, for actions such as Create from and Add to contacts.
 
 IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xml` (the mounts and providers) and
 `screen-extend/basic-comms/`.
@@ -131,5 +145,6 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
 provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
-phone's events. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
+and its limits, notices, transcription and its retry, and the trash. IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

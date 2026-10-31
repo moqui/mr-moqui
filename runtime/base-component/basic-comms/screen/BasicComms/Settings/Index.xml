@@ -72,6 +72,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <label type="p" text="Notifications, sounds, Enter to send, message previews and when you show as away." style="m-muted"/>
                 <link url="../Chat" text="Chat settings" icon="sym_o_chat"/>
             </box-body></container-box></row-col>
+            <row-col md="4" sm="6"><container-box><box-header title="Phone"/><box-body>
+                <label type="p" text="Your numbers and your voicemail: greeting, PIN, email notices and how many rings before it answers." style="m-muted"/>
+                <link url="../Phone" text="Phone settings" icon="sym_o_voicemail"/>
+            </box-body></container-box></row-col>
         </container-row>
     </widgets>
 </screen>

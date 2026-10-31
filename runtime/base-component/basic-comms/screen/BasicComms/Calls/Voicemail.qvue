@@ -1,0 +1,131 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voicemail (plans/Comms-Framework.md §5.5 VoicemailDetail, V2), the component Voicemail.xml serves in the qvue render
+    mode: one of the user's messages (the voicemail transition), its player (the audio transition, inline; playing it marks
+    it heard), its transcript or the transcript's state with Retry when it failed, Mark heard or unheard, Delete (to the
+    Trash, and from it for good after a confirmation) or Put back, Call back (a phone call to the caller, then the Call
+    screen), Download, and the actions apps add (m-ext-actions, slot voicemail-actions). -->
+<template><div class="m-voicemail q-pa-sm column q-gutter-md" style="max-width:760px">
+    <div class="row items-center">
+        <q-btn flat dense no-caps icon="sym_o_arrow_back" :label="t('Voicemail')" @click="back"></q-btn><q-space></q-space>
+    </div>
+    <div v-if="loaded && !voicemail" class="m-muted">{{t('Voicemail not found.')}}</div>
+    <template v-if="voicemail">
+        <div>
+            <div class="text-h6">{{voicemail.fromName}}</div>
+            <div class="text-caption m-muted">
+                <span v-if="voicemail.fromNumber && voicemail.fromNumber !== voicemail.fromName">{{voicemail.fromNumber}} · </span>
+                {{whenText(voicemail.receivedDate)}} · {{lengthText(voicemail.durationMs)}}
+                <q-chip dense square :color="voicemail.heard ? 'grey-6' : 'primary'" text-color="white">{{voicemail.heard ? t('Heard') : t('New')}}</q-chip>
+                <q-chip v-if="voicemail.folder === 'trash'" dense square color="grey-7" text-color="white">{{t('In the trash')}}</q-chip>
+            </div>
+        </div>
+        <div v-if="voicemail.hasAudio">
+            <audio ref="player" controls preload="metadata" style="width:100%" :src="audioUrl(true)" @play="played"></audio>
+        </div>
+        <q-banner v-else dense rounded class="m-tonal text-warning">{{t('The audio was not stored.')}} {{voicemail.lastErrorText || ''}}</q-banner>
+        <q-card flat bordered>
+            <q-card-section>
+                <div class="text-subtitle2 q-mb-xs">{{t('Transcript')}}</div>
+                <div v-if="voicemail.transcriptStatus === 'done'" style="white-space:pre-wrap">{{voicemail.transcriptText || t('(nothing was said)')}}</div>
+                <div v-else-if="voicemail.transcriptStatus === 'pending'" class="m-muted"><q-spinner size="1em" class="q-mr-sm"></q-spinner>{{t('Transcribing...')}}</div>
+                <div v-else-if="voicemail.transcriptStatus === 'failed'" class="text-warning">
+                    {{t('The transcript could not be made.')}} <span class="text-caption">{{voicemail.transcriptError || ''}}</span>
+                    <div class="text-caption m-muted">{{t('The audio is kept.')}}</div>
+                </div>
+                <div v-else class="m-muted">{{voicemail.transcribeOn ? t('No transcript.') : t('Transcription is off here.')}}</div>
+                <q-btn v-if="voicemail.canRetryTranscript" class="q-mt-sm" dense no-caps unelevated color="primary" icon="sym_o_refresh"
+                    :label="t('Retry the transcript')" @click="post('retryTranscript')"></q-btn>
+            </q-card-section>
+        </q-card>
+        <div class="row q-gutter-sm items-center">
+            <q-btn v-if="canCall && voicemail.fromNumber" unelevated no-caps color="positive" icon="sym_o_call" :label="t('Call back')" @click="callBack"></q-btn>
+            <q-btn v-if="voicemail.folder !== 'trash' && !voicemail.heard" flat no-caps icon="sym_o_done" :label="t('Mark heard')" @click="post('mark', {heard: true})"></q-btn>
+            <q-btn v-if="voicemail.folder !== 'trash' && voicemail.heard" flat no-caps icon="sym_o_markunread" :label="t('Mark unheard')" @click="post('mark', {heard: false})"></q-btn>
+            <q-btn v-if="voicemail.hasAudio" flat no-caps icon="sym_o_download" :label="t('Download')" :href="audioUrl(false)" target="_blank"></q-btn>
+            <q-btn v-if="voicemail.folder === 'trash'" flat no-caps icon="sym_o_restore_from_trash" :label="t('Put back')" @click="post('restore')"></q-btn>
+            <q-btn flat no-caps color="negative" :icon="voicemail.folder === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete'"
+                :label="voicemail.folder === 'trash' ? t('Delete for good') : t('Delete')" @click="remove"></q-btn>
+            <!-- what an app adds to a voicemail (ext-action slot voicemail-actions): Create from, Add to contacts -->
+            <m-ext-actions slot="voicemail-actions" as="buttons"
+                :item="{ voicemailId: voicemail.voicemailId, fromNumber: voicemail.fromNumber, callSessionId: voicemail.callSessionId }"
+                @done="load"></m-ext-actions>
+        </div>
+    </template>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'Voicemail',
+    data() { return { voicemail: null, loaded: false, canCall: false, markedOnPlay: false }; },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        voicemailId() { return (this.$root.currentParameters || {}).voicemailId || ''; },
+        path() { return this.$root.currentPathList || ['BasicComms', 'Calls', 'Voicemail']; },
+        url(name) { return this.$root.basePath + '/' + this.path().join('/') + '/' + name; },
+        // a screen beside this one under Calls (History, Call)
+        sibling(name) { return this.$root.basePath + '/' + this.path().slice(0, -1).concat([name]).join('/'); },
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: Object.assign({ voicemailId: this.voicemailId() }, params || {}) })
+                .then((result) => {
+                    const json = result.json || {};
+                    if (json.errors) moqui.notifyMessages([], json.errors);
+                    return json;
+                }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        load() {
+            return this.request('voicemail').then((json) => {
+                this.voicemail = json.voicemail || null;
+                this.canCall = !!json.canCall;
+                this.loaded = true;
+            }, () => { this.loaded = true; });
+        },
+        post(name, params) {
+            return this.request(name, params, 'POST').then((json) => { if (!json.errors) this.load(); return json; }, () => null);
+        },
+        audioUrl(inline) {
+            return this.url('audio') + '?voicemailId=' + encodeURIComponent(this.voicemailId()) + (inline ? '&inline=true' : '');
+        },
+        played() {
+            if (this.markedOnPlay || !this.voicemail || this.voicemail.heard || this.voicemail.folder === 'trash') return;
+            this.markedOnPlay = true;
+            this.request('mark', { heard: true }, 'POST').then((json) => { if (json.voicemail) this.voicemail.heard = true; }, () => null);
+        },
+        remove() {
+            const forGood = this.voicemail.folder === 'trash';
+            const go = () => this.request('delete', {}, 'POST').then((json) => { if (!json.errors) this.back(); }, () => null);
+            if (!forGood) { go(); return; }
+            this.$q.dialog({ title: t('Delete this voicemail for good?'), message: t('Its audio and transcript are deleted.'),
+                ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(go);
+        },
+        callBack() {
+            this.request('callBack', { idempotencyKey: 'vm-' + this.voicemailId() + '-' + Date.now() }, 'POST').then((json) => {
+                if (json.callSessionId) this.$root.setUrl(this.sibling('Call') + '?callSessionId=' + encodeURIComponent(json.callSessionId));
+            }, () => null);
+        },
+        back() {
+            const folder = this.voicemail && this.voicemail.folder === 'trash' ? '&folder=trash' : '';
+            this.$root.setUrl(this.sibling('History') + '?outcome=voicemail' + folder);
+        },
+        whenText(millis) { return millis ? new Date(Number(millis)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; },
+        lengthText(millis) {
+            const s = Math.round(Number(millis || 0) / 1000);
+            return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+        }
+    }
+};
+</script>

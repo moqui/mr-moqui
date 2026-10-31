@@ -25,4 +25,9 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="expire_Recordings_hourly" description="Delete expired call recordings, clean up partial ones"
             serviceName="org.moqui.impl.CallRecordingServices.expire#Recordings" cronExpression="0 17 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
+    <!-- Voicemail (V2, org.moqui.impl.VoicemailServices): messages in a trash longer than voicemail_trash_days are deleted
+        with their audio and transcripts. Each message is on its own. -->
+    <moqui.service.job.ServiceJob jobName="expire_VoicemailTrash_daily" description="Delete voicemail long in the trash"
+            serviceName="org.moqui.impl.VoicemailServices.expire#VoicemailTrash" cronExpression="0 41 3 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
 </entity-facade-xml>

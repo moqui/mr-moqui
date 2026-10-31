@@ -172,6 +172,15 @@ Each provider is unverified until its own live check.
   - When a provider forks and several phones answer, the first answer wins; the others are ACKed and ended.
   - An outbound call that rings 60 seconds is canceled.
 
+## Voicemail
+
+An inbound call to a user goes to their voicemail box (V2) when it rings the box's rings with no answer (the engine's
+timer, from `receive#PhoneCall`'s `voicemailSeconds`), when the user is in another call (`voicemail: busy`: not rung),
+when the user declines it (the control `voicemail` from `decline#Call`), or on the access number (`PnrVoicemail`). The
+engine asks `VoicemailServices.begin#Voicemail`, answers the call itself, plays the greeting and a beep, records the
+caller as Ogg Opus, and hands the file to `store#Voicemail`; `*` in the greeting, or the access number, opens phone
+access with a PIN. All of it is in [Voicemail](Voicemail.md).
+
 ## Notices
 
 What a browser in the call sees as an `rtc` frame, a phone leg hears as a prompt mixed over the call's audio. The
@@ -306,7 +315,7 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 - `cargo test -p moqui-host --test it sip::`: an outbound and an inbound call on a real server, through a fake trunk,
   heard by a browser stand-in.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, and prompts queued one after
-  another.
+  another; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
   only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.

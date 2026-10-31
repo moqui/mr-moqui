@@ -33,11 +33,16 @@
 //!
 //! - **Notices.** The control `prompt` plays a call's notice to a phone leg (`prompt.rs`): the recording's (W5, D-V5)
 //!   and the captions' (W6), which browsers get as `rtc` frames; a tone pattern of each, then the deployment's audio.
+//! - **Voicemail** (V2, `voicemail.rs`, `audio.rs`): an inbound call unanswered after its box's rings (this engine's
+//!   timer), whose user is busy, that its user declined (the control `voicemail`), or to the access number, is answered
+//!   here with no one else in it: the greeting, a beep, the caller's message as Ogg Opus; or the PIN and the new messages.
 
+mod audio;
 mod leg;
 mod prompt;
+mod voicemail;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -204,6 +209,27 @@ enum Command {
     Reanswered {
         leg: String,
         answer: Option<String>,
+    },
+    /// Voicemail (V2): the services' answer to `begin#Voicemail`.
+    VmBegun {
+        leg: String,
+        reason: String,
+        result: Result<Json, String>,
+    },
+    /// Voicemail: the services' answer to a PIN.
+    VmPin {
+        leg: String,
+        result: Result<Json, String>,
+    },
+    /// Voicemail: a prompt's audio is ready.
+    VmPlay {
+        leg: String,
+        tag: u32,
+        prompt: Prompt,
+    },
+    /// An inbound call rang its box's rings.
+    RingTimeout {
+        leg: String,
     },
 }
 
@@ -375,6 +401,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         policy: DialPolicy::default(),
         max_concurrent: 0,
         commands: commands_tx,
+        voicemail: HashMap::new(),
+        voicemail_starting: HashSet::new(),
     };
     runtime.spawn(engine.run(events, commands));
     let stop = Arc::new(AtomicBool::new(false));
@@ -556,11 +584,13 @@ struct TrunkInfo {
     srtp: bool,
 }
 
-/// A leg here: its room, its media and its SDP.
+/// A leg here: its room, its media and its SDP; an inbound one's caller, and whether its user answered.
 struct Leg {
     room: String,
     media: LegMedia,
     local: LocalMedia,
+    caller: String,
+    answered: bool,
 }
 
 struct Engine {
@@ -574,6 +604,9 @@ struct Engine {
     policy: DialPolicy,
     max_concurrent: usize,
     commands: UnboundedSender<Command>,
+    /// The legs in voicemail (V2), and those whose `begin#Voicemail` is on its way.
+    voicemail: HashMap<String, voicemail::VmCall>,
+    voicemail_starting: HashSet<String>,
 }
 
 fn text(body: &Json, key: &str) -> String {
@@ -775,6 +808,7 @@ impl Engine {
                 }
             }
             UaEvent::Ended { leg, reason } => {
+                self.voicemail.remove(&leg);
                 let Some(entry) = self.legs.remove(&leg) else { return };
                 let (event, code) = match reason {
                     EndReason::Bye | EndReason::Hangup => ("ended", None),
@@ -841,10 +875,15 @@ impl Engine {
         let from = dial::normalize(&call.from, &self.policy).unwrap_or_else(|| call.from.clone());
         let parameters = serde_json::json!({"voiceTrunkId": call.trunk_id, "toNumber": to, "fromNumber": from,
             "fromName": call.from_name, "instanceId": self.own, "sipCallId": call.call_id});
+        // V2: voicemail busy or access sends it to voicemail at once; voicemailSeconds is how long it rings before it does
+        let mut voicemail_now = None;
+        let mut ring_seconds = None;
         let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
             Ok(out) => {
                 let room = text(&out, "callSessionId");
                 let leg = text(&out, "callLegId");
+                voicemail_now = Some(text(&out, "voicemail")).filter(|v| !v.is_empty());
+                ring_seconds = number(&out, "voicemailSeconds").filter(|s| *s > 0);
                 if room.is_empty() || leg.is_empty() {
                     Err(404)
                 } else {
@@ -906,7 +945,21 @@ impl Engine {
                     self.note_leg(&room, &leg, "failed", Some(480), "decided too late");
                     return;
                 }
-                self.legs.insert(leg, Leg { room, media, local });
+                self.legs.insert(
+                    leg.clone(),
+                    Leg {
+                        room,
+                        media,
+                        local,
+                        caller: from,
+                        answered: false,
+                    },
+                );
+                match (voicemail_now, ring_seconds) {
+                    (Some(reason), _) => self.start_voicemail(&leg, &reason),
+                    (None, Some(seconds)) => self.ring_timer(&leg, seconds),
+                    (None, None) => {}
+                }
             }
             Err(err) => {
                 tracing::warn!("SIP call {leg}: its media did not start: {err}");
@@ -934,11 +987,15 @@ impl Engine {
         match command {
             Command::Control(body) => self.control(&body).await,
             Command::Note(LegNote::Gone { leg }) => {
+                self.voicemail.remove(&leg);
                 if self.legs.remove(&leg).is_some() {
                     self.ua.hangup(&leg);
                 }
             }
             Command::Note(LegNote::Digit { leg, digit }) => {
+                if self.voicemail_event(&leg, voicemail::Event::Digit(digit)) {
+                    return;
+                }
                 if let Some(entry) = self.legs.get(&leg) {
                     tracing::debug!("SIP leg {leg}: digit {digit}");
                     self.note(
@@ -962,6 +1019,18 @@ impl Engine {
                     _ => tracing::warn!("SIP leg {leg}: the re-INVITE was not answered"),
                 }
             }
+            Command::Note(LegNote::Played { leg, tag }) => {
+                self.voicemail_event(&leg, voicemail::Event::Played(tag));
+            }
+            Command::Note(LegNote::Recorded { leg, recorded }) => self.voicemail_recorded(&leg, *recorded),
+            Command::VmBegun { leg, reason, result } => self.voicemail_begun(leg, &reason, result),
+            Command::VmPin { leg, result } => self.voicemail_pin(&leg, result),
+            Command::VmPlay { leg, tag, prompt } => self.voicemail_play(&leg, tag, prompt),
+            Command::RingTimeout { leg } => {
+                if self.legs.get(&leg).is_some_and(|entry| !entry.answered) {
+                    self.start_voicemail(&leg, "noAnswer");
+                }
+            }
         }
     }
 
@@ -970,6 +1039,9 @@ impl Engine {
         match body.get("action").and_then(Json::as_str).unwrap_or_default() {
             "dial" => self.dial(body),
             "answer" => {
+                if let Some(entry) = self.legs.get_mut(&leg) {
+                    entry.answered = true;
+                }
                 if let Err(err) = self.ua.answer(&leg) {
                     tracing::warn!("SIP leg {leg}: not answered: {err}");
                 }
@@ -1018,6 +1090,11 @@ impl Engine {
                 });
             }
             "reload" => self.reload().await,
+            // V2: its user declined it (CallServices decline#Call)
+            "voicemail" => {
+                let reason = Some(text(body, "reason")).filter(|r| !r.is_empty());
+                self.start_voicemail(&leg, reason.as_deref().unwrap_or("declined"));
+            }
             other => tracing::debug!("SIP: unknown control {other}"),
         }
     }
@@ -1077,6 +1154,8 @@ impl Engine {
                 room: room.clone(),
                 media,
                 local,
+                caller: String::new(),
+                answered: true,
             },
         );
         let request = DialRequest {
