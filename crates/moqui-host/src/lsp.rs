@@ -723,7 +723,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
-            "--server" => server_url = rest.next().cloned(),
+            "--server" => server_url = Some(rest.next().ok_or_else(|| crate::usage::command_usage("lsp"))?.clone()),
             other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
             "--java" => {
                 java = Some(PathBuf::from(
@@ -800,5 +800,13 @@ mod tests {
         assert_eq!(tag_context(text, 2, 17), context("entity-find", TagPlace::Attributes));
         assert_eq!(tag_context("<screen>\n    <ent", 1, 8), context("ent", TagPlace::Name));
         assert_eq!(tag_context("<screen>text", 0, 10), None);
+    }
+
+    #[test]
+    fn a_flag_without_its_value_is_the_usage_error() {
+        for flag in ["--server", "--java"] {
+            let err = dispatch_lsp(&[flag.to_string()]).unwrap_err().to_string();
+            assert!(err.contains("moqui help lsp"), "{flag}: {err}");
+        }
     }
 }
