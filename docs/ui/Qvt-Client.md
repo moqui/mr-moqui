@@ -672,8 +672,10 @@ again), so a peeked row is a link; the peeked row is the list's selected row.
 
 The `scan-input` form field (`xml-form-3.xsd`; IronStone style-guide §8.1, Warehouse WH-SCAN) is a field for a keyboard-wedge
 barcode scanner and for typed codes. Its `resolver` names a service; the client never names it. Every screen has the implicit
-transition **`scanResolve`** (`crates/moqui-core/src/screen/scan.rs`, POST with the session token, the screen's view authorization):
-it takes `scanForm` and `scanField`, finds that `scan-input` in the assembled form, and calls its resolver with:
+transition **`scanResolve`** (`crates/moqui-core/src/screen/scan.rs`, the screen's view authorization). It is a read, so it takes
+any method, as a `dynamic-options` transition does: the browser clients POST, which must carry the session token, and the
+terminal client searches it with a GET. It takes `scanForm` and `scanField`, finds that `scan-input` in the assembled form, and
+calls its resolver with:
 
 | In | What |
 |---|---|
@@ -682,25 +684,39 @@ it takes `scanForm` and `scanField`, finds that `scan-input` in the assembled fo
 | `scanId` | the client's id of the scan intent |
 | the `parameter` and `depends-on` names | the screen's context (facility, task) and the form fields the field names; no other request value |
 
+**The resolver must check everything again.** The form does not protect it: it runs for any request that names the form and
+field, also where a `conditional-field` or a section's condition leaves the field out of the page, and the `parameter` values it
+gets are client input (the values the screen rendered, sent back by the page). A resolver checks the user's permission and the
+facility, task and other context itself.
+
 The resolver answers `matches`, a List of `{identityType, id, label, detail}`, and `parsed`, the GS1 fields of the text as
-`ec.resource.parseGs1` answers them ([Barcodes](../data/Barcodes.md)). It checks the user's permissions and the context itself.
-The transition answers JSON `{scanId, scanText, matches, parsed, options}`: the matches of the allowed types with an id (at most 50,
-a label defaulting to the id), `parsed` from the resolver or, when it answered none and the text parses, from the framework's GS1
-parse, and the matches again as drop-down `options` (`value`, `label`). The resolver's own errors are a 400 with them; no such
-field is a 404.
+`ec.resource.parseGs1` answers them ([Barcodes](../data/Barcodes.md); `moqui_lib::barcode::Gs1Data::to_value`). The transition
+answers JSON `{scanId, scanText, matches, parsed, options}`: the matches of the allowed types with an id (at most 50, a label
+defaulting to the id), `parsed` from the resolver or, when it answered none and the text parses, from the framework's GS1 parse,
+and the matches again as drop-down `options` (`value`, `label`). The resolver's own errors are a 400 with them; no such field is a
+404. The scan inputs of one form need distinct `scan-id-field` names: assembling a form whose scans share one logs an error, and
+`scanResolve` refuses it with a 400.
 
 `m-scan-input`: Enter, or a Tab that ends a burst of keys (a scanner, under 35 ms a key on average: `qvt.scanEndsWithTab`), posts
-the text. One match fills `name` with its id, `name_type` with its identityType, `name_scanText` with the text and the
-`scan-id-field` (`scanId`) with the intent's id, and submits the form; with `confirm` it shows the match with a Confirm button
-first (Enter confirms, Escape cancels); with `auto-submit="false"` the form's own submit does. Several matches open a chooser (a
-click or the number keys); none is named under the field, the text selected for the next scan. After a submit the field clears
-and keeps the focus; it takes the focus on mount when nothing else has it. **Scan intent:** each scan gets an id
-(`crypto.randomUUID`); the same text again within 2 s is a double scan, the same intent with the same id, ignored while its
-first is in flight or done (`qvt.scanIntent`). A transition passes the scan id on as its operation key, so a double scan or a
-second Confirm that does reach it answers the first; it reads the GS1 fields again from `name_scanText` rather than trusting values
-the page parsed. The html mode writes a text input (`name_scanText`) with hidden id, type and scan id inputs that `moqui-html.js`
-posts to the same transition with the same rules (without JavaScript the text posts alone); the tui mode a drop-down searching
-`scanResolve` with a hidden scan id made when the screen rendered. The gallery's Handheld screen shows both forms of it.
+the text. **Scan intent:** each scan gets an id (`moqui.randomId`: `crypto.randomUUID`, else a version 4 UUID from
+`crypto.getRandomValues`, since `randomUUID` needs a secure origin); the same text again within 2 s of its first scan is a double
+scan, the same intent with the same id (`qvt.scanIntent`), and while that intent is in flight or filled the field says Already
+scanned. A new intent first clears what the last one put in the form (the id, `name_type`, `name_scanText`, the scan id and a match
+waiting for Confirm), and an answer for an intent that is no longer the current one is dropped. One match fills `name` with its id,
+`name_type` with its identityType, `name_scanText` with the text and the `scan-id-field` (`scanId`) with the intent's id, and
+submits the form; with `auto-submit="false"` the form's own submit does. With `confirm` the match waits under the field with a
+Confirm button while the focus stays in the field: Enter on the same text, or the button, confirms; other text is a new scan.
+Several matches open a chooser (a click or the number keys); none is named under the field, the text selected for the next scan.
+After a submit the field clears and keeps the focus, and an answer without errors for the form empties the scan's fields, so a
+later submit of the form (another quantity, say) carries no scan id and is not answered as the scan's operation. The field takes
+the focus on mount when nothing else has it.
+
+A transition passes the scan id on as its operation key, so a double scan or a second Confirm that does reach it answers the first;
+the key is chosen by the client, so its lookup is scoped to the user. It reads the GS1 fields again from `name_scanText` rather than
+trusting values the page parsed. The html mode writes a text input (`name_scanText`) with hidden id, type and scan id inputs that
+`moqui-html.js` posts to the same transition with the same rules (the hidden inputs filled only when a match is taken; without
+JavaScript the text posts alone); the tui mode a drop-down searching `scanResolve` with a hidden scan id made when the screen
+rendered. The gallery's Handheld screen shows both forms of it.
 
 ## Layout panels: split, wizard and stack
 

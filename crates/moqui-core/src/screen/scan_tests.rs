@@ -90,3 +90,23 @@ fn the_matches_keep_the_allowed_types_and_need_an_id() {
     let many = Value::List((0..80).map(|n| item(&[("id", &n.to_string())])).collect());
     assert_eq!(matches_of(Some(&many), &[]).len(), 50);
 }
+
+#[test]
+fn the_scans_of_a_form_need_their_own_scan_id_names() {
+    let form = |text: &str| MNode::parse_text("form", text).unwrap();
+    let apart = form(
+        r#"<form-single name="F"><field name="a"><default-field><scan-input resolver="r"/></default-field></field>
+            <field name="b"><default-field><scan-input resolver="r" scan-id-field="bScanId"/></default-field></field></form-single>"#,
+    );
+    assert_eq!(super::shared_scan_id(&apart), None);
+    let shared = form(
+        r#"<form-single name="F"><field name="a"><default-field><scan-input resolver="r" scan-id-field="s"/></default-field></field>
+            <field name="b"><conditional-field condition="x"><scan-input resolver="r" scan-id-field="s"/></conditional-field>
+                <default-field><scan-input resolver="r" scan-id-field="s"/></default-field></field></form-single>"#,
+    );
+    assert_eq!(
+        super::shared_scan_id(&shared),
+        Some(("s".to_string(), vec!["a".to_string(), "b".to_string()])),
+        "one field's sub-fields are one scan"
+    );
+}

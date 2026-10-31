@@ -92,6 +92,39 @@ pub(crate) fn find_in_form(form: &MNode, field_name: &str) -> Option<MNode> {
     field.children().iter().find_map(|sub| sub.first_named("scan-input"))
 }
 
+/// The fields of `form` whose `scan-input`s post their scan id under the same name, or None when each has its own. Two
+/// scans of one form under one name would post one operation key for both, so the key would no longer name one scan.
+pub(crate) fn shared_scan_id(form: &MNode) -> Option<(String, Vec<String>)> {
+    let mut by_name: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    for field in form.children_named("field") {
+        for sub in field.children() {
+            if let Some(input) = sub.first_named("scan-input") {
+                let name = input
+                    .attribute("scan-id-field")
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "scanId".to_string());
+                let fields = by_name.entry(name).or_default();
+                let field_name = field.attribute("name").unwrap_or_default();
+                if !fields.contains(&field_name) {
+                    fields.push(field_name);
+                }
+            }
+        }
+    }
+    by_name.into_iter().find(|(_, fields)| fields.len() > 1)
+}
+
+/// Log, when the form is assembled (the definition), the fields of a form whose scans share a scan id name.
+pub(crate) fn check_form(form: &MNode, location: &str) {
+    if let Some((name, fields)) = shared_scan_id(form) {
+        tracing::error!(
+            "Form {} of {location}: the scan-input fields {} post their scan id as the same {name}; give each its own scan-id-field",
+            form.attribute("name").unwrap_or_default(),
+            fields.join(", ")
+        );
+    }
+}
+
 /// Run the transition for the request's parameters and send its JSON answer: 400 for a request that names no field or
 /// has no text, 404 when the screen has no such `scan-input`, 400 with the resolver's errors when it fails.
 ///
@@ -134,6 +167,16 @@ pub(crate) fn resolve(
         );
         return Ok(());
     };
+    if let Some((name, fields)) = shared_scan_id(&form.shared_node()?) {
+        web::send_json_error(
+            400,
+            &format!(
+                "The scan-input fields {} of form {form_name} share the scan id {name}",
+                fields.join(", ")
+            ),
+        );
+        return Ok(());
+    }
     if scan_text.is_empty() || scan_text.chars().count() > MAX_TEXT {
         web::send_json_error(400, "Nothing was scanned");
         return Ok(());
@@ -172,7 +215,7 @@ pub(crate) fn resolve(
     let matches = matches_of(answer.get("matches"), &input.allowed_types);
     let parsed = match answer.get("parsed") {
         Some(Value::Map(map)) if !map.is_empty() => Value::Map(map.clone()),
-        _ => moqui_lib::barcode::parse_gs1(&scan_text).map_or(Value::Null, |data| crate::script::gs1_value(&data)),
+        _ => moqui_lib::barcode::parse_gs1(&scan_text).map_or(Value::Null, |data| data.to_value()),
     };
     let options = matches
         .iter()

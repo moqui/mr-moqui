@@ -301,3 +301,29 @@ fn gs1_weight_identifiers_and_errors_name_the_problem() {
     assert!(error("9999").contains("at byte 0"), "{}", error("9999"));
     assert!(error("(01").contains("unclosed"), "{}", error("(01"));
 }
+
+#[test]
+fn a_gs1_parse_as_a_value_has_its_elements_in_order_and_by_identifier() {
+    use crate::object::{to_plain_string, Value};
+    let value = parse_gs1("(01)04006381333931(10)LOT-7").unwrap().to_value();
+    let Value::Map(map) = value else { panic!("{value:?}") };
+    let Some(Value::Map(ais)) = map.get("applicationIdentifiers") else {
+        panic!("{map:?}")
+    };
+    assert_eq!(ais.get("10").map(to_plain_string).as_deref(), Some("LOT-7"));
+    let Some(Value::List(elements)) = map.get("elements") else {
+        panic!("{map:?}")
+    };
+    let order: Vec<String> = elements
+        .iter()
+        .map(|item| match item {
+            Value::Map(item) => to_plain_string(item.get("applicationIdentifier").unwrap()),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(order, ["01", "10"]);
+    assert_eq!(
+        map.get("humanReadable").map(to_plain_string).as_deref(),
+        Some("(01)04006381333931(10)LOT-7")
+    );
+}

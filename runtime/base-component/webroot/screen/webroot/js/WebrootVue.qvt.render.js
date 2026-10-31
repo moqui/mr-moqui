@@ -7507,7 +7507,7 @@
               ], 10, ["data-state"]))
             }
         } },
-        "m-scan-input": { hash: "5763650d", make: function (Vue) {
+        "m-scan-input": { hash: "b23a8c65", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, mergeProps: _mergeProps, normalizeClass: _normalizeClass, createElementBlock: _createElementBlock, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -7584,7 +7584,6 @@
                     }, [
                       _createElementVNode("div", { class: "col text-body2" }, _toDisplayString(_ctx.matchText(_ctx.pending.match)), 1),
                       _createVNode(_component_q_btn, {
-                        ref: "confirmBtn",
                         unelevated: "",
                         "no-caps": "",
                         color: "primary",

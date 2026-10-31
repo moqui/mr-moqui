@@ -698,10 +698,76 @@ test("the same text within two seconds is the same scan intent; other text or la
     const first = qvt.scanIntent(null, "A1", 1000, makeId);
     assert.deepEqual(first, { text: "A1", id: "S1", time: 1000, repeat: false });
     const twice = qvt.scanIntent(first, "A1", 2500, makeId);
-    assert.deepEqual(twice, { text: "A1", id: "S1", time: 2500, repeat: true });
-    assert.equal(qvt.scanIntent(twice, "A1", 4600, makeId).id, "S2", "later is a new intent");
+    assert.deepEqual(twice, { text: "A1", id: "S1", time: 1000, repeat: true }, "the window is from the first scan");
+    assert.equal(qvt.scanIntent(twice, "A1", 3100, makeId).id, "S2", "a repeat does not slide the window");
     assert.equal(qvt.scanIntent(twice, "B2", 2600, makeId).id, "S3", "other text is a new intent");
     assert.ok(qvt.scanId() !== qvt.scanId());
+});
+
+test("a random id is a version 4 UUID, from getRandomValues where randomUUID is missing (an insecure origin)", () => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    assert.match(moqui.randomId(), uuid);
+    Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+    try {
+        const one = moqui.randomId();
+        assert.match(one, uuid);
+        assert.notEqual(one, moqui.randomId());
+    } finally {
+        delete crypto.randomUUID;
+    }
+    assert.equal(typeof crypto.randomUUID, "function", "randomUUID is back");
+});
+
+// m-scan-input's methods over a stand-in for the component and its form
+const scanVm = (extra) => {
+    const methods = qvt.components["m-scan-input"].methods;
+    const vm = Object.assign({ text: "", loading: false, message: "", messageType: "", matches: [], chooser: false, pending: null, done: null,
+        last: null, firstKey: 0, parsed: null, name: "assetId", scanIdField: "scanId", confirm: false, autoSubmit: false, emitted: [],
+        mForm: { fields: { assetId: "OLD", assetId_type: "asset", assetId_scanText: "OLD", scanId: "S0" } },
+        $emit(name, value) { this.emitted.push([name, value]); }, $nextTick(fn) { fn(); }, $refs: {} }, extra);
+    Object.keys(methods).forEach((key) => { vm[key] = methods[key].bind(vm); });
+    return vm;
+};
+
+test("a new scan clears the last one's fields; a late answer for a replaced intent is dropped", () => {
+    const vm = scanVm({ resolveUrl: "/scanResolve", resolveParameters: {} });
+    const answers = [];
+    const savedRequest = moqui.request;
+    moqui.request = () => new Promise((resolve) => answers.push(resolve));
+    try {
+        vm.resolve("A1");
+        assert.deepEqual(vm.mForm.fields, { assetId: "", assetId_type: "", assetId_scanText: "", scanId: "" });
+        const first = vm.last;
+        vm.resolve("B2");
+        assert.notEqual(vm.last.id, first.id);
+        assert.ok(!vm.isCurrent(first), "the A1 answer is late now");
+        assert.ok(vm.isCurrent(vm.last));
+    } finally {
+        moqui.request = savedRequest;
+    }
+});
+
+test("a confirm match waits with the focus in the field; Enter on its text confirms, a double scan says Already scanned", () => {
+    const vm = scanVm({ confirm: true });
+    const intent = { text: "B-01-07", id: "S7", time: Date.now(), repeat: false };
+    vm.last = intent;
+    vm.answered({ matches: [{ identityType: "location", id: "B-01-07" }] }, intent);
+    assert.equal(vm.pending.match.id, "B-01-07");
+    assert.equal(vm.mForm.fields.assetId, "OLD", "nothing is filled before Confirm");
+    vm.text = "B-01-07";
+    vm.onKey({ key: "Enter", preventDefault() {}, stopPropagation() {} });
+    assert.equal(vm.pending, null);
+    assert.equal(vm.mForm.fields.assetId, "B-01-07");
+    assert.equal(vm.mForm.fields.scanId, "S7");
+    assert.equal(vm.done, "S7");
+    vm.resolve("B-01-07");
+    assert.match(vm.message, /Already scanned B-01-07/);
+    // the form's answer took the scan: a later submit carries no scan id
+    vm.onFormAnswer({ ok: false, form: vm.mForm });
+    assert.equal(vm.mForm.fields.scanId, "S7", "a refused answer keeps the scan for a retry");
+    vm.onFormAnswer({ ok: true, form: vm.mForm });
+    assert.equal(vm.mForm.fields.scanId, "");
+    assert.equal(vm.mForm.fields.assetId, "");
 });
 
 test("a Tab ends a scan only after a burst of keys", () => {

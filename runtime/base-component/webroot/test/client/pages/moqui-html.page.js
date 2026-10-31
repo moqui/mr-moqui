@@ -169,8 +169,10 @@ test("a scan's outcome, its intent and a scanner's Tab follow the qvt client's r
     let next = 0;
     const makeId = () => "S" + (++next);
     const first = u.scanIntent(null, "A1", 1000, makeId);
-    assert.equal(u.scanIntent(first, "A1", 2000, makeId).id, "S1");
-    assert.equal(u.scanIntent(first, "A1", 3500, makeId).id, "S2");
+    const again = u.scanIntent(first, "A1", 2000, makeId);
+    assert.equal(again.id, "S1");
+    assert.equal(u.scanIntent(again, "A1", 3100, makeId).id, "S2", "the window is from the first scan");
+    assert.match(u.scanId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.ok(u.scanEndsWithTab(10, 1000, 1100));
     assert.ok(!u.scanEndsWithTab(10, 1000, 2000));
 });

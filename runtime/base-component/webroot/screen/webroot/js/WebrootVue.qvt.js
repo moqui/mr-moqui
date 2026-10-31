@@ -2802,28 +2802,45 @@
 
     // A scan field (the scan-input element; docs/ui/Qvt-Client.md, Scan input). The rules, tested in the page:
     //  - scanOutcome: the resolver's answer as none, one (the match) or many; a match with no id is not one;
-    //  - scanIntent: the same text again within 2 s of the last scan of it is a double scan, the same intent with the same id
-    //    (the transition's operation key answers it once); other text, or the same later, is a new intent with a new id;
-    //  - scanEndsWithTab: a Tab ends a scan when the text came in a burst (a keyboard wedge, under 35 ms a key on average).
+    //  - scanIntent: the same text again within 2 s of its first scan is a double scan, the same intent with the same id (the
+    //    window does not slide with each repeat); other text, or the same later, is a new intent with a new id;
+    //  - scanEndsWithTab: a Tab ends a scan when the text came in a burst (a keyboard wedge, under 35 ms a key on average);
+    //  - randomId: a UUID from crypto.randomUUID, else from crypto.getRandomValues (randomUUID needs a secure origin, which a
+    //    handheld on a plain http site is not); moqui-html.js has the same rules for the html mode.
     qvt.scanOutcome = (answer) => {
         const matches = answer && Array.isArray(answer.matches) ? answer.matches.filter((item) => item && item.id) : [];
         if (!matches.length) return { kind: "none", matches };
         return matches.length === 1 ? { kind: "one", match: matches[0], matches } : { kind: "many", matches };
     };
     qvt.scanIntent = (last, text, now, makeId, windowMs) => {
-        if (last && last.text === text && now - last.time < (windowMs || 2000)) return { text, id: last.id, time: now, repeat: true };
+        if (last && last.text === text && now - last.time < (windowMs || 2000)) return { text, id: last.id, time: last.time, repeat: true };
         return { text, id: makeId(), time: now, repeat: false };
     };
     qvt.scanEndsWithTab = (length, firstKeyTime, now) => length >= 3 && firstKeyTime > 0 && (now - firstKeyTime) / length < 35;
-    qvt.scanId = () => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    moqui.randomId = () => {
+        const crypto = root.crypto;
+        if (crypto && crypto.randomUUID) return crypto.randomUUID();
+        if (!crypto || !crypto.getRandomValues) throw new Error("no crypto.getRandomValues for a random id");
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+    };
+    qvt.scanId = () => moqui.randomId();
     qvt.scanMatchText = (match) => [match.label || match.id, match.detail].filter(Boolean).join(" · ");
 
     // Enter, or a scanner's quick Tab, posts the text to resolve-url (the screen's scanResolve transition) with resolve-parameters,
-    // the depends-on fields and the scan intent's id. One match fills the field with its id, name_type, name_scanText and the
-    // scan-id-field, and submits the form (confirm: after a Confirm, which Enter also gives; auto-submit false: never); several
-    // open the chooser (the number keys or a click pick one, Escape goes back); none is named under the field, and the text stays
-    // selected for the next scan. After a submit the text clears and the field takes the focus again. Outside a form it emits
-    // update:modelValue with the id. It emits resolved with {match, parsed, scanId, scanText} for a .qvue host.
+    // the depends-on fields and the scan intent's id. A new intent first clears what the last one put in the form (the id,
+    // name_type, name_scanText, the scan-id-field and a match waiting for Confirm), and an answer for an intent that is no longer
+    // the current one is dropped. One match fills the field with its id, name_type, name_scanText and the scan-id-field, and
+    // submits the form (auto-submit false: it does not). With confirm the match waits under the field with a Confirm button and
+    // the focus stays in the field: Enter on the same text, or the button, confirms; other text is a new scan. Several open the
+    // chooser (the number keys or a click pick one, Escape goes back); none is named under the field, the text selected for the
+    // next scan. A double scan of the intent filled or in flight says Already scanned. After a submit the text clears and the field
+    // keeps the focus; an answer without errors for the form clears the scan's fields, so a later submit of the form does not
+    // reuse the scan id as its operation key. Outside a form it emits update:modelValue with the id. It emits resolved with
+    // {match, parsed, scanId, scanText} for a .qvue host.
     component("m-scan-input", {
         name: "mScanInput",
         mixins: [fieldMixin],
@@ -2832,8 +2849,8 @@
             autoSubmit: { type: Boolean, default: true }, confirm: Boolean, placeholder: String, size: String, maxlength: String, fields: Object },
         emits: ["update:modelValue", "resolved"],
         data() {
-            return { text: "", loading: false, message: "", messageType: "", matches: [], chooser: false, pending: null, chosen: null, last: null, firstKey: 0,
-                parsed: null };
+            return { text: "", loading: false, message: "", messageType: "", matches: [], chooser: false, pending: null, done: null, last: null,
+                firstKey: 0, parsed: null };
         },
         template:
             '<div class="m-scan-input">' +
@@ -2847,7 +2864,7 @@
                 '<div v-if="message" class="m-scan-message text-caption" :class="messageType ? \'text-\' + messageType : \'m-muted\'" role="status">{{message}}</div>' +
                 '<div v-if="pending" class="m-scan-confirm row items-center q-gutter-sm q-mt-xs">' +
                     '<div class="col text-body2">{{matchText(pending.match)}}</div>' +
-                    '<q-btn ref="confirmBtn" unelevated no-caps color="primary" icon="check" :label="L(\'Confirm\')" @click="confirmPending"></q-btn>' +
+                    '<q-btn unelevated no-caps color="primary" icon="check" :label="L(\'Confirm\')" @click="confirmPending"></q-btn>' +
                     '<q-btn flat no-caps :label="L(\'Cancel\')" @click="cancel"></q-btn>' +
                 '</div>' +
                 '<q-dialog v-model="chooser" @hide="onChooserHide"><q-card class="m-scan-chooser" style="min-width:300px;max-width:520px;">' +
@@ -2893,30 +2910,54 @@
                 event.stopPropagation();
                 this.firstKey = 0;
                 const text = this.text.trim();
-                // a confirmation waits: Enter on the same text confirms it
+                // a match waiting for Confirm: Enter on its text (or on nothing) confirms it, other text is a new scan
                 if (this.pending && (!text || text === this.pending.intent.text)) { this.confirmPending(); return; }
                 this.resolve(text);
+            },
+            // the scan's fields in the form, empty: before a new intent, and after the form's answer took the scan
+            clearScan() {
+                const form = this.mForm;
+                if (form && form.fields) {
+                    form.fields[this.name] = "";
+                    form.fields[this.name + "_type"] = "";
+                    form.fields[this.name + "_scanText"] = "";
+                    form.fields[this.scanIdField || "scanId"] = "";
+                }
             },
             resolve(text) {
                 if (!text || this.disable) return;
                 const intent = qvt.scanIntent(this.last, text, Date.now(), qvt.scanId);
+                if (intent.repeat && (this.loading || this.done === intent.id || this.pending)) {
+                    // the code was taken: the field is ready for the next one
+                    this.say(this.L("Already scanned") + " " + text, "warning");
+                    this.text = "";
+                    this.focus();
+                    return;
+                }
                 this.last = intent;
-                if (intent.repeat && (this.loading || this.chosen === intent.id)) return;
+                this.pending = null;
+                this.done = null;
+                this.chooser = false;
+                this.clearScan();
+                if (!this.mForm) this.$emit("update:modelValue", "");
                 const { reqData } = dependsValues({ fields: this.fields || (this.mForm && this.mForm.fields) }, this.dependsOn, this.resolveParameters);
                 Object.assign(reqData, { scanText: text, scanId: intent.id });
                 this.loading = true;
                 this.message = "";
-                this.pending = null;
                 moqui.request(this.resolveUrl, { method: "POST", params: reqData }).then((result) => {
+                    if (!this.isCurrent(intent)) return;
                     this.loading = false;
                     this.answered(result.json || {}, intent);
                 }, (err) => {
+                    if (!this.isCurrent(intent)) return;
                     this.loading = false;
                     const errors = err && err.json && err.json.errors;
                     this.say(errors ? String(errors) : this.L("The scan could not be resolved"), "negative");
                     this.focus();
                 });
             },
+            // a late answer, for an intent a newer scan replaced, is dropped
+            isCurrent(intent) { return !!this.last && this.last.id === intent.id; },
             answered(answer, intent) {
                 const outcome = qvt.scanOutcome(answer);
                 this.parsed = answer.parsed || null;
@@ -2935,7 +2976,8 @@
                 this.chooser = false;
                 if (this.last) this.accept(match, this.last);
             },
-            onChooserHide() { if (!this.pending && !this.chosen) this.focus(); },
+            // the chooser closed without a choice: back to the field, unless the current intent was filled or waits for Confirm
+            onChooserHide() { if (!this.pending && !(this.last && this.done === this.last.id)) this.focus(); },
             // the number keys pick in the chooser, 1 for the first
             onChooserKey(event) {
                 if (!this.chooser || !/^[1-9]$/.test(event.key)) return;
@@ -2947,16 +2989,17 @@
             say(text, type) { this.message = text; this.messageType = type || ""; },
             accept(match, intent) {
                 if (this.confirm) {
+                    // the match waits; the focus stays in the field, so a next scan is a scan and not a Confirm
                     this.pending = { match, intent };
-                    this.say("");
-                    this.$nextTick(() => { const btn = this.$refs.confirmBtn; if (btn && btn.$el) btn.$el.focus(); });
+                    this.say(this.L("Enter or Confirm to take it"), "");
+                    this.focus();
                     return;
                 }
                 this.fill(match, intent);
             },
             confirmPending() {
                 const pending = this.pending;
-                if (!pending) return;
+                if (!pending || !this.isCurrent(pending.intent)) return;
                 this.pending = null;
                 this.fill(pending.match, pending.intent);
             },
@@ -2966,7 +3009,7 @@
                 this.focus();
             },
             fill(match, intent) {
-                this.chosen = intent.id;
+                this.done = intent.id;
                 const form = this.mForm;
                 if (form && form.fields) {
                     form.fields[this.name] = match.id;
@@ -2984,9 +3027,17 @@
                         this.focus();
                     });
                 } else this.focus();
+            },
+            // the form's answer: one without errors took the scan, so its fields go and a later submit carries no scan id
+            onFormAnswer(answer) {
+                if (answer && answer.ok && answer.form === this.mForm && this.done) this.clearScan();
             }
         },
-        beforeUnmount() { root.document.removeEventListener("keydown", this.onChooserKey, true); },
+        created() { this.offFormAnswer = moqui.onFormAnswer((answer) => this.onFormAnswer(answer)); },
+        beforeUnmount() {
+            root.document.removeEventListener("keydown", this.onChooserKey, true);
+            if (this.offFormAnswer) this.offFormAnswer();
+        },
         mounted() {
             // a scan field takes the focus when nothing else on the page has it (a handheld task keeps scan focus)
             // (at once, not on the next tick, so a second scan field mounted after it sees the focus taken)

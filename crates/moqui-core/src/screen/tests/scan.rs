@@ -15,7 +15,7 @@
 //! The `scanResolve` transition of a screen with a `scan-input` (`scan.rs`), and a screen's `density` in the menu data and
 //! the html body.
 
-use super::forms::form_post;
+use super::forms::{cookies, form_post, token_of, with_cookies};
 use super::{basic, request, World};
 use crate::screen::serve_at;
 
@@ -51,6 +51,11 @@ const SCREEN: &str = r#"<screen require-authentication="false" density="handheld
                 </scan-input>
             </default-field></field>
             <field name="plain"><default-field><text-line/></default-field></field>
+        </form-single>
+        <!-- two scans posting their scan id as the same name: refused -->
+        <form-single name="Twice" transition="move">
+            <field name="fromId"><default-field><scan-input resolver="resolve#Scan"/></default-field></field>
+            <field name="toId"><default-field><scan-input resolver="resolve#Scan"/></default-field></field>
         </form-single>
     </widgets>
 </screen>"#;
@@ -161,16 +166,41 @@ fn the_scan_resolver_runs_for_the_named_field_with_its_types_and_context() {
     assert_eq!(status, 404, "{answer}");
     let (status, _) = site.scan("scanForm=Nope&scanField=assetId&scanText=A1");
     assert_eq!(status, 404);
+    let (status, answer) = site.scan("scanForm=Twice&scanField=fromId&scanText=A1");
+    assert_eq!(status, 400, "{answer}");
+    assert!(answer["errors"].as_str().unwrap().contains("fromId, toId"), "{answer}");
 
-    // a GET is refused: the scan is a post with the session token
+    // a GET is the read it is (the terminal client searches with one), and needs no token
     let mut get = request("GET", "/scanResolve");
     get.query = vec![
         ("scanForm".into(), "Move".into()),
         ("scanField".into(), "assetId".into()),
-        ("scanText".into(), "A1".into()),
+        ("term".into(), "A1".into()),
     ];
     let response = serve_at(&site.world.factory, get, &site.root);
-    assert_eq!(response.status, 405, "{}", response.body_text());
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    assert!(
+        response.body_text().contains(r#""value" : "A1""#),
+        "{}",
+        response.body_text()
+    );
+
+    // a POST of a session that has its token must carry it, as the page's own posts do
+    let mut jar = Vec::new();
+    let page = serve_at(&site.world.factory, request("GET", "/"), &site.root);
+    cookies(&page, &mut jar);
+    let token = token_of(&page.body_text());
+    let post = |body: &str| {
+        serve_at(
+            &site.world.factory,
+            with_cookies(form_post("/scanResolve", body), &jar),
+            &site.root,
+        )
+    };
+    let refused = post(&format!("{base}&scanText=A1"));
+    assert!(refused.status >= 400, "{} {}", refused.status, refused.body_text());
+    let taken = post(&format!("{base}&scanText=A1&moquiSessionToken={token}"));
+    assert_eq!(taken.status, 200, "{}", taken.body_text());
 }
 
 /// `density="handheld"` reaches the shell in the menu data entry of the screen, and the html page as a body class.

@@ -315,7 +315,9 @@ impl TransitionDef {
     /// The automatic transitions: `ActionsTransitionItem` runs the screen's data preparation on demand, and the
     /// saved find, column and screen document ones are `ScreenDefinition`'s other items. The saved find and column
     /// ones write rows, so they take only a POST with the session token (Java takes any method and no token). The scan
-    /// resolver only reads, but it takes a POST with the session token too: a scan is the user's own action on the page.
+    /// resolver only reads: it takes any method, as a dynamic-options transition does (the terminal client asks for the
+    /// options of its search drop-down with a GET), and a POST, which the browser clients send, must carry the session
+    /// token (`csrf_rejected`).
     fn implicit(screen_location: &str, implicit: Implicit) -> Self {
         let (name, read_only, begin_transaction) = match implicit {
             Implicit::FormSelectColumns => ("formSelectColumns", false, true),
@@ -324,14 +326,13 @@ impl TransitionDef {
             Implicit::ScanResolve => ("scanResolve", true, false),
             Implicit::Actions | Implicit::None => ("actions", true, true),
         };
-        let post_only = !read_only || implicit == Implicit::ScanResolve;
         Self {
             name: name.to_string(),
-            method: if post_only { "post" } else { "any" }.to_string(),
+            method: if read_only { "any" } else { "post" }.to_string(),
             screen_location: screen_location.to_string(),
             begin_transaction,
             read_only,
-            require_session_token: Some(post_only),
+            require_session_token: Some(!read_only || implicit == Implicit::ScanResolve),
             authz_action: "view".to_string(),
             authz_explicit: true,
             parameters: Vec::new(),

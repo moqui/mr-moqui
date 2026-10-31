@@ -2483,8 +2483,9 @@ fn csrf_rejected(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Erro
     ) {
         return Ok(false);
     }
-    // Only a transition that runs something can change data.
-    if !runs_actions(transition) {
+    // Only a transition that runs something can change data. The scan resolver changes none, but a POST of it is the
+    // page's own scan and carries the token as the page's other posts do.
+    if !runs_actions(transition) && transition.implicit != super::Implicit::ScanResolve {
         return Ok(false);
     }
     let required = match transition.require_session_token {

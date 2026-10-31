@@ -84,7 +84,7 @@ use convert::{
 };
 pub use convert::{host_to_js, js_to_host};
 use decimal::HostDecimal;
-pub use ec_extra::{expand_localized, gs1_value};
+pub use ec_extra::expand_localized;
 use entities::{
     atom_name, entity_find, entity_make_value, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has,
     prototype_member, wrap_find, EntityCell, HostEntity, HostFind, HostList, ScriptList,

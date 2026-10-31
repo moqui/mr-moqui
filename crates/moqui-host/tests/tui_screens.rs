@@ -93,6 +93,45 @@ fn gallery_screens() {
     drive_tools(&link);
     drive_push(&factory, &link);
     drive_views(&factory, &link);
+    drive_handheld(&link);
+}
+
+/// The Gallery's Handheld scan field in the terminal: a search drop-down over the screen's scanResolve transition (asked
+/// with a GET), the code typed is the search, its match the choice, and the save posts the id with the scan id the screen
+/// made when it rendered.
+fn drive_handheld(link: &HostLink) {
+    let mut view = open_screen(link, "/apps/gallery/Handheld");
+    focus(&mut view, "ScanAnything.itemId");
+    view.on_key(&press(Key::F(4)));
+    type_text(&mut view, "A-100");
+    view.session_mut()
+        .on_time(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    view.run_requests();
+    let choices = view.session().dropdown_choices();
+    assert!(
+        choices.iter().any(|choice| choice.value == "A-100"),
+        "{choices:?} {}",
+        field_debug(&view)
+    );
+    let at = view.session().dropdown().map_or(0, |drop| drop.at);
+    let to = choices.iter().position(|choice| choice.value == "A-100").unwrap_or(0);
+    let key = if to >= at { Key::Down } else { Key::Up };
+    for _ in 0..at.abs_diff(to) {
+        view.on_key(&press(key.clone()));
+    }
+    view.on_key(&press(Key::Enter));
+    assert_eq!(view.session().buffer("ScanAnything.itemId"), "A-100");
+    view.on_key(&KeyPress::with_ctrl(Key::Char('s')));
+    view.run_requests();
+    let message = view.session().message().to_string();
+    assert!(!view.session().message_is_error(), "{message}");
+    assert!(message.contains("A-100"), "{message}");
+    let operation = message
+        .split("operation ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or("");
+    assert!(operation.len() >= 16, "the scan id made at render: {message}");
 }
 
 /// The Gallery's Views list: its board first (`views="board,list,calendar"`), then `v` to the list and the calendar,
