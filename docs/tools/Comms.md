@@ -77,6 +77,15 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   message plays, then `7` deletes it, `9` saves it and `#` skips to the next. The email notice has only a link unless you
   turn on the audio or the transcript in it; turning one on warns that mail cannot be recalled. See
   [Voicemail](../interfaces/Voicemail.md).
+- <a id="desk-phones"></a>**Desk and soft phones.** Settings, Desk and soft phones: Add a phone gives a username,
+  a password, the domain, the port and the transport, each with a copy button, shown only then; put them in the desk
+  phone or in a phone app (Linphone, Zoiper, Groundwire), choosing TLS and SRTP where it has them. Once it registers,
+  the list shows it with its address and how long the registration lasts. A call to you rings the phone beside your
+  tabs, and whichever answers first takes it; the phone calls out as you, to a number (with your caller ID and your
+  limits) or to a colleague by username. New password makes new credentials and stops the old ones at once; Remove
+  ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
+  until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
+  [SIP, Registrar](../interfaces/SIP.md#registrar).
 - <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
   whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
   provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
@@ -84,7 +93,8 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   number's trunk, the person it rings (or the voicemail access number) and its emergency location. Caller IDs: who may call from which number. Fraud: the
   limits, each person's permissions, and the sources blocked after failed SIP sign-ins (a block never locks the account;
   Clear lifts it). Emergency: the readiness checklist and the emergency locations (address, callback number, who is
-  told, the provider's reference and whether it is validated). The screens are basic-comms' (`screen/System/`), mounted
+  told, the provider's reference and whether it is validated). Phones: everyone's desk and soft phones with their
+  registrations, whether the registrar is on, and Remove. The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), and rooms with unread.
@@ -146,5 +156,7 @@ user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens
 provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
-and its limits, notices, transcription and its retry, and the trash. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and
+soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, a phone's own
+call). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

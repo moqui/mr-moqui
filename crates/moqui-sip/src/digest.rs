@@ -370,6 +370,17 @@ impl NonceBook {
     /// Checks an answer for `method`, with the password of its username (`None` when there is no such user, which is
     /// checked the same way so the time does not tell).
     pub fn verify(&mut self, auth: &Authorization, method: &str, password: Option<&str>, now_secs: u64) -> Verdict {
+        let password = password.unwrap_or("\u{0}no user");
+        let verifier = auth
+            .algorithm
+            .map(|algorithm| ha1(algorithm, &auth.username, &auth.realm, password));
+        self.verify_ha1(auth, method, verifier.as_deref(), now_secs)
+    }
+
+    /// Checks an answer for `method` against a stored verifier: the HA1 of its username, this book's realm and the
+    /// answer's algorithm ([`ha1`]), as the registrar keeps a phone's credentials (§5.2 "Verifiers"). `None` when there
+    /// is no such user or no verifier for that algorithm, which is checked the same way so the time does not tell.
+    pub fn verify_ha1(&mut self, auth: &Authorization, method: &str, verifier: Option<&str>, now_secs: u64) -> Verdict {
         let Some(issued) = self.issued_at(&auth.nonce) else {
             return Verdict::Invalid;
         };
@@ -379,8 +390,11 @@ impl NonceBook {
         let Some(algorithm) = auth.algorithm else {
             return Verdict::Invalid;
         };
-        let password = password.unwrap_or("\u{0}no user");
-        let ha1 = algorithm.hash(&format!("{}:{}:{password}", auth.username, auth.realm));
+        let known = verifier.is_some();
+        let ha1 = match verifier {
+            Some(v) => v.to_ascii_lowercase(),
+            None => algorithm.hash("\u{0}no verifier"),
+        };
         let ha2 = algorithm.hash(&format!("{method}:{}", auth.uri));
         let (expected, count) = match (&auth.qop, &auth.nc, &auth.cnonce) {
             (Some(qop), Some(nc), Some(cnonce)) if qop.eq_ignore_ascii_case("auth") => {
@@ -395,7 +409,7 @@ impl NonceBook {
             (None, _, _) => (algorithm.hash(&format!("{ha1}:{}:{ha2}", auth.nonce)), 0),
             _ => return Verdict::Invalid,
         };
-        if !constant_eq(expected.as_bytes(), auth.response.as_bytes()) {
+        if !constant_eq(expected.as_bytes(), auth.response.as_bytes()) || !known {
             return Verdict::Invalid;
         }
         if now_secs.saturating_sub(issued) > self.lifetime_secs {
@@ -428,6 +442,12 @@ impl NonceBook {
         self.seen
             .retain(|_, (issued, _)| now_secs.saturating_sub(*issued) <= lifetime);
     }
+}
+
+/// A digest verifier: `H(username:realm:password)` (RFC 7616 §3.4.2), what the registrar stores for a phone instead of
+/// its password, one per algorithm and realm.
+pub fn ha1(algorithm: Algorithm, username: &str, realm: &str, password: &str) -> String {
+    algorithm.hash(&format!("{username}:{realm}:{password}"))
 }
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {

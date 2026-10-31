@@ -30,6 +30,9 @@
 //! - [`media`]: a phone leg's audio, sans-IO: its RTP to 48 kHz frames for the call's mixer, and the mix-minus back
 //!   to its codec every 20 ms (moqui-rtc's audio core, the M0 gate).
 //! - [`race`]: the outcome of a leg's offers when more than one answers or the caller gives up: the first answer wins.
+//! - [`registrar`] (V4): the bindings of desk and soft phones, sans-IO; the user agent's side of the registrar
+//!   (digest against stored verifiers, the flows, forking a call to a device's bindings, a device's own calls) is
+//!   `ua_phones.rs`.
 
 pub mod dial;
 pub mod digest;
@@ -37,10 +40,14 @@ pub mod dtmf;
 pub mod guard;
 pub mod media;
 pub mod race;
+pub mod registrar;
 pub mod rtp;
 pub mod sdp;
 pub mod srtp;
 pub mod ua;
+
+/// The attribute [`ua::DeviceDirectory`] is implemented with, so the host needs no dependency of its own for it.
+pub use async_trait::async_trait;
 
 /// Makes aws-lc-rs the process's default rustls provider, as the rest of the host uses it. rsipstack's TLS builds its
 /// configs from the process default, and its `ring` feature puts a second provider in rustls, so without this the

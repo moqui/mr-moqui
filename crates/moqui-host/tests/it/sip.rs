@@ -737,3 +737,152 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
     assert!(in_trash, "7 sent the message to the trash: {trash:?}");
     assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
 }
+
+/// The phone's REGISTER, unsigned or with its digest answer (V4).
+fn register_text(phone: SocketAddr, server: SocketAddr, user: &str, cseq: u32, auth: Option<&str>) -> String {
+    let auth = auth.map(|a| format!("Authorization: {a}\r\n")).unwrap_or_default();
+    format!(
+        "REGISTER sip:{server} SIP/2.0\r\nVia: SIP/2.0/UDP {phone};branch=z9hG4bK-reg{cseq};rport\r\nMax-Forwards: 70\r\n\
+         From: <sip:{user}@{server}>;tag=desk\r\nTo: <sip:{user}@{server}>\r\nCall-ID: desk-reg-1\r\nCSeq: {cseq} REGISTER\r\n\
+         Contact: <sip:{user}@{phone}>\r\nExpires: 300\r\n{auth}User-Agent: Spec Desk Phone\r\nContent-Length: 0\r\n\r\n"
+    )
+}
+
+/// The registrar (V4) on a real server: a user's desk phone registers with the credentials it was given once, a call
+/// from a colleague rings it, it answers in G.722, and the colleague's browser hears it.
+#[test]
+fn a_registered_desk_phone_rings_answers_and_is_heard() {
+    if !crate::common::own_process() {
+        return;
+    }
+    const CALLEE: &str = "sip.desk";
+    const PASSWORD: &str = "Sip-desk-77!";
+    // the phone: its signaling and media sockets
+    let phone = Trunk::new();
+    let gate = crate::common::start_with_properties(
+        "sip",
+        None,
+        &[
+            ("rtc_media_port", "0"),
+            ("sip_port", "0"),
+            ("sip_rtp_ports", "42400-42499"),
+            ("sip_registrar_enabled", "true"),
+        ],
+    );
+    let http = gate.server.address();
+    let sip_at = gate.server.sip_address().expect("the SIP listener is up");
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let (callee, credentials) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let created = call(
+            "org.moqui.impl.UserServices.create#UserAccount",
+            &[
+                ("username", Value::string(CALLEE)),
+                ("newPassword", Value::string(PASSWORD)),
+                ("newPasswordVerify", Value::string(PASSWORD)),
+                ("userFullName", Value::string("Desk Callee")),
+            ],
+        );
+        let callee = text(&created, "userId");
+        moqui_core::user::internal_login_user(CALLEE).unwrap();
+        let device = call(
+            "org.moqui.impl.SipDeviceServices.create#SipDevice",
+            &[("name", Value::string("Front desk"))],
+        );
+        (callee, device)
+    };
+    let (user, password) = (text(&credentials, "username"), text(&credentials, "password"));
+    assert_eq!(credentials.get("registrarEnabled"), Some(&Value::Bool(true)));
+
+    // the phone registers: challenged, then signed with SHA-256
+    let at = phone.addr();
+    phone.send(&register_text(at, sip_at, &user, 1, None), sip_at);
+    let challenge = phone.response(401);
+    let challenges: Vec<moqui_sip::digest::Challenge> = values(&challenge.headers, "WWW-Authenticate")
+        .iter()
+        .filter_map(|v| moqui_sip::digest::Challenge::parse(v))
+        .collect();
+    let credentials = moqui_sip::digest::Credentials {
+        username: user.clone(),
+        password,
+        algorithms: vec![moqui_sip::digest::Algorithm::Sha256],
+        ..Default::default()
+    };
+    let chosen = moqui_sip::digest::choose(&challenges, &credentials).expect("a SHA-256 challenge");
+    let auth = moqui_sip::digest::answer(&credentials, chosen, "REGISTER", &format!("sip:{sip_at}"), "c1").unwrap();
+    phone.send(&register_text(at, sip_at, &user, 2, Some(&auth)), sip_at);
+    let ok = phone.response(200);
+    assert!(
+        values(&ok.headers, "Contact")[0].contains("expires="),
+        "the binding's expiry"
+    );
+
+    // the binding is kept as a row; then john calls the callee, whose phone rings beside the tabs
+    let (call_id, caller_leg) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user(CALLEE).unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let listed = call("org.moqui.impl.SipDeviceServices.find#SipDevices", &[]);
+            let registered = match listed.get("deviceList") {
+                Some(Value::List(list)) => list.iter().any(|d| match d {
+                    Value::Map(m) => matches!(m.get("registrationList"), Some(Value::List(r)) if !r.is_empty()),
+                    _ => false,
+                }),
+                _ => false,
+            };
+            if registered {
+                break;
+            }
+            assert!(Instant::now() < until, "the registration is kept: {listed:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let started = call(
+            "org.moqui.impl.CallServices.start#Call",
+            &[("calleeUserIdList", Value::List(vec![Value::string(&callee)]))],
+        );
+        (text(&started, "callSessionId"), text(&started, "callLegId"))
+    };
+    let (invite, from) = phone.request("INVITE");
+    assert!(invite.uri.to_string().contains(&user), "{}", invite.uri);
+    assert_eq!(from, sip_at, "over the flow the phone registered on");
+    let offer = sdp::parse(&String::from_utf8_lossy(&invite.body)).unwrap();
+    let mut desk = phone.local_media();
+    desk.codecs = vec!["g722", "pcmu"];
+    let (answer, settled) = sdp::answer(&offer, &desk).unwrap();
+    assert_eq!(settled.codec.name, "g722", "a wideband desk phone answers G.722");
+    phone.reply(&invite, from, 180, "", "");
+    phone.reply(&invite, from, 200, "", &answer);
+    phone.request("ACK");
+
+    // the call is answered on the phone; john's browser hears it, and it hears john's side of the call
+    let cookie = crate::common::sign_in(http, "john.doe", "moqui");
+    factory.flush_sessions().unwrap();
+    let mut media = PhoneMedia::new(&settled).unwrap();
+    let mut peer = Peer::new(open_socket(http, &cookie), &call_id, &caller_leg);
+    peer.join();
+    let got = talk(&phone, &mut media, &mut peer, Duration::from_secs(6), 20);
+    assert!(
+        peer.received >= 20,
+        "the browser hears the desk phone: {} frames",
+        peer.received
+    );
+    assert!(got >= 20, "the desk phone gets the call's audio: {got} packets");
+    let state = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        call(
+            "org.moqui.impl.CallServices.get#Call",
+            &[("callSessionId", Value::string(&call_id))],
+        )
+    };
+    assert_eq!(status_of(&state).as_deref(), Some("active"));
+    // john hangs up: the phone gets a BYE
+    peer.send(json!({"rtc": "leave", "id": 5}));
+    let (bye, from) = phone.request("BYE");
+    phone.reply(&bye, from, 200, "", "");
+}

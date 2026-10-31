@@ -45,6 +45,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::shell::get_providers",
         "moqui_core::service::shell::get_shell_counts",
         "moqui_core::service::shell::publish_shell_counts",
+        "moqui_core::service::sip_credential::make_sip_credential",
         "moqui_core::service::speech::get_speech_provider",
         "moqui_core::service::speech::transcribe_audio",
         "moqui_core::service::spreadsheet::load_spreadsheet_entity",

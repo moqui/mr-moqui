@@ -52,6 +52,7 @@ mod schedule;
 mod script_ports_tests;
 mod seca;
 mod security_checks;
+mod sip_credential;
 mod speech;
 pub(crate) mod semaphore;
 pub mod shell;

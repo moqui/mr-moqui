@@ -39,6 +39,7 @@
 
 mod audio;
 mod leg;
+mod phones;
 mod prompt;
 mod voicemail;
 
@@ -92,6 +93,11 @@ pub(crate) struct SipSettings {
     pub ca_file: Option<PathBuf>,
     /// The flood caps: `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`.
     pub limits: RequestLimits,
+    /// The realm of the digest challenges and the domain phones register to: `sip_domain`, else the public address,
+    /// else `moqui`.
+    pub domain: String,
+    /// The registrar for desk and soft phones (V4), `None` unless `sip_registrar_enabled`.
+    pub registrar: Option<moqui_sip::registrar::RegistrarLimits>,
 }
 
 /// The flood caps from the properties; one that is not a number is logged and keeps its default.
@@ -173,6 +179,10 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
     } else {
         Some(PathBuf::from(ca.trim()))
     };
+    let domain = or(
+        "sip_domain",
+        &public.map(|p| p.to_string()).unwrap_or_else(|| "moqui".to_string()),
+    );
     Ok(Some(SipSettings {
         listen,
         tls,
@@ -181,6 +191,8 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
         public,
         ca_file,
         limits: limits_from(property),
+        domain,
+        registrar: phones::registrar_from(property),
     }))
 }
 
@@ -353,13 +365,13 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         tls,
         public_host: settings.public.map(|p| p.to_string()),
         ca_pem,
-        realm: settings
-            .public
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "moqui".to_string()),
+        realm: settings.domain.clone(),
         guard: GuardPolicy::default(),
         limits: settings.limits,
         user_agent: "Moqui".to_string(),
+        registrar: settings
+            .registrar
+            .map(|limits| phones::registrar_config(factory, limits, &settings.domain)),
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
         Ok(ua) => ua,
@@ -596,6 +608,10 @@ struct Leg {
     local: LocalMedia,
     caller: String,
     answered: bool,
+    /// A desk or soft phone's leg (V4): its device's username, which `dropDevice` hangs up.
+    device: Option<String>,
+    /// A device leg's SDP with SRTP keys, for a binding over TLS, until a binding answers.
+    srtp_local: Option<LocalMedia>,
 }
 
 struct Engine {
@@ -790,7 +806,10 @@ impl Engine {
 
     async fn event(&mut self, event: UaEvent) {
         match event {
+            UaEvent::Incoming(call) if call.device.is_some() => self.incoming_device(call).await,
             UaEvent::Incoming(call) => self.incoming(call).await,
+            UaEvent::Binding { change, binding } => self.binding_changed(change, &binding),
+            UaEvent::DeviceAnswered { leg, answer, source } => self.device_answered(&leg, &answer, source),
             UaEvent::Ringing { .. } => {}
             UaEvent::Answered { leg, answer } => {
                 let Some(entry) = self.legs.get(&leg) else {
@@ -958,6 +977,8 @@ impl Engine {
                         local,
                         caller: from,
                         answered: false,
+                        device: None,
+                        srtp_local: None,
                     },
                 );
                 match (voicemail_now, ring_seconds) {
@@ -1103,6 +1124,8 @@ impl Engine {
                 let reason = Some(text(body, "reason")).filter(|r| !r.is_empty());
                 self.start_voicemail(&leg, reason.as_deref().unwrap_or("declined"));
             }
+            "ringDevice" => self.ring_device(body),
+            "dropDevice" => self.drop_device(body),
             other => tracing::debug!("SIP: unknown control {other}"),
         }
     }
@@ -1164,6 +1187,8 @@ impl Engine {
                 local,
                 caller: String::new(),
                 answered: true,
+                device: None,
+                srtp_local: None,
             },
         );
         let request = DialRequest {

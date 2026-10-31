@@ -216,6 +216,18 @@
     <default-property name="sip_request_burst" value="100"/>
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
+    <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
+        true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
+        to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's
+        expiry is held between sip_registrar_min_expires and sip_registrar_max_expires seconds (sip_registrar_default_expires
+        when the phone asks none), and to sip_registrar_nat_expires for a phone behind a NAT without Outbound (RFC 5626). -->
+    <default-property name="sip_registrar_enabled" value="false"/>
+    <default-property name="sip_domain" value=""/>
+    <default-property name="sip_registrar_min_expires" value="60"/>
+    <default-property name="sip_registrar_max_expires" value="3600"/>
+    <default-property name="sip_registrar_default_expires" value="600"/>
+    <default-property name="sip_registrar_nat_expires" value="60"/>
+
     <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
         voicemail_max_seconds: the longest message (10 to 600). voicemail_prompt_location: a folder (any resource location)

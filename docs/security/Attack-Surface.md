@@ -471,8 +471,22 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   (profile "PBX on a private network") answer it: a provider trunk's are the provider account's password, so a digest
   with them is refused and counted as a failure, and a provider's calls come only from its addresses. A listed address
   range is at most a /8 (IPv4) or a /32 (IPv6); the services refuse a wider one and the engine ignores it. Other requests from addresses that
-  are not a trunk's are not answered. There is no registrar yet: REGISTER is refused after the checks. Over UDP a
+  are not a trunk's are not answered. Without the registrar, REGISTER is refused after the checks. Over UDP a
   source address can be forged, so a trunk taken by its address is best on TLS (the default) or TCP.
+- **The registrar (V4).** Off unless `sip_registrar_enabled` is true, even with the listeners on. With it, a REGISTER
+  and a phone's INVITE answer the same challenge with a desk or soft phone's credentials: a generated username and a
+  22-character random password that is shown to its user once and never stored. Only its digest verifiers are kept
+  (`SipDeviceVerifier.ha1`, encrypted, per algorithm and realm): SHA-256, and MD5 only for a device of the legacy
+  profile, so an MD5 answer for a standard device fails. A failed or replayed answer counts against its source as any
+  failed digest; no device or account is locked. Each REGISTER or signed INVITE looks the username up once
+  (`get#SipDeviceAuth`), within the per-source rate. Rotation deletes the old verifiers and revocation the device's,
+  and either ends its bindings and its calls on every engine. A binding is the flow the phone opened (its transport
+  and source address and port); calls to the phone go back over it only, never to the address its Contact names, and
+  a stream connection that closes ends its bindings. A device has at most 10 bindings, and expiry is held to
+  `sip_registrar_min_expires`..`sip_registrar_max_expires`. A phone's own call is placed as its user through the same
+  checks as the browser's (`place#PhoneCall`: outbound permission, caller ID, international and premium, limits,
+  emergency first), so a phone's credentials give no more than its user has. Plain RTP from a phone is taken from its
+  SDP's address or the address it signals from (its NAT's), on any port until the first packet latches.
 - **Failed digests block the source.** `authFailureLimit` failures in `authFailureWindowSeconds` from one address
   block it for `authBlockSeconds` (5 in 10 minutes, for an hour, by default): its datagrams and stream messages are
   dropped before a transaction is made, nothing is answered, and the block is kept in `VoiceAuthFailure` across

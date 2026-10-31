@@ -33,6 +33,8 @@
 //! - **Outbound.** CANCEL while ringing, forked answers (the first wins, the others are ACKed and ended with BYE) and
 //!   a 2xx that crosses a CANCEL (ACK and BYE) are rsipstack's dialog layer; [`crate::race`] decides the outcome the
 //!   host is told, and the ring timeout.
+//! - **Phones (V4).** With [`UaConfig::registrar`], desk and soft phones register here, ring over the flows they
+//!   opened, and place calls signed with their credentials (`ua_phones.rs`).
 //!
 //! Each leg has the id the host gives it (the call's `callLegId`). Hold is a re-INVITE either way: the other side's
 //! comes to the host as [`UaEvent::Reoffer`] for its answer; the host's goes out with [`Ua::reinvite`].
@@ -64,6 +66,12 @@ use tokio_util::sync::CancellationToken;
 use crate::digest::{self, Algorithm, Authorization, Challenge, Credentials, NonceBook, Verdict};
 use crate::guard::{Admit, Failure, GuardPolicy, RequestGate, RequestLimits, SourceGuard};
 use crate::race::{self, Race};
+use crate::registrar::{Binding, Registrar};
+
+#[path = "ua_phones.rs"]
+mod phones;
+pub use phones::{BindingChange, DeviceDirectory, DeviceRing, PhoneDevice, RegistrarConfig};
+use phones::{Caller, Phones};
 
 /// How long a challenge's nonce lasts.
 const NONCE_SECONDS: u64 = 300;
@@ -194,6 +202,8 @@ pub struct UaConfig {
     pub guard: GuardPolicy,
     pub limits: RequestLimits,
     pub user_agent: String,
+    /// The registrar for desk and soft phones (V4); `None` keeps it off, and a REGISTER is refused.
+    pub registrar: Option<RegistrarConfig>,
 }
 
 /// The addresses the listeners bound.
@@ -240,6 +250,8 @@ pub struct IncomingCall {
     /// The caller's SDP offer.
     pub offer: String,
     pub source: SocketAddr,
+    /// A registered phone's call (its `sipDeviceId`): `trunk_id` is empty and `to` is the number or user it dialed.
+    pub device: Option<String>,
     pub reply: oneshot::Sender<Decision>,
 }
 
@@ -288,6 +300,18 @@ pub enum UaEvent {
         source: IpAddr,
         username: String,
         blocked: bool,
+    },
+    /// A phone's binding was added, refreshed or removed (it expired, it unregistered, its flow closed, or its device
+    /// was rotated or revoked).
+    Binding {
+        change: BindingChange,
+        binding: Binding,
+    },
+    /// A device leg ([`Ua::ring_device`]) was answered by one of its bindings, which signals from `source`.
+    DeviceAnswered {
+        leg: String,
+        answer: String,
+        source: SocketAddr,
     },
 }
 
@@ -342,6 +366,8 @@ struct Inner {
     bound: Bound,
     public_host: Option<String>,
     stop: CancellationToken,
+    /// The registrar, when it is on.
+    phones: Option<Phones>,
 }
 
 /// The running user agent. Dropping it does not stop it: call [`Ua::shutdown`].
@@ -358,6 +384,8 @@ struct BlockInspector {
     gate: Arc<Mutex<RequestGate>>,
     /// The endpoint, once built, for its running transactions.
     endpoint: Arc<std::sync::OnceLock<std::sync::Weak<EndpointInner>>>,
+    /// The registrar's bindings, which end with the stream connection they came over.
+    phones: Option<(Arc<Mutex<Registrar>>, mpsc::UnboundedSender<UaEvent>)>,
 }
 
 /// A request outside a dialog (no To tag), other than the ACK and CANCEL of one this side already has.
@@ -415,7 +443,12 @@ impl TransportEventInspector for BlockInspector {
                     });
                 }
             }
-            TransportEvent::Closed(connection) if connection.is_reliable() => lock(&self.gate).connection_closed(),
+            TransportEvent::Closed(connection) if connection.is_reliable() => {
+                lock(&self.gate).connection_closed();
+                if let Some((registrar, events)) = &self.phones {
+                    phones::connection_closed(registrar, events, connection);
+                }
+            }
             _ => {}
         }
         Some(event)
@@ -533,6 +566,7 @@ impl Ua {
             &config.user_agent
         };
         let endpoint_slot = Arc::new(std::sync::OnceLock::new());
+        let phones = config.registrar.as_ref().map(Phones::new);
         let endpoint: Endpoint = EndpointBuilder::new()
             .with_user_agent(user_agent)
             .with_transport_layer(transport_layer)
@@ -541,6 +575,7 @@ impl Ua {
                 guard: Arc::clone(&guard),
                 gate: Arc::new(Mutex::new(RequestGate::new(config.limits))),
                 endpoint: Arc::clone(&endpoint_slot),
+                phones: phones.as_ref().map(|p| (Arc::clone(&p.registrar), events.clone())),
             }))
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
@@ -573,7 +608,9 @@ impl Ua {
             bound,
             public_host: config.public_host.filter(|h| !h.trim().is_empty()),
             stop: stop.clone(),
+            phones,
         });
+        phones::sweep(&inner);
         {
             let inner = Arc::clone(&inner);
             tokio::spawn(async move {
@@ -1237,19 +1274,24 @@ impl Inner {
             // anything else from a stranger is not answered
             _ => return,
         }
-        let trunk = match trunk {
-            Some(trunk) => trunk,
-            None => match self.authenticate(&mut tx, source).await {
-                Some(trunk) => trunk,
+        if method == Method::Register && self.phones.is_some() {
+            // the registrar (V4): a phone's REGISTER, from wherever it is
+            self.register_phone(tx, source).await;
+            return;
+        }
+        let caller = match trunk {
+            Some(trunk) => Caller::Trunk(trunk),
+            None => match self.authenticate(&mut tx, source, method == Method::Invite).await {
+                Some(caller) => caller,
                 None => return,
             },
         };
         if method == Method::Register {
-            // a trunk does not register here; phones register with V4's registrar
+            // a trunk does not register here; phones register with the registrar, when it is on
             let _ = tx.reply(StatusCode::Forbidden).await;
             return;
         }
-        self.new_call(tx, trunk, source).await;
+        self.new_call(tx, caller, source).await;
     }
 
     fn trunk_by_address(&self, ip: IpAddr) -> Option<TrunkConfig> {
@@ -1259,40 +1301,54 @@ impl Inner {
             .map(|t| t.config.clone())
     }
 
-    /// A request from an address that is not a trunk's: its digest answer must name a trunk's username. A missing
-    /// or stale answer is challenged; a failed one counts against the source.
-    async fn authenticate(&self, tx: &mut Transaction, source: Option<SocketAddr>) -> Option<TrunkConfig> {
+    /// A request from an address that is not a trunk's: its digest answer must name a PBX trunk's username (`trunks`),
+    /// or, with the registrar on, a phone's (its verifiers). A missing or stale answer is challenged; a failed one
+    /// counts against the source.
+    async fn authenticate(&self, tx: &mut Transaction, source: Option<SocketAddr>, trunks: bool) -> Option<Caller> {
         let proxy = tx.original.method == Method::Invite;
         let header_name = if proxy { "Proxy-Authorization" } else { "Authorization" };
         let given = header_values(&tx.original.headers, header_name)
             .into_iter()
             .find_map(|v| Authorization::parse(&v));
         let method = tx.original.method.to_string();
-        let verdict = given.as_ref().map(|auth| {
-            // a PBX trunk's credentials only: a provider's are its account's, never a way in
-            let trunk = lock(&self.trunks)
-                .values()
-                .find(|t| {
-                    let c = &t.config.credentials;
-                    t.config.inbound_digest
-                        && c.auth_username
-                            .as_deref()
-                            .filter(|u| !u.is_empty())
-                            .unwrap_or(&c.username)
-                            == auth.username
-                        && !c.password.is_empty()
-                })
-                .map(|t| t.config.clone());
-            let password = trunk.as_ref().map(|t| t.credentials.password.clone());
-            let verdict = lock(&self.nonces).verify(auth, &method, password.as_deref(), now_secs());
-            (verdict, trunk)
-        });
+        let verdict = match given.as_ref() {
+            None => None,
+            Some(auth) => {
+                // a PBX trunk's credentials only: a provider's are its account's, never a way in
+                let trunk = lock(&self.trunks)
+                    .values()
+                    .find(|t| {
+                        let c = &t.config.credentials;
+                        trunks
+                            && t.config.inbound_digest
+                            && c.auth_username
+                                .as_deref()
+                                .filter(|u| !u.is_empty())
+                                .unwrap_or(&c.username)
+                                == auth.username
+                            && !c.password.is_empty()
+                    })
+                    .map(|t| t.config.clone());
+                match trunk {
+                    Some(trunk) => {
+                        let password = trunk.credentials.password.clone();
+                        let verdict = lock(&self.nonces).verify(auth, &method, Some(&password), now_secs());
+                        Some((verdict, Some(Caller::Trunk(trunk))))
+                    }
+                    None if self.phones.is_some() => {
+                        let (verdict, device) = self.check_device(auth, &method).await;
+                        Some((verdict, device.map(Caller::Device)))
+                    }
+                    None => Some((lock(&self.nonces).verify(auth, &method, None, now_secs()), None)),
+                }
+            }
+        };
         match verdict {
-            Some((Verdict::Valid, Some(trunk))) => {
+            Some((Verdict::Valid, Some(caller))) => {
                 if let Some(source) = source {
                     lock(&self.guard).success(source.ip());
                 }
-                Some(trunk)
+                Some(caller)
             }
             None | Some((Verdict::Stale, _)) => {
                 let stale = verdict.is_some();
@@ -1337,8 +1393,21 @@ impl Inner {
         }
     }
 
-    async fn new_call(self: Arc<Self>, mut tx: Transaction, trunk: TrunkConfig, source: Option<SocketAddr>) {
+    async fn new_call(self: Arc<Self>, mut tx: Transaction, caller: Caller, source: Option<SocketAddr>) {
         let request = tx.original.clone();
+        // a trunk's call, or a registered phone's over the transport it came by
+        let (trunk_id, device, transport) = match caller {
+            Caller::Trunk(trunk) => (trunk.id, None, trunk.transport),
+            Caller::Device(device) => {
+                let transport = request
+                    .via_header()
+                    .ok()
+                    .and_then(|v| SipConnection::parse_target_from_via(v).ok())
+                    .and_then(|(t, _)| phones::transport_of(t))
+                    .unwrap_or(Transport::Udp);
+                (String::new(), Some(device.id), transport)
+            }
+        };
         let to = user_of(&request.uri);
         let (from, from_name) = match request.from_header().ok().and_then(|h| h.typed().ok()) {
             Some(from) => (user_of(&from.uri), from.display_name.clone()),
@@ -1354,7 +1423,7 @@ impl Inner {
             return;
         }
         let offer = String::from_utf8_lossy(&request.body).into_owned();
-        let contact = Uri::try_from(self.contact(trunk.transport, &to).as_str()).ok();
+        let contact = Uri::try_from(self.contact(transport, &to).as_str()).ok();
         let (states_tx, states) = self.dialogs.new_dialog_state_channel();
         let dialog = match self.dialogs.get_or_create_server_invite(&tx, states_tx, None, contact) {
             Ok(dialog) => dialog,
@@ -1373,13 +1442,14 @@ impl Inner {
         }
         let (reply, decision) = oneshot::channel();
         self.emit(UaEvent::Incoming(IncomingCall {
-            trunk_id: trunk.id.clone(),
+            trunk_id,
             to,
             from,
             from_name,
             call_id: call_id.clone(),
             offer,
             source: source.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0))),
+            device,
             reply,
         }));
         match tokio::time::timeout(DECIDE_WAIT, decision).await {

@@ -251,4 +251,75 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="blockedUntilDate" type="date-time"/>
     </entity>
     <!-- ========== end V2 ========== -->
+
+    <!-- ========== V4: the registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones",
+        §5.4; docs/interfaces/SIP.md "Registrar"). The services are org.moqui.impl.SipDeviceServices (SipDevices.js). ========== -->
+
+    <entity entity-name="SipDevice" package="moqui.call" use="configuration" cache="never">
+        <description>A user's desk or soft phone that registers with Moqui's registrar: its generated SIP username and the
+            realm its credentials are for, a name, the revision of its credentials (each rotation adds one, which ends the
+            older verifiers and their bindings), its profile (deviceProfile standard: SHA-256 digest only; legacy: MD5 too,
+            for a phone that has no SHA-256), its status (SdsActive, SdsRevoked) and when it last registered. The password is
+            never stored: it is shown once, and only its verifiers are kept (SipDeviceVerifier).</description>
+        <field name="sipDeviceId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="username" type="text-medium"/>
+        <field name="realm" type="text-medium"/>
+        <field name="name" type="text-medium"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <field name="deviceProfile" type="text-short"/>
+        <field name="statusId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="SipDevice" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <relationship type="many" related="moqui.call.SipDeviceVerifier" short-alias="verifiers">
+            <key-map field-name="sipDeviceId"/></relationship>
+        <relationship type="many" related="moqui.call.SipRegistration" short-alias="registrations">
+            <key-map field-name="sipDeviceId"/></relationship>
+        <index name="SIP_DEVICE_USERNAME" unique="true"><index-field name="username"/></index>
+        <index name="SIP_DEVICE_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="SipDeviceVerifier" package="moqui.call" use="configuration" cache="never">
+        <description>A device's digest verifier for one algorithm and realm: HA1, the hash of username:realm:password
+            (RFC 7616 §3.4.2, RFC 8760), encrypted. A standard device has a SHA-256 one only; a legacy device an MD5 one too.
+            credentialRevision is its device's revision when it was made; a rotation deletes the older ones.</description>
+        <field name="sipDeviceId" type="id" is-pk="true"/>
+        <field name="algorithm" type="text-short" is-pk="true"/>
+        <field name="realm" type="text-medium" is-pk="true"/>
+        <field name="ha1" type="text-medium" encrypt="true"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <relationship type="one" related="moqui.call.SipDevice" short-alias="device"/>
+    </entity>
+
+    <entity entity-name="SipRegistration" package="moqui.call" use="nontransactional" cache="never">
+        <description>A binding of a registered device (RFC 3261 §10, RFC 5626), as the SIP engine of instanceId holds it:
+            the Contact URI, the flow it came over (transport, the source address and port as rport gives them; a call to
+            the phone goes back over it), its Call-ID and CSeq, its Outbound instance (+sip.instance) and reg-id when it uses
+            Outbound, when it expires and was last refreshed, and the phone's user agent. Expired or revoked bindings cannot
+            ring; the engine removes a row when its binding ends, and expire#SipRegistrations removes those whose engine
+            went away.</description>
+        <field name="sipRegistrationId" type="id" is-pk="true"/>
+        <field name="sipDeviceId" type="id"/>
+        <field name="instanceId" type="text-medium"/>
+        <field name="contactUri" type="text-medium"/>
+        <field name="transport" type="text-short"/>
+        <field name="sourceAddress" type="text-medium"/>
+        <field name="sourcePort" type="number-integer"/>
+        <field name="sipCallId" type="text-medium"/>
+        <field name="cseq" type="number-integer"/>
+        <field name="instanceKey" type="text-medium"/>
+        <field name="regId" type="number-integer"/>
+        <field name="outboundFlag" type="text-indicator"/>
+        <field name="credentialRevision" type="number-integer"/>
+        <field name="expiresDate" type="date-time"/>
+        <field name="lastRefreshDate" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="userAgent" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.call.SipDevice" short-alias="device"/>
+        <index name="SIP_REG_DEVICE"><index-field name="sipDeviceId"/></index>
+    </entity>
 </entities>

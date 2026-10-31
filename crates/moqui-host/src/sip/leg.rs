@@ -15,9 +15,9 @@
 //! A phone leg's media (plans/Comms-Framework.md §5.1, §6.5; the M0 hook points in `rtc/media.rs`): its RTP socket
 //! from the `sip_rtp_ports` range and one thread, on a 20 ms tick, between that socket and the call's SFU room.
 //!
-//! - **In.** The phone's RTP is decoded (G.711 or Opus) and resampled to 48 kHz by [`moqui_sip::media::PhoneMedia`],
-//!   and each frame is pushed into the leg's [`PcmSource`]: the browsers hear it as one more participant, and the
-//!   room's consumers (the mixer here, the recorder, captions) see it too.
+//! - **In.** The phone's RTP is decoded (G.711, G.722 or Opus) and resampled to 48 kHz by
+//!   [`moqui_sip::media::PhoneMedia`], and each frame is pushed into the leg's [`PcmSource`]: the browsers hear it as
+//!   one more participant, and the room's consumers (the mixer here, the recorder, captions) see it too.
 //! - **Out.** A [`Consumer`] of the room's audio feeds an [`AudioRoom`]; each tick its `minus(leg)` (everyone but this
 //!   leg, other phone legs included) goes back to the phone, resampled to 8 kHz and encoded, or as RFC 4733 events
 //!   while digits are sent. A prompt ([`Prompt`]) is mixed in over it.
@@ -75,6 +75,8 @@ pub(crate) enum LegCommand {
     /// Voicemail: record the phone's audio from now (`Recorded` when it ends).
     Record(Box<RecordPlan>),
     StopRecording,
+    /// Plain RTP is taken from this address too: where a registered phone signals from (V4, its NAT's address).
+    AllowSource(IpAddr),
     Stop,
 }
 
@@ -192,6 +194,7 @@ impl LegMedia {
             play_tag: None,
             recording: None,
             notes,
+            allow: None,
         };
         let thread = std::thread::Builder::new()
             .name("moqui-sip-leg".to_string())
@@ -231,6 +234,8 @@ struct Worker {
     /// A voicemail being recorded.
     recording: Option<Recording>,
     notes: tokio::sync::mpsc::UnboundedSender<LegNote>,
+    /// [`LegCommand::AllowSource`]'s address, for this media and any that replaces it.
+    allow: Option<IpAddr>,
 }
 
 impl Worker {
@@ -325,10 +330,21 @@ impl Worker {
             LegCommand::Settled(settled) => match self.media.as_mut() {
                 Some(media) if media.takes(&settled) => media.update(&settled),
                 _ => match PhoneMedia::new(&settled) {
-                    Ok(media) => self.media = Some(media),
+                    Ok(mut media) => {
+                        if let Some(ip) = self.allow {
+                            media.allow_source(ip);
+                        }
+                        self.media = Some(media);
+                    }
                     Err(err) => tracing::warn!("SIP leg {}: its media did not start: {err}", self.leg),
                 },
             },
+            LegCommand::AllowSource(ip) => {
+                self.allow = Some(ip);
+                if let Some(media) = self.media.as_mut() {
+                    media.allow_source(ip);
+                }
+            }
             LegCommand::Digits(digits) => {
                 if let Some(media) = self.media.as_mut() {
                     media.send_digits(&digits);

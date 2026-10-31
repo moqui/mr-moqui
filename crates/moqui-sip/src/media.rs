@@ -19,7 +19,7 @@
 //!
 //! - **In.** [`PhoneMedia::receive`] takes each datagram: SRTP is checked and decrypted, RTCP dropped, telephone-event
 //!   packets become digits, and the voice is held in a small jitter buffer by sequence number. Every 20 ms
-//!   [`PhoneMedia::pull`] decodes the next frame (G.711 or Opus, concealing a lost one) and resamples it to the
+//!   [`PhoneMedia::pull`] decodes the next frame (G.711, G.722 or Opus, concealing a lost one) and resamples it to the
 //!   mixer's 48 kHz, for the leg's `PcmSource` in the call's room.
 //! - **Out.** Every 20 ms [`PhoneMedia::send`] takes the room's mix without this leg (`AudioRoom` `minus(leg)`),
 //!   resamples it to the codec's rate, encodes it and writes the packet, or an RFC 4733 event while a digit is sent.
@@ -79,6 +79,8 @@ pub struct PhoneMedia {
     codec: Box<dyn Codec>,
     /// The codec's samples per 20 ms.
     frame: usize,
+    /// The RTP clock's step per 20 ms: the frame, except for G.722, whose 16 kHz audio keeps an 8000 clock.
+    clock_step: u32,
     dtmf_pt: Option<u8>,
     up: Option<Resampler>,
     down: Option<Resampler>,
@@ -87,6 +89,9 @@ pub struct PhoneMedia {
     remote: SocketAddr,
     /// The address in the SDP: plain RTP is taken only from it.
     signaled: std::net::IpAddr,
+    /// Another address plain RTP is taken from: the one a registered phone signals from (its NAT's), for a phone that
+    /// puts its private address in the SDP ([`PhoneMedia::allow_source`]).
+    also: Option<std::net::IpAddr>,
     /// The other side's SRTP key: a re-INVITE with another needs a new leg media.
     remote_key: Option<crate::srtp::MasterKey>,
     latched: bool,
@@ -134,6 +139,7 @@ impl PhoneMedia {
         Ok(PhoneMedia {
             choice: settled.codec,
             frame: (rate / 50) as usize,
+            clock_step: codec.clock_rate() / 50,
             codec,
             dtmf_pt: settled.dtmf.map(|(pt, _)| pt),
             up,
@@ -142,6 +148,7 @@ impl PhoneMedia {
             rx,
             remote: settled.remote,
             signaled: settled.remote.ip(),
+            also: None,
             remote_key: settled.remote_key.clone(),
             latched: false,
             direction: settled.direction,
@@ -195,6 +202,13 @@ impl PhoneMedia {
         }
     }
 
+    /// Takes plain RTP from `ip` too: the address a registered phone's signaling comes from, when its SDP names its
+    /// private address behind a NAT (§5.2 "NAT"). The port may be any, as for the SDP's address; SRTP needs no such
+    /// address, since only an authenticated packet moves it.
+    pub fn allow_source(&mut self, ip: std::net::IpAddr) {
+        self.also = Some(ip);
+    }
+
     /// Queues keypad digits to send; how many were taken (none without telephone-event).
     pub fn send_digits(&mut self, digits: &str) -> usize {
         if self.dtmf_pt.is_none() {
@@ -228,7 +242,7 @@ impl PhoneMedia {
             let allowed = if self.latched {
                 from == self.remote
             } else {
-                self.signaled.is_unspecified() || from.ip() == self.signaled
+                self.signaled.is_unspecified() || from.ip() == self.signaled || Some(from.ip()) == self.also
             };
             if !allowed {
                 self.stats.rejected += 1;
@@ -326,7 +340,7 @@ impl PhoneMedia {
     /// The packet for this 20 ms tick, from `pcm` (the mix without this leg, [`FRAME`] samples at 48 kHz): a digit's
     /// event while one is sent, else the voice. `None` while the other side holds the call.
     pub fn send(&mut self, pcm: &[i16]) -> Option<Vec<u8>> {
-        let samples = self.frame as u32;
+        let samples = self.clock_step;
         let sends = self.direction.flows().0;
         let mut payload = Vec::with_capacity(self.frame);
         let event = if sends && self.dtmf_pt.is_some() {

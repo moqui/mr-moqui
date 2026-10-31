@@ -189,10 +189,11 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         voice("grant#CallerId", {phoneNumber: "+15550109999", userId: USER})
         voice("store#VoiceUserSetting", {userId: USER, outboundEnabled: "Y"})
         voice("record#AuthFailure", {sourceAddress: "198.51.100.7", username: "render"})
+        sys(() => ec.service.sync().name("org.moqui.impl.SipDeviceServices.create#SipDevice").parameters({name: "Render phone"}).call())
         ec.message.clearErrors()
         const problems = []
         const texts = {Status: "SIP servers", Trunks: "Render trunk", Numbers: "+15550109999", CallerIds: "Let someone call from a number",
-            Fraud: "198.51.100.7", Emergency: "Render office"}
+            Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone"}
         for (const [path, text] of Object.entries(texts)) {
             for (const mode of ["qvt", "tui"]) {
                 const shown = render(systemRoot, "Voice/" + path, mode, {})

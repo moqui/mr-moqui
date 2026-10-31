@@ -4369,6 +4369,7 @@ dependencies = [
  "indexmap",
  "inventory",
  "jiff",
+ "md-5 0.11.0",
  "memchr",
  "moqui-db",
  "moqui-entity",

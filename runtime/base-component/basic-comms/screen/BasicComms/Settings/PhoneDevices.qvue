@@ -1,0 +1,161 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- My desk and soft phones (plans/Comms-Framework.md §5.5, V4), the component PhoneDevices.xml serves in the qvue render
+    mode: the user's phones with their live registrations (user agent, address, expiry), Add a phone, New password and
+    Remove. A new phone's credentials and a new password show once in a dialog, each with a copy button and a short setup
+    note; closing it forgets them (nothing on the page or the server keeps the password). -->
+<template><div class="m-phone-devices q-pa-sm column q-gutter-md" style="max-width:900px">
+    <div class="row items-center">
+        <div class="text-h6">{{t('Desk and soft phones')}}</div><q-space></q-space>
+        <q-btn flat dense no-caps icon="sym_o_refresh" :label="t('Refresh')" @click="load"></q-btn>
+        <q-btn unelevated no-caps color="primary" icon="sym_o_add" :label="t('Add a phone')" class="q-ml-sm" @click="adding = true"></q-btn>
+    </div>
+    <div class="m-muted">{{t('A desk phone or a phone app (Linphone, Zoiper, Groundwire) that registers with this server rings with your calls, and calls out as you.')}}
+        {{t('Calls nobody answers go to your voicemail.')}}
+        <q-btn flat dense no-caps color="primary" icon="sym_o_voicemail" :label="t('Phone and voicemail settings')" @click="$root.setUrl(sibling('Phone'))"></q-btn></div>
+    <q-banner v-if="loaded && !server.registrarEnabled" dense rounded class="bg-warning text-black">
+        {{t('The registrar is off on this server: phones cannot register until an administrator turns it on (sip_registrar_enabled).')}}
+    </q-banner>
+    <div v-if="loaded && !devices.length" class="m-muted">{{t('No phones yet.')}}</div>
+    <q-list bordered separator class="rounded-borders" v-if="devices.length">
+        <q-item v-for="d in devices" :key="d.sipDeviceId">
+            <q-item-section avatar><q-icon name="sym_o_deskphone" :color="d.registrationList.length ? 'positive' : 'grey'"></q-icon></q-item-section>
+            <q-item-section>
+                <q-item-label>{{d.name}} <span class="text-caption m-muted">· {{d.username}}<span v-if="d.deviceProfile === 'legacy'"> · {{t('Legacy (MD5)')}}</span></span></q-item-label>
+                <q-item-label caption v-if="!d.registrationList.length">{{t('Not registered')}}<span v-if="d.lastSeenDate"> · {{t('last seen')}} {{whenText(d.lastSeenDate)}}</span></q-item-label>
+                <q-item-label caption v-for="r in d.registrationList" :key="r.contactUri + r.sourcePort">
+                    {{r.userAgent || t('Phone')}} · {{r.sourceAddress}}:{{r.sourcePort}} ({{(r.transport || '').toUpperCase()}}) · {{t('until')}} {{whenText(r.expiresDate)}}
+                </q-item-label>
+            </q-item-section>
+            <q-item-section side>
+                <div class="row q-gutter-xs">
+                    <q-btn flat dense no-caps icon="sym_o_key" :label="t('New password')" @click="rotate(d)"></q-btn>
+                    <q-btn flat dense no-caps icon="sym_o_delete" color="negative" :label="t('Remove')" @click="remove(d)"></q-btn>
+                </div>
+            </q-item-section>
+        </q-item>
+    </q-list>
+
+    <q-dialog v-model="adding">
+        <q-card style="min-width:360px">
+            <q-card-section class="text-h6">{{t('Add a phone')}}</q-card-section>
+            <q-card-section class="q-gutter-md">
+                <q-input dense outlined v-model="newName" :label="t('Name')" :placeholder="t('Desk phone')" maxlength="60"></q-input>
+                <q-option-group v-model="newProfile" :options="profileOptions"></q-option-group>
+            </q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" :label="t('Add')" :loading="busy" @click="add"></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showing" persistent @hide="credentials = null">
+        <q-card style="min-width:360px;max-width:560px" v-if="credentials">
+            <q-card-section class="text-h6">{{t('Set up the phone')}}</q-card-section>
+            <q-card-section>
+                <div class="text-warning q-mb-sm">{{t('The password is shown only now. Copy it into the phone before you close this.')}}</div>
+                <q-list dense>
+                    <q-item v-for="f in fields" :key="f.key">
+                        <q-item-section><q-item-label caption>{{f.label}}</q-item-label><q-item-label class="text-mono">{{f.value}}</q-item-label></q-item-section>
+                        <q-item-section side><q-btn flat dense round size="sm" icon="sym_o_content_copy" :aria-label="t('Copy') + ' ' + f.label" @click="copy(f)"></q-btn></q-item-section>
+                    </q-item>
+                </q-list>
+                <div class="text-caption m-muted q-mt-sm">{{t('In the phone or app, add a SIP account with this username, password and domain (the domain is also the server, or registrar). Choose TLS on the TLS port where the phone has it, with SRTP media; behind a home router, turn on its keepalive or "outbound" option if there is one.')}}</div>
+                <div v-if="!credentials.registrarEnabled" class="text-caption text-warning q-mt-sm">{{t('The registrar is off on this server: the phone can register once an administrator turns it on.')}}</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn unelevated no-caps color="primary" :label="t('Done')" v-close-popup></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'PhoneDevices',
+    data() {
+        return { devices: [], server: {}, loaded: false, adding: false, newName: '', newProfile: 'standard', busy: false,
+            credentials: null, showing: false };
+    },
+    computed: {
+        profileOptions() {
+            return [{ label: t('Standard (SHA-256)'), value: 'standard' }, { label: t('Legacy (MD5), for a phone without SHA-256'), value: 'legacy' }];
+        },
+        fields() {
+            const c = this.credentials || {};
+            const port = c.transport === 'TLS' ? c.tlsPort : c.sipPort;
+            return [
+                { key: 'username', label: t('Username'), value: c.username },
+                { key: 'password', label: t('Password'), value: c.password },
+                { key: 'domain', label: t('Domain'), value: c.domain },
+                { key: 'port', label: t('Port'), value: port ? String(port) : '' },
+                { key: 'transport', label: t('Transport'), value: c.transport || '' },
+            ].filter((f) => f.value);
+        }
+    },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'PhoneDevices']).join('/') + '/' + name; },
+        /** Another Settings screen, beside this one. */
+        sibling(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'PhoneDevices']).slice(0, -1).concat(name).join('/'); },
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        load() {
+            return this.request('devices').then((json) => {
+                this.devices = json.deviceList || [];
+                this.server = json;
+                this.loaded = true;
+            }, () => { this.loaded = true; });
+        },
+        show(json) {
+            if (!json.credentials) return;
+            this.credentials = json.credentials;
+            this.showing = true;
+            this.load();
+        },
+        add() {
+            this.busy = true;
+            this.request('add', { name: this.newName, deviceProfile: this.newProfile }, 'POST').then((json) => {
+                this.busy = false;
+                if (json.errors) return;
+                this.adding = false;
+                this.newName = '';
+                this.show(json);
+            }, () => { this.busy = false; });
+        },
+        rotate(d) {
+            this.$q.dialog({ title: t('Make a new password?'), message: t('The phone stops working until you enter the new password in it.'),
+                ok: { label: t('New password'), color: 'primary', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.request('newPassword', { sipDeviceId: d.sipDeviceId }, 'POST').then((json) => this.show(json), () => null));
+        },
+        remove(d) {
+            this.$q.dialog({ title: t('Remove the phone?'), message: t('It stops ringing and cannot register again.'),
+                ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.request('remove', { sipDeviceId: d.sipDeviceId }, 'POST').then(() => this.load(), () => null));
+        },
+        copy(f) {
+            if (navigator.clipboard) navigator.clipboard.writeText(f.value || '').then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => {});
+        },
+        whenText(millis) {
+            return millis ? new Date(Number(millis)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        }
+    }
+};
+</script>

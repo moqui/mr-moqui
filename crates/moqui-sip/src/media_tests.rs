@@ -213,3 +213,77 @@ fn two_phone_legs_hear_each_other_through_the_mix_minus() {
         "A does not hear itself: {heard_by_a:?}"
     );
 }
+
+#[test]
+fn g722_is_negotiated_with_a_desk_phone_and_carries_wideband_audio() {
+    // the offer to a device lists Opus, G.722 and G.711; a desk phone without Opus answers G.722
+    let ours_at: SocketAddr = "127.0.0.1:20002".parse().unwrap();
+    let theirs_at: SocketAddr = "127.0.0.1:40002".parse().unwrap();
+    let mut ours = LocalMedia::new(ours_at.ip(), ours_at.port(), None);
+    ours.codecs = sdp::DEVICE_CODECS.to_vec();
+    let offer = sdp::offer(&ours);
+    assert!(offer.contains("a=rtpmap:9 G722/8000"), "{offer}");
+    let mut desk = LocalMedia::new(theirs_at.ip(), theirs_at.port(), None);
+    desk.codecs = vec!["g722", "pcmu"];
+    let (answer, their_side) = sdp::answer(&sdp::parse(&offer).unwrap(), &desk).unwrap();
+    assert!(answer.contains("m=audio 40002 RTP/AVP 9"), "{answer}");
+    let our_side = sdp::accept(&ours, &sdp::parse(&answer).unwrap()).unwrap();
+    assert_eq!(our_side.codec.name, "g722");
+    assert_eq!(our_side.codec.clock_rate, 8000);
+    let mut ours = PhoneMedia::new(&our_side).unwrap();
+    let mut theirs = PhoneMedia::new(&their_side).unwrap();
+    // a 6 kHz tone: above what G.711's 8 kHz sampling carries, within G.722's 16 kHz
+    let (mut heard, mut out, mut stamps) = (Vec::new(), Vec::new(), Vec::new());
+    for tick in 0..30 {
+        let packet = ours.send(&tone(6000.0, tick)).unwrap();
+        assert_eq!(packet.len(), 12 + 160, "20 ms of G.722 is 160 bytes");
+        stamps.push(u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]));
+        assert_eq!(theirs.receive(ours_at, &packet), Received::Audio);
+        if theirs.pull(&mut out) {
+            heard.push(level_dbov(&out));
+        }
+    }
+    assert!(
+        stamps.windows(2).all(|w| w[1].wrapping_sub(w[0]) == 160),
+        "G.722 keeps an 8000 clock: 160 a packet"
+    );
+    assert!(
+        heard.len() >= 25 && heard[10..].iter().all(|l| *l > -30.0),
+        "the wideband tone is heard: {heard:?}"
+    );
+}
+
+#[test]
+fn plain_rtp_from_a_phone_behind_a_nat_latches_only_to_its_signaling_address() {
+    // the phone's offer names its private address; its packets come from its NAT's, where it registered from
+    let leg_at: SocketAddr = "127.0.0.1:20004".parse().unwrap();
+    let private: SocketAddr = "192.168.1.20:40004".parse().unwrap();
+    let nat: SocketAddr = "198.51.100.7:61000".parse().unwrap();
+    let ours = LocalMedia::new(leg_at.ip(), leg_at.port(), None);
+    let phone = LocalMedia::new(private.ip(), private.port(), None);
+    let offer = sdp::offer(&phone);
+    let (answer, our_side) = sdp::answer(&sdp::parse(&offer).unwrap(), &ours).unwrap();
+    let their_side = sdp::accept(&phone, &sdp::parse(&answer).unwrap()).unwrap();
+    let mut leg = PhoneMedia::new(&our_side).unwrap();
+    let mut handset = PhoneMedia::new(&their_side).unwrap();
+    let packet = handset.send(&tone(440.0, 0)).unwrap();
+    assert_eq!(leg.receive(nat, &packet), Received::Rejected, "not the SDP's address");
+    leg.allow_source(nat.ip());
+    assert_eq!(
+        leg.receive(nat, &handset.send(&tone(440.0, 1)).unwrap()),
+        Received::Audio
+    );
+    assert_eq!(leg.remote(), nat, "answered where it sends from");
+    // a guessed source elsewhere takes nothing, nor, once latched, another port of the NAT's address
+    let stranger: SocketAddr = "203.0.113.9:61000".parse().unwrap();
+    assert_eq!(
+        leg.receive(stranger, &handset.send(&tone(440.0, 2)).unwrap()),
+        Received::Rejected
+    );
+    let other_port: SocketAddr = "198.51.100.7:61001".parse().unwrap();
+    assert_eq!(
+        leg.receive(other_port, &handset.send(&tone(440.0, 3)).unwrap()),
+        Received::Rejected
+    );
+    assert_eq!(leg.remote(), nat);
+}

@@ -28,6 +28,7 @@ opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
 rquickjs = { workspace = true, features = ["macro"] }
+md-5 = { workspace = true }
 sha2 = { workspace = true }
 memchr = { workspace = true }
 hmac = { workspace = true }

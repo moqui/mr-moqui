@@ -70,6 +70,39 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
 }
 
 #[test]
+fn the_registrar_is_off_until_enabled_and_takes_its_limits_and_domain() {
+    let s = settings(&[("sip_port", "5060")]).unwrap().unwrap();
+    assert_eq!(s.registrar, None, "off by default, even with the listener on");
+    assert_eq!(s.domain, "moqui");
+    let s = settings(&[("sip_port", "5060"), ("sip_public_address", "198.51.100.20")])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.domain, "198.51.100.20",
+        "the realm is the public address when no domain is set"
+    );
+    let s = settings(&[
+        ("sip_port", "5060"),
+        ("sip_domain", "sip.example.com"),
+        ("sip_registrar_enabled", "true"),
+        ("sip_registrar_min_expires", "120"),
+        ("sip_registrar_max_expires", "60"),
+        ("sip_registrar_nat_expires", "often"),
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(s.domain, "sip.example.com");
+    let limits = s.registrar.expect("on");
+    assert_eq!(limits.min_expires, 120);
+    assert_eq!(limits.max_expires, 120, "the maximum is never under the minimum");
+    assert_eq!(limits.default_expires, 600);
+    assert_eq!(
+        limits.nat_expires, 120,
+        "one that is not a number keeps its default, held to the minimum"
+    );
+}
+
+#[test]
 fn a_port_range_hands_out_free_ports_and_wraps() {
     let range = PortRange::parse("41850-41852", "127.0.0.1".parse().unwrap()).unwrap();
     let a = range.take().unwrap();

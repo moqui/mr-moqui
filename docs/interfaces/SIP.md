@@ -3,12 +3,15 @@
 A user calls a phone number from BasicComms, and a number's calls ring its user, through a SIP trunk provider. The
 browser never speaks SIP: it talks WebRTC to Moqui ([WebRTC](WebRTC.md)), and Moqui places the SIP leg toward the
 trunk. The phone is one more leg of the call's `CallSession`. Its audio joins the call's room on the media node: the
-browsers hear it as a participant, and the phone hears everyone else mixed (mix-minus).
+browsers hear it as a participant, and the phone hears everyone else mixed (mix-minus). Desk and soft phones register
+with Moqui's own registrar ([Registrar](#registrar), V4): a call to a user rings them beside the user's tabs, and they
+call out as their user.
 
-- The SIP user agent and B2BUA are in `crates/moqui-sip`, on rsipstack.
+- The SIP user agent and B2BUA are in `crates/moqui-sip`, on rsipstack; the registrar's bindings are its
+  `registrar.rs`, and its side of the user agent `ua_phones.rs`.
 - The engine, the listeners and the RTP sockets are in `crates/moqui-host/src/sip/`.
 - The voice services are `org.moqui.impl.VoiceServices` (`framework/service/org/moqui/impl/Voice.js`), with
-  `framework/entity/VoiceEntities.xml`.
+  `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.impl.SipDeviceServices` (`SipDevices.js`).
 - Administration is System, Voice (in basic-comms).
 - The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.
 
@@ -35,6 +38,11 @@ Every listener is off until its setting is set.
 | `sip_request_rate`, `sip_request_burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
 | `sip_max_transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
 | `sip_max_connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
+| `sip_registrar_enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on |
+| `sip_domain` | `sip_public_address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
+| `sip_registrar_min_expires`, `sip_registrar_max_expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
+| `sip_registrar_default_expires` | `600` | The expiry of a binding whose phone asks none |
+| `sip_registrar_nat_expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -49,7 +57,7 @@ Open these ports on the firewall, to the provider's signaling and media addresse
 - `sip_tls_port`, TCP;
 - the `sip_rtp_ports` range, UDP.
 
-**DNS.** Desk and soft phones (the registrar comes in V4) find a server through its SRV record:
+**DNS.** Desk and soft phones ([Registrar](#registrar)) find a server through its SRV record:
 
 ```
 _sips._tcp.example.com. 3600 IN SRV 10 10 5061 sip.example.com.
@@ -201,6 +209,88 @@ notice that comes while another plays waits for it.
 - **Withdrawing** is hanging up.
 - Audio that does not read is logged, and the notice plays its tones only.
 
+## Registrar
+
+Desk phones (Yealink, Polycom, Grandstream) and soft phones (Linphone, Zoiper, Groundwire, on a computer or a mobile, the
+native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/Comms-Framework.md §5.2
+"Registrar for phones", V4). It is off unless `sip_registrar_enabled` is true, even with the listeners on; until then a
+REGISTER is refused as before, and phones may be added but cannot register or ring.
+
+**Phones and their credentials.** A user adds a phone in Comms, Settings, Desk and soft phones
+(`SipDeviceServices.create#SipDevice`). Its credentials are generated: a ten-digit username and a 22-character random
+password. They show once, with the domain, the port and the transport, each with a copy button; the password is never
+stored. What is kept (`SipDeviceVerifier`, encrypted) is a digest verifier per algorithm for `sip_domain`: HA1 =
+H(username:realm:password), as RFC 7616 and RFC 8760 define it.
+
+- **Profiles.** A standard phone has a SHA-256 verifier only. The registrar challenges with SHA-256 first and MD5 second
+  (RFC 8760), and an MD5 answer from a standard phone fails: it counts against its source like any failed digest. The
+  legacy profile keeps an MD5 verifier too, for a phone that has no SHA-256; choose it only for such a phone.
+- **New password** (`rotate#SipDeviceCredential`) makes a new password for the same username, deletes the old
+  verifiers, and ends the phone's registrations on every engine; the phone stops until it has the new one.
+- **Remove** (`revoke#SipDevice`) deletes its verifiers, ends its registrations and hangs up its calls. It cannot
+  register or ring again.
+- An admin sees everyone's phones and removes one in System, Voice, Phones.
+
+**Setting up a phone.** In the phone or the app, add a SIP account:
+
+- username and password as shown; the domain (also the registrar, or server, or proxy) is `sip_domain`;
+- transport TLS on `sip_tls_port` (5061) with SRTP media (SDES) for a phone outside the office network. UDP or TCP on
+  `sip_port` is for a phone on the same network, with plain RTP;
+- with an SRV record (`_sips._tcp`, [Settings](#settings)) a phone given only the domain finds the server;
+- behind a home router, turn on the phone's "outbound" (RFC 5626) or keepalive option where it has one;
+- leave the registration expiry at its default; the registrar holds it to its limits.
+
+**Bindings.** Each registered contact is a binding (`SipRegistration`, one row each): the contact, the flow the REGISTER
+came over (transport, and the source address and port as `rport` gives them, RFC 3581), its Call-ID and CSeq, its
+Outbound instance and reg-id, when it expires and was last refreshed, and the phone's user agent. Settings shows them.
+
+- A phone may have several bindings (at most 10), say a soft phone on two computers.
+- Expiry is the contact's, else the request's, else `sip_registrar_default_expires`, held between
+  `sip_registrar_min_expires` and `sip_registrar_max_expires` (one under the minimum is refused with 423 and
+  `Min-Expires`).
+- `Expires: 0` on a contact removes it; `Contact: *` with `Expires: 0` removes them all.
+- A REGISTER with the same Call-ID must have a higher CSeq; one out of order is refused (500) and changes nothing.
+- An expired binding, one of an older credential revision, and those of a removed phone cannot ring. The engine sweeps
+  expired bindings every 5 seconds, and the job `expire_SipRegistrations` removes the rows of an engine that stopped.
+
+**NAT.** Phones behind NAT mostly do not do ICE, so the registrar keeps the path the phone opened:
+
+- **The flow.** A call to the phone goes back over the flow its REGISTER came on: the same TCP or TLS connection, or,
+  over UDP, its source address and port from the listener's own socket, which the NAT's mapping lets in. The address in
+  its Contact is never dialed. A TCP or TLS connection that closes ends the bindings over it.
+- **Outbound (RFC 5626).** A phone that sends `Supported: outbound` with `+sip.instance` and `reg-id` binds its flow; the
+  200 says `Require: outbound` and `Flow-Timer` (25 seconds over UDP, 120 over a stream), and the phone sends CRLF
+  keepalives, which the engine answers. Such a binding keeps its expiry.
+- **Short expiry.** A phone behind a NAT (its Via does not name where it sends from) without Outbound gets at most
+  `sip_registrar_nat_expires` (60 seconds), so its own REGISTER keeps the mapping open.
+- **RTP latching.** A phone's RTP is answered where it comes from. With SRTP, only an authenticated packet moves it.
+  With plain RTP, packets are taken from the SDP's address or from the address the phone signals from (its NAT's,
+  when its SDP names its private address), on any port until the first one latches; then only from that source.
+
+**Calls to a phone.** When a call rings a user (a call from a colleague or a browser, or a call to their number
+through a trunk), each of their phones registered with the call's node gets a leg (`CltSipDevice`, offered), and the
+engine forks an INVITE to every live binding of it, beside the ring in their tabs.
+
+- The offer is Opus, G.722 (wideband desk phones; 16 kHz audio on its 8000 RTP clock) and G.711, with
+  telephone-event; SRTP to a binding over TLS, plain RTP otherwise.
+- The first answer wins, through the call services' state machine: the answering phone's leg is the user's in the call,
+  and the other offers end. Their tabs stop ringing, and the other bindings and phones are canceled; a phone that
+  answers after is ACKed and ended with BYE. A tab that answers first cancels the phones the same way; declining in a
+  tab stops them too.
+- An inbound phone call is answered toward its trunk when the user's phone answers. The phone hears the call's notices
+  (recording, captions) as a phone leg does.
+
+**Calls from a phone.** A registered phone's INVITE answers a challenge (`Proxy-Authorization`) with its credentials,
+and the call is placed as its user (`SipDeviceServices.receive#DeviceCall`), with the phone as their leg:
+
+- a colleague's username is an internal call, which rings their tabs and phones;
+- anything else is a number, through `place#PhoneCall`: the user's outbound permission and caller ID, international
+  and premium, the limits, and the emergency path first. A phone gives no more than its user has.
+- The phone hears ringing (180) until the far end answers, and the call ends when either hangs up.
+
+**Mobile.** On a mobile, a SIP soft phone registered this way is how calls ring natively (§7.2). Push to wake a
+sleeping app is the app's own service; the registrar does not send pushes.
+
 ## Fraud controls
 
 Scanners probe SIP listeners for weak credentials, then place international calls (§5.2). Each of these is a release
@@ -286,8 +376,13 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 
 ## Not yet
 
-- **Registrar.** A desk or soft phone cannot register yet (V4). A REGISTER from anyone is refused (403), after the
-  same digest checks.
+- **Registrar.**
+  - Provisioning files for the common desk phones come later; a phone is set up by hand.
+  - A phone rings only for calls whose media is on the node it registered with (one node a call, until W7).
+  - A UDP phone's STUN keepalive (RFC 5626 over UDP) is not answered; its CRLF keepalive is, and without Outbound
+    the short expiry keeps its NAT open.
+  - An extension is a colleague's username; there are no numeric extensions yet.
+  - Not checked with a real desk phone or app yet: the in-memory phones of the tests play their part.
 - **Offers.**
   - An INVITE without an SDP offer (late offer) is refused (488).
   - Video in an offer is refused with port 0 (D-V3: SIP legs are audio only).
@@ -311,11 +406,21 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - a flood from one source held to its rate while another source calls in;
   - inbound ranges wider than a /8 or a /32 ignored;
   - a call over TLS with SRTP;
-  - two phone legs mixed.
+  - two phone legs mixed;
+  - the registrar against in-memory phones (`ua_phones_tests.rs`): a SHA-256 registration and MD5 refused for a
+    standard phone, a replayed REGISTER refused, several bindings, unregistering one or all, expiry, rotation and
+    revocation, a call forked to two bindings with the first answer winning, `rport` and an Outbound TCP flow (its
+    keepalive, a call over the same connection, its close), and a phone's own signed call;
+  - the bindings on simulated time (`registrar_tests.rs`), G.722 negotiation and audio, and plain RTP latching behind a
+    NAT (`media_tests.rs`).
 - `cargo test -p moqui-host --test it sip::`: an outbound and an inbound call on a real server, through a fake trunk,
-  heard by a browser stand-in.
-- `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, and prompts queued one after
-  another; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
+  heard by a browser stand-in; and a desk phone that registers, rings for a colleague's call, answers in G.722 and is
+  heard by the colleague's browser.
+- `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, prompts queued one after
+  another, and the registrar's settings; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
   only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.
+- `./moq test framework --spec SipDevice`: the registrar off by default, credentials shown once with only verifiers
+  kept, another user refused with the same parameters, rotation and revocation, a phone ringing beside the tabs with
+  the first answer winning (a phone, a tab, one of two phones), and a phone's call to a colleague.

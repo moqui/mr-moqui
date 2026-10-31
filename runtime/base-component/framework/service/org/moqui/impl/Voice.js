@@ -300,7 +300,7 @@ function userName(userId) {
   return account ? account.userFullName || account.username || userId : userId
 }
 
-function place(p) {
+function place(p, viaNode) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in to make a call')
   const pol = policy()
@@ -318,7 +318,7 @@ function place(p) {
       return refuse('emergencyNotReady', ec.resource.expand('Emergency calls cannot be placed from here: ${what}. Call emergency services from another phone.', '',
         { what: missingText(ready.missing) }), { missing: ready.missing })
     }
-    const nodes = voiceNodes()
+    const nodes = voiceNodes().filter((n) => !viaNode || n.instanceId === viaNode)
     if (!nodes.length) return refuse('voiceUnavailable', 'Phone calls are not available: no SIP server is running. Call emergency services from another phone.')
     const started = calls('startPhone', { userId: me, direction: 'outbound', phoneNumber: dest.number, displayName: dest.number,
       mediaNodeId: nodes[0].instanceId, idempotencyKey: key })
@@ -354,7 +354,7 @@ function place(p) {
   const number = one(NUMBER, { phoneNumber: fromNumber })
   const trunk = number?.voiceTrunkId ? one(TRUNK, { voiceTrunkId: number.voiceTrunkId }) : null
   if (!trunk || trunk.disabled === 'Y') return refuse('noTrunk', 'Your number has no trunk to call out through')
-  const nodes = voiceNodes()
+  const nodes = voiceNodes().filter((n) => !viaNode || n.instanceId === viaNode)
   if (!nodes.length) return refuse('voiceUnavailable', 'Phone calls are not available: no SIP server is running')
   const started = calls('startPhone', { userId: me, direction: 'outbound', phoneNumber: dest.number, displayName: dest.number,
     mediaNodeId: nodes[0].instanceId, idempotencyKey: key })
@@ -984,7 +984,9 @@ function status() {
 }
 
 const operations = {
-  place, receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
+  place: (p) => place(p), receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
+  // a registered phone's call (SipDevices.js receiveDeviceCall), on its own SIP engine's node; not a service
+  placeFromDevice: (p) => place(p, p.instanceId || null),
   myCallerIds, registerNode, engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
   deleteTrunk, findNumbers, storeNumber, deleteNumber, findGrants, grantCallerId, revokeCallerId, findLocations,
   storeLocation, deleteLocation, getPolicy, updatePolicy, findUserSettings, storeUserSetting, findAuthBlocks,

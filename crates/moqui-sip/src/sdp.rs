@@ -13,8 +13,9 @@
  */
 
 //! The SDP of a phone leg (RFC 4566, RFC 3264 offer and answer; plans/Comms-Framework.md §5.2 "codecs", D-V3): one
-//! audio stream, G.711 μ-law and A-law and Opus, telephone-event for DTMF (RFC 4733), and SDES keys (RFC 4568) when the
-//! media is SRTP. SIP legs are audio only, so a video stream in an offer is refused with port 0.
+//! audio stream, G.711 μ-law and A-law, G.722 (V4, for desk phones; its 16 kHz audio on an 8000 clock) and Opus,
+//! telephone-event for DTMF (RFC 4733), and SDES keys (RFC 4568) when the media is SRTP. SIP legs are audio only, so a
+//! video stream in an offer is refused with port 0.
 //!
 //! Hold is the stream's direction (RFC 3264 §8.4): a re-INVITE with `a=sendonly` or `a=inactive` (or the old
 //! `c=0.0.0.0`) puts this side on hold; the answer mirrors it.
@@ -26,6 +27,9 @@ use crate::srtp::{MasterKey, SUITE};
 
 /// The codecs a phone leg speaks, in the order offered.
 pub const CODECS: [&str; 3] = ["pcmu", "pcma", "opus"];
+/// The codecs offered to a desk or soft phone (V4): Opus where the phone has it, then G.722 for wideband desk phones,
+/// then G.711.
+pub const DEVICE_CODECS: [&str; 4] = ["opus", "g722", "pcmu", "pcma"];
 /// The dynamic payload types this side offers.
 const OPUS_PT: u8 = 111;
 const EVENT_PT: u8 = 101;
@@ -80,7 +84,7 @@ impl Direction {
 /// The codec both sides settled on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodecChoice {
-    /// The name moqui-rtc's `codec::by_name` knows: `pcmu`, `pcma` or `opus`.
+    /// The name moqui-rtc's `codec::by_name` knows: `pcmu`, `pcma`, `g722` or `opus`.
     pub name: &'static str,
     pub payload_type: u8,
     pub clock_rate: u32,
@@ -194,6 +198,10 @@ fn codec_line(out: &mut String, name: &str, pt: u8) {
         "pcma" => {
             let _ = write!(out, "a=rtpmap:{pt} PCMA/8000\r\n");
         }
+        // 16 kHz audio on an 8000 clock (RFC 3551 §4.5.2)
+        "g722" => {
+            let _ = write!(out, "a=rtpmap:{pt} G722/8000\r\n");
+        }
         "opus" => {
             let _ = write!(
                 out,
@@ -208,6 +216,7 @@ fn static_pt(name: &str) -> Option<u8> {
     match name {
         "pcmu" => Some(0),
         "pcma" => Some(8),
+        "g722" => Some(9),
         _ => None,
     }
 }
@@ -375,6 +384,7 @@ pub fn parse(text: &str) -> Result<RemoteMedia, SdpError> {
             if let Some(name) = match pt {
                 0 => Some("pcmu"),
                 8 => Some("pcma"),
+                9 => Some("g722"),
                 _ => None,
             } {
                 media.formats.push(Format {
@@ -407,6 +417,7 @@ fn codec_of(format: &Format) -> Option<CodecChoice> {
     let name = match (format.name.as_str(), format.rate) {
         ("pcmu", 8000) => "pcmu",
         ("pcma", 8000) => "pcma",
+        ("g722", 8000) => "g722",
         ("opus", 48_000) => "opus",
         _ => return None,
     };

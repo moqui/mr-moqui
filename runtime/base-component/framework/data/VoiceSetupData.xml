@@ -56,4 +56,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <moqui.security.user.NotificationTopic topic="VoiceAlert" inboxEnumId="NinUpdates" description="Phone alert: a blocked SIP source or an emergency call"
             typeString="warning" showAlert="Y" persistOnSend="Y"/>
+
+    <!-- V4: desk and soft phones registered with Moqui's registrar (SipDevice, org.moqui.impl.SipDeviceServices), and the
+        cleanup of the bindings whose engine went away. -->
+    <moqui.basic.StatusType description="SIP Device" statusTypeId="SipDevice"/>
+    <moqui.basic.StatusItem statusId="SdsActive" statusTypeId="SipDevice" sequenceNum="1" description="Active"/>
+    <moqui.basic.StatusItem statusId="SdsRevoked" statusTypeId="SipDevice" sequenceNum="2" description="Revoked"/>
+    <moqui.service.job.ServiceJob jobName="expire_SipRegistrations" description="Remove expired phone registrations"
+            serviceName="org.moqui.impl.SipDeviceServices.expire#SipRegistrations" cronExpression="0 0/5 * * * ?" paused="N"
+            errorHistoryOnly="Y"/>
 </entity-facade-xml>
