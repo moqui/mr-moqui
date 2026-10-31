@@ -30,6 +30,7 @@
 
 pub mod handoff;
 pub mod preview;
+pub mod steps;
 
 #[cfg(test)]
 mod tests;

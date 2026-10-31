@@ -82,11 +82,13 @@ pub struct FindLookup {
 ///
 /// `Handled` means this module stored the write or ran it itself. Return that only when the write
 /// will not be lost: a transaction cache inside an open frame, or a sim write already sent to the
-/// overlay. `on_write` still runs after either variant and is the one-cache invalidation.
+/// overlay. `on_write` still runs after either variant and is the one-cache invalidation. `Missed` is a sim write that
+/// wrote nothing, as on the database: an update probe that matched no row, or a create-if-missing of a row that is there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteGate {
     Proceed,
     Handled,
+    Missed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +160,22 @@ struct SimSession {
     poisoned: Option<String>,
     /// The transactions (frame tokens) with a rollback hook for this sim, Java's `trackedTransactions`.
     tracked: HashSet<u64>,
+    /// Step savepoints open on this sim ([`super::sim_step`]). While one is, a rolled-back transaction fails the step
+    /// instead of ending the sim: the step's savepoint undoes what it wrote.
+    steps: usize,
+}
+
+/// What a step savepoint restores of a sim session ([`super::sim_step`]): which tables, rows, replicas and tombstones
+/// the sim has, and whether it is poisoned. Not the sequence banks: an id a rolled-back step took is not given out
+/// again, so an id names one step's row over the whole run.
+#[derive(Clone)]
+pub(super) struct SimState {
+    tables: HashSet<String>,
+    tombstones: HashMap<String, HashSet<String>>,
+    written: HashSet<String>,
+    replicas: HashSet<String>,
+    copied: usize,
+    poisoned: Option<String>,
 }
 
 impl SimSession {
@@ -172,13 +190,70 @@ impl SimSession {
             copied: 0,
             poisoned: None,
             tracked: HashSet::new(),
+            steps: 0,
         }
     }
+}
+
+/// The innermost sim session's state, for a step savepoint to restore; none without a session.
+pub(super) fn sim_state() -> Option<SimState> {
+    SIM.with(|slot| {
+        slot.borrow().last().map(|session| SimState {
+            tables: session.tables.clone(),
+            tombstones: session.tombstones.clone(),
+            written: session.written.clone(),
+            replicas: session.replicas.clone(),
+            copied: session.copied,
+            poisoned: session.poisoned.clone(),
+        })
+    })
+}
+
+/// Put back the innermost sim session's state as [`sim_state`] took it, after its step was rolled back to the savepoint.
+pub(super) fn restore_sim_state(state: SimState) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            session.tables = state.tables;
+            session.tombstones = state.tombstones;
+            session.written = state.written;
+            session.replicas = state.replicas;
+            session.copied = state.copied;
+            session.poisoned = state.poisoned;
+        }
+    });
+}
+
+/// Count a step savepoint opened (`true`) or ended (`false`) on the innermost sim session.
+pub(super) fn note_sim_step(open: bool) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            session.steps = if open {
+                session.steps + 1
+            } else {
+                session.steps.saturating_sub(1)
+            };
+        }
+    });
+}
+
+/// Poison the innermost sim session with `reason` unless it is poisoned already.
+pub(super) fn poison_sim(reason: &str) {
+    SIM.with(|slot| {
+        if let Some(session) = slot.borrow_mut().last_mut() {
+            if session.poisoned.is_none() {
+                tracing::warn!("Sim overlay terminated: {reason}");
+                session.poisoned = Some(reason.to_string());
+            }
+        }
+    });
 }
 
 const SIM_ROLLED_BACK: &str =
     "A transaction that wrote to the sim was rolled back, and sim writes are not undone, so the sim \
      state can no longer be trusted. The sim has been terminated. Start a new sim to continue testing.";
+
+/// The poison of a sim inside a step savepoint: the step fails and its savepoint undoes what it wrote.
+const SIM_STEP_ROLLED_BACK: &str = "A transaction that wrote to the sim was rolled back, so the step was rolled back.";
 
 /// [`sim_check_open`] for a find of `entity_name`, which finds call first, since a failed overlay read otherwise falls
 /// back to production. The entities a sim leaves on production ([`SIM_PRODUCTION_ENTITIES`]) are not the sim's, as Java's
@@ -249,8 +324,13 @@ fn end_sim_tracking(schema: &str, token: u64, poison: Option<&str>) {
         };
         session.tracked.remove(&token);
         if let (Some(reason), None) = (poison, &session.poisoned) {
-            tracing::warn!("Sim overlay terminated: {reason}");
-            session.poisoned = Some(reason.to_string());
+            if session.steps > 0 {
+                tracing::info!("Sim step failed: {reason}");
+                session.poisoned = Some(SIM_STEP_ROLLED_BACK.to_string());
+            } else {
+                tracing::warn!("Sim overlay terminated: {reason}");
+                session.poisoned = Some(reason.to_string());
+            }
         }
     });
 }
@@ -789,12 +869,14 @@ fn build_views_by_member(facade: &EntityFacade) -> HashMap<String, Vec<String>> 
     map
 }
 
-/// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller.
+/// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller. `quiet` is an update that matches
+/// no row, or a create of a row that is there, without an error: `update_if_exists` and `create_if_missing`.
 pub fn gate_write(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
     values: &FieldMap,
+    quiet: bool,
 ) -> Result<WriteGate, Error> {
     let op = parse_op(operation)?;
     if super::fence::active() {
@@ -820,8 +902,8 @@ pub fn gate_write(
             tx.with_connection(|_| Ok(()))?;
         }
         note_sim_write(&tx)?;
-        write_sim(facade, entity_name, op, values, &prepared)?;
-        return Ok(WriteGate::Handled);
+        let written = write_sim(facade, entity_name, op, values, &prepared, quiet)?;
+        return Ok(if written { WriteGate::Handled } else { WriteGate::Missed });
     }
     tx.with_connection(|_| Ok(()))?;
     let token = tx.frame_token().ok_or_else(|| Error::new("no transaction in place"))?;
@@ -1293,14 +1375,40 @@ pub(super) fn query_sim(facade: &EntityFacade, schema: &str, sql: &str, params: 
     let sim = facade
         .sim_transactions()
         .ok_or_else(|| Error::new("sim transactions are not configured"))?;
+    let held = sim.in_transaction();
+    // Held (super::sim_step): a failed read would abort the held transaction and mark it rollback-only, so it runs
+    // under a savepoint of its own and its error is returned past `with_connection`.
     sim.with_connection(|conn| {
-        query_conn(
-            conn,
-            "SELECT set_config('search_path', ?, false)",
-            &[Value::string(schema)],
-        )?;
-        query_conn(conn, sql, params)
-    })
+        if !held {
+            return Ok(read_overlay(conn, schema, sql, params));
+        }
+        conn.savepoint(SIM_STATEMENT_SAVEPOINT)?;
+        let result = read_overlay(conn, schema, sql, params);
+        end_statement_savepoint(conn, result.is_ok())?;
+        Ok(result)
+    })?
+}
+
+fn read_overlay(conn: &mut dyn DbConnection, schema: &str, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
+    query_conn(
+        conn,
+        "SELECT set_config('search_path', ?, false)",
+        &[Value::string(schema)],
+    )?;
+    query_conn(conn, sql, params)
+}
+
+/// The savepoint one overlay read or write runs under while the overlay transaction is held.
+const SIM_STATEMENT_SAVEPOINT: &str = "moqui_sim_statement";
+
+/// Release the statement savepoint, or roll back to it after a failure, which leaves the held transaction usable.
+fn end_statement_savepoint(conn: &mut dyn DbConnection, ok: bool) -> Result<(), Error> {
+    if ok {
+        conn.release_savepoint(SIM_STATEMENT_SAVEPOINT)
+    } else {
+        conn.rollback_to_savepoint(SIM_STATEMENT_SAVEPOINT)?;
+        conn.release_savepoint(SIM_STATEMENT_SAVEPOINT)
+    }
 }
 
 /// End every sim session this thread still has open, dropping its schema, and clear the sim flag. A failed drop is
@@ -1392,65 +1500,74 @@ fn write_sim(
     op: Op,
     plain: &FieldMap,
     prepared: &SealedWrite,
-) -> Result<(), Error> {
+    quiet: bool,
+) -> Result<bool, Error> {
     let hit = sim_hit(&prepared.full_name, &prepared.pk)?;
     // The overlay dialect rejects insert-or-update. A new sim row is an insert; a written row is an update.
     // A replica row is in the sim table already, as a written one is.
     let present = hit.written || hit.replica;
+    // A row the sim has not written or deleted is the database's: the write sees it as the database would.
+    let stored = if !present && !hit.tombstone && op != Op::Delete {
+        load_by_pk(facade, entity_name, plain)?
+    } else {
+        None
+    };
     let op = match op {
-        Op::Upsert if present => Op::Update,
+        Op::Upsert if present || stored.is_some() => Op::Update,
         Op::Upsert => Op::Create,
         other => other,
     };
-    if op == Op::Update && hit.tombstone {
-        return Ok(());
+    // As on the database: an update of a row that is not there (or that the sim deleted) and a create of a row that is
+    // there are errors, or write nothing when quiet.
+    if op == Op::Update && !present && stored.is_none() {
+        if quiet {
+            return Ok(false);
+        }
+        return Err(Error::new(facade.missing_update(entity_name, plain)));
     }
-    if op == Op::Create && present {
+    if op == Op::Create && (present || stored.is_some()) {
+        if quiet {
+            return Ok(false);
+        }
         return Err(Error::new(format!(
-            "create of existing sim row {} {}",
+            "Tried to create a value that already exists [{}: {}]",
             prepared.full_name, prepared.pk
         )));
     }
     if op == Op::Delete && !hit.table {
         note_sim(&prepared.full_name, &prepared.pk, Op::Delete, false);
-        return Ok(());
+        return Ok(true);
     }
-    let sealed_copy = if op == Op::Update && !present {
-        match load_by_pk(facade, entity_name, plain)? {
-            Some(row) => Some(seal(facade, entity_name, "create", row)?),
-            None => None,
-        }
-    } else {
-        None
+    let sealed_copy = match stored {
+        Some(row) if op == Op::Update => Some(seal(facade, entity_name, "create", row)?),
+        _ => None,
     };
     let ddl = if hit.table {
         None
     } else {
         Some(create_sql(facade, entity_name)?)
     };
-    let statements = sim_statements(facade, entity_name, op, &hit, &prepared.sealed, sealed_copy.as_ref())?;
+    let statements = sim_statements(facade, entity_name, op, &prepared.sealed, sealed_copy.as_ref())?;
     let sim = facade
         .sim_transactions()
         .ok_or_else(|| Error::new("sim transactions are not configured"))?;
     run_overlay(&sim, &hit.schema, ddl.as_deref(), &statements)?;
     note_sim(&prepared.full_name, &prepared.pk, op, ddl.is_some());
-    Ok(())
+    Ok(true)
 }
 
 fn sim_statements(
     facade: &EntityFacade,
     entity_name: &str,
     op: Op,
-    hit: &SimHit,
     sealed: &FieldMap,
     sealed_copy: Option<&FieldMap>,
 ) -> Result<Vec<(String, Vec<Value>)>, Error> {
     let mut statements = Vec::new();
+    // An update of a database row the sim has not written copies the row into the sim first
     if let Some(copied) = sealed_copy {
         push_statement(&mut statements, dml(facade, entity_name, Op::Create, copied)?);
         push_statement(&mut statements, dml(facade, entity_name, Op::Update, sealed)?);
-    } else if op == Op::Update && !hit.written && !hit.replica {
-        push_statement(&mut statements, dml(facade, entity_name, Op::Create, sealed)?);
     } else {
         push_statement(&mut statements, dml(facade, entity_name, op, sealed)?);
     }
@@ -1469,17 +1586,26 @@ fn run_overlay(
     ddl: Option<&str>,
     statements: &[(String, Vec<Value>)],
 ) -> Result<(), Error> {
+    // Held (super::sim_step): the write is part of the held transaction, under a savepoint of its own so a failed
+    // statement leaves the rest; otherwise each write commits on its own.
+    let held = sim.in_transaction();
     sim.with_connection(|conn| {
+        if held {
+            conn.savepoint(SIM_STATEMENT_SAVEPOINT)?;
+            let result = apply_overlay(conn, schema, ddl, statements);
+            end_statement_savepoint(conn, result.is_ok())?;
+            return Ok(result);
+        }
         conn.begin()?;
         let result = apply_overlay(conn, schema, ddl, statements);
-        match result {
+        Ok(match result {
             Ok(()) => conn.commit(),
             Err(err) => {
                 let _ = conn.rollback();
                 Err(err)
             }
-        }
-    })
+        })
+    })?
 }
 
 fn apply_overlay(

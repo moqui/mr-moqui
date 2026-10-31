@@ -1028,6 +1028,7 @@ fn the_runtime_registers_its_rust_services() {
         "moqui_llm::chat::decide_chat_card",
         "moqui_llm::chat::handle_chat_message",
         "moqui_llm::gateway::store_api_client",
+        "moqui_llm::approval::steps::run_steps",
         "moqui_llm::remote::store_mcp_server",
         "moqui_llm::remote::store_mcp_server_tool",
         "moqui_llm::remote::store_remote_agent",

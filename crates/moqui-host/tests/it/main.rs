@@ -85,6 +85,7 @@ mod search_logs_postgres;
 mod search_opensearch;
 mod search_replica;
 mod search_semantic;
+mod sim_steps;
 mod smtp;
 mod ssh;
 mod sso;
