@@ -362,8 +362,13 @@ const SIM_PRODUCTION_ENTITIES: &[&str] = &[
 ];
 
 /// The next id of `seq_name` from the sim's own bank, when a sim session is open on this thread: -1, then -2, and so
-/// on, below every production id. See [`SIM_SEQ_START`].
+/// on, below every production id. See [`SIM_SEQ_START`]. An entity the sim leaves on production
+/// ([`SIM_PRODUCTION_ENTITIES`]) takes its ids from the production sequence, since its rows are real: a sim id there
+/// would be the same -1 the next sim gives out.
 pub(crate) fn sim_next_seq(seq_name: &str) -> Option<i64> {
+    if SIM_PRODUCTION_ENTITIES.contains(&seq_name) {
+        return None;
+    }
     SIM.with(|slot| {
         let mut sessions = slot.borrow_mut();
         let session = sessions.last_mut()?;

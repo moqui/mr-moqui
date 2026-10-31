@@ -305,6 +305,9 @@ fn a_sim_takes_its_ids_from_its_own_bank() {
     assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(-2));
     assert_eq!(super::sim_next_seq("moqui.test.OtherEntity"), Some(-1));
     assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(-3));
+    // the entities a sim leaves on production take production ids
+    assert_eq!(super::sim_next_seq("moqui.llm.LlmCall"), None);
+    assert_eq!(super::sim_next_seq("moqui.agent.AgentRun"), None);
     super::SIM.with(|slot| slot.borrow_mut().clear());
 }
 

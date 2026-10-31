@@ -110,6 +110,20 @@ pub fn run_in_sim<T: Send>(
     })
 }
 
+/// Leaves the sim, its schema dropped, when dropped: at the end of a sim run, and also when the run panics.
+pub(super) struct LeaveSim<'a> {
+    pub(super) facade: &'a EntityFacade,
+    pub(super) label: &'a str,
+}
+
+impl Drop for LeaveSim<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = cache::exit_sim(self.facade) {
+            tracing::error!("the sim of {} was not dropped: {error}", self.label);
+        }
+    }
+}
+
 fn sim_body<T>(
     factory: &Arc<ExecutionContextFactory>,
     username: &str,
@@ -124,6 +138,7 @@ fn sim_body<T>(
     }
     let facade = run::facade_of(factory)?;
     cache::enter_sim(&facade)?;
+    let left = LeaveSim { facade: &facade, label };
     // entity writes go into the overlay; a resource write, a notification, mail, a remote call or a print would be
     // real, so they are refused, and so is a lift of them by the approved transition's render
     let (ran, effects) = {
@@ -148,9 +163,7 @@ fn sim_body<T>(
         Err(_) => Vec::new(),
     };
     let poisoned = cache::sim_poisoned();
-    if let Err(error) = cache::exit_sim(&facade) {
-        tracing::error!("the sim of {label} was not dropped: {error}");
-    }
+    drop(left);
     if !effects.is_empty() {
         return Err(Error::new(format!(
             "it would do what a preview cannot simulate: {}",

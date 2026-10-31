@@ -27,7 +27,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::{json, Value as Json};
 
-use super::preview::{compared_to, key_json, production_row, MAX_ROWS};
+use super::preview::{compared_to, key_json, production_row, LeaveSim, MAX_ROWS};
 use crate::run;
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::cache::{self, SimChange};
@@ -137,10 +137,12 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, request: &StepsRequest<'_>) ->
         tracing::warn!("the sim run of {} could not enter the sim: {error}", request.label);
         return StepsRun::default();
     }
+    let left = LeaveSim {
+        facade: &facade,
+        label: request.label,
+    };
     let ran = held_steps(&facade, request);
-    if let Err(error) = cache::exit_sim(&facade) {
-        tracing::error!("the sim of {} was not dropped: {error}", request.label);
-    }
+    drop(left);
     let Some((pending, read)) = ran else {
         return StepsRun::default();
     };

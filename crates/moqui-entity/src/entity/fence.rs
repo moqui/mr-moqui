@@ -310,8 +310,13 @@ pub fn check_write(full_name: &str, operation: &str) -> Result<(), Error> {
     let allowed = match in_force() {
         None => true,
         Some((_, Kind::Read)) => allows_entity(full_name),
-        // the overlay takes the write, but the agent's records stay on production in a sim: a preview leaves them
-        Some((_, _)) => !(full_name.starts_with("moqui.agent.") || full_name.starts_with("moqui.llm.")),
+        // the overlay takes the write, but the agent's records and the sequence banks stay on production in a sim: a
+        // preview leaves them (a bank refill is not an entity write, so it is not refused here)
+        Some((_, _)) => {
+            !(full_name.starts_with("moqui.agent.")
+                || full_name.starts_with("moqui.llm.")
+                || full_name == "moqui.entity.SequenceValueItem")
+        }
     };
     if allowed {
         return Ok(());

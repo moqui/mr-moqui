@@ -151,11 +151,18 @@ impl SimSavepoint {
     ///
     /// # Errors
     ///
-    /// Fails when the overlay cannot release the savepoint.
+    /// Fails when the overlay cannot release the savepoint. The step is then rolled back, as a failed step is, so the
+    /// steps after it do not run on what it wrote.
     pub fn release(mut self) -> Result<(), Error> {
+        if let Err(err) = self.sim.release_savepoint(&self.name) {
+            if let Err(undo) = self.roll_back() {
+                tracing::warn!(error = %undo, "a sim step that did not release did not roll back either");
+            }
+            return Err(err);
+        }
         self.state = None;
         cache::note_sim_step(false);
-        self.sim.release_savepoint(&self.name)
+        Ok(())
     }
 
     fn roll_back(&mut self) -> Result<(), Error> {
