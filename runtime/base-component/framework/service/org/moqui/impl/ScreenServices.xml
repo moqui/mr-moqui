@@ -71,6 +71,12 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- get the lock record with for-update to make sure we're the only one running, if no record create one to lock -->
             <entity-find-one entity-name="moqui.screen.ScreenScheduledLock" value-field="screenScheduledLock" for-update="true"/>
+            <!-- no lock record yet: a lock on a missing row locks nothing, so lock the ScreenScheduled row (as the report
+                runs do, before their lock record) and look again; a second run at once waits, then finds the record -->
+            <if condition="screenScheduledLock == null">
+                <entity-find-one entity-name="moqui.screen.ScreenScheduled" value-field="lockedScheduled" for-update="true" cache="false"/>
+                <entity-find-one entity-name="moqui.screen.ScreenScheduledLock" value-field="screenScheduledLock" for-update="true"/>
+            </if>
             <if condition="screenScheduledLock == null">
                 <service-call name="create#moqui.screen.ScreenScheduledLock"
                         in-map="{screenScheduledId: screenScheduledId, lastRunTime: ec.user.nowTimestamp}"/>
