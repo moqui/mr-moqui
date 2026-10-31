@@ -29,9 +29,15 @@ use crate::ArtifactKind;
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactRow {
     /// `entity:<full name>`, `field:<entity>.<field>`, `service:<name>`, `screen:<location>`,
-    /// `transition:<screen location>#<name>`, `form:<screen location>#<name>`, `anchor:<screen location>#<name>`,
+    /// `transition:<screen location>#<name>:<method>` (default `any`), `form:<screen location>#<name>`,
+    /// `anchor:<screen location>#<name>`,
     /// `screen-extend:<location>`, `extend-entity:<location>#<entity>`, `seca:<location>#<id or position>` (and
-    /// `eeca`, `emeca`, `giteca`), `rest:<path>`, `data:<location>`, `script:<location>`, `skill:<location>`.
+    /// `eeca`, `emeca`, `giteca`), `rest:<path>`, `rest:<path>:<method>` (lowercase HTTP method),
+    /// `data:<location>`, `script:<location>`, `skill:<location>`, and
+    /// `parameter:<owner id>@<in|out|path>.<name>` ([`parameter_id`]): a service's in or out parameter
+    /// (`parameter:service:a.B.verb#Noun@in.aId`, a nested one by its dotted path, `@in.order.items`), a screen's
+    /// (`parameter:screen:component://c/screen/A.xml@in.aId`), a transition's (`parameter:transition:<screen>#save:post@in.aId`,
+    /// a `path-parameter` `@path.aId`), a REST method's route parameter (`parameter:rest:/a/{aId}:post@path.aId`).
     pub id: String,
     pub kind: String,
     pub name: String,
@@ -61,6 +67,8 @@ pub enum ToKind {
     Transition,
     /// A named form, container, section or transition of the base screen in `scope`.
     Anchor,
+    /// An in-parameter of the service in `scope` (a `field-map`'s `field-name`).
+    Parameter,
 }
 
 impl ToKind {
@@ -74,6 +82,7 @@ impl ToKind {
             Self::Screen => "screen",
             Self::Transition => "transition",
             Self::Anchor => "anchor",
+            Self::Parameter => "parameter",
         }
     }
 
@@ -87,6 +96,7 @@ impl ToKind {
             "screen" => Self::Screen,
             "transition" => Self::Transition,
             "anchor" => Self::Anchor,
+            "parameter" => Self::Parameter,
             _ => return None,
         })
     }
@@ -99,7 +109,7 @@ pub struct RefRow {
     pub from: String,
     pub to_kind: ToKind,
     pub to_name: String,
-    /// What the name is relative to: a field's entity, an anchor's or transition's screen location.
+    /// What the name is relative to: a field's entity, a parameter's service, or an anchor's/transition's screen.
     pub to_scope: String,
     /// How it refers: the element that makes it (`entity-find`, `service-call`, `relationship`, `member-entity`,
     /// `subscreens-item`), `extend` for an extension's target, `anchor` for a named anchor of a base screen,
@@ -408,20 +418,59 @@ impl Reader<'_> {
                 self.artifact(id.clone(), element, &format!("{element} {key}"), Some(node), on, None);
                 Some(id)
             }
-            (ArtifactKind::Rest, "resource") => {
-                let mut path = vec![node.attribute("name").unwrap_or_default()];
-                let mut up = node.parent();
-                while let Some(ancestor) = up {
-                    if ancestor.has_name("resource") {
-                        path.push(ancestor.attribute("name").unwrap_or_default());
-                    }
-                    up = ancestor.parent();
-                }
-                path.reverse();
-                let name = format!("/{}", path.join("/"));
+            (ArtifactKind::Rest, "resource" | "id") if parent != "method" => {
+                let name = rest_path(node);
                 let id = format!("rest:{name}");
-                let summary = description(node).unwrap_or_default();
-                self.artifact(id.clone(), "rest", &name, Some(node), summary, None);
+                self.artifact(
+                    id.clone(),
+                    "rest",
+                    &name,
+                    Some(node),
+                    description(node).unwrap_or_default(),
+                    None,
+                );
+                Some(id)
+            }
+            (ArtifactKind::Rest, "method") => {
+                let method = node.attribute("type")?.to_ascii_lowercase();
+                let id = format!("{from}:{method}");
+                self.artifact(
+                    id.clone(),
+                    "rest",
+                    &format!("{}:{method}", rest_path(node)),
+                    Some(node),
+                    format!("HTTP {method}"),
+                    Some(from.to_string()),
+                );
+                // Each method binds the path variables of its route; inputs declared by its service stay there.
+                let path = rest_path(node);
+                let mut names = std::collections::BTreeSet::new();
+                for segment in path.split('/') {
+                    if let Some(name) = segment.strip_prefix('{').and_then(|value| value.strip_suffix('}')) {
+                        names.insert(name.to_string());
+                    }
+                }
+                let mut declaration = Some(node.clone());
+                while let Some(at) = declaration {
+                    for child in at.child_iter().filter(|child| {
+                        child.has_name("path-parameter") || (at.has_name("method") && child.has_name("id"))
+                    }) {
+                        if let Some(name) = child.attribute("name") {
+                            names.insert(name);
+                        }
+                    }
+                    declaration = at.parent();
+                }
+                for name in names {
+                    self.artifact(
+                        parameter_id(&id, "path", &name),
+                        "parameter",
+                        &parameter_name(&id, "path", &name),
+                        Some(node),
+                        "path String, required".to_string(),
+                        Some(id.clone()),
+                    );
+                }
                 Some(id)
             }
             (ArtifactKind::Rest, "service") if parent == "method" => {
@@ -436,9 +485,85 @@ impl Reader<'_> {
                 }
                 None
             }
+            (ArtifactKind::Service, "parameter") => {
+                // in-parameters or out-parameters of a service, maybe inside another parameter (a Map's or List's)
+                let mut names = vec![node.attribute("name")?];
+                let mut up = node.parent();
+                while let Some(ancestor) = up.as_ref().filter(|ancestor| ancestor.has_name("parameter")) {
+                    names.push(ancestor.attribute("name")?);
+                    up = ancestor.parent();
+                }
+                let direction = match up?.name().as_str() {
+                    "in-parameters" => "in",
+                    "out-parameters" => "out",
+                    _ => return None,
+                };
+                let owner = from;
+                names.reverse();
+                let name = names.join(".");
+                let parent_id = match name.rsplit_once('.') {
+                    Some((up, _)) => parameter_id(owner, direction, up),
+                    None => owner.to_string(),
+                };
+                let mut summary = vec![format!(
+                    "{direction} {}",
+                    node.attribute("type").unwrap_or_else(|| "String".to_string())
+                )];
+                summary.push(format!(
+                    "required={}",
+                    node.attribute("required").unwrap_or_else(|| "false".to_string())
+                ));
+                if let Some(default) = node.attribute("default-value").or_else(|| node.attribute("default")) {
+                    summary.push(format!("default {default}"));
+                }
+                self.artifact(
+                    parameter_id(owner, direction, &name),
+                    "parameter",
+                    &parameter_name(owner, direction, &name),
+                    Some(node),
+                    summary.join(", "),
+                    Some(parent_id),
+                );
+                None
+            }
+            (ArtifactKind::Screen, "parameter" | "path-parameter")
+                if matches!(parent, "screen" | "transition" | "transition-include") =>
+            {
+                let name = node.attribute("name")?;
+                let owner = if parent == "screen" {
+                    format!("screen:{location}")
+                } else {
+                    from.to_string()
+                };
+                let direction = if element == "path-parameter" { "path" } else { "in" };
+                let mut summary = vec![format!(
+                    "{direction} {}",
+                    node.attribute("type").unwrap_or_else(|| "String".to_string())
+                )];
+                summary.push(format!(
+                    "required={}",
+                    element == "path-parameter" || node.attribute_is("required", "true")
+                ));
+                if let Some(default) = node.attribute("value").or_else(|| node.attribute("from")) {
+                    summary.push(format!("default {default}"));
+                }
+                self.artifact(
+                    parameter_id(&owner, direction, &name),
+                    "parameter",
+                    &parameter_name(&owner, direction, &name),
+                    Some(node),
+                    summary.join(", "),
+                    Some(owner),
+                );
+                None
+            }
             (ArtifactKind::Screen, "transition" | "transition-include") => {
                 let name = node.attribute("name")?;
-                let id = format!("transition:{location}#{name}");
+                let method = node
+                    .attribute("method")
+                    .unwrap_or_else(|| "any".to_string())
+                    .to_ascii_lowercase();
+                let id = format!("transition:{location}#{name}:{method}");
                 let summary = node
                     .first_named("service-call")
                     .and_then(|call| call.attribute("name"))
@@ -458,15 +583,7 @@ impl Reader<'_> {
                 let name = node.attribute("name")?;
                 let id = format!("form:{location}#{name}");
                 if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
-                    self.reference(
-                        &id,
-                        ToKind::Transition,
-                        &transition,
-                        location,
-                        "form",
-                        node.line(),
-                        node.column(),
-                    );
+                    self.transition_refs(node, &id, &transition, "form");
                 }
                 self.artifact(
                     id.clone(),
@@ -483,15 +600,7 @@ impl Reader<'_> {
                 "link" | "default-response" | "success-response" | "error-response" | "conditional-response",
             ) => {
                 if let Some(url) = node.attribute("url").filter(|url| is_plain_name(url)) {
-                    self.reference(
-                        from,
-                        ToKind::Transition,
-                        &url,
-                        location,
-                        "link",
-                        node.line(),
-                        node.column(),
-                    );
+                    self.transition_refs(node, from, &url, "link");
                 }
                 None
             }
@@ -509,6 +618,51 @@ impl Reader<'_> {
                 None
             }
             _ => None,
+        }
+    }
+
+    /// A method-less reference may reach every overload; preserve each edge rather than choosing one.
+    fn transition_refs(&mut self, node: &MNode, from: &str, name: &str, ref_type: &str) {
+        let mut root = node.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        let method = node.attribute("method").map(|value| value.to_ascii_lowercase());
+        let mut methods: Vec<String> = root
+            .child_iter()
+            .filter(|child| {
+                matches!(child.name().as_str(), "transition" | "transition-include") && child.attribute_is("name", name)
+            })
+            .map(|child| {
+                child
+                    .attribute("method")
+                    .unwrap_or_else(|| "any".to_string())
+                    .to_ascii_lowercase()
+            })
+            .collect();
+        methods.sort();
+        methods.dedup();
+        if let Some(method) = method {
+            let selected = if methods.contains(&method) {
+                method
+            } else {
+                "any".to_string()
+            };
+            methods.retain(|value| *value == selected);
+        }
+        if methods.is_empty() {
+            methods.push("any".to_string());
+        }
+        for method in methods {
+            self.reference(
+                from,
+                ToKind::Transition,
+                &format!("{name}:{method}"),
+                self.info.location,
+                ref_type,
+                node.line(),
+                node.column(),
+            );
         }
     }
 
@@ -544,8 +698,12 @@ impl Reader<'_> {
                         }
                     }
                 }
-                // parameters are not artifacts of the index
-                RefKind::ServiceParameter => {}
+                // an in-parameter of the service called
+                RefKind::ServiceParameter => {
+                    if let Some(service) = refs::service_of(node).filter(|name| refs::is_literal(name)) {
+                        found.push((ToKind::Parameter, value.to_string(), service, ref_type));
+                    }
+                }
                 RefKind::Location if value.contains("://") => {
                     let kind = if element == "subscreens-item" {
                         ToKind::Screen
@@ -699,6 +857,47 @@ fn service_prefix(location: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The REST route through resources and variable `id` segments, including enclosing path parameters.
+fn rest_path(node: &MNode) -> String {
+    let mut parts = Vec::new();
+    let mut current = Some(node.clone());
+    while let Some(node) = current {
+        match node.name().as_str() {
+            "resource" => parts.push(node.attribute("name").unwrap_or_default()),
+            "id" => parts.push(format!("{{{}}}", node.attribute("name").unwrap_or_default())),
+            _ => {}
+        }
+        current = node.parent();
+    }
+    parts.reverse();
+    format!("/{}", parts.join("/"))
+}
+
+/// The id of the parameter `name` (a nested one by its dotted path) of the artifact `owner`, `direction` `in`, `out`
+/// or `path`: `parameter:<owner>@<direction>.<name>`. [`parse_parameter_id`] reads it back.
+#[must_use]
+pub fn parameter_id(owner: &str, direction: &str, name: &str) -> String {
+    format!("parameter:{owner}@{direction}.{name}")
+}
+
+/// The name of a parameter artifact: its owner's name, the direction and its own (`a.B.save#Order@in.quantity`), so a
+/// find of a bare name such as `orderId` matches it by its short name (the last part) only, after an entity's field.
+#[must_use]
+pub fn parameter_name(owner: &str, direction: &str, name: &str) -> String {
+    let owner = owner.split_once(':').map_or(owner, |(_, name)| name);
+    format!("{owner}@{direction}.{name}")
+}
+
+/// The owner id, direction and name of a [`parameter_id`]: the text after the last `@` (a parameter's name has none)
+/// is the direction, a dot, and the name. Owners may include a method suffix (`:post`, `:any`).
+#[must_use]
+pub fn parse_parameter_id(id: &str) -> Option<(&str, &str, &str)> {
+    let (owner, rest) = id.strip_prefix("parameter:")?.rsplit_once('@')?;
+    let (direction, name) = rest.split_once('.')?;
+    (matches!(direction, "in" | "out" | "path") && !owner.is_empty() && !name.is_empty())
+        .then_some((owner, direction, name))
+}
+
 /// The base screen a `screen-extend` file at `location` extends: `component://<its path under screen-extend/>`.
 #[must_use]
 pub fn extended_location(location: &str) -> String {
@@ -713,7 +912,9 @@ pub fn extended_location(location: &str) -> String {
 #[must_use]
 pub fn short_of(kind: &str, name: &str) -> String {
     match kind {
-        "entity" | "view-entity" | "extend-entity" | "field" => name.rsplit('.').next().unwrap_or(name).to_string(),
+        "entity" | "view-entity" | "extend-entity" | "field" | "parameter" => {
+            name.rsplit('.').next().unwrap_or(name).to_string()
+        }
         "service" => match name.split_once('#') {
             Some((head, noun)) => format!("{}#{noun}", head.rsplit('.').next().unwrap_or(head)),
             None => name.rsplit('.').next().unwrap_or(name).to_string(),

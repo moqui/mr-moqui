@@ -73,3 +73,15 @@ feature("extensions with their state", {
         result.brokenCount == 0
     },
 })
+
+feature("parameters have their own artifact and incoming field-map references", {
+    expect() {
+        const id = "parameter:service:org.moqui.impl.UserServices.get#UserAuthcFactorRequired@in.userId"
+        const result = svc("get#Artifact").parameters({artifactId: id}).call()
+        const refs = svc("get#ArtifactRefs").parameters({artifactId: id}).call().refs
+        result.artifact.id == id
+        result.artifact.kind == "parameter"
+        result.artifact.parent == "service:org.moqui.impl.UserServices.get#UserAuthcFactorRequired"
+        refs.some(ref => ref.refType == "field-map" && ref.toId == id && ref.resolved)
+    }
+})

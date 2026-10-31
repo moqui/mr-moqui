@@ -237,7 +237,7 @@ set the directory. The default is types/ inside the runtime directory. This does
 ";
 
 const CHECK: &str = "\
-moqui check [paths] [--extensions] [--json] [--server URL] [--java DIR]
+moqui check [paths] [--extensions] [--json] [--server URL] [--project DIR | --java DIR]
     Check Moqui XML files: schema, references, expressions.
 
 Checks each file (a directory: the XML files in it) against the framework's XSDs, the names it uses
@@ -249,10 +249,16 @@ extend-entity's entity, and each ECA rule's service or entity. Each problem prin
 prints one JSON object per line. Exits 1 when there is an error, so it runs as a git or agent hook;
 warnings do not fail it. This does not open a database. --server URL asks a running dev instance
 instead (its MCP check tool, with the login key moqui tui --server keeps, or MOQUI_LOGIN_KEY).
---java DIR reads a Java Moqui checkout (framework/ beside runtime/): the framework's artifacts from
-framework/, the components from runtime/base-component and runtime/component, with MR Moqui's framework
-conf (beside this executable, or MOQUI_FRAMEWORK). It is found without --java when MOQUI_RUNTIME is its
-runtime or the working directory is in it. A definition that does not resolve is logged and left out.
+--project DIR reads another Moqui project, its layout told from marker paths (no walk of the tree):
+Java Moqui when DIR has framework/src/main/java or framework/src/main/groovy (or framework/build.gradle
+with .java or .groovy files under framework/src) beside runtime/; else MR Moqui when DIR has
+runtime/base-component/framework (a clone) or base-component/framework (a runtime). Neither is an
+error naming these. A Java checkout's framework artifacts come from framework/ and its components from
+runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_FRAMEWORK). --java DIR
+reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
+MOQUI_RUNTIME is its runtime or the working directory is in it. With --server, the project is a
+directory on the server's machine, read there into memory on first use and kept fresh with its files
+(no restart). A definition that does not resolve is logged and left out.
 
   moqui check
   moqui check runtime/component/my-site/service/my/MyServices.xml
@@ -260,7 +266,7 @@ runtime or the working directory is in it. A definition that does not resolve is
 ";
 
 const REFS: &str = "\
-moqui refs <name> [--in | --out] [--kind k] [--json] [--server URL] [--java DIR]
+moqui refs <name> [--in | --out] [--kind k] [--json] [--server URL] [--project DIR | --java DIR]
     What uses an artifact, or what it uses.
 
 name is an artifact id (entity:moqui.example.Example, service:a.B.run#Thing, screen:component://...,
@@ -271,19 +277,27 @@ inside its definition. For a screen or an entity, its transitions, forms and fie
 transition, form, anchor, seca, eeca, script, data ...). Each prints as path:line: how artifact;
 --json prints one JSON object per line. This does not open a database. --server URL asks a running dev
 instance's artifact index instead (its MCP artifact tool).
---java DIR reads a Java Moqui checkout (framework/ beside runtime/): the framework's artifacts from
-framework/, the components from runtime/base-component and runtime/component, with MR Moqui's framework
-conf (beside this executable, or MOQUI_FRAMEWORK). It is found without --java when MOQUI_RUNTIME is its
-runtime or the working directory is in it. A definition that does not resolve is logged and left out.
+--project DIR reads another Moqui project, its layout told from marker paths (no walk of the tree):
+Java Moqui when DIR has framework/src/main/java or framework/src/main/groovy (or framework/build.gradle
+with .java or .groovy files under framework/src) beside runtime/; else MR Moqui when DIR has
+runtime/base-component/framework (a clone) or base-component/framework (a runtime). Neither is an
+error naming these. A Java checkout's framework artifacts come from framework/ and its components from
+runtime/, read with MR Moqui's framework conf (beside this executable, or MOQUI_FRAMEWORK). --java DIR
+reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java checkout is found when
+MOQUI_RUNTIME is its runtime or the working directory is in it. With --server, the project is a
+directory on the server's machine, read there into memory on first use and kept fresh with its files
+(no restart). A definition that does not resolve is logged and left out.
 
   moqui refs moqui.example.Example
   moqui refs org.moqui.impl.UserServices.create#UserAccount --out
   moqui refs component://example/screen/Gallery/ExampleDetail.xml
-  moqui refs --java ~/src/moqui 'update#mantle.order.OrderHeader'
+  moqui refs --project ~/src/moqui 'update#mantle.order.OrderHeader'
+  moqui refs --server http://localhost:8080 --project ~/src/moqui --out \
+      ~/src/moqui/runtime/component/my-site/screen/MySite/Order.xml
 ";
 
 const LSP: &str = "\
-moqui lsp [--server URL] [--java DIR]
+moqui lsp [--server URL] [--project DIR | --java DIR]
     A language server for editors and coding agents, over stdio.
 
 Speaks the Language Server Protocol on stdin and stdout: diagnostics of each open Moqui XML file as it
@@ -292,7 +306,7 @@ memory and kept current with the open files), hover (an artifact's summary, an e
 attribute's documentation from the XSDs), completion (elements, attributes, enumerated values, entity
 and service names) and document and workspace symbols. --server URL answers from a running dev
 instance instead, as moqui check --server does. Logs go to stderr. In the Dev and Debug packages.
---java DIR reads a Java Moqui checkout, as moqui refs --java does.
+--project DIR (or --java DIR) reads another Moqui project, as moqui refs --project does.
 
   moqui lsp
   moqui lsp --server https://dev.example.com

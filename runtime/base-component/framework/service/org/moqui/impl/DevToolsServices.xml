@@ -62,14 +62,33 @@ along with this software (see the LICENSE.md file). If not, see
                 field, service, screen, transition, form, anchor, seca, eeca, rest, data, script, skill ...</description></parameter>
             <parameter name="components" type="Object"/>
             <parameter name="limit" type="Integer" default-value="50"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="artifacts" type="List"/></out-parameters>
     </service>
     <service verb="get" noun="Artifact" type="rust" location="moqui_devkit::service::get_artifact"
             allow-remote="false" read-only="true">
-        <description>One artifact of the index by its id (entity:moqui.example.Example), or the best match of a name.</description>
-        <in-parameters><parameter name="artifactId" required="true"/></in-parameters>
-        <out-parameters><parameter name="artifact" type="Map"/></out-parameters>
+        <description>One artifact of the index by its id (entity:moqui.example.Example), or the best match of a name,
+            with its parts (an entity's fields, a screen's transitions and forms) and a service's in and out
+            parameters.</description>
+        <in-parameters>
+            <parameter name="artifactId" required="true"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="artifact" type="Map"/>
+            <parameter name="parts" type="List"/>
+            <parameter name="parameters" type="Map"><description>A service's: in and out, each a list of name, type
+                and required.</description></parameter>
+        </out-parameters>
     </service>
     <service verb="get" noun="ArtifactRefs" type="rust" location="moqui_devkit::service::get_artifact_refs"
             allow-remote="false" read-only="true">
@@ -79,6 +98,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="artifactId" required="true"/>
             <parameter name="direction" default-value="in"/>
             <parameter name="kinds" type="Object"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="refs" type="List"/></out-parameters>
     </service>
@@ -90,6 +114,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="path" required="true"/>
             <parameter name="line" type="Integer" required="true"/>
             <parameter name="word"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/></out-parameters>
     </service>
@@ -97,13 +126,29 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" read-only="true">
         <description>The extensions the components make (extend-entity, screen-extend and its anchors, ECA rules on
             another's service or entity) with whether each target is there, broken first.</description>
-        <in-parameters><parameter name="components" type="Object"/></in-parameters>
+        <in-parameters>
+            <parameter name="components" type="Object"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
+        </in-parameters>
         <out-parameters><parameter name="extensions" type="List"/><parameter name="brokenCount" type="Integer"/></out-parameters>
     </service>
     <service verb="rebuild" noun="ArtifactIndex" type="rust" location="moqui_devkit::service::rebuild_artifact_index"
             allow-remote="false">
-        <description>Read every component file whose hash changed into the index now; with full, every file.</description>
-        <in-parameters><parameter name="full" type="Boolean" default-value="false"/></in-parameters>
+        <description>Read every component file whose hash changed into the index now; with full, every file. With
+            project, look at that project's files now (with full, boot it again) and answer its index's
+            summary.</description>
+        <in-parameters>
+            <parameter name="full" type="Boolean" default-value="false"/>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
+        </in-parameters>
         <out-parameters><parameter name="report" type="Map"/></out-parameters>
     </service>
     <service verb="restart" noun="Server" type="rust" location="moqui_devkit::service::restart_server"

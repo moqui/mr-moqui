@@ -302,7 +302,10 @@ impl NativeRegistry {
         insert(&mut self.templates, class, renderer)
     }
 
-    pub(crate) fn discover(components: &[ComponentInfo], conf: &MNode) -> Result<Self, Error> {
+    /// The native implementations of the linked crates and `components`, and the conf's service types. With
+    /// `tolerant` (an artifacts-only boot of another project) a service type whose runner is not linked is logged and
+    /// left out instead of failing the boot.
+    pub(crate) fn discover(components: &[ComponentInfo], conf: &MNode, tolerant: bool) -> Result<Self, Error> {
         let mut registry = Self::default();
         crate::telemetry::register(&mut registry)?;
         // the framework's own tool factories (MailCapture; VCard and ICalendar are moqui-dav's), which
@@ -335,10 +338,15 @@ impl NativeRegistry {
                 if builtin_service_type(&name) {
                     return Err(Error::new(format!("cannot replace built-in service type {name}")));
                 }
-                let runner =
-                    registry.runners.get(&class).copied().ok_or_else(|| {
-                        Error::new(format!("service-type {name}: native runner {class} is not linked"))
-                    })?;
+                let Some(runner) = registry.runners.get(&class).copied() else {
+                    if tolerant {
+                        tracing::error!("Leaving out service-type {name}: native runner {class} is not linked");
+                        continue;
+                    }
+                    return Err(Error::new(format!(
+                        "service-type {name}: native runner {class} is not linked"
+                    )));
+                };
                 insert(&mut registry.service_types, &name, runner)?;
             }
         }

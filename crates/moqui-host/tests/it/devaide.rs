@@ -573,6 +573,8 @@ const UPSTREAM_SCREEN: &str = r#"<screen>
             <form-single name="Facts"><field name="upId"><default-field><display/></default-field></field></form-single>
         </box-body></container-box>
     </widgets>
+    <transition name="save" method="post"><actions><service-call name="mysite.Things.get#Thing"/></actions>
+        <default-response url="."/></transition>
 </screen>
 "#;
 const UPSTREAM_ENTITIES: &str = r#"<entities>
@@ -759,6 +761,49 @@ fn the_index_follows_reloads_and_extensions() {
         .find(|r| r["from"] == "service:mysite.Things.get#Outer")
         .unwrap_or_else(|| panic!("{callers}"));
     assert!(from_outer["calls"].as_i64().unwrap() >= 1, "{callers}");
+
+    // a transition's frame has no method: its call counts on the transition's indexed id, `#save:post`
+    moqui_core::devtools::calls::observe(
+        "AT_XML_SCREEN_TRANS",
+        "component://upstream-app/screen/UpApp/Detail.xml/save",
+        "AT_SERVICE",
+        "mysite.Things.get#Thing",
+    );
+    moqui_core::devtools::calls::flush(&factory).unwrap();
+    let save = "transition:component://upstream-app/screen/UpApp/Detail.xml#save:post";
+    let callers = call(
+        &factory,
+        "john.doe",
+        &format!("{DT}get#ArtifactRefs"),
+        &[("artifactId", "service:mysite.Things.get#Thing")],
+    )
+    .unwrap();
+    let callers = json(&callers, "refs");
+    let from_save: Vec<&serde_json::Value> = callers
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["from"].as_str().is_some_and(|from| from.contains("Detail.xml#save")))
+        .collect();
+    assert_eq!(from_save.len(), 1, "{callers}");
+    assert_eq!(from_save[0]["from"], save, "{callers}");
+    assert!(from_save[0]["calls"].as_i64().unwrap() >= 1, "{callers}");
+    let used = call(
+        &factory,
+        "john.doe",
+        &format!("{DT}get#ArtifactRefs"),
+        &[("artifactId", save), ("direction", "out")],
+    )
+    .unwrap();
+    let used = json(&used, "refs");
+    let to_thing: Vec<&serde_json::Value> = used
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["toId"] == "service:mysite.Things.get#Thing")
+        .collect();
+    assert_eq!(to_thing.len(), 1, "{used}");
+    assert!(to_thing[0]["calls"].as_i64().unwrap() >= 1, "{used}");
 }
 
 /// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (base-component and

@@ -716,21 +716,18 @@ pub(crate) fn serve(connection: &Connection, server: &mut Server) -> Result<(), 
     Ok(())
 }
 
-/// `moqui lsp [--server URL]`: the server over stdio.
+/// `moqui lsp [--server URL] [--project DIR | --java DIR]`: the server over stdio.
 pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     let mut server_url = None;
-    let mut java = None;
+    let mut project = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--server" => server_url = Some(rest.next().ok_or_else(|| crate::usage::command_usage("lsp"))?.clone()),
             other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
-            "--java" => {
-                java = Some(PathBuf::from(
-                    rest.next().ok_or_else(|| crate::usage::command_usage("lsp"))?,
-                ))
+            other if let Some(found) = crate::devtools_cmd::ProjectArg::parse(other, &mut rest) => {
+                project = Some(found.ok_or_else(|| crate::usage::command_usage("lsp"))?);
             }
-            other if let Some(dir) = other.strip_prefix("--java=") => java = Some(PathBuf::from(dir)),
             "--stdio" => {}
             _ => return Err(crate::usage::command_usage("lsp")),
         }
@@ -738,9 +735,9 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     // stdout is the protocol's: the log goes to stderr only
     crate::logging::install_with_console(Some(tracing::Level::WARN));
     let backend = match server_url {
-        Some(url) => Backend::Remote(Remote::connect(&url)?),
+        Some(url) => Backend::Remote(crate::devtools_cmd::remote(&url, project.as_ref())?),
         None => {
-            let factory = crate::devtools_cmd::model_only(java.as_deref())?;
+            let factory = crate::devtools_cmd::model_only(project.as_ref())?;
             let index = MemoryIndex::build(&factory);
             Backend::Local { factory, index }
         }
@@ -804,7 +801,7 @@ mod tests {
 
     #[test]
     fn a_flag_without_its_value_is_the_usage_error() {
-        for flag in ["--server", "--java"] {
+        for flag in ["--server", "--java", "--project"] {
             let err = dispatch_lsp(&[flag.to_string()]).unwrap_err().to_string();
             assert!(err.contains("moqui help lsp"), "{flag}: {err}");
         }

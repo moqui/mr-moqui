@@ -185,7 +185,8 @@ fn canonical(path: &Path) -> PathBuf {
 #[must_use]
 pub fn hash_of(text: &str) -> String {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(text.as_bytes());
+    // Version the extraction rules so persisted files gain parameter artifacts on refresh.
+    let digest = Sha256::digest(format!("2\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -314,6 +315,8 @@ pub struct MemoryIndex {
     pub resolver: Resolver,
     /// Files that did not read or parse, with why.
     pub problems: Vec<(String, String)>,
+    /// Each artifact's position in `artifacts` by id, for [`Self::describe`]; made again by each read.
+    positions: HashMap<String, usize>,
 }
 
 impl MemoryIndex {
@@ -347,7 +350,97 @@ impl MemoryIndex {
         for (_, row) in &mut index.refs {
             index.resolver.resolve(row, &exists);
         }
+        index.position();
         index
+    }
+
+    /// Each id's first row, as a find of the rows in order answers (an id defined in two components is the first's).
+    fn position(&mut self) {
+        let mut positions = HashMap::with_capacity(self.artifacts.len());
+        for (at, artifact) in self.artifacts.iter().enumerate() {
+            positions.entry(artifact.id.clone()).or_insert(at);
+        }
+        self.positions = positions;
+    }
+
+    /// The rows of the files `paths` read again from disk (`files` are the ones there now; a path with none was
+    /// removed), the names resolved again. A file that does not read or parse loses its rows and is listed in
+    /// [`Self::problems`]; the others go on. Answers how many files were read.
+    pub fn replace_files(&mut self, factory: &ExecutionContextFactory, paths: &[String], files: &[Located]) -> usize {
+        let gone: HashSet<&str> = paths.iter().map(String::as_str).collect();
+        self.artifacts.retain(|artifact| !gone.contains(artifact.path.as_str()));
+        self.refs.retain(|(file, _)| !gone.contains(file.as_str()));
+        self.problems.retain(|(file, _)| !gone.contains(file.as_str()));
+        for file in files {
+            let path = file.path.display().to_string();
+            match file.extract() {
+                Ok((_, read)) => {
+                    self.artifacts.extend(read.artifacts);
+                    self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
+                }
+                Err(problem) => {
+                    tracing::error!("Artifact index: {path} not read: {problem}");
+                    self.problems.push((path, problem));
+                }
+            }
+        }
+        let mut resolver = Resolver::default();
+        for artifact in &self.artifacts {
+            resolver.add(artifact);
+        }
+        let exists = |location: &str| location_exists(factory, location);
+        for (_, row) in &mut self.refs {
+            resolver.resolve(row, &exists);
+        }
+        self.resolver = resolver;
+        self.position();
+        files.len()
+    }
+
+    /// [`Self::find`] in `components` when not empty.
+    #[must_use]
+    pub fn find_in(&self, text: &str, kinds: &[String], components: &[String], limit: usize) -> Vec<ArtifactRow> {
+        rank(
+            self.artifacts
+                .iter()
+                .filter(|artifact| kinds.is_empty() || kinds.contains(&artifact.kind))
+                .filter(|artifact| components.is_empty() || components.contains(&artifact.component))
+                .cloned()
+                .collect(),
+            text,
+            limit,
+        )
+    }
+
+    /// The artifacts whose parent is `id` (an entity's fields, a screen's transitions and forms), in file order.
+    #[must_use]
+    pub fn children(&self, id: &str) -> Vec<ArtifactRow> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| artifact.parent.as_deref() == Some(id))
+            .cloned()
+            .collect()
+    }
+
+    /// The artifacts the file `path` defines at its top (no parent): a screen, an entity file's entities, a service
+    /// file's services.
+    #[must_use]
+    pub fn in_file(&self, path: &str) -> Vec<ArtifactRow> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| artifact.path == path && artifact.parent.is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// [`Self::refs`], keeping those whose other side is of `kinds` when not empty, as the database index's [`refs`].
+    #[must_use]
+    pub fn refs_of_kinds(&self, id: &str, direction: Direction, kinds: &[String]) -> Vec<RefEntry> {
+        let mut entries = self.refs(id, direction);
+        if !kinds.is_empty() {
+            entries.retain(|item| item.other.as_ref().is_some_and(|other| kinds.contains(&other.kind)));
+        }
+        entries
     }
 
     /// The artifacts whose names match `text`, best first.
@@ -366,6 +459,14 @@ impl MemoryIndex {
 
     #[must_use]
     pub fn describe(&self, id: &str) -> Option<ArtifactRow> {
+        if let Some(found) = self
+            .positions
+            .get(id)
+            .and_then(|at| self.artifacts.get(*at))
+            .filter(|artifact| artifact.id == id)
+        {
+            return Some(found.clone());
+        }
         self.artifacts.iter().find(|artifact| artifact.id == id).cloned()
     }
 
@@ -379,18 +480,20 @@ impl MemoryIndex {
     /// What uses `id`, or what it uses; for a screen or entity, its transitions, forms and fields too.
     #[must_use]
     pub fn refs(&self, id: &str, direction: Direction) -> Vec<RefEntry> {
+        let parameters = with_parameters(id, &[]);
         let mut ids: HashSet<&str> = HashSet::from([id]);
         ids.extend(
             self.artifacts
                 .iter()
                 .filter(|artifact| artifact.parent.as_deref() == Some(id))
+                .filter(|artifact| parameters || artifact.kind != "parameter")
                 .map(|artifact| artifact.id.as_str()),
         );
         self.refs
             .iter()
             .filter(|(_, row)| match direction {
                 Direction::In => row.to_id.as_deref().is_some_and(|to| ids.contains(to)),
-                Direction::Out => ids.contains(row.from.as_str()),
+                Direction::Out => ids.contains(row.from.as_str()) && (parameters || !to_parameter(row)),
             })
             .map(|(path, row)| {
                 let other = match direction {
@@ -450,6 +553,7 @@ impl MemoryIndex {
             resolver.resolve(row, &exists);
         }
         self.resolver = resolver;
+        self.position();
         true
     }
 
@@ -553,6 +657,8 @@ fn kind_order(kind: &str) -> u8 {
         "transition" | "form" => 3,
         "field" => 5,
         "anchor" => 6,
+        // a parameter's short name is a field's too often (`orderId`): it comes after every other kind
+        "parameter" => 7,
         _ => 4,
     }
 }
@@ -1378,11 +1484,21 @@ pub fn find(
     let exact = narrow(facade.find(ARTIFACT)?)
         .condition(Condition::or(vec![
             Condition::equals("artifactId", Value::string(text_query.trim())),
-            Condition::equals("shortName", Value::string(text_query.trim())),
+            Condition::and(vec![
+                Condition::equals("shortName", Value::string(text_query.trim())),
+                Condition::not_equals("artifactKind", Value::string("parameter")),
+            ]),
         ]))
         .limit(50)
         .list()?;
     let mut candidates: Vec<ArtifactRow> = exact.values().iter().map(artifact_of).collect();
+    // the parameters of that short name apart, so the many (`orderId`) do not take the places of the fields
+    let parameters = narrow(facade.find(ARTIFACT)?)
+        .eq("shortName", Value::string(text_query.trim()))
+        .eq("artifactKind", Value::string("parameter"))
+        .limit(50)
+        .list()?;
+    candidates.extend(parameters.values().iter().map(artifact_of));
     if let [head, tail @ ..] = query.as_slice() {
         // a key with a segment starting with each query segment's first letter, in order: the ranking does the rest
         let rest: String = tail
@@ -1505,6 +1621,29 @@ pub fn children(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<Vec<
         .collect())
 }
 
+/// The artifacts the file `path` defines at its top (no parent), as [`MemoryIndex::in_file`].
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn in_file(factory: &Arc<ExecutionContextFactory>, path: &str) -> Result<Vec<ArtifactRow>, Error> {
+    ensure(factory)?;
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _lifted = fence::lift();
+    let path = canonical(Path::new(path)).display().to_string();
+    Ok(facade
+        .find(ARTIFACT)?
+        .disable_authz()
+        .eq("filePath", Value::string(path))
+        .order_by("sequenceNum", false)
+        .list()?
+        .values()
+        .iter()
+        .map(artifact_of)
+        .filter(|artifact| artifact.parent.is_none())
+        .collect())
+}
+
 /// The artifacts `ids`, by id.
 fn artifacts_by_id(facade: &EntityFacade, ids: &BTreeSet<String>) -> Result<HashMap<String, ArtifactRow>, Error> {
     let mut found = HashMap::new();
@@ -1540,16 +1679,20 @@ pub fn refs(
     ensure(factory)?;
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let _lifted = fence::lift();
+    let parameters = with_parameters(id, kinds);
     let mut ids: Vec<Value> = vec![Value::string(id)];
     for child in facade
         .find(ARTIFACT)?
         .disable_authz()
         .eq("parentArtifactId", Value::string(id))
         .select_field("artifactId")
+        .select_field("artifactKind")
         .list()?
         .values()
     {
-        ids.push(Value::string(text(child, "artifactId")));
+        if parameters || text(child, "artifactKind") != "parameter" {
+            ids.push(Value::string(text(child, "artifactId")));
+        }
     }
     let (near, far) = match direction {
         Direction::In => ("toArtifactId", "fromArtifactId"),
@@ -1562,29 +1705,59 @@ pub fn refs(
         .order_by("filePath", false)
         .order_by("lineNumber", false)
         .list()?;
+    // a call is observed under a transition's method-less id: the near ids by that form, to put back the indexed id
+    let mut near_ids: HashMap<String, String> = HashMap::new();
+    for value in &ids {
+        let indexed = moqui_lib::object::to_plain_string(value);
+        near_ids.entry(observed_form(&indexed)).or_insert(indexed);
+    }
     let calls = facade
         .find(CALL)?
         .disable_authz()
-        .condition(Condition::is_in(near, ids))
+        .condition(Condition::is_in(
+            near,
+            near_ids
+                .keys()
+                .map(|observed| Value::string(observed.as_str()))
+                .collect(),
+        ))
         .list()?;
+    let mut observed: Vec<(String, String, i64)> = Vec::new();
+    for row in calls.values() {
+        let near_id = text(row, near);
+        let near_id = near_ids.get(&near_id).cloned().unwrap_or(near_id);
+        let far_id = indexed_transition(&facade, &text(row, far))?;
+        let (from, to) = match direction {
+            Direction::In => (far_id, near_id),
+            Direction::Out => (near_id, far_id),
+        };
+        observed.push((from, to, number(row, "callCount")));
+    }
     let mut other_ids: BTreeSet<String> = BTreeSet::new();
-    for row in rows.values().iter().chain(calls.values()) {
+    for row in rows.values() {
         let other = text(row, far);
         if !other.is_empty() {
             other_ids.insert(other);
         }
     }
+    for (from, to, _) in &observed {
+        other_ids.insert(if direction == Direction::In {
+            from.clone()
+        } else {
+            to.clone()
+        });
+    }
     let others = artifacts_by_id(&facade, &other_ids)?;
     let mut call_counts: HashMap<(String, String), i64> = HashMap::new();
-    for row in calls.values() {
-        call_counts.insert(
-            (text(row, "fromArtifactId"), text(row, "toArtifactId")),
-            number(row, "callCount"),
-        );
+    for (from, to, count) in observed {
+        *call_counts.entry((from, to)).or_insert(0) += count;
     }
     let mut entries: Vec<RefEntry> = Vec::new();
     for row in rows.values() {
         let reference = ref_of(row);
+        if direction == Direction::Out && !parameters && to_parameter(&reference) {
+            continue;
+        }
         let other_id = text(row, far);
         let other = others.get(&other_id).cloned();
         let mut item = entry(&text(row, "filePath"), &reference, other);
@@ -1615,6 +1788,59 @@ pub fn refs(
         entries.retain(|item| item.other.as_ref().is_some_and(|other| kinds.contains(&other.kind)));
     }
     Ok(entries)
+}
+
+/// Whether refs of `id` take in its parameters' (the field-maps of each call): for a parameter, or when `kinds` asks
+/// for them. Else a service's callers, or what a caller uses, are not listed once more for each field-map.
+fn with_parameters(id: &str, kinds: &[String]) -> bool {
+    id.starts_with("parameter:") || kinds.iter().any(|kind| kind == "parameter")
+}
+
+/// Whether `row` is to a parameter: a field-map's.
+fn to_parameter(row: &RefRow) -> bool {
+    row.to_kind == ToKind::Parameter || row.to_id.as_deref().is_some_and(|to| to.starts_with("parameter:"))
+}
+
+/// The id a call on the artifact stack is observed under ([`moqui_core::devtools::calls::artifact_id`]): a transition's
+/// without its method (`transition:<screen>#<name>`), since a frame names only the screen and the transition; any other
+/// id as it is.
+fn observed_form(id: &str) -> String {
+    if let Some(rest) = id.strip_prefix("transition:") {
+        if let Some((screen, name)) = rest.rsplit_once('#') {
+            if let Some((name, _method)) = name.rsplit_once(':') {
+                return format!("transition:{screen}#{name}");
+            }
+        }
+    }
+    id.to_string()
+}
+
+/// The indexed id of an observed call's `id`: a method-less transition's is its `any` transition, else the first of
+/// its methods; an id that is no such transition, or names none indexed, as it is.
+fn indexed_transition(facade: &EntityFacade, id: &str) -> Result<String, Error> {
+    if observed_form(id) != id || !id.starts_with("transition:") || !id.contains('#') {
+        return Ok(id.to_string());
+    }
+    let found = facade
+        .find(ARTIFACT)?
+        .disable_authz()
+        .condition(Condition::like("artifactId", Value::string(format!("{id}:%"))))
+        .select_field("artifactId")
+        .order_by("artifactId", false)
+        .list()?;
+    let prefix = format!("{id}:");
+    let methods: Vec<String> = found
+        .values()
+        .iter()
+        .map(|row| text(row, "artifactId"))
+        .filter(|found| found.starts_with(&prefix))
+        .collect();
+    let any = format!("{id}:any");
+    Ok(if methods.contains(&any) {
+        any
+    } else {
+        methods.into_iter().next().unwrap_or_else(|| id.to_string())
+    })
 }
 
 /// The artifact or reference at `line` of `path`, for go to definition: the reference on the line naming `word` (or
@@ -1746,3 +1972,6 @@ pub fn counts(factory: &Arc<ExecutionContextFactory>) -> Result<BTreeMap<String,
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod parameter_tests;
