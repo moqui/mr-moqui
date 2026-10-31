@@ -19,6 +19,8 @@ fn registry_keys_are_the_function_paths() {
     keys.sort_unstable();
     let mut expected = vec![
         "moqui_core::service::backup::backup_embedded_database",
+        "moqui_core::service::call_media::make_ice_servers",
+        "moqui_core::service::call_media::send_media_control",
         "moqui_core::service::chat::check_record_visible",
         "moqui_core::service::chat::get_external_users",
         "moqui_core::service::chat::push_signal",
