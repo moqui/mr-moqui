@@ -54,14 +54,25 @@
     define("uploadedFile", (fileName, text, contentType) => __moquiTestHost.uploadedFile(String(fileName), String(text == null ? "" : text),
         contentType == null ? "text/plain" : String(contentType)));
 
-    // Run fn with a process property set (null clears it), then put it back: a setting the code under test reads from
-    // its properties, such as a feature's switch, in one feature of a spec. Specs run one at a time in a run.
+    // A process property, as a conf property is (null clears it): a setting the code under test reads from its
+    // properties, such as a feature's switch. Specs run one at a time in a run. Every property a spec changes is put
+    // back as it was before the spec when the spec ends (T.restoreProperties, prelude.js); the value it had is kept
+    // the first time the spec changes it. The property's value before this change, or null.
+    const putProperty = (name, value) => {
+        const key = String(name);
+        const before = __moquiTestHost.setProperty(key, value == null ? null : String(value));
+        if (!T.properties.has(key)) T.properties.set(key, before == null ? null : before);
+        return before == null ? null : before;
+    };
+    // setProperty(name, value): for the rest of the spec, as for a policy switch the spec's features share
+    define("setProperty", (name, value) => { putProperty(name, value); });
+    // withProperty(name, value, fn): for fn only, then back to what it was (as in one feature of a spec)
     define("withProperty", (name, value, fn) => {
-        const before = __moquiTestHost.setProperty(String(name), value == null ? null : String(value));
+        const before = putProperty(name, value);
         try {
             return fn();
         } finally {
-            __moquiTestHost.setProperty(String(name), before == null ? null : before);
+            putProperty(name, before);
         }
     });
 

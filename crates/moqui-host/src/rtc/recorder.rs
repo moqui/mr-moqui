@@ -44,7 +44,7 @@ use moqui_rtc::record::{ClosedSegment, RecordConfig, RecordError, Recorder, Spoo
 use serde_json::Value as Json;
 
 use super::media::{self, Kinds, TapEvent};
-use super::{command, Command};
+use super::{command, Command, NoticeKind};
 
 /// Where the recorder spools its files, under the runtime directory: the one place `store#RecordingFile` takes a file
 /// from (`RECORDING_SPOOL` in moqui-core `service/call_media.rs`).
@@ -107,6 +107,11 @@ fn recorders() -> &'static Mutex<HashMap<String, SyncSender<Control>>> {
     RECORDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Whether a recording notice is kept for the legs that join later: until the recording is over (stopped or failed).
+fn notice_kept(notice: &Json) -> bool {
+    !matches!(notice.get("state").and_then(Json::as_str), Some("stopped" | "failed"))
+}
+
 /// A `recording` control message for this node: its notice to the room's legs, then its op for the recorder.
 pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
     let text = |k: &str| body.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
@@ -116,9 +121,11 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
         return;
     }
     if let Some(notice) = body.get("notice").filter(|n| n.is_object()) {
-        if let Err(code) = command(Command::Notice {
+        if let Err(code) = command(Command::RoomNotice {
             room: room.clone(),
+            kind: NoticeKind::Recording,
             frame: notice.clone(),
+            keep: notice_kept(notice),
         }) {
             tracing::debug!("call recording notice for {room} not taken: {code}");
         }

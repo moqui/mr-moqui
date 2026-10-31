@@ -96,13 +96,13 @@ call goes on.
   `get#RecordingFile` serves one segment by its id; anyone else gets "not found" for the same id. A guest is told of
   the recording once let in, not in the lobby, which shows a waiting guest nothing of the call. No route serves the
   `dbresource://` locations to users, and an app's record links (BOSS) go through these services and never widen this.
-- **Delete:** the one who recorded it, once it is not going (`delete#Recording`): its files and rows.
+- **Delete:** the one who recorded it, once it is not going (`delete#Recording`): its files and rows, its transcripts (`CallTranscript`) too.
 - **Acknowledge or withdraw:** each leg for itself; a guest by the credential of its page.
 
 ## Retention and recovery
 
-The job `expire_Recordings_hourly` (`expire#Recordings`) deletes recordings past `retentionUntilDate`, files and rows.
-It also recovers: a recording still marked going whose call ended or whose media node stopped or restarted since it
+The job `expire_Recordings_hourly` (`expire#Recordings`) deletes recordings past `retentionUntilDate`, files and rows,
+with their transcripts. It also recovers: a recording still marked going whose call ended or whose media node stopped or restarted since it
 began fails ("the recorder stopped"), a segment that was not stored is removed with any partial file, and files under the recordings' root that no
 recording row names (an upload whose rows rolled back) are deleted. Each item runs on its own, and one that fails is
 logged.

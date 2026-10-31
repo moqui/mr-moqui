@@ -17,7 +17,8 @@
 //! `reaction` and `leave`, each with `callSessionId` and `callLegId` and an optional `id` that the reply carries. Replies
 //! and the media node's offers and events come back on the topic `rtc:<callSessionId>`: `joined`, `answer`, `offer`,
 //! `ack`, `error` (`code`), `connected`, `mediaLost`, `participant`, `track`, `layer`, `quality`, the relayed `mute`,
-//! `hand` and `reaction`, `ended`, and `recording` (the notice of a call being recorded, W5; `rtc/recorder.rs`).
+//! `hand` and `reaction`, `ended`, the notices `recording` (W5, `rtc/recorder.rs`) and `captions` (W6), which a leg
+//! that joins later gets right after its `joined`, and the captions' lines, `caption` (`rtc/captions.rs`).
 //!
 //! A `join` runs `CallServices.bind#Connection` as the socket's user on a request worker: the leg must be theirs and in
 //! the call. That claims the leg's next connection generation, which every later frame of this socket carries, so the

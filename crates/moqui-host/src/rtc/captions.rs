@@ -57,7 +57,7 @@ use moqui_rtc::audio::{level_dbov, FRAME, FRAME_MS};
 use serde_json::{json, Value as Json};
 
 use super::media::{Kinds, TapEvent};
-use super::Command;
+use super::{Command, NoticeKind};
 
 /// A frame this loud or louder (RMS, dBov) is speech.
 pub(crate) const SPEECH_DBOV: f32 = -50.0;
@@ -669,10 +669,10 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
     // the table stays locked while the notice is sent, so a stop that follows sends its "off" after it
     let mut table = lock(calls_running());
     if table.contains_key(room) {
-        set_notice(room, Some(notice));
+        set_notice(room, notice, true);
         return;
     }
-    if !set_notice(room, Some(notice)) {
+    if !set_notice(room, notice, true) {
         // no notice, no captions: the driver is gone or overloaded
         to_room(
             room,
@@ -720,10 +720,10 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
                     let mut table = lock(calls_running());
                     if table.get(&room_id).is_some_and(|flag| Arc::ptr_eq(flag, &stop)) {
                         table.remove(&room_id);
-                        set_notice(&room_id, None);
-                        to_room(
+                        set_notice(
                             &room_id,
                             json!({"rtc": "captions", "state": "unavailable", "reason": code, "message": "the call's audio could not be reached"}),
+                            false,
                         );
                     }
                 }
@@ -737,7 +737,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
         tracing::error!("call {room} captions did not start, the thread did not: {err}");
         let mut table = lock(calls_running());
         table.remove(room);
-        set_notice(room, None);
+        set_notice(
+            room,
+            json!({"rtc": "captions", "state": "unavailable", "reason": "overloaded", "message": "the call's media server is busy"}),
+            false,
+        );
     }
 }
 
@@ -747,15 +751,17 @@ pub(crate) fn stop(room: &str) {
     if let Some(flag) = lock(calls_running()).remove(room) {
         flag.store(true, Ordering::Release);
     }
-    set_notice(room, None);
-    to_room(room, json!({"rtc": "captions", "state": "off"}));
+    set_notice(room, json!({"rtc": "captions", "state": "off"}), false);
 }
 
-/// The notice every leg gets now and each leg gets when it joins; `None` takes it down. Whether the driver took it.
-fn set_notice(room: &str, frame: Option<Json>) -> bool {
+/// A captions frame every leg gets now; kept (the notice that they are on), each leg gets it when it joins too, and
+/// one not kept (off, unavailable at the start) takes that down. Whether the driver took it.
+fn set_notice(room: &str, frame: Json, keep: bool) -> bool {
     match super::command(Command::RoomNotice {
         room: room.to_string(),
+        kind: NoticeKind::Captions,
         frame,
+        keep,
     }) {
         Ok(()) => true,
         Err(code) => {

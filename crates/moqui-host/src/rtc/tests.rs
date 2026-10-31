@@ -59,3 +59,33 @@ fn a_bad_port_or_address_is_an_error() {
     assert!(config(&[("rtc_media_port", "media")]).is_err());
     assert!(config(&[("rtc_media_port", "10000"), ("rtc_public_address", "not an address")]).is_err());
 }
+
+#[test]
+fn a_room_keeps_one_notice_of_each_kind_for_its_joiners() {
+    use super::driver::RoomNotices;
+    use super::NoticeKind;
+    use serde_json::json;
+
+    let mut notices = RoomNotices::default();
+    assert!(notices.of("call-1").is_empty());
+    // captions on first, then a recording: a joiner gets both, the recording's first
+    let captions = json!({"rtc": "captions", "state": "on", "provider": "whisper"});
+    notices.set("call-1", NoticeKind::Captions, Some(captions.clone()));
+    let recording = json!({"rtc": "recording", "state": "recording", "callRecordingId": "R1"});
+    notices.set("call-1", NoticeKind::Recording, Some(recording));
+    // a newer notice of a kind takes the place of the older
+    let paused = json!({"rtc": "recording", "state": "paused", "callRecordingId": "R1"});
+    notices.set("call-1", NoticeKind::Recording, Some(paused.clone()));
+    assert_eq!(notices.of("call-1"), vec![paused.clone(), captions]);
+    assert!(notices.of("call-2").is_empty(), "another room has none");
+    // captions off: the recording's stays
+    notices.set("call-1", NoticeKind::Captions, None);
+    assert_eq!(notices.of("call-1"), vec![paused]);
+    notices.set(
+        "call-1",
+        NoticeKind::Captions,
+        Some(json!({"rtc": "captions", "state": "on"})),
+    );
+    notices.room_closed("call-1");
+    assert!(notices.of("call-1").is_empty());
+}

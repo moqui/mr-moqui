@@ -484,9 +484,8 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- ========== W6: captions and transcripts (plans/Comms-Framework.md §5.4, §6.4) ==========
-        Appended after the call entities (and after W5's recording block when both are merged). callRecordingId and
-        voicemailId are plain ids for now: CallRecording (W5) and Voicemail (V2) arrive in their own steps, and the merge
-        adds their relationships here (type one-nofk to moqui.call.CallRecording and moqui.call.Voicemail). -->
+        After W5's recording block. voicemailId is a plain id until V2 adds Voicemail and its relationship here (type
+        one-nofk to moqui.call.Voicemail). -->
     <entity entity-name="CallCaptions" package="moqui.call" use="transactional" cache="never">
         <description>Whether a call's live captions are on (CallCaptionServices start#Captions, stop#Captions), who turned
             them on or off and when, and the provider the notice named. The media node transcribes; nothing of the audio
@@ -514,7 +513,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="callTranscriptId" type="id" is-pk="true"/>
         <field name="callSessionId" type="id"/>
         <field name="callLegId" type="id"/>
-        <field name="callRecordingId" type="id"><description>The recording transcribed (W5 adds the relationship)</description></field>
+        <field name="callRecordingId" type="id"><description>The recording transcribed; its transcripts are deleted with it
+            (delete#Recording, expire#Recordings)</description></field>
         <field name="voicemailId" type="id"><description>The voicemail transcribed (V2 adds the relationship)</description></field>
         <field name="segment" type="number-integer"/>
         <field name="speaker" type="text-medium"/>
@@ -524,6 +524,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one-nofk" related="moqui.call.CallRecording" short-alias="recording"/>
         <relationship type="one" title="CallTranscript" related="moqui.basic.StatusItem" short-alias="status">
             <key-map field-name="statusId"/></relationship>
         <index name="CALL_TRANSCRIPT_SESSION"><index-field name="callSessionId"/><index-field name="segment"/></index>

@@ -74,12 +74,6 @@ pub(crate) enum Command {
     Keyframes {
         room: String,
     },
-    /// The recording notice (an rtc `recording` frame) for every leg of the room, kept for the legs that join later
-    /// until the recording stops (`recorder.rs`).
-    Notice {
-        room: String,
-        frame: Json,
-    },
     /// A datagram from a browser's ICE-TCP connection.
     TcpIn {
         from: SocketAddr,
@@ -92,12 +86,25 @@ pub(crate) enum Command {
         room: String,
         frame: Json,
     },
-    /// A frame for every leg of a room now and each leg that joins it later (the captions notice); `None` clears it.
+    /// A notice (an `rtc` frame) for every leg of a room now. With `keep`, the room's notice of that kind: each leg
+    /// that joins later gets it right after its `joined`, with the room's other kinds, until a notice of the same kind
+    /// without `keep` (the recording stopped, captions off) takes it down.
     RoomNotice {
         room: String,
-        frame: Option<Json>,
+        kind: NoticeKind,
+        frame: Json,
+        keep: bool,
     },
     Stop,
+}
+
+/// What a room's notice is about. A room keeps one notice of each kind, and a joining leg gets them in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum NoticeKind {
+    /// The `recording` frame (`recorder.rs`, W5).
+    Recording,
+    /// The `captions` frame (`captions.rs`, W6).
+    Captions,
 }
 
 fn media() -> &'static Mutex<Option<SyncSender<Command>>> {

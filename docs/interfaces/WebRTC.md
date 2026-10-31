@@ -109,7 +109,8 @@ How they work:
 5. Anyone in the call turns them off (`stop#Captions`, `{rtc: 'captions', state: 'off'}`). They also end with the call.
 
 Transcription for other server code is `org.moqui.impl.SpeechServices.transcribe#Audio` (internal): voicemail (V2) and
-recordings (W5) use the same seam, and `CallTranscript` holds their text too.
+a recording's transcript will use the same seam, and `CallTranscript` holds their text too; a recording's transcripts
+are deleted with it.
 
 ## Cluster
 

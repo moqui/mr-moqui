@@ -23,7 +23,7 @@ use moqui_rtc::audio::opus::OpusEncoder;
 use moqui_rtc::audio::FRAME;
 use moqui_rtc::record::{ClosedSegment, RecordConfig, TrackKind};
 
-use super::{Control, Ended, Limits, Session, Store};
+use super::{notice_kept, Control, Ended, Limits, Session, Store};
 use crate::rtc::media::{Kind, OwnedFrame, Source, TapEvent};
 
 /// A store that keeps each segment's bytes, read from its spooled file as it is handed over.
@@ -262,4 +262,21 @@ fn the_limits_come_from_the_properties() {
         2_048 * 1024 * 1024,
         "a bad number is the default"
     );
+}
+
+#[test]
+fn the_notice_is_kept_for_joiners_until_the_recording_is_over() {
+    use serde_json::json;
+    for (state, kept) in [
+        ("recording", true),
+        ("paused", true),
+        ("stopped", false),
+        ("failed", false),
+    ] {
+        assert_eq!(
+            notice_kept(&json!({"rtc": "recording", "state": state})),
+            kept,
+            "{state}"
+        );
+    }
 }

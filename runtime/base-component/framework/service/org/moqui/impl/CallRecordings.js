@@ -18,6 +18,8 @@ const RECORDING = 'moqui.call.CallRecording'
 const TRACK = 'moqui.call.CallRecordingTrack'
 const SEGMENT = 'moqui.call.CallRecordingSegment'
 const CONSENT = 'moqui.call.CallRecordingConsent'
+/** A recording's transcripts (W6's CallTranscript) go with it (plans/Comms-Framework.md §5.4). */
+const TRANSCRIPT = 'moqui.call.CallTranscript'
 
 /** Where the files go; store#RecordingFile refuses any other place. */
 const ROOT = 'dbresource://moqui/call/recording'
@@ -558,7 +560,7 @@ function file(p) {
   }
 }
 
-/** Deletes a recording's files and rows; a file that does not go is logged, and the rows go anyway. */
+/** Deletes a recording's files and rows, its transcripts too; a file that does not go is logged, and the rows go anyway. */
 function deleteRecording(recording) {
   for (const segment of rows(SEGMENT, { callRecordingId: recording.callRecordingId })) {
     if (segment.contentLocation) {
@@ -574,7 +576,7 @@ function deleteRecording(recording) {
   } catch (err) {
     ec.logger.debug(`Call recording folder ${recording.callRecordingId} not removed: ${err && err.message ? err.message : err}`)
   }
-  for (const entity of [SEGMENT, TRACK, CONSENT]) find(entity).condition('callRecordingId', recording.callRecordingId).deleteAll()
+  for (const entity of [SEGMENT, TRACK, CONSENT, TRANSCRIPT]) find(entity).condition('callRecordingId', recording.callRecordingId).deleteAll()
   recording.delete()
 }
 

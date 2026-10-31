@@ -3,7 +3,7 @@
 // joiner too; under the acknowledgement policy the recording pauses until every current leg acknowledged, and a resume
 // starts the next period of segments; a withdrawal pauses; only the owner and the hosts read a recording (another user
 // with the same segment id gets "not found"); a recorder failure ends the recording and not the call; retention deletes
-// the files and rows; the job fails a recording whose media node restarted since it began. The media node is simulated: its segments come in through store#RecordingSegment, as the recorder
+// the files and rows, the recording's transcripts too; the job fails a recording whose media node restarted since it began. The media node is simulated: its segments come in through store#RecordingSegment, as the recorder
 // hands them, and its failure through note#RecorderEnd. The recorder itself is moqui-host's (it rtc::).
 // Run: ./moq test framework --spec CallRecording
 const A = "REC_SPEC_A"
@@ -14,6 +14,7 @@ const NODE = "rec-spec-node"
 const RECORDING = "moqui.call.CallRecording"
 const CONSENT = "moqui.call.CallRecordingConsent"
 const SEGMENT = "moqui.call.CallRecordingSegment"
+const TRANSCRIPT = "moqui.call.CallTranscript"
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -75,7 +76,7 @@ function endAll() {
             for (const seg of ec.entity.find(SEGMENT).condition("callRecordingId", r.callRecordingId).list()) {
                 if (seg.contentLocation) ec.resource.getLocationReference(seg.contentLocation).delete()
             }
-            for (const entity of [SEGMENT, "moqui.call.CallRecordingTrack", CONSENT]) {
+            for (const entity of [SEGMENT, "moqui.call.CallRecordingTrack", CONSENT, TRANSCRIPT]) {
                 ec.entity.find(entity).condition("callRecordingId", r.callRecordingId).deleteAll()
             }
             r.delete()
@@ -273,13 +274,21 @@ feature("a recorder failure ends the recording and not the call; a segment after
     }
 })
 
-feature("the call's end stops its recording, and retention deletes the files and rows", {
+feature("the call's end stops its recording, and retention deletes the files and rows, its transcripts too", {
     when() {
         setProperty("call_recording_ack_required", "false")
         const started = as(A, "start#Recording", {callSessionId: callId})
         const kept = storeSegment(started.callRecordingId, {callLegId: legOf(callId, A).callLegId})
         as(A, calls("end#Call"), {callSessionId: callId})
         const ended = recording(started.callRecordingId)
+        // a transcript of the recording (as a transcription of it would keep), and a live caption of the same call
+        sys(() => {
+            for (const [callTranscriptId, callRecordingId] of [["REC_SPEC_TR1", started.callRecordingId], ["REC_SPEC_TR2", null]]) {
+                const row = ec.entity.makeValue(TRANSCRIPT)
+                row.setFields({callTranscriptId, callSessionId: callId, callRecordingId, segment: 1, statusId: "CtsDone", text: "hello"}, true, null, null)
+                row.create()
+            }
+        })
         const stillThere = sys(() => ec.resource.getLocationReference(kept.contentLocation).getExists())
         sys(() => {
             for (const r of ec.entity.find(RECORDING).condition("callSessionId", callId).list()) {
@@ -291,9 +300,10 @@ feature("the call's end stops its recording, and retention deletes the files and
         return {started, ended, stillThere, expired, gone: !sys(() => ec.resource.getLocationReference(kept.contentLocation).getExists()),
             rows: sys(() => ec.entity.find(RECORDING).condition("callSessionId", callId).count()),
             segments: sys(() => ec.entity.find(SEGMENT).condition("callRecordingId", started.callRecordingId).count()),
-            consentRows: sys(() => ec.entity.find(CONSENT).condition("callSessionId", callId).count())}
+            consentRows: sys(() => ec.entity.find(CONSENT).condition("callSessionId", callId).count()),
+            transcripts: sys(() => Array.from(ec.entity.find(TRANSCRIPT).condition("callSessionId", callId).list()).map(t => t.callTranscriptId))}
     },
-    then({started, ended, stillThere, expired, gone, rows, segments, consentRows}) {
+    then({started, ended, stillThere, expired, gone, rows, segments, consentRows, transcripts}) {
         started.recording.state == "recording"
         ended.statusId == "CrsStopped"
         stillThere == true
@@ -302,6 +312,10 @@ feature("the call's end stops its recording, and retention deletes the files and
         rows == 0
         segments == 0
         consentRows == 0
+        transcripts == ["REC_SPEC_TR2"]
+    },
+    cleanup() {
+        sys(() => ec.entity.find(TRANSCRIPT).condition("callTranscriptId", "in", ["REC_SPEC_TR1", "REC_SPEC_TR2"]).deleteAll())
     }
 })
 

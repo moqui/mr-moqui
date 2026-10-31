@@ -312,7 +312,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
         }
     };
     let finish = || {
-        // the process properties the spec's setProperty changed, if cleanupSpec did not put them back
+        // the process properties the spec changed (setProperty, withProperty), if cleanupSpec did not put them back
         let _ = moqui_core::script::eval_named_value("__moquiTest.restoreProperties()", PRELUDE_NAME);
         finish_host();
     };
@@ -1048,8 +1048,6 @@ pub fn run_on_thread(
         })
 }
 
-/// `__moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds)`: run the function source on `n`
-/// threads, each with its own execution context and engine, and return `{results, errors}` as JSON.
 /// `uploadedFile(fileName, text, contentType)` of the prelude: an uploaded file holding the text.
 fn uploaded_file_host<'js>(
     ctx: Ctx<'js>,
@@ -1061,8 +1059,9 @@ fn uploaded_file_host<'js>(
     moqui_core::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
 }
 
-/// `__moquiTestHost.setProperty(name, value)`: a process property for the rest of the run (`null` clears it); the
-/// property as it was, or `null`. `withProperty` (server.js) puts it back after its function.
+/// `__moquiTestHost.setProperty(name, value)`: a process property (`null` clears it); the property as it was, from the
+/// process table only, or `null`. Under `setProperty` and `withProperty` (server.js), which keep what to put back when
+/// the spec ends (`__moquiTest.restoreProperties`, in cleanupSpec and in [`run_spec`]'s finish).
 fn set_property_host(name: String, value: Option<String>) -> Option<String> {
     let before = moqui_lib::env::get_property(&name);
     match value {
@@ -1072,6 +1071,8 @@ fn set_property_host(name: String, value: Option<String>) -> Option<String> {
     before
 }
 
+/// `__moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds)`: run the function source on `n`
+/// threads, each with its own execution context and engine, and return `{results, errors}` as JSON.
 fn parallel_host(
     ctx: Ctx<'_>,
     count: u32,
