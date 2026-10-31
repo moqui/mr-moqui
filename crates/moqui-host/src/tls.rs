@@ -497,7 +497,7 @@ fn pair_names(dir: &Path) -> Vec<String> {
 }
 
 /// The certificate and key files for `name`, in any of the layouts.
-fn find_files(dir: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
+pub(crate) fn find_files(dir: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     let key = dir.join(format!("{name}.key"));
     if key.is_file() {
         return CERT_EXTENSIONS

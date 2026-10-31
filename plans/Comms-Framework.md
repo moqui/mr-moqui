@@ -969,6 +969,56 @@ codecs, the mix-minus mixer and the taps that SIP legs, recording (W5) and capti
 - **Not yet shown:** the mixer on real sockets and real speech, and its CPU cost per room under load. V1's SIP legs and
   W5's mixed recording will exercise them.
 
+**The V1 gate, SIP (2026-10-31): rsipstack passed.** D-V1 put `rsipstack` first and `rvoip` second; rsipstack passed
+every case, so rvoip was not tried. rustpbx stayed a design reference: it was not checked out and nothing was copied.
+
+- **Version and licenses:** `rsipstack` 0.7.12 (released 2026-10-29), MIT, with its default features off and
+  `platform-tokio` and `rustls` on. It leaves out WebSocket (`tokio-tungstenite`) and SRV lookup (`hickory-resolver`).
+  - New transitive crates: `if-addrs` 0.14.0 (MIT OR BSD-3-Clause) and `hashbrown` 0.15.5 (MIT OR Apache-2.0);
+    `windows-sys` 0.59.0 on Windows only.
+  - Its TLS turns on rustls's `ring` provider beside aws-lc-rs. ring was already linked, through `rustls-webpki`.
+    rsipstack builds its TLS configs from the process default, so `moqui_sip::install_crypto` makes aws-lc-rs that
+    default.
+  - No OpenSSL. `cargo deny check licenses` passes (License-Review).
+- **SRTP** is in house (`moqui-sip` `srtp.rs`): RFC 3711's key derivation, packet index and replay window, and the
+  80-bit tag. It runs on str0m's public crypto provider, the aws-lc-rs one the browsers' DTLS-SRTP uses. str0m's own
+  SRTP context is private. No SRTP crate is added.
+- **What is rsipstack's and what is Moqui's.**
+  - rsipstack: the transactions and dialogs; the UDP, TCP and TLS transports; CANCEL, including a 2xx that crosses
+    it; forked 2xx answers.
+  - Moqui: digest for the trunk's realm and algorithms; challenges with expiring nonces and replay checks; the
+    per-source block; SDP; RTP; SRTP; RFC 4733 DTMF; the phone side of the media; registration; the outcome of an
+    outbound leg (`race.rs`).
+- **Tokio.** rsipstack's only host backend is Tokio; its embassy backend is for embedded targets. The user agent
+  (`ua.rs`) runs on a two-thread runtime the host's `src/sip/` owns, beside no business logic. The rest is sans-IO,
+  tested in memory with the time passed in: digest, the guard, the dial classes, SDP, RTP, SRTP, DTMF, the media and
+  the race. The UA cases run on loopback sockets.
+- **Build cost:** a Dev build with `sip` is 5.9 MiB larger than one with `rtc`, and its first build is 68 s longer.
+- **Cases passed** (`cargo test -p moqui-sip`, 27 tests, 2.7 s together; the fake trunk is a raw SIP peer on a
+  loopback socket, and for TLS a second user agent):
+  - trunk registration with a SHA-256 challenge; a registrar challenging for another realm gets no credentials;
+  - an outbound call answering a 407, with ringing, the answer, media both ways, DTMF (RFC 4733) and a hangup;
+  - an inbound call that rings, is answered, carries media both ways and is hung up by the far end;
+  - hold by re-INVITE both ways (`sendonly` answered `recvonly`; this side's `sendonly` answered);
+  - CANCEL while ringing (487 and ACK), and a 2xx crossing the CANCEL (ACKed and ended with BYE, reported canceled);
+  - two forked 2xx: the first wins, the second is ACKed and ended with BYE, and one answer is reported;
+  - credentials: failed digests from one address block it (and only it) without touching the account; right
+    credentials from another address are taken;
+  - a call over TLS with SRTP between two user agents, with media and DTMF;
+  - media mixing: two phone legs, G.711 and Opus, each hearing the other through the mix-minus and not itself;
+  - each codec over SRTP, jitter and loss concealment, symmetric RTP, and forged or replayed SRTP refused;
+  - vectors: RFC 7616's digest (SHA-256 and MD5) and RFC 3711's keystream and key derivation (B.2, B.3).
+
+  On a real server: `cargo test -p moqui-host --test it sip::` (2.2 s). A fake trunk takes an outbound call and
+  places an inbound one, and a browser stand-in (a str0m peer) hears the phone through the call's SFU room while the
+  phone hears the room.
+- **Not yet shown:**
+  - a live provider (the Telnyx profile is unverified until an authorized live check, §7.3);
+  - interoperation with real PBXes and phones;
+  - the server behind NAT;
+  - RTCP;
+  - load.
+
 ### 6.3 Signaling
 
 - **Frames.** A new client frame kind on `/notws`, `rtc`, in `crates/moqui-host/src/notws/rtc.rs` beside
@@ -1237,6 +1287,7 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 | M0 | The audio core of V1, in `moqui-rtc` `audio/`: Opus on `opus-rs` (the §6.2 gate) with concealment and FEC, G.711 μ-law and A-law, G.722, a polyphase resampler, `Codec` by SDP name, `LegDecoder` (a jitter buffer by RTP time), the mix-minus `Mixer` and `AudioRoom`. Taps: several per room (`add_tap`, `remove_tap`), injected frames tapped too, a leg leaving told to them (`TapEvent::Left`), `QueueTap` (bounded, drops and counts). `AudioRoom` decodes a leg's microphone and screen-share audio as separate streams of one input. The host's hook points (`src/rtc/media.rs`, off stub in `rtc_off.rs`): `attach` a consumer to a room, `add_pcm_source` for an injected leg, paced on the media thread | this commit | `moqui-rtc` audio (13, with malformed Opus and a leg's two audio streams) and `sfu::audio_tests` (2: a stalled consumer; tap, mix and inject heard by a peer, then its leave); `rtc::media::tests` (3) |
 | W5 | Call recording. `moqui-rtc` `record/` (sans-IO, in house): Ogg Opus (OpusHead, OpusTags, pages with their CRC, granule positions from RTP time, a gap as a granule jump), WebM VP8 (EBML: Segment, Cluster, SimpleBlock with keyframe flags, Cues), the per-track and mixed-audio recorder with segments at pause and resume and at size and time caps. The host: `rtc/recorder.rs`, a thread per recording on the media node (a `Kinds::All` consumer, an `AudioRoom` on a 20 ms tick encoded with `OpusEncoder` for the mix, a bounded queue, a spool under `runtime/tmp/call-recording`, keyframes asked of the room's publishers while a video track waits for one), started and stopped by `send#MediaControl` (`action: 'recording'`); the `rtc` frame `recording` to every leg and again to a late joiner (the driver's `RoomNotice`, one notice of each kind per room, which the captions notice shares). `CallRecording`, `CallRecordingTrack`, `CallRecordingSegment`, `CallRecordingConsent`; `CallRecordingServices` and `CallRecordings.js`: `start#`, `stop#`, `pause#`, `resume#Recording`, `get#RecordingState`, `ack#RecordingNotice`, `withdraw#RecordingConsent`, `find#Recordings`, `get#RecordingFile`, `delete#Recording` and `expire#Recordings` (job; with the recording's `CallTranscript` rows), `store#RecordingSegment` and `store#RecordingFile` (Rust) to `dbresource://moqui/call/recording/`, `note#RecorderEnd`, `note#CallChange` (Calls.js: a leg bound, a leg gone, the end), the hook `notify#LegRecording` for phone legs (V1). The `call_recording_*` properties (off by default). In `m-call`: Record, the indicator, the acknowledgement prompt and Withdraw; the guest page too. BasicComms Calls, Recordings: the list, a player of a period's tracks together, downloads, Delete; RecordingsTui. `docs/interfaces/Call-Recording.md` | 7680f1a3, a54ba33f | `moqui-rtc` record (8: Ogg pages, checksums and granule positions, a gap as a granule jump, a packet too big for a page dropped, a WebM walked as EBML with its clusters and cues, segments by period, cap and leg, layer switches and the keyframes they wait for, the size limit); `moqui-rtc` `sfu::tests::a_room_s_publishers_are_asked_for_keyframes`; `rtc::recorder` tests (4: a session with frames in memory, a failed store, the size limit, the limits); `it rtc::a_recorded_call…` (a recorded call on a real server: the notice on both sockets, a track per leg and the mix stored as Ogg, 2.4 s); `CallRecording.spec.js` (9); `BasicCommsCalls` (Recordings, the file refused for others); `BasicComms` (every screen in qvt and tui) |
 | W6 | Captions. The transcription seam: `moqui-llm` `speech.rs` (`transcribe`: the `transcribe` binding, the user's `api` quota, an `LlmCall`; `transcribe_with`, which dictation now shares; `provider`), `moqui_core::llm_hooks::{transcribe, speech_provider}` (`notBuiltIn` without `llm`), `org.moqui.impl.SpeechServices.transcribe#Audio` and `get#SpeechProvider` (internal). The host's `rtc/captions.rs`: a consumer and an `AudioRoom` per call on its own thread, chunks gated by level and cut at a pause or `call_captions_chunk_seconds`, 16 kHz WAV, a bounded queue and workers on the service pool with a timeout each (at most half the pool across a node's calls), results in speaker and chunk order, the oldest waiting chunk dropped as a gap, `captions unavailable` on failure; the `Transcriber` trait; the driver's `ToRoom` and `RoomNotice` (the notice to each leg that joins later). `speech-local`: a host feature off in every package, a stub answering "not built in". `CallCaptionServices` (`start#`, `stop#Captions`, `get#CaptionState`; `CallCaptions.js`: the switch `call_captions_enabled`, in the call, not ended, not end-to-end encrypted, a provider) through `send#MediaControl`; `CallCaptions` and `CallTranscript` (appended to CallEntities; `call_captions_store`). `m-call`: CC, the notice, the speaker's lines, unavailable; `m-call-guest` the notice and lines. The spec harness's `withProperty` | 086466c9, ba1bdb16 | `rtc::captions::tests` (10: order with answers out of order on real Opus and simulated time, timeout, backpressure gap, silence, a hung provider with no frame dropped, the node's cap on jobs); `moqui-llm` `speech::tests` (4, a fake endpoint on loopback); `CallCaptions.spec.js` (5) |
+| V1 | `crates/moqui-sip` on rsipstack (the V1 gate in §6.2): the UA and B2BUA (`ua.rs`); trunk registration; digest for a trunk's realm and algorithms, with nonce and replay checks; the per-source block of failed digests; SDP for PCMU, PCMA and Opus with telephone-event; RTP and SRTP by SDES; RFC 4733 DTMF; hold by re-INVITE; CANCEL and forked answers; the phone leg's media. The host's `sip` feature (`src/sip/`): `sip_port`, `sip_tls_port` and `sip_rtp_ports`; each leg's audio is a `PcmSource` in the call's room, and gets the room's mix-minus; the engine checks the dial again; `play_prompt` (W5's recording notice). `send#SipControl` (Rust). `VoiceEntities` (`VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `EmergencyLocation`, `VoiceUserSetting`, `VoicePolicy`, `VoiceAuthFailure`, `SipNode`) and `VoiceServices`/`Voice.js`: trunks and numbers, `place#PhoneCall`, inbound DIDs ringing their user, caller-ID grants, the fraud limits, the emergency path, `get#VoiceCapabilities`. `Calls.js` phone legs. System/Voice (Status, Trunks, Numbers, Caller IDs, Fraud, Emergency); Call a number in History; the phone tile and keypad in `m-call`. [docs/interfaces/SIP.md](../docs/interfaces/SIP.md) | this commit | `moqui-sip` (27); `it sip::` (an outbound and an inbound call through a fake trunk, heard by a browser stand-in, 2.2 s); `sip::tests` (2); `Voice.spec.js` (10); `Calls.spec.js`; `BasicComms.spec.js` (the Voice screens in qvt and tui); `tui_screens` goldens (the new enumerations) |
 
 Left for later:
 - `speech-local` (Whisper on candle, §10.1) is a stub that answers "not built in"; captions use the `moqui-llm`
@@ -1264,6 +1315,19 @@ Left for later:
   by its screen renders, not with real media in a browser, and the file transition sends whole files (no range
   requests), so seeking far into a long file waits for it. A guest sees the recording state only once let in, not in
   the lobby.
+- V1 has not been checked with a live provider.
+  - The Telnyx profile is documented and marked unverified until an authorized live check (§7.3).
+  - No emergency call was placed. Emergency readiness is per deployment ([SIP](../docs/interfaces/SIP.md),
+    "Emergency readiness").
+- V1 leaves out:
+  - the registrar (V4);
+  - the INVITE without an offer (late offer);
+  - RTCP and SRTCP;
+  - SRV lookups for a trunk's host;
+  - IPv6, which is not tested.
+- A trunk that does not register shows no status until a call fails: there are no OPTIONS pings.
+- `play_prompt` (`src/sip/mod.rs`) plays a tone or speech to a phone leg. W5's recording notice wires it at the merge.
+- No client spec covers the phone tile and the keypad of `m-call`.
 
 ---
 
@@ -1335,7 +1399,7 @@ Observed on 2026-10-30 on crates.io, docs.rs and the upstream repositories. Each
 | WebRTC | [str0m][str0m] | 0.24.1, MIT/Apache-2.0 | — | Sans-IO, all media exposed; aws-lc-rs, or `rust-crypto` and `dimpl` |
 | WebRTC fallback | webrtc-rs `rtc` | 0.21.1, MIT/Apache-2.0 | — | Sans-IO, exposes received RTP. [`sfu`][sfu-api] 0.5.0: reference only |
 | TURN, STUN | `turn-server-proto` | 0.7.3, MIT/Apache-2.0 | coturn (BSD-3-Clause) | Sans-IO; TLS by rustls. Or webrtc-rs `turn` 0.17. turn-rs is MIT only from 4.0.1 |
-| SIP | [rsipstack][rsipstack] | 0.7.12, MIT | an existing PBX as a trunk | Transactions, dialogs, UDP/TCP/TLS/WS; Tokio. B2BUA and registrar logic is Moqui's |
+| SIP | [rsipstack][rsipstack] (the V1 gate, §6.2) | 0.7.12 (2026-10-29), MIT | an existing PBX as a trunk | Transactions, dialogs, UDP/TCP/TLS; Tokio, in the host layer. B2BUA, digest policy, SDP, SRTP (on str0m's crypto provider), DTMF and registrar logic are Moqui's (`moqui-sip`) |
 | SIP fallback | `rvoip` | 0.4.0, MIT | — | Beta registrar, proxy, B2BUA. `rsiprtp` is UA-only; ezk's media needs OpenSSL |
 | SIP reference | [rustpbx][rustpbx] | MIT (community edition) | — | A Rust PBX on rsipstack. Check each file's license before reuse |
 | Opus | `opus-rs` (M0, §6.2) | 0.1.40, BSD-3-Clause | — | Pure Rust, no dependencies; its decoder matches libopus 1.6.1 to float rounding. `opus-pure` 0.2.2 is the next pick; `opus` 0.4.0 + `opusic-sys` (libopus via cmake) the fallback |

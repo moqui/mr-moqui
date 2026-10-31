@@ -177,6 +177,40 @@ feature("an app that mounts BasicComms shows its screens with its extensions und
     }
 })
 
+feature("the System Voice screens render in qvt and tui through the System app, and History has Call a number", {
+    when() {
+        login("john.doe")
+        const systemRoot = "component://tools/screen/System.xml"
+        // a row in each list, so the row dialogs render too
+        const voice = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.VoiceServices." + name).parameters(parameters).call()) || {}
+        const trunk = voice("store#VoiceTrunk", {name: "Render trunk", host: "sip.render.test", emergencyCapable: "Y"}).voiceTrunkId
+        const location = voice("store#EmergencyLocation", {name: "Render office", address1: "1 Main St", callbackNumber: "+15550109999"}).emergencyLocationId
+        voice("store#PhoneNumber", {phoneNumber: "+15550109999", voiceTrunkId: trunk, routeId: USER, emergencyLocationId: location})
+        voice("grant#CallerId", {phoneNumber: "+15550109999", userId: USER})
+        voice("store#VoiceUserSetting", {userId: USER, outboundEnabled: "Y"})
+        voice("record#AuthFailure", {sourceAddress: "198.51.100.7", username: "render"})
+        ec.message.clearErrors()
+        const problems = []
+        const texts = {Status: "SIP servers", Trunks: "Render trunk", Numbers: "+15550109999", CallerIds: "Let someone call from a number",
+            Fraud: "198.51.100.7", Emergency: "Render office"}
+        for (const [path, text] of Object.entries(texts)) {
+            for (const mode of ["qvt", "tui"]) {
+                const shown = render(systemRoot, "Voice/" + path, mode, {})
+                if (shown.status != 200 || shown.broken || !shown.output.includes(text))
+                    problems.push(mode + " " + path + ": " + shown.status + " " + shown.errors + " " + shown.output.slice(0, 200))
+            }
+        }
+        const history = render(root, "Calls/History", "qvt", {})
+        const historyTui = render(root, "Calls/History", "tui", {})
+        return {problems, history, historyTui}
+    },
+    then({problems, history, historyTui}) {
+        problems.join("\n") == ""
+        history.output.includes("Call a number")
+        historyTui.output.includes("Call a number")
+    }
+})
+
 feature("the component calls no Mantle or IronStone service, reads no Mantle entity and names no app component", {
     when() {
         const problems = []

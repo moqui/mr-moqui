@@ -955,7 +955,8 @@
                     muted: this.call.muted, hand: this.call.hand, reaction: this.call.myReaction, isMe: true }];
                 for (const r of this.remotes) {
                     list.push({ key: r.legId, legId: r.legId, name: r.name, stream: r.stream && r.stream.getVideoTracks().length && !r.cameraOff ? r.stream : null,
-                        muted: r.muted, hand: r.hand, reaction: r.reaction, audioOnly: r.audioOnly, speaking: this.call.speaker === r.legId });
+                        muted: r.muted, hand: r.hand, reaction: r.reaction, audioOnly: r.audioOnly && !this.phoneLegs.has(r.legId),
+                        phone: this.phoneLegs.has(r.legId), speaking: this.call.speaker === r.legId });
                     if (r.screen) list.push({ key: r.legId + ":screen", legId: r.legId, name: r.name + " · " + t("screen"), stream: r.screen, screen: true });
                 }
                 return list;
@@ -986,7 +987,14 @@
             recordingText() { return recordingText(this.recording); },
             canRecord() { return !!(this.rec && this.rec.enabled && this.rec.canRecord && this.inThis); },
             needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
-            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); }
+            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); },
+            // a phone call (V1): its phone legs are audio only, and the keypad sends tones to them
+            phoneLegs() {
+                const v = this.known;
+                return new Set(v ? (v.participants || []).filter((p) => p.identity === "phone").flatMap((p) => (p.legs || []).map((leg) => leg.callLegId)) : []);
+            },
+            hasPhone() { return this.phoneLegs.size > 0; },
+            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; }
         },
         watch: {
             callSessionId() { this.load(); }
@@ -1008,6 +1016,7 @@
                     this.view = json.call || null;
                     this.loading = false;
                     if (this.view && this.view.status !== "ended") moqui.call.loadRecording(this.callSessionId);
+                    if (this.view && this.view.kind === "phone") this.video = false;
                     if (this.view && !this.inThis && this.view.status !== "ended") this.startPreview();
                     if (this.view && this.inThis) moqui.call.loadCaptions(this.callSessionId);
                 }, () => (this.loading = false));
@@ -1062,6 +1071,7 @@
             },
             leave() { moqui.call.leave().then(() => this.load()); },
             recAction(name) { moqui.call.recordingAction(this.callSessionId, name); },
+            dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.callSessionId, digits: key }); },
             endForAll() { moqui.call.endForAll().then(() => this.load()); },
             tileStyle(tile) {
                 const ring = tile.speaking ? ";box-shadow:0 0 0 3px var(--q-positive)" : "";
@@ -1113,7 +1123,7 @@
             '<div v-if="inThis && mainTile" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
-            '<div v-else class="fit flex flex-center text-white text-subtitle1">{{tile.name}}</div>' +
+            '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
             '<div v-if="tile.reaction" class="absolute-center text-h3">{{tile.reaction}}</div>' +
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
@@ -1121,7 +1131,7 @@
             '<div v-if="inThis" :style="gridStyle">' +
             '<div v-for="tile in stripTiles" :key="tile.key">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
-            '<div v-else class="fit flex flex-center text-white text-subtitle1">{{tile.name}}</div>' +
+            '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
             '<div v-if="tile.reaction" class="absolute-center text-h3">{{tile.reaction}}</div>' +
             '<q-chip v-if="tile.audioOnly" dense square class="absolute-top-right q-ma-xs" color="grey-9" text-color="white" icon="sym_o_signal_cellular_alt_1_bar">{{t(\'Audio only: low bandwidth\')}}</q-chip>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
@@ -1145,6 +1155,8 @@
             '<q-btn v-if="recording.state === \'recording\'" flat no-caps align="left" icon="sym_o_pause" :label="t(\'Pause recording\')" v-close-popup @click="recAction(\'pauseRecording\')"></q-btn>' +
             '<q-btn v-if="recording.state === \'paused\' && recording.pauseReason === \'user\'" flat no-caps align="left" icon="sym_o_play_arrow" :label="t(\'Resume recording\')" v-close-popup @click="recAction(\'resumeRecording\')"></q-btn>' +
             '<q-btn flat no-caps align="left" color="negative" icon="sym_o_stop" :label="t(\'Stop recording\')" v-close-popup @click="recAction(\'stopRecording\')"></q-btn></div></q-menu></q-btn>' +
+            '<q-btn v-if="hasPhone" round unelevated color="grey-8" icon="sym_o_dialpad" :aria-label="t(\'Keypad\')"><q-tooltip>{{t(\'Keypad\')}}</q-tooltip><q-menu>' +
+            '<div class="q-pa-sm" style="display:grid;grid-template-columns:repeat(3,48px);gap:4px"><q-btn v-for="key in keys" :key="key" outline dense size="lg" @click="dtmf(key)">{{key}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"><q-tooltip>{{t(\'Leave\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="isHost && known && known.kind !== \'direct\'" flat no-caps color="negative" :label="t(\'End for everyone\')" @click="endForAll"></q-btn>' +
             '<m-ext-actions v-if="known" slot="call-actions" :item="{callSessionId: callSessionId}"></m-ext-actions></div>' +

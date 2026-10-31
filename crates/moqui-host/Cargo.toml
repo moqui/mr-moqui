@@ -19,7 +19,7 @@ dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -62,6 +62,10 @@ rtc = ["axum", "dep:moqui-rtc"]
 # Local speech to text for call captions (Whisper on candle, plans/Comms-Framework.md §6.4): not built yet, off in every
 # package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
 speech-local = []
+# Phone calls (crates/moqui-sip, plans/Comms-Framework.md §5.2, docs/interfaces/SIP.md): the SIP engine (src/sip/), its
+# trunks and the RTP of phone legs, joined to the call media. It starts only when sip_port or sip_tls_port is set. In
+# Maximal, Enterprise and Debug; not Lite or Dev.
+sip = ["rtc", "dep:moqui-sip"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
 grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
@@ -92,6 +96,8 @@ moqui-report = { workspace = true }
 moqui-collab = { workspace = true }
 # Calls: the SFU on str0m (crates/moqui-rtc), under the rtc feature.
 moqui-rtc = { workspace = true, optional = true }
+# Phone calls: the SIP user agent and B2BUA (crates/moqui-sip), under the sip feature.
+moqui-sip = { workspace = true, optional = true }
 # The DAV server, the VCard and ICalendar tools and elFinder (crates/moqui-dav), in every build; /dav/ and SFTP serve it.
 moqui-dav = { workspace = true }
 # The development kit (crates/moqui-devkit), in every build: moqui test, lint, check and types; its file watcher is the
@@ -152,6 +158,8 @@ workspace = true
 str0m = { workspace = true }
 # A relayed browser stand-in for the TURN test (tests/it/rtc.rs).
 turn-client-proto = { workspace = true }
+# The fake trunk's SIP messages (tests/it/sip.rs).
+rsipstack = { workspace = true }
 # the dev-aide component's services, for the tests of tests/it/devaide.rs
 dev-aide = { workspace = true }
 indexmap = { workspace = true }

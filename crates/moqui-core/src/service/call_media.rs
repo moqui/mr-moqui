@@ -16,7 +16,8 @@
 //! holding a call's media that a leg left or was removed, or that the call ended, so the node closes its peers. The
 //! message goes on the `rtc-signal` cluster topic to that node only ([`crate::cluster::send_to`]), after the caller's
 //! transaction commits; moqui-host's rtc module takes it there. A node that is gone is logged and skipped: its calls
-//! end on their own when its heartbeat stops (`expire#Calls`).
+//! end on their own when its heartbeat stops (`expire#Calls`). `org.moqui.impl.VoiceServices.send#SipControl` (§5.2)
+//! goes the same way to a node's SIP engine (moqui-host's sip module), with kind `sip`.
 //!
 //! `org.moqui.impl.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
 //! recordings' `dbresource://` root.
@@ -37,6 +38,7 @@ pub(in crate::service) fn register(
     rust_service!(map, send_media_control)?;
     rust_service!(map, make_ice_servers)?;
     rust_service!(map, store_recording_file)?;
+    rust_service!(map, send_sip_control)?;
     Ok(())
 }
 
@@ -169,8 +171,28 @@ fn send_media_control(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    send_to_node(parameters, facade, "mediaNodeId", "control")
+}
+
+/// `org.moqui.impl.VoiceServices.send#SipControl` (plans/Comms-Framework.md §5.2): the voice services tell the SIP
+/// engine of a node (`instanceId`) to dial, answer, hang up, hold, send digits or reload its trunks, on the same
+/// `rtc-signal` topic with kind `sip`, after the caller's commit; moqui-host's sip module takes it there.
+fn send_sip_control(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    send_to_node(parameters, facade, "instanceId", "sip")
+}
+
+/// Sends `message` to the node named by `node_parameter`, with `kind`, after the caller's transaction commits.
+fn send_to_node(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+    node_parameter: &str,
+    kind: &str,
+) -> Result<BTreeMap<String, Value>, LibError> {
     let Some(node) = parameters
-        .get("mediaNodeId")
+        .get(node_parameter)
         .filter(|v| !is_empty(v))
         .map(to_plain_string)
     else {
@@ -180,7 +202,7 @@ fn send_media_control(
         Some(serde_json::Value::Object(map)) => map,
         _ => serde_json::Map::new(),
     };
-    body.insert("kind".to_string(), serde_json::Value::String("control".to_string()));
+    body.insert("kind".to_string(), serde_json::Value::String(kind.to_string()));
     body.insert("target".to_string(), serde_json::Value::String(node.clone()));
     let message = TopicMessage {
         origin_id: crate::notify::origin_id().to_string(),
@@ -188,9 +210,10 @@ fn send_media_control(
         body: serde_json::Value::Object(body),
     };
     let target = facade.clone();
+    let kind = kind.to_string();
     let send = move || {
         if let Err(err) = crate::cluster::send_to(&target, &node, RTC_SIGNAL, &message) {
-            tracing::warn!("call media control for node {node} not sent: {err}");
+            tracing::warn!("call {kind} message for node {node} not sent: {err}");
         }
     };
     match facade.default_transactions() {

@@ -1,0 +1,1018 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! Phone calls over SIP trunks (plans/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
+//! this node. Off while `sip_port` and `sip_tls_port` are empty, like the other listeners, and only beside this node's
+//! call media (`rtc_media_port`), since a phone leg's audio joins the call's SFU room here.
+//!
+//! - **Listeners.** `sip_port` (UDP and TCP) on `sip_host`, `sip_tls_port` (TLS, the certificate from `runtime/cert`
+//!   as TURN's) on `sip_tls_host`; each leg's RTP on a port of `sip_rtp_ports` on `sip_rtp_host`. `sip_public_address`
+//!   is the address in Contact headers and SDP when the bound one is not what the trunk reaches.
+//! - **The user agent** is [`moqui_sip::ua::Ua`] on a small Tokio runtime of its own: signaling only, no business logic.
+//!   What a call may do is the voice services' (`org.moqui.impl.VoiceServices`), called on a request worker: the engine
+//!   reads its trunks and policy with `get#EngineConfig`, hands an incoming call to `receive#PhoneCall`, reports each
+//!   leg with `note#PhoneLeg`, a trunk's registration with `note#TrunkStatus` and a failed digest with
+//!   `record#AuthFailure`, and registers itself every 20 seconds (`register#SipNode`).
+//! - **Control.** The services tell it to dial, answer, hang up, hold, resume, send digits or reload with
+//!   `send#SipControl`, on the `rtc-signal` topic with kind `sip`, to this node only.
+//! - **Fraud, again.** Before a dial goes out the engine checks the number's class against the deployment's policy
+//!   (international and premium off unless enabled), sends an emergency number only through an emergency-capable
+//!   trunk, and holds the deployment's concurrency limit, whatever asked for the call (§5.2).
+//! - **Media.** Each leg is a [`leg::LegMedia`]: its own thread between its RTP socket and the room (`leg.rs`).
+//!
+//! [`play_prompt`] plays a tone or recorded audio to a phone leg: the hook for the recording notice of non-web legs
+//! (W5, D-V5).
+
+mod leg;
+
+use std::collections::{BTreeMap, HashMap};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::notify::{TopicMessage, RTC_SIGNAL};
+use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
+use moqui_sip::dial::{self, DestinationClass, DialPolicy};
+use moqui_sip::digest::{Algorithm, Credentials};
+use moqui_sip::guard::GuardPolicy;
+use moqui_sip::sdp::{self, Direction, LocalMedia};
+use moqui_sip::srtp::MasterKey;
+use moqui_sip::ua::{
+    Decision, DialRequest, EndReason, IncomingCall, Transport, TrunkConfig, TrunkState, Ua, UaConfig, UaEvent,
+};
+use serde_json::Value as Json;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+pub(crate) use leg::Prompt;
+use leg::{LegCommand, LegMedia, LegNote, PortRange};
+
+const CONFIG_SERVICE: &str = "org.moqui.impl.VoiceServices.get#EngineConfig";
+const RECEIVE_SERVICE: &str = "org.moqui.impl.VoiceServices.receive#PhoneCall";
+const NOTE_LEG_SERVICE: &str = "org.moqui.impl.VoiceServices.note#PhoneLeg";
+const NOTE_TRUNK_SERVICE: &str = "org.moqui.impl.VoiceServices.note#TrunkStatus";
+const AUTH_FAILURE_SERVICE: &str = "org.moqui.impl.VoiceServices.record#AuthFailure";
+const REGISTER_SERVICE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
+/// How often the node registers itself.
+const REGISTER_EVERY: Duration = Duration::from_secs(20);
+/// How long an outbound call rings before it is canceled.
+const RING_TIMEOUT: Duration = Duration::from_secs(60);
+/// The usual CA bundle, for TLS to trunks when `sip_tls_ca_file` is empty.
+const SYSTEM_CA: &str = "/etc/ssl/certs/ca-certificates.crt";
+
+/// The SIP settings from the properties.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SipSettings {
+    /// UDP and TCP.
+    pub listen: Option<SocketAddr>,
+    pub tls: Option<SocketAddr>,
+    pub rtp_host: IpAddr,
+    pub rtp_ports: String,
+    pub public: Option<IpAddr>,
+    pub ca_file: Option<PathBuf>,
+}
+
+fn bind_address(host: &str, port: u16, name: &str) -> Result<SocketAddr, String> {
+    (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("{name} {host}: {e}"))?
+        .next()
+        .ok_or_else(|| format!("{name} {host} has no address"))
+}
+
+fn port_of(property: &dyn Fn(&str) -> String, name: &str) -> Result<Option<u16>, String> {
+    let text = property(name);
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse()
+        .map(Some)
+        .map_err(|_| format!("{name} {text} is not a port"))
+}
+
+/// `None` while both `sip_port` and `sip_tls_port` are empty.
+pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<SipSettings>, String> {
+    let port = port_of(property, "sip_port")?;
+    let tls_port = port_of(property, "sip_tls_port")?;
+    if port.is_none() && tls_port.is_none() {
+        return Ok(None);
+    }
+    let or = |name: &str, fallback: &str| {
+        let value = property(name);
+        if value.trim().is_empty() {
+            fallback.to_string()
+        } else {
+            value.trim().to_string()
+        }
+    };
+    let host = or("sip_host", "127.0.0.1");
+    let listen = port.map(|p| bind_address(&host, p, "sip_host")).transpose()?;
+    let tls = tls_port
+        .map(|p| bind_address(&or("sip_tls_host", &host), p, "sip_tls_host"))
+        .transpose()?;
+    let rtp_host = bind_address(&or("sip_rtp_host", &host), 0, "sip_rtp_host")?.ip();
+    let public = property("sip_public_address");
+    let public = public.trim();
+    let public = if public.is_empty() {
+        None
+    } else {
+        Some(
+            public
+                .parse::<IpAddr>()
+                .map_err(|_| format!("sip_public_address {public} is not an address"))?,
+        )
+    };
+    let ca = property("sip_tls_ca_file");
+    let ca_file = if ca.trim().is_empty() {
+        Some(PathBuf::from(SYSTEM_CA)).filter(|p| p.exists())
+    } else {
+        Some(PathBuf::from(ca.trim()))
+    };
+    Ok(Some(SipSettings {
+        listen,
+        tls,
+        rtp_host,
+        rtp_ports: or("sip_rtp_ports", "20000-20999"),
+        public,
+        ca_file,
+    }))
+}
+
+/// The SIP listeners' bound addresses once started, for `Server::sip_address`.
+#[derive(Default)]
+pub struct SipAddress(pub Mutex<Option<SocketAddr>>);
+
+/// What the engine task is given.
+enum Command {
+    /// A `send#SipControl` message.
+    Control(Json),
+    Note(LegNote),
+    Prompt {
+        leg: String,
+        prompt: Prompt,
+    },
+    /// A re-INVITE this side sent was answered.
+    Reanswered {
+        leg: String,
+        answer: Option<String>,
+    },
+}
+
+fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
+    static ENGINE: OnceLock<Mutex<Option<UnboundedSender<Command>>>> = OnceLock::new();
+    ENGINE.get_or_init(|| Mutex::new(None))
+}
+
+/// Plays a prompt to a phone leg on this node, over what it hears: the recording notice for a leg with no browser
+/// (W5, D-V5: "a voice prompt on a phone"). Err `noSip` when this node has no SIP engine. A leg that is not here is
+/// skipped (logged).
+#[allow(dead_code, reason = "the recording notice (W5) calls it")]
+pub(crate) fn play_prompt(leg: &str, prompt: Prompt) -> Result<(), &'static str> {
+    let sender = lock(engine()).clone().ok_or("noSip")?;
+    sender
+        .send(Command::Prompt {
+            leg: leg.to_string(),
+            prompt,
+        })
+        .map_err(|_| "noSip")
+}
+
+/// The running engine, stopped when dropped (before the factory: its last act deregisters the node).
+pub(crate) struct SipNode {
+    runtime: Option<tokio::runtime::Runtime>,
+    ua: Ua,
+    stop: Arc<AtomicBool>,
+    register: Option<JoinHandle<()>>,
+    _signal: Option<moqui_core::notify::Subscription>,
+}
+
+impl Drop for SipNode {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        *lock(engine()) = None;
+        self.ua.shutdown();
+        if let Some(t) = self.register.take() {
+            let _ = t.join();
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_timeout(Duration::from_secs(2));
+        }
+    }
+}
+
+/// The TLS listener's certificate and key, PEM, from `runtime/cert`: the public address's pair, else `default`.
+fn tls_pair(runtime_dir: &Path, name: Option<&str>) -> Option<(Vec<u8>, Vec<u8>)> {
+    let dir = runtime_dir.join("cert");
+    let names = name.into_iter().map(str::to_string).chain(["default".to_string()]);
+    for name in names {
+        if let Some((cert, key)) = crate::tls::find_files(&dir, &name) {
+            if let (Ok(cert), Ok(key)) = (std::fs::read(&cert), std::fs::read(&key)) {
+                return Some((cert, key));
+            }
+        }
+    }
+    None
+}
+
+/// Starts the SIP engine when `sip_port` or `sip_tls_port` is set. One that cannot start is logged; the server starts
+/// without phone calls.
+pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
+    let settings = match settings_from(&moqui_lib::env::get_prop_or_env) {
+        Ok(Some(settings)) => settings,
+        Ok(None) => {
+            tracing::info!("Not starting SIP, sip_port and sip_tls_port are not set");
+            return None;
+        }
+        Err(err) => {
+            tracing::error!("SIP did not start, the server starts without phone calls: {err}");
+            return None;
+        }
+    };
+    if lock(&factory.extension(|_| crate::rtc::RtcAddress::default()).0).is_none() {
+        tracing::error!("SIP did not start: phone calls need this server's call media (rtc_media_port)");
+        return None;
+    }
+    let bind_any = |a: Option<SocketAddr>| a.is_some_and(|a| a.ip().is_unspecified());
+    if settings.public.is_none()
+        && (bind_any(settings.listen) || bind_any(settings.tls) || settings.rtp_host.is_unspecified())
+    {
+        tracing::error!("SIP did not start: it binds every address; set sip_public_address to the one trunks reach");
+        return None;
+    }
+    let ports = match PortRange::parse(&settings.rtp_ports, settings.rtp_host) {
+        Ok(ports) => Arc::new(ports),
+        Err(err) => {
+            tracing::error!("SIP did not start: {err}");
+            return None;
+        }
+    };
+    let tls = settings.tls.and_then(|addr| {
+        let name = settings.public.map(|p| p.to_string());
+        match tls_pair(factory.runtime_dir(), name.as_deref()) {
+            Some((cert, key)) => Some((addr, cert, key)),
+            None => {
+                tracing::error!(
+                    "SIP over TLS did not start: no certificate in runtime/cert (default or the public address)"
+                );
+                None
+            }
+        }
+    });
+    let ca_pem = settings.ca_file.as_ref().and_then(|path| match std::fs::read(path) {
+        Ok(pem) => Some(pem),
+        Err(err) => {
+            tracing::warn!(
+                "SIP: the CA file {} did not read, TLS to trunks cannot verify them: {err}",
+                path.display()
+            );
+            None
+        }
+    });
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("moqui-sip")
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            tracing::error!("SIP did not start, its runtime did not start: {err}");
+            return None;
+        }
+    };
+    let (events_tx, events) = unbounded_channel();
+    let config = UaConfig {
+        udp: settings.listen,
+        tcp: settings.listen,
+        tls,
+        public_host: settings.public.map(|p| p.to_string()),
+        ca_pem,
+        realm: settings
+            .public
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "moqui".to_string()),
+        guard: GuardPolicy::default(),
+        user_agent: "Moqui".to_string(),
+    };
+    let ua = match runtime.block_on(Ua::start(config, events_tx)) {
+        Ok(ua) => ua,
+        Err(err) => {
+            tracing::error!("SIP did not start, the server starts without phone calls: {err}");
+            return None;
+        }
+    };
+    let bound = ua.bound();
+    let (commands_tx, commands) = unbounded_channel();
+    *lock(engine()) = Some(commands_tx.clone());
+    let signal = {
+        let factory = Arc::downgrade(factory);
+        let commands = commands_tx.clone();
+        let deliver = move |message: &TopicMessage| {
+            let Some(factory) = factory.upgrade() else { return };
+            if message.body.get("kind").and_then(Json::as_str) != Some("sip")
+                || !moqui_core::cluster::for_this_member(&factory, message)
+            {
+                return;
+            }
+            let _ = commands.send(Command::Control(message.body.clone()));
+        };
+        match moqui_core::notify::subscribe(RTC_SIGNAL, Arc::new(deliver)) {
+            Ok(subscription) => Some(subscription),
+            Err(err) => {
+                tracing::error!(
+                    "SIP: the rtc-signal topic was not subscribed, calls cannot be placed: {}",
+                    err.message()
+                );
+                None
+            }
+        }
+    };
+    let own = crate::rtc::own_node(factory);
+    let engine = Engine {
+        factory: Arc::clone(factory),
+        ua: ua.clone(),
+        own: own.clone(),
+        ports,
+        public: settings.public,
+        legs: HashMap::new(),
+        trunks: HashMap::new(),
+        policy: DialPolicy::default(),
+        max_concurrent: 0,
+        commands: commands_tx,
+    };
+    runtime.spawn(engine.run(events, commands));
+    let stop = Arc::new(AtomicBool::new(false));
+    let sip_address = bound.udp.or(bound.tcp).or(bound.tls);
+    let addresses = [
+        (
+            "sipAddress",
+            bound.udp.or(bound.tcp).map(|a| public_of(a, settings.public)),
+        ),
+        ("tlsAddress", bound.tls.map(|a| public_of(a, settings.public))),
+    ];
+    let register = {
+        let factory = Arc::clone(factory);
+        let stop = Arc::clone(&stop);
+        let rtp_ports = settings.rtp_ports.clone();
+        let addresses: Vec<(&'static str, String)> = addresses
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
+            .collect();
+        std::thread::Builder::new()
+            .name("moqui-sip-register".to_string())
+            .spawn(move || register_loop(&factory, &own, &addresses, &rtp_ports, &stop))
+            .ok()
+    };
+    *lock(&factory.extension(|_| SipAddress::default()).0) = sip_address;
+    tracing::info!(
+        "SIP started: {}",
+        [("udp/tcp", bound.udp), ("tls", bound.tls)]
+            .iter()
+            .filter_map(|(k, a)| a.map(|a| format!("{k} {a}")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Some(SipNode {
+        runtime: Some(runtime),
+        ua,
+        stop,
+        register,
+        _signal: signal,
+    })
+}
+
+fn public_of(bound: SocketAddr, public: Option<IpAddr>) -> SocketAddr {
+    SocketAddr::new(public.unwrap_or(bound.ip()), bound.port())
+}
+
+fn register_loop(
+    factory: &Arc<ExecutionContextFactory>,
+    own: &str,
+    addresses: &[(&'static str, String)],
+    rtp_ports: &str,
+    stop: &AtomicBool,
+) {
+    let mut next = Instant::now();
+    while !stop.load(Ordering::Acquire) {
+        if Instant::now() >= next {
+            register(factory, own, addresses, rtp_ports, false);
+            next = Instant::now() + REGISTER_EVERY;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    register(factory, own, addresses, rtp_ports, true);
+}
+
+fn register(
+    factory: &Arc<ExecutionContextFactory>,
+    own: &str,
+    addresses: &[(&'static str, String)],
+    rtp_ports: &str,
+    stopping: bool,
+) {
+    let mut parameters = BTreeMap::from([
+        ("instanceId".to_string(), Value::string(own)),
+        ("rtpPorts".to_string(), Value::string(rtp_ports)),
+        ("stopping".to_string(), Value::Bool(stopping)),
+    ]);
+    for (key, value) in addresses {
+        parameters.insert((*key).to_string(), Value::string(value));
+    }
+    let ran = factory.service_pools().call(move || {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        moqui_core::service::sync(REGISTER_SERVICE, &parameters).map(|_| ())
+    });
+    if let Err(err) = ran {
+        tracing::warn!("SIP node not registered: {}", err.message());
+    }
+}
+
+/// Runs a voice service on a request worker, as internal work; its answer as JSON, or its errors.
+async fn call_service(
+    factory: &Arc<ExecutionContextFactory>,
+    name: &'static str,
+    parameters: Json,
+) -> Result<Json, String> {
+    let factory = Arc::clone(factory);
+    tokio::task::spawn_blocking(move || {
+        let parameters: BTreeMap<String, Value> = match moqui_lib::json::from_json(&parameters) {
+            Value::Map(map) => map.into_iter().collect(),
+            _ => BTreeMap::new(),
+        };
+        let job = move || {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            let called = moqui_core::service::sync(name, &parameters);
+            let errors = ExecutionContext::with_current(|ec| {
+                let errors = ec.message().errors().join("; ");
+                ec.message().clear_errors();
+                errors
+            })
+            .unwrap_or_default();
+            Ok(match called {
+                Ok(out) => {
+                    let map: serde_json::Map<String, Json> = out
+                        .iter()
+                        .map(|(k, v)| (k.clone(), moqui_lib::json::to_json(v)))
+                        .collect();
+                    (Json::Object(map), errors)
+                }
+                Err(err) => (Json::Null, err.message().to_string()),
+            })
+        };
+        let rx = factory
+            .request_pool()
+            .try_submit(Arc::clone(&factory), job)
+            .map_err(|e| e.message().to_string())?;
+        match rx.recv() {
+            Ok(Ok((out, errors))) if errors.is_empty() => Ok(out),
+            Ok(Ok((out, errors))) => {
+                let code = out.get("reasonCode").and_then(Json::as_str).unwrap_or("refused");
+                Err(format!("{code}: {errors}"))
+            }
+            Ok(Err(err)) => Err(err.message().to_string()),
+            Err(_) => Err("request worker stopped".to_string()),
+        }
+    })
+    .await
+    .map_err(|_| "request worker panicked".to_string())?
+}
+
+/// A trunk as the engine knows it, besides what the user agent has.
+#[derive(Debug, Clone)]
+struct TrunkInfo {
+    emergency: bool,
+    srtp: bool,
+}
+
+/// A leg here: its room, its media and its SDP.
+struct Leg {
+    room: String,
+    media: LegMedia,
+    local: LocalMedia,
+}
+
+struct Engine {
+    factory: Arc<ExecutionContextFactory>,
+    ua: Ua,
+    own: String,
+    ports: Arc<PortRange>,
+    public: Option<IpAddr>,
+    legs: HashMap<String, Leg>,
+    trunks: HashMap<String, TrunkInfo>,
+    policy: DialPolicy,
+    max_concurrent: usize,
+    commands: UnboundedSender<Command>,
+}
+
+fn text(body: &Json, key: &str) -> String {
+    match body.get(key) {
+        Some(Json::String(s)) => s.clone(),
+        Some(Json::Number(n)) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn texts(body: &Json, key: &str) -> Vec<String> {
+    match body.get(key) {
+        Some(Json::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .filter(|s| !s.trim().is_empty())
+            .collect(),
+        Some(Json::String(s)) => s
+            .split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn flag(body: &Json, key: &str) -> bool {
+    match body.get(key) {
+        Some(Json::Bool(b)) => *b,
+        Some(Json::String(s)) => s == "Y" || s == "true",
+        _ => false,
+    }
+}
+
+fn number(body: &Json, key: &str) -> Option<u64> {
+    match body.get(key) {
+        Some(Json::Number(n)) => n.as_u64(),
+        Some(Json::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+impl Engine {
+    async fn run(mut self, mut events: UnboundedReceiver<UaEvent>, mut commands: UnboundedReceiver<Command>) {
+        self.reload().await;
+        loop {
+            tokio::select! {
+                event = events.recv() => match event {
+                    Some(event) => self.event(event).await,
+                    None => break,
+                },
+                command = commands.recv() => match command {
+                    Some(command) => self.command(command).await,
+                    None => break,
+                },
+            }
+        }
+    }
+
+    /// Fire and forget: a note for the services.
+    fn note(&self, name: &'static str, parameters: Json) {
+        let factory = Arc::clone(&self.factory);
+        tokio::spawn(async move {
+            if let Err(err) = call_service(&factory, name, parameters).await {
+                tracing::warn!("SIP: {name} failed: {err}");
+            }
+        });
+    }
+
+    fn note_leg(&self, room: &str, leg: &str, event: &str, code: Option<u16>, reason: &str) {
+        self.note(
+            NOTE_LEG_SERVICE,
+            serde_json::json!({"callSessionId": room, "callLegId": leg, "event": event, "sipCode": code,
+                "reasonText": reason}),
+        );
+    }
+
+    async fn reload(&mut self) {
+        let config = match call_service(&self.factory, CONFIG_SERVICE, serde_json::json!({})).await {
+            Ok(config) => config,
+            Err(err) => {
+                tracing::error!("SIP: the trunks did not load, calls wait for a reload: {err}");
+                return;
+            }
+        };
+        let policy = config.get("policy").cloned().unwrap_or(Json::Null);
+        let defaults = DialPolicy::default();
+        self.policy = DialPolicy {
+            home_country: Some(text(&policy, "homeCountryCode"))
+                .filter(|c| !c.is_empty())
+                .unwrap_or(defaults.home_country),
+            emergency_numbers: Some(texts(&policy, "emergencyNumbers"))
+                .filter(|n| !n.is_empty())
+                .unwrap_or(defaults.emergency_numbers),
+            premium_prefixes: Some(texts(&policy, "premiumPrefixes"))
+                .filter(|n| !n.is_empty())
+                .unwrap_or(defaults.premium_prefixes),
+            international_enabled: flag(&policy, "internationalEnabled"),
+            premium_enabled: flag(&policy, "premiumEnabled"),
+        };
+        self.max_concurrent = number(&policy, "maxConcurrentCalls").unwrap_or(0) as usize;
+        let guard = GuardPolicy::default();
+        self.ua.set_guard_policy(GuardPolicy {
+            limit: number(&policy, "authFailureLimit")
+                .map(|n| n as u32)
+                .unwrap_or(guard.limit),
+            window: number(&policy, "authFailureWindowSeconds")
+                .map(Duration::from_secs)
+                .unwrap_or(guard.window),
+            block: number(&policy, "authBlockSeconds")
+                .map(Duration::from_secs)
+                .unwrap_or(guard.block),
+        });
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if let Some(Json::Array(blocks)) = config.get("blockedSourceList") {
+            for block in blocks {
+                let (Ok(ip), Some(until)) = (
+                    text(block, "sourceAddress").parse::<IpAddr>(),
+                    number(block, "blockedUntil"),
+                ) else {
+                    continue;
+                };
+                if until > now_ms {
+                    self.ua
+                        .set_block(ip, Some(Instant::now() + Duration::from_millis(until - now_ms)));
+                }
+            }
+        }
+        let mut trunks = Vec::new();
+        self.trunks.clear();
+        if let Some(Json::Array(list)) = config.get("trunkList") {
+            for trunk in list {
+                // one trunk that does not make sense is logged and the others go on
+                let id = text(trunk, "voiceTrunkId");
+                let Some(transport) = Transport::parse(&text(trunk, "transport")) else {
+                    tracing::error!("SIP trunk {id}: unknown transport {}", text(trunk, "transport"));
+                    continue;
+                };
+                let srtp = text(trunk, "mediaEncryption") != "plain";
+                self.trunks.insert(
+                    id.clone(),
+                    TrunkInfo {
+                        emergency: flag(trunk, "emergencyCapable"),
+                        srtp,
+                    },
+                );
+                trunks.push(TrunkConfig {
+                    id,
+                    host: text(trunk, "host"),
+                    port: number(trunk, "port").and_then(|p| u16::try_from(p).ok()),
+                    transport,
+                    credentials: Credentials {
+                        username: text(trunk, "username"),
+                        auth_username: Some(text(trunk, "authUsername")).filter(|u| !u.is_empty()),
+                        password: text(trunk, "password"),
+                        realm: Some(text(trunk, "realm")).filter(|r| !r.is_empty()),
+                        algorithms: texts(trunk, "algorithms")
+                            .iter()
+                            .filter_map(|a| Algorithm::parse(a))
+                            .collect(),
+                    },
+                    domain: Some(text(trunk, "fromDomain")).filter(|d| !d.is_empty()),
+                    register: flag(trunk, "register"),
+                    inbound: texts(trunk, "inboundAddresses"),
+                    srtp,
+                });
+            }
+        }
+        tracing::info!("SIP: {} trunks", trunks.len());
+        self.ua.set_trunks(trunks).await;
+    }
+
+    async fn event(&mut self, event: UaEvent) {
+        match event {
+            UaEvent::Incoming(call) => self.incoming(call).await,
+            UaEvent::Ringing { .. } => {}
+            UaEvent::Answered { leg, answer } => {
+                let Some(entry) = self.legs.get(&leg) else { return };
+                let room = entry.room.clone();
+                match sdp::parse(&answer).and_then(|a| sdp::accept(&entry.local, &a)) {
+                    Ok(settled) => {
+                        entry.media.send(LegCommand::Settled(Box::new(settled)));
+                        self.note_leg(&room, &leg, "answered", Some(200), "");
+                    }
+                    Err(err) => {
+                        tracing::warn!("SIP leg {leg}: the answer did not settle: {err}");
+                        self.ua.hangup(&leg);
+                        self.legs.remove(&leg);
+                        self.note_leg(&room, &leg, "failed", Some(488), &err.to_string());
+                    }
+                }
+            }
+            UaEvent::Ended { leg, reason } => {
+                let Some(entry) = self.legs.remove(&leg) else { return };
+                let (event, code) = match reason {
+                    EndReason::Bye | EndReason::Hangup => ("ended", None),
+                    EndReason::Canceled | EndReason::TimedOut => ("canceled", None),
+                    EndReason::Busy => ("busy", Some(486)),
+                    EndReason::Failed(code) => ("failed", code),
+                };
+                self.note_leg(&entry.room, &leg, event, code, &format!("{reason:?}"));
+            }
+            UaEvent::Reoffer { leg, offer, reply } => {
+                let answer = self.legs.get(&leg).and_then(|entry| {
+                    let (answer, settled) = sdp::parse(&offer).and_then(|o| sdp::answer(&o, &entry.local)).ok()?;
+                    let held = settled.direction != Direction::SendRecv;
+                    entry.media.send(LegCommand::Settled(Box::new(settled)));
+                    Some((answer, held, entry.room.clone()))
+                });
+                if let Some((_, held, room)) = &answer {
+                    self.note_leg(room, &leg, if *held { "held" } else { "resumed" }, None, "");
+                }
+                let _ = reply.send(answer.map(|(a, _, _)| a));
+            }
+            UaEvent::TrunkStatus { trunk, state } => {
+                let (status, error) = match state {
+                    TrunkState::Registered => ("registered", String::new()),
+                    TrunkState::Failed(err) => ("failed", err),
+                    TrunkState::Unregistered => ("unregistered", String::new()),
+                };
+                self.note(
+                    NOTE_TRUNK_SERVICE,
+                    serde_json::json!({"voiceTrunkId": trunk, "status": status, "errorText": error}),
+                );
+            }
+            UaEvent::AuthFailure {
+                source,
+                username,
+                blocked,
+            } => {
+                if blocked {
+                    tracing::warn!("SIP: {source} is blocked after failed digests (last for {username:?})");
+                }
+                self.note(
+                    AUTH_FAILURE_SERVICE,
+                    serde_json::json!({"sourceAddress": source.to_string(), "username": username}),
+                );
+            }
+        }
+    }
+
+    /// A leg's RTP socket and its SDP for this side.
+    fn local_media(&self, srtp: bool) -> Result<(std::net::UdpSocket, LocalMedia), String> {
+        let socket = self.ports.take().ok_or("no free port in sip_rtp_ports")?;
+        let addr = leg::sdp_address(self.public, &socket).ok_or("the RTP socket has no address")?;
+        let local = LocalMedia::new(addr.ip(), addr.port(), srtp.then(MasterKey::random));
+        Ok((socket, local))
+    }
+
+    async fn incoming(&mut self, call: IncomingCall) {
+        let srtp_required = self.trunks.get(&call.trunk_id).is_none_or(|t| t.srtp);
+        let to = dial::normalize(&call.to, &self.policy).unwrap_or_else(|| call.to.clone());
+        let from = dial::normalize(&call.from, &self.policy).unwrap_or_else(|| call.from.clone());
+        let parameters = serde_json::json!({"voiceTrunkId": call.trunk_id, "toNumber": to, "fromNumber": from,
+            "fromName": call.from_name, "instanceId": self.own, "sipCallId": call.call_id});
+        let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
+            Ok(out) => {
+                let room = text(&out, "callSessionId");
+                let leg = text(&out, "callLegId");
+                if room.is_empty() || leg.is_empty() {
+                    Err(404)
+                } else {
+                    Ok((room, leg))
+                }
+            }
+            Err(err) => {
+                tracing::info!("SIP call from {} to {to} not taken: {err}", call.source);
+                Err(match err.split(':').next().unwrap_or_default() {
+                    "notFound" => 404,
+                    "busy" => 486,
+                    _ => 480,
+                })
+            }
+        };
+        let (room, leg) = match decided {
+            Ok(ids) => ids,
+            Err(code) => {
+                let _ = call.reply.send(Decision::Reject(code));
+                return;
+            }
+        };
+        let offer = match sdp::parse(&call.offer) {
+            Ok(offer) => offer,
+            Err(err) => {
+                let _ = call.reply.send(Decision::Reject(488));
+                self.note_leg(&room, &leg, "failed", Some(488), &err.to_string());
+                return;
+            }
+        };
+        if srtp_required && !offer.secure {
+            let _ = call.reply.send(Decision::Reject(488));
+            self.note_leg(
+                &room,
+                &leg,
+                "failed",
+                Some(488),
+                "plain RTP offered to a trunk whose profile requires SRTP",
+            );
+            return;
+        }
+        let started = self.local_media(offer.secure).and_then(|(socket, local)| {
+            let (answer, settled) = sdp::answer(&offer, &local).map_err(|e| e.to_string())?;
+            let notes = self.notes_sender();
+            let media = LegMedia::start(&room, &leg, socket, Some(settled), notes)?;
+            Ok((answer, media, local))
+        });
+        match started {
+            Ok((answer, media, local)) => {
+                self.legs.insert(leg.clone(), Leg { room, media, local });
+                let _ = call.reply.send(Decision::Ring { leg, answer });
+            }
+            Err(err) => {
+                tracing::warn!("SIP call {leg}: its media did not start: {err}");
+                let _ = call.reply.send(Decision::Reject(503));
+                self.note_leg(&room, &leg, "failed", Some(503), &err);
+            }
+        }
+    }
+
+    /// A sender for the leg threads' notes, which come back as commands.
+    fn notes_sender(&self) -> UnboundedSender<LegNote> {
+        let (tx, mut rx) = unbounded_channel::<LegNote>();
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            while let Some(note) = rx.recv().await {
+                if commands.send(Command::Note(note)).is_err() {
+                    break;
+                }
+            }
+        });
+        tx
+    }
+
+    async fn command(&mut self, command: Command) {
+        match command {
+            Command::Control(body) => self.control(&body).await,
+            Command::Note(LegNote::Gone { leg }) => {
+                if self.legs.remove(&leg).is_some() {
+                    self.ua.hangup(&leg);
+                }
+            }
+            Command::Note(LegNote::Digit { leg, digit }) => {
+                if let Some(entry) = self.legs.get(&leg) {
+                    tracing::debug!("SIP leg {leg}: digit {digit}");
+                    self.note(
+                        NOTE_LEG_SERVICE,
+                        serde_json::json!({"callSessionId": entry.room, "callLegId": leg, "event": "dtmf",
+                            "digits": digit.to_string()}),
+                    );
+                }
+            }
+            Command::Prompt { leg, prompt } => match self.legs.get(&leg) {
+                Some(entry) => entry.media.send(LegCommand::Prompt(prompt)),
+                None => tracing::debug!("SIP: no leg {leg} here for a prompt"),
+            },
+            Command::Reanswered { leg, answer } => {
+                let Some(entry) = self.legs.get(&leg) else { return };
+                match answer.as_deref().map(sdp::parse) {
+                    Some(Ok(answer)) => match sdp::accept(&entry.local, &answer) {
+                        Ok(settled) => entry.media.send(LegCommand::Settled(Box::new(settled))),
+                        Err(err) => tracing::warn!("SIP leg {leg}: the re-INVITE's answer did not settle: {err}"),
+                    },
+                    _ => tracing::warn!("SIP leg {leg}: the re-INVITE was not answered"),
+                }
+            }
+        }
+    }
+
+    async fn control(&mut self, body: &Json) {
+        let leg = text(body, "callLegId");
+        match body.get("action").and_then(Json::as_str).unwrap_or_default() {
+            "dial" => self.dial(body),
+            "answer" => {
+                if let Err(err) = self.ua.answer(&leg) {
+                    tracing::warn!("SIP leg {leg}: not answered: {err}");
+                }
+            }
+            "hangup" => {
+                self.legs.remove(&leg);
+                self.ua.hangup(&leg);
+            }
+            "dtmf" => {
+                if let Some(entry) = self.legs.get(&leg) {
+                    entry.media.send(LegCommand::Digits(text(body, "digits")));
+                }
+            }
+            action @ ("hold" | "resume") => {
+                let Some(entry) = self.legs.get_mut(&leg) else { return };
+                entry.local.direction = if action == "hold" {
+                    Direction::SendOnly
+                } else {
+                    Direction::SendRecv
+                };
+                entry.local.version += 1;
+                let offer = sdp::offer(&entry.local);
+                let ua = self.ua.clone();
+                let commands = self.commands.clone();
+                tokio::spawn(async move {
+                    let answer = ua.reinvite(&leg, offer).await.unwrap_or_else(|err| {
+                        tracing::warn!("SIP leg {leg}: the re-INVITE failed: {err}");
+                        None
+                    });
+                    let _ = commands.send(Command::Reanswered { leg, answer });
+                });
+            }
+            "prompt" => {
+                if let Some(entry) = self.legs.get(&leg) {
+                    entry.media.send(LegCommand::Prompt(Prompt::Tone {
+                        hz: 1400.0,
+                        millis: 400,
+                    }));
+                }
+            }
+            "reload" => self.reload().await,
+            other => tracing::debug!("SIP: unknown control {other}"),
+        }
+    }
+
+    /// An outbound call the services placed, checked again here before it goes to a trunk.
+    fn dial(&mut self, body: &Json) {
+        let room = text(body, "callSessionId");
+        let leg = text(body, "callLegId");
+        let trunk_id = text(body, "voiceTrunkId");
+        let emergency = flag(body, "emergency");
+        let refuse = |engine: &Engine, why: &str| {
+            tracing::warn!("SIP call {leg} refused: {why}");
+            engine.note_leg(&room, &leg, "failed", Some(403), why);
+        };
+        let Some(trunk) = self.trunks.get(&trunk_id).cloned() else {
+            return refuse(self, "the trunk is not known to this SIP engine");
+        };
+        let Some((to, class)) = dial::classify(&text(body, "toNumber"), &self.policy) else {
+            return refuse(self, "not a phone number");
+        };
+        if emergency != (class == DestinationClass::Emergency) {
+            return refuse(self, "an emergency number goes only through the emergency path");
+        }
+        if emergency && !trunk.emergency {
+            return refuse(self, "the trunk does not take emergency calls");
+        }
+        if let Err(code) = dial::deployment_allows(class, &self.policy) {
+            return refuse(self, code);
+        }
+        if !emergency && self.max_concurrent > 0 && self.legs.len() >= self.max_concurrent {
+            return refuse(self, "tooManyCalls");
+        }
+        let from = text(body, "fromNumber");
+        let started = self.local_media(trunk.srtp).and_then(|(socket, local)| {
+            let media = LegMedia::start(&room, &leg, socket, None, self.notes_sender())?;
+            Ok((media, local))
+        });
+        let (media, local) = match started {
+            Ok(started) => started,
+            Err(err) => {
+                tracing::warn!("SIP call {leg}: its media did not start: {err}");
+                self.note_leg(&room, &leg, "failed", Some(503), &err);
+                return;
+            }
+        };
+        let offer = sdp::offer(&local);
+        let mut headers = Vec::new();
+        if emergency {
+            let callback = text(body, "callbackNumber");
+            if !callback.is_empty() {
+                headers.push(("P-Asserted-Identity".to_string(), format!("<tel:{callback}>")));
+            }
+        }
+        self.legs.insert(
+            leg.clone(),
+            Leg {
+                room: room.clone(),
+                media,
+                local,
+            },
+        );
+        let request = DialRequest {
+            leg: leg.clone(),
+            trunk: trunk_id,
+            to,
+            from,
+            from_name: Some(text(body, "fromName")).filter(|n| !n.is_empty()),
+            offer,
+            ring_timeout: RING_TIMEOUT,
+            headers,
+        };
+        if let Err(err) = self.ua.dial(request) {
+            self.legs.remove(&leg);
+            self.note_leg(&room, &leg, "failed", Some(503), &err);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

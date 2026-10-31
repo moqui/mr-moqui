@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Caller IDs (plans/Comms-Framework.md §5.2): which users may present which numbers on the calls they place. A user
+    calls only from a number granted here. org.moqui.impl.VoiceServices find#CallerIdGrants, grant# and revoke#CallerId. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Caller IDs" default-menu-index="4">
+
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition name="grantCallerId">
+        <service-call name="org.moqui.impl.VoiceServices.grant#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Caller ID granted</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="revokeCallerId">
+        <service-call name="org.moqui.impl.VoiceServices.revoke#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Caller ID revoked</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        grantList = Array.from(call('find#CallerIdGrants').grantList || [])
+        numberOptions = Array.from(call('find#PhoneNumbers').numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        ec.message.clearErrors()
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Caller IDs" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="GrantDialog" button-text="Let someone call from a number" icon="sym_o_add" width="560" title="Let someone call from a number" type="primary">
+                <form-single name="Grant" transition="grantCallerId">
+                    <field name="userId"><default-field title="Who">
+                        <drop-down><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                    <field name="phoneNumber"><default-field title="Number"><drop-down><list-options list="numberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Grant"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </container>
+        <label type="p" style="m-muted" text="A person calls out only from a number they are given here; it is the number the other side sees."/>
+        <container-box><box-body-nopad>
+            <form-list name="GrantList" list="grantList" skip-form="true" paginate="false">
+                <field name="userName"><default-field title="Who"><display style="text-weight-medium"/></default-field></field>
+                <field name="phoneNumber"><default-field title="Calls from"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="revokeCallerId" link-type="hidden-form-link" icon="sym_o_block" text="Revoke" style="m-btn-flat" btn-type="danger"
+                            confirmation="Stop ${userName} calling from ${phoneNumber}?" parameter-map="{phoneNumber:phoneNumber, userId:userId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="userName"/><field-ref name="phoneNumber"/></column>
+                    <column><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoGrants" condition="!grantList.length"><widgets>
+                <label type="p" text="Nobody may call out yet." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

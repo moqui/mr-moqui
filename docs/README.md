@@ -48,6 +48,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Mail-OAuth.md](interfaces/Mail-OAuth.md) | Mail accounts that sign in to Google and Microsoft with OAuth |
 | [WebRTC.md](interfaces/WebRTC.md) | Calls: the media port and the SFU, signaling on the notification socket, guests by link, the cluster |
 | [TURN.md](interfaces/TURN.md) | ICE-TCP and the embedded TURN server for browsers behind NAT and firewalls; coturn instead |
+| [SIP.md](interfaces/SIP.md) | Phone calls through SIP trunks: the settings, provider profiles (Telnyx), fraud controls, emergency readiness |
 
 ## ai: Agents and Models
 

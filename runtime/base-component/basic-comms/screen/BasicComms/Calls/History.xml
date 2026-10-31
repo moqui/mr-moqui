@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     the missed calls seen, so they no longer count on Home; Recordings opens the call recordings (W5, Recordings.xml). Call links (W3): a link to a meeting for people with no
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
-    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. An app adds actions to a call with ext-action slot="call-actions" (the
+    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
+    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
     item: callSessionId). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
@@ -32,6 +33,17 @@ along with this software (see the LICENSE.md file). If not, see
             const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
                 video: String(video) !== 'N'}).requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a phone number, through a SIP trunk (V1): from one of the user's numbers -->
+    <transition name="callNumber">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.place#PhoneCall').parameters({phoneNumber: phoneNumber || '',
+                fromNumber: fromNumber || null}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -120,6 +132,14 @@ along with this software (see the LICENSE.md file). If not, see
                 ringing: call.myLegStatus === 'offered'}
         })
         newCall = {calleeUserIdList: [], video: 'Y'}
+        // Call a number (V1): the user's caller IDs; the full dialer is V3
+        const voice = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+        const myIds = ec.service.sync().name('org.moqui.impl.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        callerIdOptions = Array.from(myIds.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        phoneActive = !!voice.active
+        phoneReason = !voice.active ? L('Phone calls are not available here.') : !callerIdOptions.length ? L('You have no number to call from; an administrator can give you one.') : ''
+        newPhoneCall = {phoneNumber: '', fromNumber: callerIdOptions.length ? callerIdOptions[0].key : ''}
 
         // the history, by outcome; the Missed tab marks them seen
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
@@ -179,6 +199,17 @@ along with this software (see the LICENSE.md file). If not, see
                 </box-body></container-box>
             </row-col>
             <row-col lg="7" md="6">
+                <container-box><box-header title="Call a number"/><box-body>
+                    <section name="PhoneNote" condition="phoneReason"><widgets><label type="p" text="${phoneReason}" style="m-muted"/></widgets></section>
+                    <form-single name="CallNumber" transition="callNumber" map="newPhoneCall">
+                        <field name="phoneNumber"><default-field title="Number"><text-line size="20"/></default-field></field>
+                        <field name="fromNumber"><conditional-field condition="callerIdOptions.length" title="From">
+                            <drop-down><list-options list="callerIdOptions" key="${key}" text="${text}"/></drop-down></conditional-field>
+                            <default-field><hidden/></default-field></field>
+                        <field name="submitButton"><default-field title="Call"><submit icon="sym_o_dialpad"/></default-field></field>
+                        <field-layout><field-row-big><field-ref name="phoneNumber"/><field-ref name="fromNumber"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                    </form-single>
+                </box-body></container-box>
                 <container-box><box-header title="Now"/><box-body>
                     <section name="NoCalls" condition="!callList.length"><widgets><label type="p" text="No call is ringing for you, and you are in no call." style="m-muted"/></widgets></section>
                     <form-list name="ActiveCalls" list="callList" skip-form="true">

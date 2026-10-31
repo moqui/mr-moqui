@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions the System Voice screens share (screen/System/Voice/*, plans/Comms-Framework.md §5.5, D-A6), each included by
+    name: searchUsers, the users a number rings, a caller-ID grant names or a setting is for, by name or username, with the
+    label of a selected one that is not in the page. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="searchUsers" read-only="true">
+        <actions><script><![CDATA[
+            const term = String(ec.web.parameters.term || '').trim()
+            const selected = String(ec.web.parameters.value || '').trim()
+            let out = []
+            if (selected && !term) {
+                const account = ec.entity.find('moqui.security.UserAccount').condition('userId', selected).disableAuthz().one()
+                if (account) out = [{value: account.userId, label: account.userFullName || account.username}]
+            } else {
+                const found = ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term, limit: 20}).call() || {}
+                out = Array.from(found.userList || []).map((user) => ({value: user.value, label: user.label}))
+            }
+            ec.web.sendJsonResponse(out)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

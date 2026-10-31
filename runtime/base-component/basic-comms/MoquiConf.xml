@@ -19,5 +19,10 @@
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="BasicComms" menu-title="Comms" menu-index="22" location="component://basic-comms/screen/BasicComms.xml"/>
         </screen>
+        <!-- Admin: Voice (plans/Comms-Framework.md §5.5, D-A6): trunks, numbers, caller IDs, fraud limits and emergency setup, in
+            the tools System app, with the files here -->
+        <screen location="component://tools/screen/System.xml">
+            <subscreens-item name="Voice" menu-title="Voice" menu-index="20" location="component://basic-comms/screen/System/Voice.xml"/>
+        </screen>
     </screen-facade>
 </moqui-conf>

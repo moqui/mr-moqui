@@ -82,6 +82,8 @@ mod report_monitoring;
 mod report_schedule_lock;
 #[cfg(feature = "rtc")]
 mod rtc;
+#[cfg(feature = "sip")]
+mod sip;
 mod search;
 mod search_logs_postgres;
 mod search_opensearch;

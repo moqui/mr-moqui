@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice (framework/entity/VoiceEntities.xml, org.moqui.impl.VoiceServices, plans/Comms-Framework.md §5.2): the kinds and
+    states of trunks, numbers and emergency locations, the VoiceAdmin permission, and the topic of the fraud and emergency
+    alerts. The fraud policy needs no row: without one the defaults apply (international and premium off). -->
+<entity-facade-xml type="seed">
+    <moqui.basic.EnumerationType description="Voice Transport" enumTypeId="VoiceTransport"/>
+    <moqui.basic.Enumeration description="TLS" enumId="VtrTls" enumCode="tls" enumTypeId="VoiceTransport" sequenceNum="1"/>
+    <moqui.basic.Enumeration description="TCP" enumId="VtrTcp" enumCode="tcp" enumTypeId="VoiceTransport" sequenceNum="2"/>
+    <moqui.basic.Enumeration description="UDP" enumId="VtrUdp" enumCode="udp" enumTypeId="VoiceTransport" sequenceNum="3"/>
+
+    <moqui.basic.EnumerationType description="Voice Media Encryption" enumTypeId="VoiceMediaEncryption"/>
+    <moqui.basic.Enumeration description="SRTP" enumId="VmeSrtp" enumCode="srtp" enumTypeId="VoiceMediaEncryption" sequenceNum="1"/>
+    <moqui.basic.Enumeration description="Plain RTP" enumId="VmePlain" enumCode="plain" enumTypeId="VoiceMediaEncryption" sequenceNum="2"/>
+
+    <!-- A provider profile: optionValue Y when it allows UDP or TCP signaling and plain RTP. None is verified by an
+        authorized live check yet (docs/interfaces/SIP.md); Voice.js VERIFIED_PROFILES lists those that are. -->
+    <moqui.basic.EnumerationType description="Voice Provider Profile" enumTypeId="VoiceProviderProfile"/>
+    <moqui.basic.Enumeration description="Telnyx (TLS, SRTP; not yet verified live)" enumId="VppTelnyx" enumCode="telnyx" enumTypeId="VoiceProviderProfile" sequenceNum="1" optionValue="N"/>
+    <moqui.basic.Enumeration description="Other provider (TLS, SRTP)" enumId="VppGeneric" enumCode="generic" enumTypeId="VoiceProviderProfile" sequenceNum="2" optionValue="N"/>
+    <moqui.basic.Enumeration description="PBX on a private network (UDP or TCP, plain RTP allowed)" enumId="VppPlainLan" enumCode="plainLan" enumTypeId="VoiceProviderProfile" sequenceNum="3" optionValue="Y"/>
+
+    <moqui.basic.StatusType description="Voice Trunk" statusTypeId="VoiceTrunk"/>
+    <moqui.basic.StatusItem statusId="VtsUnknown" statusTypeId="VoiceTrunk" sequenceNum="1" description="Not checked yet"/>
+    <moqui.basic.StatusItem statusId="VtsRegistered" statusTypeId="VoiceTrunk" sequenceNum="2" description="Registered"/>
+    <moqui.basic.StatusItem statusId="VtsOk" statusTypeId="VoiceTrunk" sequenceNum="3" description="Reachable"/>
+    <moqui.basic.StatusItem statusId="VtsFailed" statusTypeId="VoiceTrunk" sequenceNum="4" description="Failed"/>
+    <moqui.basic.StatusItem statusId="VtsDisabled" statusTypeId="VoiceTrunk" sequenceNum="5" description="Disabled"/>
+
+    <moqui.basic.EnumerationType description="Phone Number Route" enumTypeId="PhoneNumberRoute"/>
+    <moqui.basic.Enumeration description="A user" enumId="PnrUser" enumCode="user" enumTypeId="PhoneNumberRoute" sequenceNum="1"/>
+    <moqui.basic.Enumeration description="A ring group" enumId="PnrRingGroup" enumCode="ringGroup" enumTypeId="PhoneNumberRoute" sequenceNum="2"/>
+    <moqui.basic.Enumeration description="An IVR menu" enumId="PnrIvr" enumCode="ivr" enumTypeId="PhoneNumberRoute" sequenceNum="3"/>
+    <moqui.basic.Enumeration description="A queue" enumId="PnrQueue" enumCode="queue" enumTypeId="PhoneNumberRoute" sequenceNum="4"/>
+
+    <moqui.basic.StatusType description="Emergency Location Validation" statusTypeId="EmergencyLocationValidation"/>
+    <moqui.basic.StatusItem statusId="ElvUnvalidated" statusTypeId="EmergencyLocationValidation" sequenceNum="1" description="Not validated"/>
+    <moqui.basic.StatusItem statusId="ElvValidated" statusTypeId="EmergencyLocationValidation" sequenceNum="2" description="Validated"/>
+    <moqui.basic.StatusItem statusId="ElvFailed" statusTypeId="EmergencyLocationValidation" sequenceNum="3" description="Validation failed"/>
+
+    <moqui.security.UserPermission userPermissionId="VoiceAdmin" description="Set up phone trunks, numbers, caller IDs, fraud limits and emergency locations"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="VoiceAdmin" fromDate="0"/>
+
+    <moqui.security.user.NotificationTopic topic="VoiceAlert" inboxEnumId="NinUpdates" description="Phone alert: a blocked SIP source or an emergency call"
+            typeString="warning" showAlert="Y" persistOnSend="Y"/>
+</entity-facade-xml>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Status: whether phone calls are supported (the binary has the sip feature), configured (sip_port or sip_tls_port and
+    a trunk) and active (a SIP server up and a trunk working), each on its own with why not (plans/Comms-Framework.md §3.1);
+    whether emergency calls are ready for the signed-in admin; the servers whose SIP engine is up and the media servers. From
+    org.moqui.impl.VoiceServices.get#VoiceStatus. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Status" default-menu-index="1">
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceStatus').requireNewTransaction(true).disableAuthz().call() || {}
+        const caps = out.capabilities || {}
+        const REASONS = {notBuilt: L('This server is not built with SIP (the sip feature).'),
+            notConfigured: L('No SIP listener is set: set sip_port or sip_tls_port.'), noTrunk: L('No trunk is set up: add one under Trunks.'),
+            noSipServer: L('No SIP server is running in the cluster.'), trunkFailed: L('Every trunk failed: see Trunks for the last error.')}
+        const yesNo = (value) => (value ? L('Yes') : L('No'))
+        capabilityList = [
+            {name: L('Supported'), value: yesNo(caps.supported)},
+            {name: L('Configured'), value: yesNo(caps.configured)},
+            {name: L('Active'), value: yesNo(caps.active)},
+            {name: L('Emergency calls ready'), value: yesNo(caps.emergencyReady)},
+            {name: L('Phone calls going'), value: String(out.activePhoneCalls || 0)},
+        ]
+        statusActive = !!caps.active
+        reasonText = caps.active ? '' : REASONS[caps.reasonCode] || L('Phone calls are not available.')
+        const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm:ss a') : '')
+        sipNodeList = Array.from(out.sipNodeList || []).map((n) => ({instanceId: n.instanceId, sipAddress: n.sipAddress || '',
+            tlsAddress: n.tlsAddress || '', rtpPorts: n.rtpPorts || '', heartbeatText: when(n.heartbeatDate), stateText: n.live ? L('Up') : L('Not heard from')}))
+        mediaNodeList = Array.from(out.mediaNodeList || []).map((n) => ({instanceId: n.instanceId, mediaAddress: n.mediaAddress || '',
+            heartbeatText: when(n.heartbeatDate), stateText: !n.live ? L('Not heard from') : n.draining ? L('Draining') : L('Up')}))
+        ec.message.clearErrors()
+    ]]></script></actions>
+    <widgets>
+        <section name="NotActive" condition="!statusActive"><widgets>
+            <container-box type="warning"><box-body><label type="p" text="${reasonText}"/></box-body></container-box>
+        </widgets></section>
+        <container-box><box-header title="Phone calls"/><box-body-nopad>
+            <form-list name="Capabilities" list="capabilityList" skip-form="true" paginate="false">
+                <field name="name"><default-field title=""><display/></default-field></field>
+                <field name="value"><default-field title=""><display style="text-weight-medium"/></default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="SIP servers"/><box-body-nopad>
+            <section name="NoSipNodes" condition="!sipNodeList.length"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No SIP server has started. A server starts one when sip_port or sip_tls_port is set and it has the sip feature."/>
+            </widgets></section>
+            <form-list name="SipNodes" list="sipNodeList" skip-form="true" paginate="false">
+                <field name="instanceId"><default-field title="Server"><display/></default-field></field>
+                <field name="sipAddress"><default-field title="SIP"><display/></default-field></field>
+                <field name="tlsAddress"><default-field title="SIP over TLS"><display/></default-field></field>
+                <field name="rtpPorts"><default-field title="RTP ports"><display/></default-field></field>
+                <field name="stateText"><default-field title="State"><display/></default-field></field>
+                <field name="heartbeatText"><default-field title="Last heard"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="instanceId"/><field-ref name="sipAddress"/></column>
+                    <column><field-ref name="stateText"/><field-ref name="heartbeatText"/></column>
+                </columns>
+            </form-list>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="Media servers"/><box-body-nopad>
+            <section name="NoMediaNodes" condition="!mediaNodeList.length"><widgets>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="No media server is running. A server starts one when rtc_media_port is set."/>
+            </widgets></section>
+            <form-list name="MediaNodes" list="mediaNodeList" skip-form="true" paginate="false">
+                <field name="instanceId"><default-field title="Server"><display/></default-field></field>
+                <field name="mediaAddress"><default-field title="Media address"><display/></default-field></field>
+                <field name="stateText"><default-field title="State"><display/></default-field></field>
+                <field name="heartbeatText"><default-field title="Last heard"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="instanceId"/><field-ref name="mediaAddress"/></column>
+                    <column><field-ref name="stateText"/><field-ref name="heartbeatText"/></column>
+                </columns>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

@@ -155,6 +155,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the in-call keypad of a phone call (V1): tones (RFC 4733) to the phones in it, for a user in the call -->
+    <transition name="sendDtmf">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.send#PhoneDtmf').parameters({callSessionId: callSessionId || '', digits: digits || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, sent: !!out.sent})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the leg's ICE servers (TURN with a short-lived credential), for its RTCPeerConnection: an admitted leg only -->
     <transition name="iceServers" method="get" read-only="true">
         <actions><script><![CDATA[

@@ -31,6 +31,8 @@ const END_CODES = {
   CerRemoved: 'removed',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
+const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone' }
+const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
 
 /** Seconds a call rings before it is missed. */
 const ringSeconds = () => Math.max(10, Number(System.getProperty('call_ring_seconds') || 45))
@@ -158,10 +160,12 @@ function view(session, forUserId) {
       userId: p.userId || null,
       displayName: p.displayName || names[p.userId] || p.userId,
       role: p.roleEnumId === 'CprHost' ? 'host' : p.roleEnumId === 'CprGuest' ? 'guest' : 'member',
+      identity: IDENTITY_CODES[p.identityKindEnumId] || 'local',
       admission: ADMISSION_CODES[p.admissionStatusId] || null,
       inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
-      legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null })),
+      legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
+        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web' })),
     }
   })
   return {
@@ -456,9 +460,9 @@ function start(p) {
 }
 
 /** Rings the invitees' tabs, and their devices by Web Push (expiring with the ring). */
-function ring(session, userIds, fromUserId) {
+function ring(session, userIds, fromUserId, fromName) {
   if (!userIds.length) return
-  const from = { userId: fromUserId, name: userNames([fromUserId])[fromUserId] || fromUserId }
+  const from = { userId: fromUserId || null, name: fromName || userNames([fromUserId])[fromUserId] || fromUserId }
   for (const userId of userIds) {
     push([userId], { action: 'ring', callSessionId: session.callSessionId, revision: Number(session.revision || 1),
       from, video: session.video === 'Y', callKind: KIND_CODES[session.kindEnumId], chatRoomId: session.chatRoomId,
@@ -491,6 +495,7 @@ function answer(p) {
   session.update()
   pushState(session, 'answered', { answeredBy: me, callLegId: offered.leg.callLegId })
   updatePresence([me])
+  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound') phoneControl(session, 'answer')
   return { callLegId: offered.leg.callLegId, call: view(session, me) }
 }
 
@@ -569,8 +574,9 @@ function leaveLeg(session, leg, reason, userId) {
   const remaining = answeredLegCount(session.callSessionId)
   if (session.statusId === 'CssRinging') {
     endSession(session, 'CerCanceled')
-  } else if (session.kindEnumId === 'CskDirect' || remaining === 0) {
-    endSession(session, remaining === 0 && session.kindEnumId !== 'CskDirect' ? 'CerEmpty' : reason)
+  } else if (session.kindEnumId === 'CskDirect' || remaining === 0 ||
+    (session.kindEnumId === 'CskPhone' && !localAnsweredCount(session.callSessionId))) {
+    endSession(session, remaining === 0 && !['CskDirect', 'CskPhone'].includes(session.kindEnumId) ? 'CerEmpty' : reason)
   } else {
     bump(session)
     session.update()
@@ -707,7 +713,7 @@ function expire() {
   const staleSince = new Date(now - HEARTBEAT_STALE_MS)
   const closedSince = new Date(now - RECONNECT_GRACE_MS)
   const answered = Array.from(find(LEG).condition('statusId', 'ClsAnswered').selectField('callLegId')
-    .selectField('answeredDate').limit(2000).list())
+    .selectField('answeredDate').selectField('legTypeEnumId').limit(2000).list()).filter((leg) => leg.legTypeEnumId !== 'CltPstn')
   const lost = []
   for (const leg of answered) {
     const conns = rows(CONNECTION, { callLegId: leg.callLegId })
@@ -1232,8 +1238,155 @@ function capabilities() {
   return { supported, configured, active: live.length > 0, reasonCode }
 }
 
+// ---------- phone legs (V1; org.moqui.impl.VoiceServices and Voice.js) ----------
+
+/** The answered legs of people here (browsers), not of phones. */
+function localAnsweredCount(callSessionId) {
+  return find(LEG).condition('callSessionId', callSessionId).condition('statusId', 'ClsAnswered')
+    .condition('legTypeEnumId', 'in', ['CltWeb', 'CltGuest', 'CltSipDevice']).count()
+}
+
+function phoneLegsOf(callSessionId) {
+  return rows(LEG, { callSessionId, legTypeEnumId: 'CltPstn' }).filter((leg) => OPEN_LEG.includes(leg.statusId))
+}
+
+/** Tells the SIP engine on the call's node about its phone legs ({action: 'answer'}), after the commit. */
+function phoneControl(session, action) {
+  if (!session.mediaNodeId) return
+  for (const leg of phoneLegsOf(session.callSessionId)) {
+    // one that cannot be told is logged, as a node that is gone is; the answer stands
+    ec.message.pushErrors()
+    try {
+      ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
+        instanceId: session.mediaNodeId, message: { action, callSessionId: session.callSessionId, callLegId: leg.callLegId },
+      }).disableAuthz().call()
+      if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${ec.message.errorsString}`)
+    } catch (err) {
+      ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${err && err.message ? err.message : err}`)
+    } finally {
+      ec.message.clearErrors()
+      ec.message.popErrors()
+    }
+  }
+}
+
+function makePhoneParticipant(session, displayName, admission) {
+  const p = ec.entity.makeValue(PARTICIPANT)
+  p.setSequencedIdPrimary()
+  p.setFields({
+    callSessionId: session.callSessionId, identityKindEnumId: 'CikPhone', displayName, roleEnumId: 'CprMember',
+    admissionStatusId: admission, admittedDate: admission === 'CasAdmitted' ? ec.user.nowTimestamp : null,
+  }, true, null, null)
+  p.create()
+  return p
+}
+
+/**
+ * Internal (Voice.js place#PhoneCall and receive#PhoneCall, which checked the user, the number and the policy): a phone
+ * call. Outbound: the user is in it at once and the number rings (a CltPstn leg offered until the SIP engine says it
+ * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee.
+ */
+function startPhone(p) {
+  const userId = p.userId
+  const outbound = p.direction !== 'inbound'
+  const key = outbound && p.idempotencyKey ? String(p.idempotencyKey).slice(0, 200) : null
+  if (key) {
+    const prior = Array.from(find(SESSION).condition('startedByUserId', userId).condition('idempotencyKey', key)
+      .orderBy('-startedDate').limit(1).list())[0]
+    if (prior) {
+      const mine = legOfMine(prior, userId, ['ClsAnswered', 'ClsLeft'])
+      const phone = rows(LEG, { callSessionId: prior.callSessionId, legTypeEnumId: 'CltPstn' })[0]
+      return { callSessionId: prior.callSessionId, callLegId: mine.leg?.callLegId || null, phoneLegId: phone?.callLegId || null,
+        call: view(prior, userId), repeated: true }
+    }
+  }
+  const now = ec.user.nowTimestamp
+  const session = ec.entity.makeValue(SESSION)
+  session.setSequencedIdPrimary()
+  session.setFields({
+    kindEnumId: 'CskPhone', statusId: 'CssRinging', revision: 1, directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
+    video: 'N', startedByUserId: outbound ? userId : null, idempotencyKey: key, startedDate: now,
+    ringExpireDate: new Date(nowMs() + ringSeconds() * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
+    encryptionMode: 'dtls-srtp',
+  }, true, null, null)
+  session.create()
+  const name = p.displayName || p.phoneNumber
+  let userLeg
+  let phoneLeg
+  if (outbound) {
+    const host = makeParticipant(session, userId, 'CprHost', 'CasAdmitted')
+    userLeg = makeLeg(session, host, 'ClsAnswered')
+    const phone = makePhoneParticipant(session, name, 'CasInvited')
+    phoneLeg = makeLeg(session, phone, 'ClsOffered', 'CltPstn')
+    setLog(session.callSessionId, userId, { roleEnumId: 'CurCaller', outcomeEnumId: 'CuoPlaced', logDate: now })
+  } else {
+    const phone = makePhoneParticipant(session, name, 'CasAdmitted')
+    phoneLeg = makeLeg(session, phone, 'ClsAnswered', 'CltPstn')
+    const callee = makeParticipant(session, userId, 'CprMember', 'CasInvited')
+    userLeg = makeLeg(session, callee, 'ClsOffered')
+    setLog(session.callSessionId, userId, { roleEnumId: 'CurCallee', logDate: now })
+  }
+  phoneLeg.set('phoneNumber', p.phoneNumber)
+  phoneLeg.update()
+  if (outbound) updatePresence([userId])
+  else ring(session, [userId], null, name)
+  return { callSessionId: session.callSessionId, callLegId: userLeg.callLegId, phoneLegId: phoneLeg.callLegId,
+    call: view(session, userId) }
+}
+
+/**
+ * Internal (the SIP engine, through Voice.js note#PhoneLeg): what a phone leg did. answered: the number picked up;
+ * failed or busy: it never did, and the call ends; ended or canceled: the far end hung up, and the call ends with its last
+ * phone leg. A repeat, or an event for a leg that is closed, answers as it is.
+ */
+function phoneEvent(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  const leg = session && p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!session || !leg || leg.callSessionId !== session.callSessionId || leg.legTypeEnumId !== 'CltPstn') {
+    return { reasonCode: 'notFound' }
+  }
+  if (session.statusId === 'CssEnded' || !OPEN_LEG.includes(leg.statusId)) return { repeated: true }
+  const now = ec.user.nowTimestamp
+  const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
+  if (p.event === 'answered') {
+    if (leg.statusId === 'ClsAnswered') return { repeated: true }
+    leg.setFields({ statusId: 'ClsAnswered', answeredDate: now, joinedDate: now }, true, null, null)
+    leg.update()
+    participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: now }, true, null, null)
+    participant.update()
+    if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
+    bump(session)
+    session.update()
+    pushState(session, 'answered', { callLegId: leg.callLegId })
+    return {}
+  }
+  if (p.event === 'failed' || p.event === 'busy') {
+    if (leg.statusId === 'ClsAnswered') return phoneEvent(Object.assign({}, p, { event: 'ended' }))
+    const busy = p.event === 'busy'
+    closeLeg(leg, busy ? 'ClsDeclined' : 'ClsFailed', busy ? 'CerDeclined' : 'CerFailed')
+    if (!phoneLegsOf(session.callSessionId).length) endSession(session, busy ? 'CerDeclined' : 'CerFailed')
+    return {}
+  }
+  if (p.event === 'ended' || p.event === 'canceled') {
+    const wasAnswered = leg.statusId === 'ClsAnswered'
+    closeLeg(leg, wasAnswered ? 'ClsLeft' : 'ClsCanceled', wasAnswered ? 'CerHangup' : 'CerCanceled')
+    if (!phoneLegsOf(session.callSessionId).length) {
+      endSession(session, session.statusId === 'CssRinging' ? 'CerCanceled' : 'CerHangup')
+    } else {
+      bump(session)
+      session.update()
+      pushState(session, 'left')
+    }
+    return {}
+  }
+  if (p.event === 'held' || p.event === 'resumed') {
+    pushState(session, p.event, { callLegId: leg.callLegId })
+  }
+  return {}
+}
+
 const operations = {
-  start, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
+  start, startPhone, phoneEvent, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
   removeParticipant, iceServers, guestIceServers,

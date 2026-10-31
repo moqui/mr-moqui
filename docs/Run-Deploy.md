@@ -242,6 +242,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `call_recording_enabled`, `call_recording_ack_required`, `call_recording_policy_revision` | `false`, `false`, `1` | Call recording by a call's host, with a notice to every leg, and whether each leg must acknowledge it ([Call recording](interfaces/Call-Recording.md)) |
 | `call_recording_retention_days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
 | `call_recording_queue_frames`, `call_recording_segment_mb`, `call_recording_segment_minutes`, `call_recording_max_mb` | `4096`, `64`, `30`, `2048` | The recorder's queue, when a file is cut into the next segment, and where a recording stops |
+| `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address`, `sip_tls_ca_file` | empty, `127.0.0.1`, empty, `sip_host`, `20000-20999`, `sip_host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)); off while both ports are empty, and only beside call media; the public address is what trunks are told in Contact and SDP |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -422,6 +423,7 @@ external database.
 | `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)) | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` |
 | `rtc_media_tcp_port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `rtc_media_tcp_port` |
 | `turn_port` (UDP and TCP), `turn_tls_port`, 443 on `turn_tls443_host`; `turn_relay_ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_host`, `turn_relay_ports` |
+| `sip_port` (UDP and TCP), `sip_tls_port`; `sip_rtp_ports` (UDP) | SIP trunks and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address` |
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
 

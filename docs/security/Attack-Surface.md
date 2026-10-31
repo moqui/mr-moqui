@@ -415,7 +415,7 @@ The cluster HTTPS listener is separate from the public HTTP and HTTPS listeners.
 
 On whenever the process starts listeners (a normal `moqui` with no command, and `moqui tui --serve`). Empty `cluster_https_port` is **8444**. Empty `cluster_bind_address` is **0.0.0.0**. `0` is ephemeral. Commands that do not serve do not start it. `plans/archive/Cluster.md` still says port 8443. That line is stale. The running default is 8444 (`README.md`, `crates/moqui-host/src/cluster_edge.rs`).
 
-A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, `session-end` or `rtc-signal`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again. `rtc-signal` is sent to one member (`cluster::send_to`, one try from a queue of 1,024 that refuses when full): a call's signaling frames for the node holding its media, its replies for the node holding a leg's socket, and the call services' close messages; a receiver drops one whose `target` is not its instance id (the notify transport reaches every notify member).
+A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, `session-end` or `rtc-signal`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again. `rtc-signal` is sent to one member (`cluster::send_to`, one try from a queue of 1,024 that refuses when full): a call's signaling frames for the node holding its media, its replies for the node holding a leg's socket, the call services' close messages, and the voice services' SIP control (kind `sip`, for the node's SIP engine); a receiver drops one whose `target` is not its instance id (the notify transport reaches every notify member).
 
 Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It needs a Postgres entity database. MySQL refuses startup. It is one connection outside the pool, not a new TCP port. The payload is not authenticated on its own. A payload over 7,900 bytes is a `ClusterMessage` row id. A notification missed while `LISTEN` is down is lost. Reconnect then clears entity caches. The default `cluster_transport` is empty, which means HTTPS POST to `cluster_base_url`.
 
@@ -456,6 +456,37 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
 
 coturn can take its place ([TURN](../interfaces/TURN.md)), with the same secret and a deny-all, allow-media-node
 peer rule.
+
+### SIP
+
+The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a media node, only in a binary with the
+`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip_port` (UDP and TCP on `sip_host`),
+`sip_tls_port` (TLS on `sip_tls_host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
+`sip_rtp_ports` on `sip_rtp_host`. An exposed SIP listener is scanned within hours, so its rules are release gates
+([SIP](../interfaces/SIP.md) "Fraud controls"):
+
+- **Who is answered.** An INVITE from a trunk's host or listed signaling addresses is a trunk's call; any other
+  INVITE or REGISTER is challenged with SIP Digest (SHA-256 and MD5, nonces that expire after 5 minutes and carry a
+  MAC under a per-process key, nonce counts that must go up). Other requests from addresses that are not a trunk's
+  are not answered. There is no registrar yet: REGISTER is refused after the checks.
+- **Failed digests block the source.** `authFailureLimit` failures in `authFailureWindowSeconds` from one address
+  block it for `authBlockSeconds` (5 in 10 minutes, for an hour, by default): its datagrams and stream messages are
+  dropped before a transaction is made, nothing is answered, and the block is kept in `VoiceAuthFailure` across
+  restarts. No account is locked or counted.
+- **What an incoming call reaches.** Only a number in `PhoneNumber` rings anyone, through the call services'
+  ringing; the SDP must be audio with a codec in common, and SRTP when the trunk's profile requires it (488
+  otherwise).
+- **Outbound.** Calls go out only from `send#SipControl` (the `rtc-signal` cluster topic, kind `sip`, to that node),
+  which only the voice services send, after their checks (caller ID grant, outbound enabled, international and
+  premium off by default, concurrency and daily limits, the emergency path). The engine checks the number's class,
+  the emergency trunk and the concurrency limit again before an INVITE goes out.
+- **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
+  allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
+- **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;
+  a packet that fails its tag or replay window is dropped. RTP goes back where the leg's packets come from (with
+  plain RTP, the first source is kept). RTCP is dropped.
+- **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
+  are cut. The engine registers its node (`SipNode`) every 20 seconds.
 
 ### Database
 

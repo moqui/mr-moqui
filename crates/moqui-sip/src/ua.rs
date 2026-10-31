@@ -1,0 +1,1380 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The SIP user agent and B2BUA toward trunk providers (plans/Comms-Framework.md §5.2; D-V1: rsipstack), on Tokio.
+//!
+//! [`Ua::start`] binds the listeners (UDP, TCP, TLS) and serves them; the host hears what happens through a channel of
+//! [`UaEvent`]s and acts through [`Ua`]'s methods. It runs no business logic: whether a call may ring a user, which
+//! trunk a number uses and whether a destination is allowed are the voice services', asked by the host. What is checked
+//! here is what protects the listener and the trunks whatever the services say:
+//!
+//! - **Who may call in.** An INVITE is taken from a trunk's signaling addresses (its host's addresses and the
+//!   `inbound` ones its profile lists), or with a digest answer for a trunk's username. Anything else is challenged
+//!   ([`crate::digest::NonceBook`]: expiring nonces, nonce counts that cannot be replayed), and each failed answer
+//!   counts against its source address ([`crate::guard`]): at the limit everything from that address is dropped
+//!   unanswered, before a transaction is made. No account is locked.
+//! - **Credentials.** A trunk's digest credentials answer only its realm and the algorithms its profile allows
+//!   ([`crate::digest::answer`]); a challenge for anything else fails the registration or the call, with the reason.
+//! - **Outbound.** CANCEL while ringing, forked answers (the first wins, the others are ACKed and ended with BYE) and
+//!   a 2xx that crosses a CANCEL (ACK and BYE) are rsipstack's dialog layer; [`crate::race`] decides the outcome the
+//!   host is told, and the ring timeout.
+//!
+//! Each leg has the id the host gives it (the call's `callLegId`). Hold is a re-INVITE either way: the other side's
+//! comes to the host as [`UaEvent::Reoffer`] for its answer; the host's goes out with [`Ua::reinvite`].
+
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use moqui_lib::sync::lock;
+use rsipstack::dialog::dialog::{Dialog, DialogState, DialogStateReceiver, TerminatedReason};
+use rsipstack::dialog::dialog_layer::DialogLayer;
+use rsipstack::dialog::invitation::InviteOption;
+use rsipstack::dialog::invite_dialog::InviteDialog;
+use rsipstack::sip::prelude::{HeadersExt, ToTypedHeader};
+use rsipstack::sip::{Header, Method, Request, Response, SipMessage, StatusCode, StatusCodeKind, Uri};
+use rsipstack::transaction::endpoint::{Endpoint, EndpointInner, TransportEventInspector};
+use rsipstack::transaction::key::{TransactionKey, TransactionRole};
+use rsipstack::transaction::transaction::Transaction;
+use rsipstack::transaction::{make_tag, random_text};
+use rsipstack::transport::connection::TransportEvent;
+use rsipstack::transport::tcp_listener::TcpListenerConnection;
+use rsipstack::transport::udp::UdpConnection;
+use rsipstack::transport::{SipAddr, SipConnection, TlsConfig, TlsListenerConnection, TransportLayer};
+use rsipstack::EndpointBuilder;
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+
+use crate::digest::{self, Algorithm, Authorization, Challenge, Credentials, NonceBook, Verdict};
+use crate::guard::{Failure, GuardPolicy, SourceGuard};
+use crate::race::{self, Race};
+
+/// How long a challenge's nonce lasts.
+const NONCE_SECONDS: u64 = 300;
+/// How long the host has to decide an incoming call.
+const DECIDE_WAIT: Duration = Duration::from_secs(10);
+/// The registration interval asked of a trunk, and the longest wait after a failure.
+const REGISTER_EXPIRES: u32 = 300;
+const MAX_BACKOFF: Duration = Duration::from_secs(300);
+/// How long a REGISTER waits for its answer.
+const REGISTER_WAIT: Duration = Duration::from_secs(32);
+/// The early answers kept at most.
+const MAX_EARLY: usize = 1_000;
+
+/// A signaling transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Udp,
+    Tcp,
+    Tls,
+}
+
+impl Transport {
+    pub fn parse(text: &str) -> Option<Transport> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "udp" => Some(Transport::Udp),
+            "tcp" => Some(Transport::Tcp),
+            "tls" => Some(Transport::Tls),
+            _ => None,
+        }
+    }
+
+    fn sip(self) -> rsipstack::sip::Transport {
+        match self {
+            Transport::Udp => rsipstack::sip::Transport::Udp,
+            Transport::Tcp => rsipstack::sip::Transport::Tcp,
+            Transport::Tls => rsipstack::sip::Transport::Tls,
+        }
+    }
+
+    fn default_port(self) -> u16 {
+        if self == Transport::Tls {
+            5061
+        } else {
+            5060
+        }
+    }
+
+    fn param(self) -> &'static str {
+        match self {
+            Transport::Udp => "udp",
+            Transport::Tcp => "tcp",
+            Transport::Tls => "tls",
+        }
+    }
+}
+
+/// A trunk, as the voice services give it (`get#EngineConfig`).
+#[derive(Debug, Clone)]
+pub struct TrunkConfig {
+    pub id: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub transport: Transport,
+    pub credentials: Credentials,
+    /// The domain of From and To when it is not the host.
+    pub domain: Option<String>,
+    pub register: bool,
+    /// Addresses (or CIDR ranges) the provider sends calls from, besides the host's own.
+    pub inbound: Vec<String>,
+    /// Its media must be SRTP.
+    pub srtp: bool,
+}
+
+impl TrunkConfig {
+    fn port(&self) -> u16 {
+        self.port.unwrap_or(self.transport.default_port())
+    }
+
+    /// A number at the trunk: its host with any port that is not the transport's default, and the transport.
+    fn uri(&self, number: &str) -> String {
+        let host = if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        let port = if self.port() == self.transport.default_port() {
+            String::new()
+        } else {
+            format!(":{}", self.port())
+        };
+        let transport = if self.transport == Transport::Udp {
+            String::new()
+        } else {
+            format!(";transport={}", self.transport.param())
+        };
+        format!("sip:{number}@{host}{port};user=phone{transport}")
+    }
+
+    fn domain(&self) -> &str {
+        self.domain.as_deref().filter(|d| !d.is_empty()).unwrap_or(&self.host)
+    }
+
+    fn has_credentials(&self) -> bool {
+        !self.credentials.username.is_empty() && !self.credentials.password.is_empty()
+    }
+}
+
+/// Where the UA listens, and how it introduces itself.
+#[derive(Clone, Default)]
+pub struct UaConfig {
+    pub udp: Option<SocketAddr>,
+    pub tcp: Option<SocketAddr>,
+    /// The TLS listener with its certificate chain and key, PEM.
+    pub tls: Option<(SocketAddr, Vec<u8>, Vec<u8>)>,
+    /// The host name or address in Contact headers (the bound address by default).
+    pub public_host: Option<String>,
+    /// The CA certificates (PEM) for TLS to trunks; without them a trunk's certificate cannot be verified.
+    pub ca_pem: Option<Vec<u8>>,
+    /// The realm of this UA's challenges.
+    pub realm: String,
+    pub guard: GuardPolicy,
+    pub user_agent: String,
+}
+
+/// The addresses the listeners bound.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bound {
+    pub udp: Option<SocketAddr>,
+    pub tcp: Option<SocketAddr>,
+    pub tls: Option<SocketAddr>,
+}
+
+/// A trunk's registration state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrunkState {
+    Registered,
+    Failed(String),
+    Unregistered,
+}
+
+/// Why a leg ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndReason {
+    /// The other side hung up.
+    Bye,
+    /// This side hung up.
+    Hangup,
+    /// The caller gave up before an answer (either side).
+    Canceled,
+    /// It rang out.
+    TimedOut,
+    Busy,
+    /// Refused or failed with this status, or with none.
+    Failed(Option<u16>),
+}
+
+/// An incoming call for the host to decide.
+#[derive(Debug)]
+pub struct IncomingCall {
+    pub trunk_id: String,
+    /// The number called (the Request-URI's user part).
+    pub to: String,
+    pub from: String,
+    pub from_name: Option<String>,
+    pub call_id: String,
+    /// The caller's SDP offer.
+    pub offer: String,
+    pub source: SocketAddr,
+    pub reply: oneshot::Sender<Decision>,
+}
+
+/// The host's decision on an incoming call.
+#[derive(Debug)]
+pub enum Decision {
+    /// Ring (180) as this leg; [`Ua::answer`] sends the answer SDP with the 200 later.
+    Ring {
+        leg: String,
+        answer: String,
+    },
+    Reject(u16),
+}
+
+/// What happened, for the host.
+#[derive(Debug)]
+pub enum UaEvent {
+    Incoming(IncomingCall),
+    /// An outbound leg rings at the other end.
+    Ringing {
+        leg: String,
+    },
+    /// An outbound leg was answered, with the other side's SDP answer.
+    Answered {
+        leg: String,
+        answer: String,
+    },
+    /// A leg ended, and how; `code` is the SIP status of a failure.
+    Ended {
+        leg: String,
+        reason: EndReason,
+    },
+    /// The other side's re-INVITE (hold, resume, a new address): the host replies with its answer, or `None` to
+    /// refuse it (488).
+    Reoffer {
+        leg: String,
+        offer: String,
+        reply: oneshot::Sender<Option<String>>,
+    },
+    TrunkStatus {
+        trunk: String,
+        state: TrunkState,
+    },
+    /// A failed digest from `source`; `blocked` when it just blocked the address.
+    AuthFailure {
+        source: IpAddr,
+        username: String,
+        blocked: bool,
+    },
+}
+
+/// An outbound call for a trunk.
+#[derive(Debug, Clone)]
+pub struct DialRequest {
+    pub leg: String,
+    pub trunk: String,
+    /// The number called, E.164 (or an emergency number as dialed).
+    pub to: String,
+    /// The number presented, E.164.
+    pub from: String,
+    pub from_name: Option<String>,
+    pub offer: String,
+    pub ring_timeout: Duration,
+    /// Extra headers, as `(name, value)` (an emergency call's callback and location, for example).
+    pub headers: Vec<(String, String)>,
+}
+
+enum LegKind {
+    Outbound,
+    Inbound,
+}
+
+struct Leg {
+    kind: LegKind,
+    dialog: Option<InviteDialog>,
+    /// The host hung up before an answer.
+    give_up: Option<oneshot::Sender<()>>,
+    /// An inbound leg's answer SDP for its 200.
+    answer: Option<String>,
+    answered: bool,
+}
+
+struct TrunkEntry {
+    config: TrunkConfig,
+    /// The addresses its host resolved to.
+    addresses: Vec<IpAddr>,
+    stop: CancellationToken,
+}
+
+struct Inner {
+    endpoint: Arc<EndpointInner>,
+    dialogs: Arc<DialogLayer>,
+    events: mpsc::UnboundedSender<UaEvent>,
+    trunks: Mutex<HashMap<String, TrunkEntry>>,
+    legs: Mutex<HashMap<String, Leg>>,
+    /// Answers given before their leg's decision arrived.
+    early: Mutex<std::collections::HashSet<String>>,
+    guard: Arc<Mutex<SourceGuard>>,
+    nonces: Mutex<NonceBook>,
+    bound: Bound,
+    public_host: Option<String>,
+    stop: CancellationToken,
+}
+
+/// The running user agent. Dropping it does not stop it: call [`Ua::shutdown`].
+#[derive(Clone)]
+pub struct Ua {
+    inner: Arc<Inner>,
+}
+
+/// Drops what blocked sources send, before rsipstack makes a transaction of it.
+struct BlockInspector {
+    guard: Arc<Mutex<SourceGuard>>,
+}
+
+#[async_trait::async_trait]
+impl TransportEventInspector for BlockInspector {
+    async fn handle(&self, event: TransportEvent) -> Option<TransportEvent> {
+        if let TransportEvent::Incoming(_, _, from) = &event {
+            if let Ok(addr) = from.get_socketaddr() {
+                if lock(&self.guard).is_blocked(addr.ip(), Instant::now()) {
+                    return None;
+                }
+            }
+        }
+        Some(event)
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn sip_err(err: impl std::fmt::Display) -> String {
+    err.to_string()
+}
+
+/// Whether `ip` is `entry` (an address or a CIDR range).
+fn matches_address(ip: IpAddr, entry: &str) -> bool {
+    let entry = entry.trim();
+    let (net, bits) = match entry.split_once('/') {
+        Some((net, bits)) => (net, bits.parse::<u32>().ok()),
+        None => (entry, None),
+    };
+    let Ok(net) = net.parse::<IpAddr>() else {
+        return false;
+    };
+    match (ip, net) {
+        (IpAddr::V4(a), IpAddr::V4(b)) => {
+            let bits = bits.unwrap_or(32).min(32);
+            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+            u32::from(a) & mask == u32::from(b) & mask
+        }
+        (IpAddr::V6(a), IpAddr::V6(b)) => {
+            let bits = bits.unwrap_or(128).min(128);
+            let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+            u128::from(a) & mask == u128::from(b) & mask
+        }
+        _ => false,
+    }
+}
+
+fn header_values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|h| h.name().eq_ignore_ascii_case(name))
+        .map(|h| h.value().to_string())
+        .collect()
+}
+
+fn user_of(uri: &Uri) -> String {
+    uri.auth.as_ref().map(|a| a.user.clone()).unwrap_or_default()
+}
+
+fn status_code(code: u16) -> StatusCode {
+    StatusCode::from(code)
+}
+
+impl Ua {
+    /// Binds the listeners that are set and starts serving them. A listener that does not bind is an error: the host
+    /// logs it and starts without SIP.
+    pub async fn start(config: UaConfig, events: mpsc::UnboundedSender<UaEvent>) -> Result<Ua, String> {
+        crate::install_crypto();
+        let stop = CancellationToken::new();
+        let transport_layer = TransportLayer::new(stop.child_token());
+        let mut bound = Bound::default();
+        if let Some(addr) = config.udp {
+            let udp = UdpConnection::create_connection(addr, None, Some(stop.child_token()))
+                .await
+                .map_err(|e| format!("SIP UDP {addr}: {e}"))?;
+            bound.udp = udp.get_addr().get_socketaddr().ok();
+            transport_layer.add_transport(udp.into());
+        }
+        if let Some(addr) = config.tcp {
+            let addr = free_port(addr).await?;
+            let tcp = TcpListenerConnection::new(addr, None).await.map_err(sip_err)?;
+            bound.tcp = Some(addr);
+            transport_layer.add_transport(SipConnection::TcpListener(tcp));
+        }
+        if let Some((addr, cert, key)) = &config.tls {
+            let addr = free_port(*addr).await?;
+            let tls = TlsListenerConnection::new(
+                addr,
+                None,
+                TlsConfig {
+                    cert: Some(cert.clone()),
+                    key: Some(key.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(sip_err)?;
+            bound.tls = Some(addr);
+            transport_layer.add_transport(SipConnection::TlsListener(tls));
+        }
+        transport_layer.set_tls_config(TlsConfig {
+            ca_certs: config.ca_pem.clone(),
+            ..Default::default()
+        });
+        let guard = Arc::new(Mutex::new(SourceGuard::new(config.guard)));
+        let user_agent = if config.user_agent.is_empty() {
+            "Moqui"
+        } else {
+            &config.user_agent
+        };
+        let endpoint: Endpoint = EndpointBuilder::new()
+            .with_user_agent(user_agent)
+            .with_transport_layer(transport_layer)
+            .with_cancel_token(stop.child_token())
+            .with_transport_inspector(Box::new(BlockInspector {
+                guard: Arc::clone(&guard),
+            }))
+            .build();
+        let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
+        let endpoint_inner = endpoint.inner.clone();
+        {
+            let serve = endpoint_inner.clone();
+            tokio::spawn(async move {
+                if let Err(err) = serve.serve().await {
+                    tracing::error!("SIP endpoint stopped: {err}");
+                }
+            });
+        }
+        let inner = Arc::new(Inner {
+            dialogs: Arc::new(DialogLayer::new(endpoint_inner.clone())),
+            endpoint: endpoint_inner,
+            events,
+            trunks: Mutex::new(HashMap::new()),
+            legs: Mutex::new(HashMap::new()),
+            early: Mutex::new(std::collections::HashSet::new()),
+            guard,
+            nonces: Mutex::new(NonceBook::new(
+                if config.realm.is_empty() {
+                    "moqui"
+                } else {
+                    &config.realm
+                },
+                NONCE_SECONDS,
+            )),
+            bound,
+            public_host: config.public_host.filter(|h| !h.trim().is_empty()),
+            stop: stop.clone(),
+        });
+        {
+            let inner = Arc::clone(&inner);
+            tokio::spawn(async move {
+                loop {
+                    let tx = tokio::select! {
+                        tx = incoming.recv() => tx,
+                        _ = inner.stop.cancelled() => None,
+                    };
+                    let Some(tx) = tx else { break };
+                    let inner = Arc::clone(&inner);
+                    tokio::spawn(async move { inner.incoming(tx).await });
+                }
+            });
+        }
+        Ok(Ua { inner })
+    }
+
+    pub fn bound(&self) -> Bound {
+        self.inner.bound
+    }
+
+    /// Replaces the trunks: their registrations start over, a trunk left out stops (and unregisters).
+    pub async fn set_trunks(&self, trunks: Vec<TrunkConfig>) {
+        let mut entries = HashMap::new();
+        for trunk in trunks {
+            let addresses = resolve(&trunk.host, trunk.port()).await;
+            if addresses.is_empty() {
+                tracing::warn!("SIP trunk {} ({}) did not resolve", trunk.id, trunk.host);
+            }
+            let stop = self.inner.stop.child_token();
+            if trunk.register && trunk.has_credentials() {
+                let inner = Arc::clone(&self.inner);
+                let config = trunk.clone();
+                let token = stop.clone();
+                tokio::spawn(async move { inner.register_loop(config, token).await });
+            }
+            entries.insert(
+                trunk.id.clone(),
+                TrunkEntry {
+                    config: trunk,
+                    addresses,
+                    stop,
+                },
+            );
+        }
+        let old = std::mem::replace(&mut *lock(&self.inner.trunks), entries);
+        for (_, entry) in old {
+            entry.stop.cancel();
+        }
+    }
+
+    /// Blocks a source until `until` (a block the voice services kept), or clears its block.
+    pub fn set_block(&self, source: IpAddr, until: Option<Instant>) {
+        lock(&self.inner.guard).set_block(source, until);
+    }
+
+    pub fn set_guard_policy(&self, policy: GuardPolicy) {
+        lock(&self.inner.guard).set_policy(policy);
+    }
+
+    /// Places an outbound call; what happens comes as events for `request.leg`.
+    pub fn dial(&self, request: DialRequest) -> Result<(), String> {
+        let trunk = lock(&self.inner.trunks)
+            .get(&request.trunk)
+            .map(|t| (t.config.clone(), t.addresses.clone()))
+            .ok_or_else(|| format!("no trunk {}", request.trunk))?;
+        let (give_up, gave_up) = oneshot::channel();
+        lock(&self.inner.legs).insert(
+            request.leg.clone(),
+            Leg {
+                kind: LegKind::Outbound,
+                dialog: None,
+                give_up: Some(give_up),
+                answer: None,
+                answered: false,
+            },
+        );
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move { inner.outbound(request, trunk.0, trunk.1, gave_up).await });
+        Ok(())
+    }
+
+    /// Answers an inbound leg that rings (200 with its answer SDP).
+    /// An answer that comes before the host's decision reached the leg is kept and sent as it rings.
+    pub fn answer(&self, leg: &str) -> Result<(), String> {
+        if !lock(&self.inner.legs).contains_key(leg) {
+            let mut early = lock(&self.inner.early);
+            if early.len() < MAX_EARLY {
+                early.insert(leg.to_string());
+            }
+            return Ok(());
+        }
+        self.inner.accept(leg)
+    }
+
+    /// Ends a leg from this side: BYE once answered, CANCEL or a refusal before.
+    pub fn hangup(&self, leg: &str) {
+        let Some(mut entry) = lock(&self.inner.legs).remove(leg) else {
+            return;
+        };
+        let inner = Arc::clone(&self.inner);
+        let leg = leg.to_string();
+        tokio::spawn(async move {
+            match (&entry.kind, entry.answered, entry.dialog.take()) {
+                (_, true, Some(dialog)) => {
+                    if let Err(err) = dialog.bye().await {
+                        tracing::debug!("SIP leg {leg}: BYE failed: {err}");
+                    }
+                    inner.emit(UaEvent::Ended {
+                        leg,
+                        reason: EndReason::Hangup,
+                    });
+                }
+                (LegKind::Outbound, false, _) => {
+                    // the outbound task cancels and reports the outcome
+                    if let Some(give_up) = entry.give_up.take() {
+                        let _ = give_up.send(());
+                    }
+                }
+                (LegKind::Inbound, false, Some(dialog)) => {
+                    let _ = dialog.reject(Some(StatusCode::BusyHere), None);
+                    inner.emit(UaEvent::Ended {
+                        leg,
+                        reason: EndReason::Hangup,
+                    });
+                }
+                _ => {}
+            }
+        });
+    }
+
+    /// Sends a re-INVITE with a new offer (hold, resume); the other side's answer.
+    pub async fn reinvite(&self, leg: &str, offer: String) -> Result<Option<String>, String> {
+        let dialog = lock(&self.inner.legs)
+            .get(leg)
+            .and_then(|l| l.dialog.clone())
+            .ok_or("noLeg")?;
+        let resp = dialog
+            .reinvite(
+                Some(vec![Header::ContentType("application/sdp".into())]),
+                Some(offer.into_bytes()),
+            )
+            .await
+            .map_err(sip_err)?;
+        Ok(resp
+            .filter(|r| r.status_code.kind() == StatusCodeKind::Successful)
+            .map(|r| String::from_utf8_lossy(&r.body).into_owned()))
+    }
+
+    /// Stops the listeners, the registrations and the legs.
+    pub fn shutdown(&self) {
+        for (_, entry) in lock(&self.inner.trunks).drain() {
+            entry.stop.cancel();
+        }
+        self.inner.stop.cancel();
+    }
+}
+
+/// A port of 0 for a stream listener is picked here, since rsipstack binds stream listeners when it serves them and
+/// would not tell the port.
+async fn free_port(addr: SocketAddr) -> Result<SocketAddr, String> {
+    if addr.port() != 0 {
+        return Ok(addr);
+    }
+    let probe = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("SIP listener {addr}: {e}"))?;
+    probe.local_addr().map_err(|e| e.to_string())
+}
+
+async fn resolve(host: &str, port: u16) -> Vec<IpAddr> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return vec![ip];
+    }
+    match tokio::net::lookup_host((host, port)).await {
+        Ok(addrs) => addrs.map(|a| a.ip()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+impl Inner {
+    fn emit(&self, event: UaEvent) {
+        let _ = self.events.send(event);
+    }
+
+    /// Sends an inbound leg's 200 with its answer SDP.
+    fn accept(&self, leg: &str) -> Result<(), String> {
+        let mut legs = lock(&self.legs);
+        let entry = legs.get_mut(leg).ok_or("noLeg")?;
+        if entry.answered {
+            return Ok(());
+        }
+        let dialog = entry.dialog.clone().ok_or("noDialog")?;
+        let body = entry.answer.clone().unwrap_or_default().into_bytes();
+        dialog
+            .accept(Some(vec![Header::ContentType("application/sdp".into())]), Some(body))
+            .map_err(sip_err)?;
+        entry.answered = true;
+        Ok(())
+    }
+
+    /// The Contact host and port for a transport.
+    fn contact(&self, transport: Transport, user: &str) -> String {
+        let bound = match transport {
+            Transport::Udp => self.bound.udp,
+            Transport::Tcp => self.bound.tcp,
+            Transport::Tls => self.bound.tls,
+        }
+        .or(self.bound.udp)
+        .or(self.bound.tcp)
+        .or(self.bound.tls);
+        let port = bound.map(|b| b.port()).unwrap_or(transport.default_port());
+        let host = self
+            .public_host
+            .clone()
+            .or_else(|| bound.map(|b| b.ip().to_string()))
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host
+        };
+        let user = if user.is_empty() { "moqui" } else { user };
+        if transport == Transport::Udp {
+            format!("sip:{user}@{host}:{port}")
+        } else {
+            format!("sip:{user}@{host}:{port};transport={}", transport.param())
+        }
+    }
+
+    fn target(&self, trunk: &TrunkConfig, addresses: &[IpAddr]) -> Result<SipAddr, String> {
+        let ip = addresses
+            .first()
+            .copied()
+            .ok_or_else(|| format!("trunk {} has no address", trunk.id))?;
+        Ok(SipAddr {
+            r#type: Some(trunk.transport.sip()),
+            addr: SocketAddr::new(ip, trunk.port()).into(),
+        })
+    }
+
+    // ---------- registration ----------
+
+    async fn register_loop(self: Arc<Self>, trunk: TrunkConfig, stop: CancellationToken) {
+        let call_id = format!("{}@moqui", random_text(16));
+        let mut seq = 0u32;
+        let mut failures = 0u32;
+        loop {
+            let outcome = self.register_once(&trunk, &call_id, &mut seq, REGISTER_EXPIRES).await;
+            let wait = match outcome {
+                Ok(expires) => {
+                    failures = 0;
+                    self.emit(UaEvent::TrunkStatus {
+                        trunk: trunk.id.clone(),
+                        state: TrunkState::Registered,
+                    });
+                    Duration::from_secs(u64::from(expires.max(30)) * 4 / 5)
+                }
+                Err(err) => {
+                    failures += 1;
+                    tracing::warn!("SIP trunk {} did not register: {err}", trunk.id);
+                    self.emit(UaEvent::TrunkStatus {
+                        trunk: trunk.id.clone(),
+                        state: TrunkState::Failed(err),
+                    });
+                    (Duration::from_secs(5) * 2u32.saturating_pow(failures.min(8))).min(MAX_BACKOFF)
+                }
+            };
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = stop.cancelled() => break,
+            }
+        }
+        // a trunk taken out or the server stopping: let the registration go
+        if !self.stop.is_cancelled() {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(5),
+                self.register_once(&trunk, &call_id, &mut seq, 0),
+            )
+            .await;
+            self.emit(UaEvent::TrunkStatus {
+                trunk: trunk.id.clone(),
+                state: TrunkState::Unregistered,
+            });
+        }
+    }
+
+    /// One REGISTER (answering one challenge); the expiry the registrar granted.
+    async fn register_once(
+        &self,
+        trunk: &TrunkConfig,
+        call_id: &str,
+        seq: &mut u32,
+        expires: u32,
+    ) -> Result<u32, String> {
+        let addresses = resolve(&trunk.host, trunk.port()).await;
+        let target = self.target(trunk, &addresses)?;
+        let (connection, _) = self
+            .endpoint
+            .transport_layer
+            .lookup(&target, None)
+            .await
+            .map_err(sip_err)?;
+        let domain = trunk.domain();
+        let user = &trunk.credentials.username;
+        let request_uri = format!("sip:{domain}");
+        let aor: Uri = Uri::try_from(format!("sip:{user}@{domain}").as_str()).map_err(sip_err)?;
+        let contact = self.contact(trunk.transport, user);
+        let tag = make_tag();
+        let mut authorization: Option<(bool, String)> = None;
+        for _attempt in 0..2 {
+            *seq += 1;
+            let via = self
+                .endpoint
+                .get_via(Some(connection.get_addr().clone()), None)
+                .map_err(sip_err)?;
+            let from = rsipstack::sip::typed::From {
+                display_name: None,
+                uri: aor.clone(),
+                params: vec![],
+            }
+            .with_tag(tag.clone());
+            let to = rsipstack::sip::typed::To {
+                display_name: None,
+                uri: aor.clone(),
+                params: vec![],
+            };
+            let mut request = self.endpoint.make_request(
+                Method::Register,
+                Uri::try_from(request_uri.as_str()).map_err(sip_err)?,
+                via,
+                from,
+                to,
+                *seq,
+                Some(call_id.to_string().into()),
+            );
+            request.headers.push(Header::Contact(format!("<{contact}>").into()));
+            request.headers.push(Header::Expires(expires.to_string().into()));
+            if let Some((proxy, value)) = &authorization {
+                request.headers.push(if *proxy {
+                    Header::ProxyAuthorization(value.clone().into())
+                } else {
+                    Header::Authorization(value.clone().into())
+                });
+            }
+            let resp = self.send_request(request, &target).await?;
+            let code = u16::from(resp.status_code.clone());
+            match code {
+                200..=299 => return Ok(granted_expires(&resp).unwrap_or(expires)),
+                401 | 407 if authorization.is_none() => {
+                    let value = answer_challenge(&resp, &trunk.credentials, "REGISTER", &request_uri)?;
+                    authorization = Some((code == 407, value));
+                }
+                _ => return Err(format!("the registrar answered {code} {}", resp.status_code)),
+            }
+        }
+        Err("the registrar refused the credentials".to_string())
+    }
+
+    /// Sends a request outside a dialog and waits for its final answer.
+    async fn send_request(&self, request: Request, target: &SipAddr) -> Result<Response, String> {
+        let key = TransactionKey::from_request(&request, TransactionRole::Client).map_err(sip_err)?;
+        let mut tx = Transaction::new_client(key, request, self.endpoint.clone(), None);
+        tx.destination = Some(target.clone());
+        tx.send().await.map_err(sip_err)?;
+        let wait = async {
+            while let Some(message) = tx.receive().await {
+                if let SipMessage::Response(resp) = message {
+                    if resp.status_code.kind() != StatusCodeKind::Provisional {
+                        return Some(resp);
+                    }
+                }
+            }
+            None
+        };
+        match tokio::time::timeout(REGISTER_WAIT, wait).await {
+            Ok(Some(resp)) => Ok(resp),
+            Ok(None) => Err("no answer".to_string()),
+            Err(_) => Err("no answer in time".to_string()),
+        }
+    }
+
+    // ---------- outbound ----------
+
+    async fn outbound(
+        self: Arc<Self>,
+        request: DialRequest,
+        trunk: TrunkConfig,
+        addresses: Vec<IpAddr>,
+        mut gave_up: oneshot::Receiver<()>,
+    ) {
+        let leg = request.leg.clone();
+        let reason = match self.place(&request, &trunk, &addresses, &mut gave_up).await {
+            Ok(None) => return,
+            Ok(Some(reason)) => reason,
+            Err(err) => {
+                tracing::warn!("SIP leg {leg} to trunk {} failed: {err}", trunk.id);
+                EndReason::Failed(None)
+            }
+        };
+        lock(&self.legs).remove(&leg);
+        self.emit(UaEvent::Ended { leg, reason });
+    }
+
+    /// Sends the INVITE (and once more with credentials) and follows it to its outcome: `None` once answered (the
+    /// dialog's watcher reports its end), else how it ended.
+    async fn place(
+        self: &Arc<Self>,
+        request: &DialRequest,
+        trunk: &TrunkConfig,
+        addresses: &[IpAddr],
+        gave_up: &mut oneshot::Receiver<()>,
+    ) -> Result<Option<EndReason>, String> {
+        let target = self.target(trunk, addresses)?;
+        let domain = trunk.domain();
+        // the Request-URI names the trunk's host and port: a CANCEL goes where it points
+        let callee = Uri::try_from(trunk.uri(&request.to).as_str()).map_err(sip_err)?;
+        let caller = Uri::try_from(format!("sip:{}@{domain}", request.from).as_str()).map_err(sip_err)?;
+        let contact = Uri::try_from(self.contact(trunk.transport, &request.from).as_str()).map_err(sip_err)?;
+        let call_id = format!("{}@moqui", random_text(20));
+        let mut race = Race::new(Instant::now(), request.ring_timeout);
+        let mut authorization: Option<Header> = None;
+        // the host's hangup, once (a oneshot is not polled again after it fired)
+        let mut given_up = false;
+        for _attempt in 0..2 {
+            let mut headers: Vec<Header> = request
+                .headers
+                .iter()
+                .map(|(name, value)| Header::Other(name.clone(), value.clone()))
+                .collect();
+            if let Some(auth) = &authorization {
+                headers.push(auth.clone());
+            }
+            let option = InviteOption {
+                caller_display_name: request.from_name.clone(),
+                caller: caller.clone(),
+                callee: callee.clone(),
+                destination: Some(target.clone()),
+                content_type: Some("application/sdp".to_string()),
+                offer: Some(request.offer.clone().into_bytes()),
+                contact: contact.clone(),
+                headers: Some(headers),
+                call_id: Some(call_id.clone()),
+                ..Default::default()
+            };
+            let (states_tx, states) = self.dialogs.new_dialog_state_channel();
+            let (dialog, handle) = self.dialogs.do_invite_async(option, states_tx).map_err(sip_err)?;
+            if let Some(entry) = lock(&self.legs).get_mut(&request.leg) {
+                entry.dialog = Some(dialog.clone());
+            }
+            let ringing = Arc::new(Mutex::new(false));
+            let watcher = self.watch_early(request.leg.clone(), states, Arc::clone(&ringing));
+            let mut handle = handle;
+            let result = loop {
+                let deadline = tokio::time::Instant::from_std(race.deadline());
+                tokio::select! {
+                    result = &mut handle => break result,
+                    _ = &mut *gave_up, if !given_up => {
+                        given_up = true;
+                        if race.cancel() == race::Action::Cancel {
+                            let _ = dialog.cancel().await;
+                        }
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        if race.poll(Instant::now()) == race::Action::Cancel {
+                            let _ = dialog.cancel().await;
+                        }
+                    }
+                }
+            };
+            let (_, response) = match result {
+                Ok(Ok(done)) => done,
+                Ok(Err(err)) => {
+                    watcher.abort();
+                    return Err(sip_err(err));
+                }
+                Err(err) => {
+                    watcher.abort();
+                    return Err(err.to_string());
+                }
+            };
+            let Some(resp) = response else {
+                watcher.abort();
+                return Ok(Some(gave_up_reason(&race)));
+            };
+            let code = u16::from(resp.status_code.clone());
+            match code {
+                200..=299 => {
+                    let tag = resp
+                        .to_header()
+                        .ok()
+                        .and_then(|h| h.tag().ok().flatten())
+                        .map(|t| t.value().to_string())
+                        .unwrap_or_default();
+                    if race.answered(&tag) != race::Action::Confirm {
+                        // the 2xx crossed our CANCEL: rsipstack ACKs and ends it with BYE
+                        watcher.abort();
+                        return Ok(Some(gave_up_reason(&race)));
+                    }
+                    let answer = String::from_utf8_lossy(&resp.body).into_owned();
+                    if let Some(entry) = lock(&self.legs).get_mut(&request.leg) {
+                        entry.answered = true;
+                        entry.give_up = None;
+                    }
+                    self.emit(UaEvent::Answered {
+                        leg: request.leg.clone(),
+                        answer,
+                    });
+                    // the watcher carries on, for the dialog's end and its re-INVITEs
+                    return Ok(None);
+                }
+                401 | 407 if authorization.is_none() && race.outcome().is_none() => {
+                    watcher.abort();
+                    let value = answer_challenge(&resp, &trunk.credentials, "INVITE", &callee.to_string())?;
+                    authorization = Some(if code == 407 {
+                        Header::ProxyAuthorization(value.into())
+                    } else {
+                        Header::Authorization(value.into())
+                    });
+                }
+                487 if race.outcome().is_some() => {
+                    watcher.abort();
+                    return Ok(Some(gave_up_reason(&race)));
+                }
+                _ => {
+                    watcher.abort();
+                    race.failed(code);
+                    return Ok(Some(match code {
+                        486 | 600 => EndReason::Busy,
+                        _ => EndReason::Failed(Some(code)),
+                    }));
+                }
+            }
+        }
+        Ok(Some(EndReason::Failed(Some(407))))
+    }
+
+    /// Follows an outbound dialog's states: ringing, then once confirmed its re-INVITEs and its end.
+    fn watch_early(
+        self: &Arc<Self>,
+        leg: String,
+        states: DialogStateReceiver,
+        ringing: Arc<Mutex<bool>>,
+    ) -> tokio::task::JoinHandle<()> {
+        let inner = Arc::clone(self);
+        tokio::spawn(async move { inner.watch(leg, states, Some(ringing)).await })
+    }
+
+    async fn watch(self: Arc<Self>, leg: String, mut states: DialogStateReceiver, ringing: Option<Arc<Mutex<bool>>>) {
+        while let Some(state) = states.recv().await {
+            match state {
+                DialogState::Early(_, resp) => {
+                    if let Some(ringing) = &ringing {
+                        let first = !std::mem::replace(&mut *lock(ringing), true);
+                        if first && u16::from(resp.status_code.clone()) >= 180 {
+                            self.emit(UaEvent::Ringing { leg: leg.clone() });
+                        }
+                    }
+                }
+                DialogState::Updated(_, req, handle) => {
+                    if req.method == Method::Invite && !req.body.is_empty() {
+                        let (reply, answer) = oneshot::channel();
+                        self.emit(UaEvent::Reoffer {
+                            leg: leg.clone(),
+                            offer: String::from_utf8_lossy(&req.body).into_owned(),
+                            reply,
+                        });
+                        match tokio::time::timeout(DECIDE_WAIT, answer).await {
+                            Ok(Ok(Some(sdp))) => {
+                                let _ = handle
+                                    .respond(
+                                        StatusCode::OK,
+                                        Some(vec![Header::ContentType("application/sdp".into())]),
+                                        Some(sdp.into_bytes()),
+                                    )
+                                    .await;
+                            }
+                            _ => {
+                                let _ = handle.reply(StatusCode::NotAcceptableHere).await;
+                            }
+                        }
+                    } else {
+                        let _ = handle.reply(StatusCode::OK).await;
+                    }
+                }
+                DialogState::Info(_, _, handle) | DialogState::Options(_, _, handle) => {
+                    let _ = handle.reply(StatusCode::OK).await;
+                }
+                DialogState::Notify(_, _, handle)
+                | DialogState::Message(_, _, handle)
+                | DialogState::Refer(_, _, handle)
+                | DialogState::Publish(_, _, handle) => {
+                    let _ = handle.reply(StatusCode::NotImplemented).await;
+                }
+                DialogState::Terminated(id, why) => {
+                    self.dialogs.remove_dialog(&id);
+                    {
+                        let mut legs = lock(&self.legs);
+                        // an outbound leg not yet answered reports its own outcome; a leg already gone was hung up here
+                        match legs.get(&leg) {
+                            None => break,
+                            Some(entry) if matches!(entry.kind, LegKind::Outbound) && !entry.answered => break,
+                            Some(_) => {
+                                legs.remove(&leg);
+                            }
+                        }
+                    }
+                    let reason = match why {
+                        TerminatedReason::UacBye | TerminatedReason::UasBye => EndReason::Bye,
+                        TerminatedReason::UacCancel => EndReason::Canceled,
+                        TerminatedReason::Timeout => EndReason::Failed(Some(408)),
+                        TerminatedReason::UacBusy | TerminatedReason::UasBusy => EndReason::Busy,
+                        TerminatedReason::UasDecline => EndReason::Failed(Some(603)),
+                        TerminatedReason::UacOther(code) | TerminatedReason::UasOther(code) => {
+                            EndReason::Failed(Some(u16::from(code)))
+                        }
+                        TerminatedReason::ProxyError(code) => EndReason::Failed(Some(u16::from(code))),
+                        TerminatedReason::ProxyAuthRequired => EndReason::Failed(Some(407)),
+                    };
+                    self.emit(UaEvent::Ended {
+                        leg: leg.clone(),
+                        reason,
+                    });
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // ---------- inbound ----------
+
+    async fn incoming(self: Arc<Self>, mut tx: Transaction) {
+        let method = tx.original.method;
+        if let Some(Dialog::Invite(mut dialog)) = self.dialogs.match_dialog(&tx) {
+            if let Err(err) = dialog.handle(&mut tx).await {
+                tracing::debug!("SIP {method} in a dialog: {err}");
+            }
+            return;
+        }
+        let source = source_of(&tx);
+        let trunk = source.and_then(|s| self.trunk_by_address(s.ip()));
+        match method {
+            Method::Invite | Method::Register => {}
+            Method::Options if trunk.is_some() => {
+                let _ = tx.reply(StatusCode::OK).await;
+                return;
+            }
+            Method::Ack => return,
+            _ if trunk.is_some() => {
+                let _ = tx.reply(StatusCode::CallTransactionDoesNotExist).await;
+                return;
+            }
+            // anything else from a stranger is not answered
+            _ => return,
+        }
+        let trunk = match trunk {
+            Some(trunk) => trunk,
+            None => match self.authenticate(&mut tx, source).await {
+                Some(trunk) => trunk,
+                None => return,
+            },
+        };
+        if method == Method::Register {
+            // a trunk does not register here; phones register with V4's registrar
+            let _ = tx.reply(StatusCode::Forbidden).await;
+            return;
+        }
+        self.new_call(tx, trunk, source).await;
+    }
+
+    fn trunk_by_address(&self, ip: IpAddr) -> Option<TrunkConfig> {
+        lock(&self.trunks)
+            .values()
+            .find(|t| t.addresses.contains(&ip) || t.config.inbound.iter().any(|e| matches_address(ip, e)))
+            .map(|t| t.config.clone())
+    }
+
+    /// A request from an address that is not a trunk's: its digest answer must name a trunk's username. A missing
+    /// or stale answer is challenged; a failed one counts against the source.
+    async fn authenticate(&self, tx: &mut Transaction, source: Option<SocketAddr>) -> Option<TrunkConfig> {
+        let proxy = tx.original.method == Method::Invite;
+        let header_name = if proxy { "Proxy-Authorization" } else { "Authorization" };
+        let given = header_values(&tx.original.headers, header_name)
+            .into_iter()
+            .find_map(|v| Authorization::parse(&v));
+        let method = tx.original.method.to_string();
+        let verdict = given.as_ref().map(|auth| {
+            let trunk = lock(&self.trunks)
+                .values()
+                .find(|t| {
+                    let c = &t.config.credentials;
+                    c.auth_username
+                        .as_deref()
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or(&c.username)
+                        == auth.username
+                        && !c.password.is_empty()
+                })
+                .map(|t| t.config.clone());
+            let password = trunk.as_ref().map(|t| t.credentials.password.clone());
+            let verdict = lock(&self.nonces).verify(auth, &method, password.as_deref(), now_secs());
+            (verdict, trunk)
+        });
+        match verdict {
+            Some((Verdict::Valid, Some(trunk))) => {
+                if let Some(source) = source {
+                    lock(&self.guard).success(source.ip());
+                }
+                Some(trunk)
+            }
+            None | Some((Verdict::Stale, _)) => {
+                let stale = verdict.is_some();
+                let challenges = lock(&self.nonces).challenges(now_secs(), &[Algorithm::Sha256, Algorithm::Md5], stale);
+                let headers = challenges
+                    .into_iter()
+                    .map(|c| {
+                        if proxy {
+                            Header::ProxyAuthenticate(c.into())
+                        } else {
+                            Header::WwwAuthenticate(c.into())
+                        }
+                    })
+                    .collect();
+                let code = if proxy {
+                    StatusCode::ProxyAuthenticationRequired
+                } else {
+                    StatusCode::Unauthorized
+                };
+                let _ = tx.reply_with(code, headers, None).await;
+                None
+            }
+            Some(_) => {
+                let username = given.map(|a| a.username).unwrap_or_default();
+                let blocked = match source {
+                    Some(source) => {
+                        let failure = lock(&self.guard).failure(source.ip(), Instant::now());
+                        self.emit(UaEvent::AuthFailure {
+                            source: source.ip(),
+                            username,
+                            blocked: failure == Failure::Blocked,
+                        });
+                        matches!(failure, Failure::Blocked | Failure::StillBlocked)
+                    }
+                    None => false,
+                };
+                if !blocked {
+                    let _ = tx.reply(StatusCode::Forbidden).await;
+                }
+                None
+            }
+        }
+    }
+
+    async fn new_call(self: Arc<Self>, mut tx: Transaction, trunk: TrunkConfig, source: Option<SocketAddr>) {
+        let request = tx.original.clone();
+        let to = user_of(&request.uri);
+        let (from, from_name) = match request.from_header().ok().and_then(|h| h.typed().ok()) {
+            Some(from) => (user_of(&from.uri), from.display_name.clone()),
+            None => (String::new(), None),
+        };
+        let call_id = request
+            .call_id_header()
+            .map(|h| h.value().to_string())
+            .unwrap_or_default();
+        if request.body.is_empty() {
+            // an INVITE without an offer (late offer) is not supported
+            let _ = tx.reply(StatusCode::NotAcceptableHere).await;
+            return;
+        }
+        let offer = String::from_utf8_lossy(&request.body).into_owned();
+        let contact = Uri::try_from(self.contact(trunk.transport, &to).as_str()).ok();
+        let (states_tx, states) = self.dialogs.new_dialog_state_channel();
+        let dialog = match self.dialogs.get_or_create_server_invite(&tx, states_tx, None, contact) {
+            Ok(dialog) => dialog,
+            Err(err) => {
+                tracing::debug!("SIP INVITE {call_id}: {err}");
+                let _ = tx.reply(StatusCode::ServerInternalError).await;
+                return;
+            }
+        };
+        // the transaction's own handling: 100 Trying, the CANCEL, the ACK
+        {
+            let mut handler = dialog.clone();
+            tokio::spawn(async move {
+                let _ = handler.handle(&mut tx).await;
+            });
+        }
+        let (reply, decision) = oneshot::channel();
+        self.emit(UaEvent::Incoming(IncomingCall {
+            trunk_id: trunk.id.clone(),
+            to,
+            from,
+            from_name,
+            call_id: call_id.clone(),
+            offer,
+            source: source.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 0))),
+            reply,
+        }));
+        match tokio::time::timeout(DECIDE_WAIT, decision).await {
+            Ok(Ok(Decision::Ring { leg, answer })) => {
+                lock(&self.legs).insert(
+                    leg.clone(),
+                    Leg {
+                        kind: LegKind::Inbound,
+                        dialog: Some(dialog.clone()),
+                        give_up: None,
+                        answer: Some(answer),
+                        answered: false,
+                    },
+                );
+                if let Err(err) = dialog.ringing(None, None) {
+                    tracing::debug!("SIP INVITE {call_id}: 180 not sent: {err}");
+                }
+                if lock(&self.early).remove(&leg) {
+                    if let Err(err) = self.accept(&leg) {
+                        tracing::debug!("SIP leg {leg}: not answered: {err}");
+                    }
+                }
+                let inner = Arc::clone(&self);
+                tokio::spawn(async move { inner.watch(leg, states, None).await });
+            }
+            Ok(Ok(Decision::Reject(code))) => {
+                let _ = dialog.reject(Some(status_code(code)), None);
+            }
+            _ => {
+                let _ = dialog.reject(Some(StatusCode::TemporarilyUnavailable), None);
+            }
+        }
+    }
+}
+
+fn gave_up_reason(race: &Race) -> EndReason {
+    match race.outcome() {
+        Some(race::Outcome::TimedOut) => EndReason::TimedOut,
+        Some(race::Outcome::Failed(code)) => EndReason::Failed(Some(code)),
+        _ => EndReason::Canceled,
+    }
+}
+
+/// Where a request came from: its top Via with `received` and `rport` (RFC 3581), which the transport fills in.
+fn source_of(tx: &Transaction) -> Option<SocketAddr> {
+    if let Some(remote) = tx.connection.as_ref().and_then(|c| c.get_remote_addr()) {
+        if let Ok(addr) = remote.get_socketaddr() {
+            return Some(addr);
+        }
+    }
+    let via = tx.original.via_header().ok()?;
+    let (_, host_with_port) = SipConnection::parse_target_from_via(via).ok()?;
+    SocketAddr::try_from(host_with_port).ok()
+}
+
+/// The expiry a 200 to a REGISTER granted (its Contact's `expires`, else its Expires header).
+fn granted_expires(resp: &Response) -> Option<u32> {
+    for contact in header_values(&resp.headers, "Contact") {
+        if let Some(value) = contact.split(';').find_map(|p| p.trim().strip_prefix("expires=")) {
+            if let Ok(n) = value.trim().parse() {
+                return Some(n);
+            }
+        }
+    }
+    header_values(&resp.headers, "Expires")
+        .first()
+        .and_then(|v| v.trim().parse().ok())
+}
+
+/// The Authorization value for a 401 or 407, checked against the trunk's realm and algorithms.
+fn answer_challenge(resp: &Response, credentials: &Credentials, method: &str, uri: &str) -> Result<String, String> {
+    let name = if u16::from(resp.status_code.clone()) == 407 {
+        "Proxy-Authenticate"
+    } else {
+        "WWW-Authenticate"
+    };
+    let challenges: Vec<Challenge> = header_values(&resp.headers, name)
+        .iter()
+        .filter_map(|v| Challenge::parse(v))
+        .collect();
+    let challenge = digest::choose(&challenges, credentials).map_err(|r| r.to_string())?;
+    digest::answer(credentials, challenge, method, uri, &digest::cnonce()).map_err(|r| r.to_string())
+}
+
+#[cfg(test)]
+#[path = "ua_tests.rs"]
+mod tests;

@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Trunks (plans/Comms-Framework.md §5.2, D-V4): the SIP trunks to the phone network, each with its status as the SIP
+    engine last reported it and its last error, its provider profile (and whether a live check verified it), whether it takes
+    emergency calls. Add and Edit are dialogs; TLS with SRTP is the default, and UDP, TCP or plain RTP only with a profile that
+    allows them. The password is never shown: an empty one keeps the old. org.moqui.impl.VoiceServices find#, store# and
+    delete#VoiceTrunk. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Trunks" default-menu-index="2">
+
+    <transition name="storeTrunk">
+        <service-call name="org.moqui.impl.VoiceServices.store#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId || null, name:name, host:host,
+                port:port || null, transportEnumId:transportEnumId, mediaEncryptionEnumId:mediaEncryptionEnumId, providerProfileEnumId:providerProfileEnumId,
+                username:username || '', password:password || null, authUsername:authUsername || '', realm:realm || '', algorithms:algorithms || '',
+                registerFlag:registerFlag || 'N', emergencyCapable:emergencyCapable || 'N', inboundAddresses:inboundAddresses || '', fromDomain:fromDomain || '',
+                disabled:disabled || 'N'}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Trunk saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteTrunk">
+        <service-call name="org.moqui.impl.VoiceServices.delete#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Trunk removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.impl.VoiceServices.find#VoiceTrunks').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
+        trunkList = Array.from(out.trunkList || []).map((t) => Object.assign({}, t, {
+            addressText: t.host + (t.port ? ':' + t.port : ''),
+            securityText: (t.transportEnumId === 'VtrTls' ? 'TLS' : t.transportEnumId === 'VtrTcp' ? 'TCP' : 'UDP') + ', ' +
+                (t.mediaEncryptionEnumId === 'VmePlain' ? L('plain RTP') : 'SRTP'),
+            profileLine: (t.profileText || '') + (t.profileVerified ? '' : ' · ' + L('not verified live')),
+            emergencyText: t.emergencyCapable === 'Y' ? L('Yes') : L('No'),
+            statusLine: (t.disabled === 'Y' ? L('Disabled') : t.statusText || L('Not checked yet')) + (t.lastStatusDate ? ' · ' + when(t.lastStatusDate) : ''),
+            statusColor: t.disabled === 'Y' ? 'grey' : t.statusId === 'VtsFailed' ? 'negative' : ['VtsRegistered', 'VtsOk'].includes(t.statusId) ? 'positive' : 'grey',
+            errorText: t.lastErrorText || (t.credentialsUnreadable ? L('Its credentials do not read; enter them again') : ''),
+            passwordText: t.hasPassword ? L('Set') : L('None'),
+        }))
+        newTrunk = {transportEnumId: 'VtrTls', mediaEncryptionEnumId: 'VmeSrtp', providerProfileEnumId: 'VppGeneric', registerFlag: 'Y',
+            emergencyCapable: 'N', algorithms: 'SHA-256,MD5', disabled: 'N'}
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Trunks" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="NewTrunkDialog" button-text="Add a trunk" icon="sym_o_add" width="720" title="Add a trunk" type="primary">
+                <form-single name="NewTrunk" transition="storeTrunk" map="newTrunk" focus-field="name">
+                    <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                    <field name="host"><default-field title="Host" tooltip="The provider's SIP host name"><text-line size="40"/></default-field></field>
+                    <field name="port"><default-field title="Port" tooltip="Empty: 5061 for TLS, 5060 otherwise"><text-line size="6"/></default-field></field>
+                    <field name="providerProfileEnumId"><default-field title="Provider profile">
+                        <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                            <econdition field-name="enumTypeId" value="VoiceProviderProfile"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="transportEnumId"><default-field title="Signaling">
+                        <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                            <econdition field-name="enumTypeId" value="VoiceTransport"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="mediaEncryptionEnumId"><default-field title="Media">
+                        <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                            <econdition field-name="enumTypeId" value="VoiceMediaEncryption"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                    <field name="username"><default-field title="Username"><text-line size="30"/></default-field></field>
+                    <field name="password"><default-field title="Password"><password size="30"/></default-field></field>
+                    <field name="authUsername"><default-field title="Authentication ID" tooltip="When the provider gives one apart from the username"><text-line size="30"/></default-field></field>
+                    <field name="realm"><default-field title="Realm" tooltip="The only realm the credentials answer; empty answers the trunk's"><text-line size="30"/></default-field></field>
+                    <field name="algorithms"><default-field title="Digest algorithms" tooltip="SHA-256, SHA-512-256, MD5; comma separated"><text-line size="30"/></default-field></field>
+                    <field name="inboundAddresses"><default-field title="Provider addresses" tooltip="The provider's signaling IPs or CIDRs, comma separated: their calls need no digest"><text-line size="40"/></default-field></field>
+                    <field name="fromDomain"><default-field title="From domain"><text-line size="30"/></default-field></field>
+                    <field name="registerFlag"><default-field title="Register"><check><option key="Y" text="Register with the provider"/></check></default-field></field>
+                    <field name="emergencyCapable"><default-field title="Emergency"><check><option key="Y" text="Takes emergency calls"/></check></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                    <field-layout>
+                        <field-row><field-ref name="name"/><field-ref name="providerProfileEnumId"/></field-row>
+                        <field-row><field-ref name="host"/><field-ref name="port"/></field-row>
+                        <field-row><field-ref name="transportEnumId"/><field-ref name="mediaEncryptionEnumId"/></field-row>
+                        <field-row><field-ref name="username"/><field-ref name="password"/></field-row>
+                        <field-row><field-ref name="authUsername"/><field-ref name="realm"/></field-row>
+                        <field-row><field-ref name="algorithms"/><field-ref name="fromDomain"/></field-row>
+                        <field-ref name="inboundAddresses"/>
+                        <field-row><field-ref name="registerFlag"/><field-ref name="emergencyCapable"/></field-row>
+                        <field-ref name="submitButton"/>
+                    </field-layout>
+                </form-single>
+            </container-dialog>
+        </container>
+        <label type="p" style="m-muted" text="A trunk carries calls to and from the phone network. TLS with SRTP is the default; UDP, TCP or plain RTP need the profile of a PBX on a private network."/>
+        <container-box><box-body-nopad>
+            <form-list name="TrunkList" list="trunkList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Trunk"><display style="text-weight-medium"/></default-field></field>
+                <field name="addressText"><default-field title="Address"><display/></default-field></field>
+                <field name="securityText"><default-field title="Security"><display/></default-field></field>
+                <field name="profileLine"><default-field title="Profile"><display style="text-caption"/></default-field></field>
+                <field name="emergencyText"><default-field title="Emergency"><display/></default-field></field>
+                <field name="statusLine"><default-field title="Status"><display style="text-${statusColor}"/></default-field></field>
+                <field name="errorText"><default-field title="Last error"><display style="text-caption text-negative"/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditTrunkDialog_${voiceTrunkId}" button-text="Edit" icon="sym_o_edit" width="720" title="Edit ${name}">
+                        <form-single name="EditTrunk" transition="storeTrunk">
+                            <field name="voiceTrunkId" from="voiceTrunkId"><default-field><hidden/></default-field></field>
+                            <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                            <field name="host" from="host"><default-field title="Host"><text-line size="40"/></default-field></field>
+                            <field name="port" from="port"><default-field title="Port"><text-line size="6"/></default-field></field>
+                            <field name="providerProfileEnumId" from="providerProfileEnumId"><default-field title="Provider profile">
+                                <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                                    <econdition field-name="enumTypeId" value="VoiceProviderProfile"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                            <field name="transportEnumId" from="transportEnumId"><default-field title="Signaling">
+                                <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                                    <econdition field-name="enumTypeId" value="VoiceTransport"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                            <field name="mediaEncryptionEnumId" from="mediaEncryptionEnumId"><default-field title="Media">
+                                <drop-down><entity-options key="${enumId}" text="${description}"><entity-find entity-name="moqui.basic.Enumeration">
+                                    <econdition field-name="enumTypeId" value="VoiceMediaEncryption"/><order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down></default-field></field>
+                            <field name="username" from="username"><default-field title="Username"><text-line size="30"/></default-field></field>
+                            <field name="password"><default-field title="Password" tooltip="Empty keeps the password"><password size="30"/></default-field></field>
+                            <field name="authUsername" from="authUsername"><default-field title="Authentication ID"><text-line size="30"/></default-field></field>
+                            <field name="realm" from="realm"><default-field title="Realm"><text-line size="30"/></default-field></field>
+                            <field name="algorithms" from="algorithms"><default-field title="Digest algorithms"><text-line size="30"/></default-field></field>
+                            <field name="inboundAddresses" from="inboundAddresses"><default-field title="Provider addresses"><text-line size="40"/></default-field></field>
+                            <field name="fromDomain" from="fromDomain"><default-field title="From domain"><text-line size="30"/></default-field></field>
+                            <field name="registerFlag" from="registerFlag"><default-field title="Register"><check><option key="Y" text="Register with the provider"/></check></default-field></field>
+                            <field name="emergencyCapable" from="emergencyCapable"><default-field title="Emergency"><check><option key="Y" text="Takes emergency calls"/></check></default-field></field>
+                            <field name="disabled" from="disabled"><default-field title="Disabled"><check><option key="Y" text="No calls through this trunk"/></check></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                            <field-layout>
+                                <field-ref name="voiceTrunkId"/>
+                                <field-row><field-ref name="name"/><field-ref name="providerProfileEnumId"/></field-row>
+                                <field-row><field-ref name="host"/><field-ref name="port"/></field-row>
+                                <field-row><field-ref name="transportEnumId"/><field-ref name="mediaEncryptionEnumId"/></field-row>
+                                <field-row><field-ref name="username"/><field-ref name="password"/></field-row>
+                                <field-row><field-ref name="authUsername"/><field-ref name="realm"/></field-row>
+                                <field-row><field-ref name="algorithms"/><field-ref name="fromDomain"/></field-row>
+                                <field-ref name="inboundAddresses"/>
+                                <field-row><field-ref name="registerFlag"/><field-ref name="emergencyCapable"/></field-row>
+                                <field-ref name="disabled"/>
+                                <field-ref name="submitButton"/>
+                            </field-layout>
+                        </form-single>
+                    </container-dialog>
+                    <link url="deleteTrunk" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove the trunk ${name}?" parameter-map="{voiceTrunkId:voiceTrunkId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="name"/><field-ref name="addressText"/></column>
+                    <column><field-ref name="statusLine"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoTrunks" condition="!trunkList.length"><widgets>
+                <label type="p" text="No trunks yet. Add one with the provider's host and the credentials it gave you." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

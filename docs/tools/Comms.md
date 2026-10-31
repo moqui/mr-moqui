@@ -4,13 +4,15 @@ BasicComms is the framework's Comms app at `/qapps/BasicComms`: the Inbox and Co
 MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab), calls, and the mail, chat and call
 settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
-order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); voice and chat bridges come later
-there.
+order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); phone calls through SIP trunks are there
+(V1), and voicemail, the full dialer and chat bridges come later.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
-`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)).
+`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
+`org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
+([SIP](../interfaces/SIP.md)).
 
 ## For users
 
@@ -54,6 +56,23 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
   they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
   (`call_captions_store`). An end-to-end encrypted call has no captions. See [WebRTC, Captions](../interfaces/WebRTC.md#captions).
+- <a id="phone"></a>**Phone calls.** Calls, Call a number: a phone number (with its country code, or as dialed at
+  home), from one of your numbers. The call opens like any other, audio only; the phone shows as a participant with the
+  number, and the keypad sends tones (for a menu or a PIN). A call to one of your numbers rings you as a call does, with
+  the caller's number. An administrator allows each person to call out and gives them the numbers they call from;
+  international and premium numbers stay off until allowed for the server and for you, and there are limits on calls at
+  once and in a day. An emergency number is always tried first: it goes through a trunk that takes emergency calls, from
+  your registered location with its callback number, and tells the location's contact; when any of that is missing the
+  call is refused and says what is missing, so call from another phone.
+- <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
+  whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
+  provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
+  network allows UDP, TCP or plain RTP, whether it takes emergency calls, and its status and last error. Numbers: each
+  number's trunk, the person it rings and its emergency location. Caller IDs: who may call from which number. Fraud: the
+  limits, each person's permissions, and the sources blocked after failed SIP sign-ins (a block never locks the account;
+  Clear lifts it). Emergency: the readiness checklist and the emergency locations (address, callback number, who is
+  told, the provider's reference and whether it is validated). The screens are basic-comms' (`screen/System/`), mounted
+  into the tools System app; in the terminal they are the same forms.
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
@@ -107,6 +126,9 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui, the mail settings and Inbox of a user with no party, the drive
-picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), the mail settings and Inbox of a
+user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
+provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
+and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
+phone's events. IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).
