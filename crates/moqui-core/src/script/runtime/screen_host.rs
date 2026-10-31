@@ -422,14 +422,20 @@ fn sri_get_base_link_url<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
     })
 }
 
-/// `sri.getScreenUrlInfo()`: the screen the request ended at and the one above it, for the page title, and the path
-/// name lists (`fullPathNameList`, `minimalPathNameList`, `preTransitionPathNameList`, `extraPathNameList`).
+/// `sri.getScreenUrlInfo()`: the screen the request ended at and the one above it, for the page title, the path
+/// name lists (`fullPathNameList`, `minimalPathNameList`, `preTransitionPathNameList`, `extraPathNameList`), and
+/// `density`, that of the deepest screen on the path that sets one (handheld), else empty.
 fn sri_get_screen_url_info<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     host_guard(&ctx, || {
-        let (target, parent) = with_render(&ctx, false, |state| {
+        let (target, parent, density) = with_render(&ctx, false, |state| {
             let defs = &state.url_info.path_defs;
             let parent = defs.len().checked_sub(2).and_then(|index| defs.get(index)).cloned();
-            Ok((Arc::clone(&state.url_info.target_screen), parent))
+            let density = defs
+                .iter()
+                .rev()
+                .find_map(|def| def.density.clone())
+                .unwrap_or_default();
+            Ok((Arc::clone(&state.url_info.target_screen), parent, density))
         })?;
         let (extra, full, minimal, pre_transition) = with_render(&ctx, false, |state| {
             let info = &state.url_info;
@@ -446,6 +452,7 @@ fn sri_get_screen_url_info<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> 
         object.set("minimalPathNameList", minimal)?;
         object.set("preTransitionPathNameList", pre_transition)?;
         object.set("targetScreen", screen_def_object(&ctx, &target)?)?;
+        object.set("density", density)?;
         if let Some(parent) = parent {
             object.set("parentScreen", screen_def_object(&ctx, &parent)?)?;
         }

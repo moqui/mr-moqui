@@ -39,6 +39,7 @@ others for dialogs, keys, downloads and the saved-find popup). A full screen is 
 | `select`, `input`, `span` | `data-url`, `data-params`, `data-depends`, `data-optional` | transition URL, fixed parameters (JSON), `[[fieldId, parameter], ...]` read when the options load or the field changes |
 | `select` | `data-search`, `data-min`, `data-delay`, `data-label`, `data-value`, `data-empty`, `data-use-actual` | search as you type, minimum length, delay, label and value field names, empty first option, the typed text is the value |
 | `input` | `data-default` | text-line `default-transition`: fills the value from the transition |
+| `span.scan-input` | `data-scan-url`, `data-params`, `data-depends`, `data-allowed`, `data-scan-id-field`, `data-no-submit`, `data-confirm-scan` | the `scan-input` field: Enter or a scanner's quick Tab in its `input[data-scan]` posts the text to the screen's `scanResolve`; one match fills the hidden id, type and scan id inputs and submits the form (or shows Confirm), several are buttons in its `.scan-result`, none is named there ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#scan-input)) |
 | `span[data-dynamic="fieldId"]` | `data-hidden` | display with `dynamic-transition`: sets `fieldId_display` and the hidden input |
 | `.tree` | `data-url`, `data-params` | fetches nodes (POST, `treeNodeId`, `treeNodeName`), draws a nested list, opens children on click |
 | `.editable` | `data-url`, `data-params`, `data-name`, `data-widget`, `data-load-url`, `data-load-params`, `data-options`, `data-value`, `data-empty` | click to edit, save by POST; `data-widget` `select` (the options, or those `data-load-url` answers), `date` and `date-time` (a date input) |
@@ -75,6 +76,6 @@ Tests: `moqui test-client webroot --offline` runs the page specs under `test/cli
 Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).
 
 Sections of the reference: Page shell and settings · Loading a screen · The components the macros write · Shell data
-and providers · Preferences · Appearance · Record panels, rich text, avatars and record cards · List views: board,
-calendar and tree · Layout panels: split, wizard and stack · Chat store and presence · Notification listeners ·
+and providers · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record
+cards · List views: board, calendar and tree · Scan input · Layout panels: split, wizard and stack · Chat store and presence · Notification listeners ·
 Collaborative editing · Mail sign-in popup · Server-static screens · The tui screen model · Not here.

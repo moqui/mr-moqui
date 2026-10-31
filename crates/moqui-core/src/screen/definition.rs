@@ -285,7 +285,8 @@ pub struct TransitionDef {
     pub default_response: ResponseDef,
     pub error_response: Option<ResponseDef>,
     /// The automatic transitions every screen has, as Java's `ScreenDefinition`: `actions` (the data of a server-static
-    /// screen as JSON), `formSelectColumns`, `formSaveFind` and `screenDoc`. A screen's own transition of the name wins.
+    /// screen as JSON), `formSelectColumns`, `formSaveFind` and `screenDoc`; and `scanResolve`, which runs the resolver of
+    /// a `scan-input` of the screen (`scan.rs`). A screen's own transition of the name wins.
     pub implicit: Implicit,
 }
 
@@ -297,6 +298,7 @@ pub enum Implicit {
     FormSelectColumns,
     FormSaveFind,
     ScreenDoc,
+    ScanResolve,
 }
 
 /// The children as one `<actions>` script. An empty list is still a script: an `<actions>` element
@@ -312,21 +314,24 @@ fn compile_actions(children: Vec<MNode>, label: &str) -> Result<Actions, String>
 impl TransitionDef {
     /// The automatic transitions: `ActionsTransitionItem` runs the screen's data preparation on demand, and the
     /// saved find, column and screen document ones are `ScreenDefinition`'s other items. The saved find and column
-    /// ones write rows, so they take only a POST with the session token (Java takes any method and no token).
+    /// ones write rows, so they take only a POST with the session token (Java takes any method and no token). The scan
+    /// resolver only reads, but it takes a POST with the session token too: a scan is the user's own action on the page.
     fn implicit(screen_location: &str, implicit: Implicit) -> Self {
         let (name, read_only, begin_transaction) = match implicit {
             Implicit::FormSelectColumns => ("formSelectColumns", false, true),
             Implicit::FormSaveFind => ("formSaveFind", false, true),
             Implicit::ScreenDoc => ("screenDoc", true, false),
+            Implicit::ScanResolve => ("scanResolve", true, false),
             Implicit::Actions | Implicit::None => ("actions", true, true),
         };
+        let post_only = !read_only || implicit == Implicit::ScanResolve;
         Self {
             name: name.to_string(),
-            method: if read_only { "any" } else { "post" }.to_string(),
+            method: if post_only { "post" } else { "any" }.to_string(),
             screen_location: screen_location.to_string(),
             begin_transaction,
             read_only,
-            require_session_token: Some(!read_only),
+            require_session_token: Some(post_only),
             authz_action: "view".to_string(),
             authz_explicit: true,
             parameters: Vec::new(),
@@ -668,6 +673,8 @@ pub struct ScreenDef {
     pub menu_image: Option<String>,
     pub menu_image_type: String,
     pub screen_theme_type: String,
+    /// `density`: `handheld`, or None for the user's density preference. The screens below inherit it in the shell.
+    pub density: Option<String>,
     /// `all`, or the render modes this screen supports.
     pub render_modes: Vec<String>,
     pub server_static: Vec<String>,
@@ -934,6 +941,7 @@ impl ScreenDef {
             Implicit::FormSelectColumns,
             Implicit::FormSaveFind,
             Implicit::ScreenDoc,
+            Implicit::ScanResolve,
         ] {
             let transition = TransitionDef::implicit(location, implicit);
             if !transitions.iter().any(|item| item.name == transition.name) {
@@ -1066,6 +1074,10 @@ impl ScreenDef {
                 .attribute("screen-theme-type-enum-id")
                 .filter(|text| !text.is_empty())
                 .unwrap_or_else(|| "STT_INTERNAL".to_string()),
+            density: node
+                .attribute("density")
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty()),
             render_modes,
             server_static,
             server_static_auto,

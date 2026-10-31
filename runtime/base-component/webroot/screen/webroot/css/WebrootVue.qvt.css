@@ -781,6 +781,26 @@ body.m-density-compact .q-item { min-height:32px; padding:4px 12px; }
 body.m-density-compact .q-list--dense > .q-item, body.m-density-compact .q-item--dense { min-height:28px; padding:2px 12px; }
 body.m-density-compact .q-mb-md { margin-bottom:8px; }
 
+/* density="handheld" on a screen of the path (moqui.setScreenDensity puts m-density-handheld on the body, and m-density-compact never
+   with it): 48 px controls and 18 px text for a warehouse handheld or a phone in one hand; the shell leaves out the drawer and all of
+   the header but the title and the account (style-guide 8.2) */
+body.m-density-handheld { font-size:18px; }
+body.m-density-handheld .q-field--dense .q-field__control, body.m-density-handheld .q-field--dense .q-field__marginal,
+    body.m-density-handheld .q-field__control, body.m-density-handheld .q-field__marginal { height:48px; min-height:48px; font-size:18px; }
+body.m-density-handheld .q-field--dense.q-field--labeled .q-field__native { padding-top:18px; }
+body.m-density-handheld .q-field__native, body.m-density-handheld .q-field__input { font-size:18px; }
+body.m-density-handheld .q-field--dense .q-field__label { font-size:14px; }
+body.m-density-handheld .q-page-container .q-btn:not(.q-btn--round), body.m-density-handheld .q-dialog .q-btn:not(.q-btn--round) { min-height:48px; font-size:18px; }
+body.m-density-handheld .q-page-container .q-btn.q-btn--round { min-width:48px; min-height:48px; }
+body.m-density-handheld .q-item, body.m-density-handheld .q-list--dense > .q-item, body.m-density-handheld .q-item--dense { min-height:48px; }
+body.m-density-handheld .q-checkbox__inner, body.m-density-handheld .q-radio__inner { font-size:48px; }
+body.m-density-handheld .q-table--dense .q-table .tbody .tr, body.m-density-handheld .q-table--dense .q-table .tbody .td { height:48px; }
+body.m-density-handheld .q-header .q-toolbar { min-height:48px; }
+
+/* scan-input (m-scan-input): the code in the monospace face; the line under the field that names the match or the failure */
+.m-scan-input .m-scan-text { font-family:var(--m-font-mono); }
+.m-scan-input .m-scan-message { padding:2px 4px 0; }
+
 /* the appearance preferences that are body classes (moqui.applyAppearance): THEME_MOTION reduce (m-motion-reduce), or with auto the
    system's reduced motion unless full (m-motion-full); THEME_LINKS_UNDERLINE (m-links-underline) for the links in the page text;
    THEME_RADIUS square (m-radius-square) or round (m-radius-round) for the cards, buttons, fields and menus */

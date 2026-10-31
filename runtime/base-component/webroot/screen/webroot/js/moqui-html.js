@@ -187,8 +187,26 @@
         return !empty && options.length ? options[0].value : "";
     };
 
+    // A scan field (scan-input), the same rules as m-scan-input in WebrootVue.qvt.js. The outcome of the resolver's answer: none,
+    // one match (filled and submitted) or many (offered to choose). A match without an id is not one.
+    const scanOutcome = (answer) => {
+        const matches = answer && Array.isArray(answer.matches) ? answer.matches.filter((item) => item && item.id) : [];
+        if (!matches.length) return { kind: "none", matches };
+        return matches.length === 1 ? { kind: "one", match: matches[0], matches } : { kind: "many", matches };
+    };
+    // The scan intent: the same text again within windowMs (2 s) of the last scan of it is a double scan, the same intent with the
+    // same id, which the transition's operation key answers once; any other text, or the same later, is a new intent.
+    const scanIntent = (last, text, now, makeId, windowMs) => {
+        if (last && last.text === text && now - last.time < (windowMs || 2000)) return { text, id: last.id, time: now, repeat: true };
+        return { text, id: makeId(), time: now, repeat: false };
+    };
+    // Whether a Tab ends a scan: a keyboard wedge types the whole code in a burst (on average under 35 ms a key) and may end
+    // it with Tab instead of Enter; a person typing as fast is rare, and gets the next field as usual otherwise.
+    const scanEndsWithTab = (length, firstKeyTime, now) => length >= 3 && firstKeyTime > 0 && (now - firstKeyTime) / length < 35;
+    const scanId = () => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+
     const pure = { normalizeDateTime, excludeEmptyFields, parseJson, queryString, optionList, dependsParams, orderByValue, treeNodes, editableOptions,
-        datePattern, dateKey, quickKeyWaits, keptValue };
+        datePattern, dateKey, quickKeyWaits, keptValue, scanOutcome, scanIntent, scanEndsWithTab };
 
     // ---------- the browser client ----------
 
@@ -580,6 +598,77 @@
         fill();
     };
 
+    // A scan field: Enter (or a scanner's quick Tab) posts the text to the resolver with the depends-on values and a scan id.
+    // One match fills the hidden id, type and scan id inputs and submits the form (with data-confirm-scan, a Confirm button
+    // submits it; with data-no-submit, the form's own submit does); several are buttons in the result line; none is named
+    // there, and the text stays selected in the input for the next scan.
+    const initScan = (box) => {
+        const input = $("input[data-scan]", box);
+        const hidden = $$("input[type=hidden]", box);
+        const result = $(".scan-result", box);
+        if (!input || hidden.length < 3 || !result) return;
+        let last = null;
+        let busy = false;
+        let firstKey = 0;
+        const say = (text, type) => { result.textContent = text || ""; if (type) result.dataset.type = type; else delete result.dataset.type; };
+        const again = () => { input.focus(); input.select(); };
+        const choose = (match, intent) => {
+            hidden[0].value = match.id;
+            hidden[1].value = match.identityType || "";
+            hidden[2].value = intent.id;
+            say([match.label || match.id, match.detail].filter(Boolean).join(" \u00b7 "), "success");
+            if (box.hasAttribute("data-confirm-scan")) {
+                const confirm = el("button", { type: "submit", "data-btn": "primary", class: "scan-confirm" }, "Confirm");
+                if (input.getAttribute("form")) confirm.setAttribute("form", input.getAttribute("form"));
+                result.appendChild(doc.createTextNode(" "));
+                result.appendChild(confirm);
+                confirm.focus();
+            } else if (!box.hasAttribute("data-no-submit") && input.form) input.form.requestSubmit();
+        };
+        const resolve = () => {
+            const text = input.value.trim();
+            if (!text) return;
+            const intent = scanIntent(last, text, Date.now(), scanId);
+            last = intent;
+            if (intent.repeat && busy) return;
+            const depends = dependsParams(parseJson(box.dataset.depends, []), readValue, true);
+            busy = true;
+            say("\u2026");
+            post(box.dataset.scanUrl, Object.assign({}, parseJson(box.dataset.params, {}), depends, { scanText: text, scanId: intent.id }))
+                .then((response) => response.text().then((body) => ({ ok: response.ok, data: parseJson(body, null) })))
+                .then(({ ok, data }) => {
+                    busy = false;
+                    if (!ok) { say((data && data.errors) || "The scan could not be resolved", "danger"); again(); return; }
+                    const outcome = scanOutcome(data);
+                    if (outcome.kind === "none") {
+                        say("No match for " + text + (box.dataset.allowed ? " (" + box.dataset.allowed.split(",").join(", ") + ")" : ""), "danger");
+                        again();
+                    } else if (outcome.kind === "one") choose(outcome.match, intent);
+                    else {
+                        say(outcome.matches.length + " matches:", "warning");
+                        outcome.matches.forEach((match) => {
+                            const label = [match.label || match.id, match.detail].filter(Boolean).join(" \u00b7 ") + (match.identityType ? " (" + match.identityType + ")" : "");
+                            const button = el("button", { type: "button", "data-btn": "default", class: "scan-choice" }, label);
+                            button.addEventListener("click", () => choose(match, intent));
+                            result.appendChild(doc.createTextNode(" "));
+                            result.appendChild(button);
+                        });
+                        const first = $("button", result);
+                        if (first) first.focus();
+                    }
+                })
+                .catch(() => { busy = false; say("The scan could not be resolved", "danger"); again(); });
+        };
+        input.addEventListener("input", () => { if (!input.value) firstKey = 0; else if (!firstKey) firstKey = Date.now(); });
+        input.addEventListener("keydown", (event) => {
+            const tabEnds = event.key === "Tab" && !event.shiftKey && scanEndsWithTab(input.value.length, firstKey, Date.now());
+            if (event.key !== "Enter" && !tabEnds) return;
+            event.preventDefault();
+            firstKey = 0;
+            resolve();
+        });
+    };
+
     // A display field whose text comes from a transition, with a hidden input for its value.
     const initDynamicDisplay = (marker) => {
         const id = marker.dataset.dynamic;
@@ -783,6 +872,7 @@
         each(scope, "[data-load]:not(dialog)", (node) => load(node));
         each(scope, "select[data-ts]", initSelect);
         each(scope, "input[data-default]", initDefault);
+        each(scope, "span.scan-input", initScan);
         each(scope, "[data-dynamic]:not(nav)", initDynamicDisplay);
         each(scope, ".tree", initTree);
         each(scope, ".editable", initEditable);

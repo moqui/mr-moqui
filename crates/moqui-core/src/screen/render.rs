@@ -1838,6 +1838,10 @@ fn run_transition_steps(
 
             return Ok(Step::Sent);
         }
+        super::Implicit::ScanResolve => {
+            super::scan::resolve(&state.facade, &state.factory, &screen, job.parameters)?;
+            return Ok(Step::Sent);
+        }
         super::Implicit::None => {}
     }
     let wired = dispatch::run(&dispatch::Call {

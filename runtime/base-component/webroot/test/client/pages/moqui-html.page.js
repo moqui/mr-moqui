@@ -161,3 +161,16 @@ test("empty-field exclusion preserves whitespace, zero, false, and multiple valu
     assert.equal(data.get("false"), "false");
     assert.deepEqual(data.getAll("tags"), ["a", "b"]);
 });
+
+test("a scan's outcome, its intent and a scanner's Tab follow the qvt client's rules", () => {
+    assert.equal(u.scanOutcome({ matches: [] }).kind, "none");
+    assert.equal(u.scanOutcome({ matches: [{ id: "A1" }] }).match.id, "A1");
+    assert.equal(u.scanOutcome({ matches: [{ id: "A1" }, { id: "L1" }, { label: "x" }] }).matches.length, 2);
+    let next = 0;
+    const makeId = () => "S" + (++next);
+    const first = u.scanIntent(null, "A1", 1000, makeId);
+    assert.equal(u.scanIntent(first, "A1", 2000, makeId).id, "S1");
+    assert.equal(u.scanIntent(first, "A1", 3500, makeId).id, "S2");
+    assert.ok(u.scanEndsWithTab(10, 1000, 1100));
+    assert.ok(!u.scanEndsWithTab(10, 1000, 2000));
+});

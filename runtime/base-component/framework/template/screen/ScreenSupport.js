@@ -46,7 +46,7 @@
         "form-single", "form-list", "row-actions", "field", "header-field", "first-row-field", "second-row-field",
         "last-row-field", "default-field", "conditional-field", "check", "date-find", "date-period", "date-time",
         "display", "display-entity", "drop-down", "dynamic-options", "editable", "file", "hidden", "ignored",
-        "lookup", "password", "radio", "range-find", "reset", "submit", "text-area", "text-find", "text-line",
+        "lookup", "password", "radio", "range-find", "reset", "submit", "text-area", "text-find", "text-line", "scan-input",
         "entity-options", "list-options", "option", "depends-on", "field-layout", "field-group", "field-accordion",
         "field-row", "field-row-big", "field-col-row", "field-col", "field-ref", "fields-not-referenced",
         "form-list-column", "columns", "column", "auto-fields-entity", "auto-fields-service", "auto-widget-entity",

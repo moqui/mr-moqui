@@ -966,6 +966,7 @@ mod print;
 mod qvt;
 mod render;
 mod saved_finds;
+mod scan;
 mod servlets;
 mod shell;
 mod statics;

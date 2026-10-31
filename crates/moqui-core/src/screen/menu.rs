@@ -263,6 +263,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         entry.insert("renderModes".into(), render_modes(&cur_screen.render_modes));
         entry.insert("image".into(), image);
         entry.insert("imageType".into(), image_type);
+        insert_density(&mut entry, &cur_screen);
         out.push(Value::Map(entry));
     }
 
@@ -315,6 +316,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         Value::List(super::saved_finds::screen_document_list(&info.target_screen.location)?),
     );
     entry.insert("renderModes".into(), render_modes(&info.target_screen.render_modes));
+    insert_density(&mut entry, &info.target_screen);
     // the declared actions and panels of the screen (ext.rs): the terminal client lists them, a .qvue renders them
     let (ext_actions, ext_panels) = super::ext::items_json(&state.factory, &root, &full_path, &info.target_screen)?;
     entry.insert("extActions".into(), ext_actions);
@@ -361,6 +363,13 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
     entry.insert("savedFinds".into(), Value::List(saved_finds));
     out.push(Value::Map(entry));
     Ok(Some(Value::List(out)))
+}
+
+/// The screen's `density` (handheld), which the shell applies to the screen and the screens below it; none when unset.
+fn insert_density(entry: &mut Item, screen: &super::definition::ScreenDef) {
+    if let Some(density) = &screen.density {
+        entry.insert("density".into(), text(density));
+    }
 }
 
 fn render_modes(modes: &[String]) -> Value {

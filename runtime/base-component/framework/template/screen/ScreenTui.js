@@ -369,6 +369,19 @@ $w("]");
             ${extra.map((line) => line + "\n            ").join("")}return $w;
         })()`;
     };
+    // A scan-input is a drop-down that searches the screen's scanResolve transition, which runs the resolver the screen names
+    // for this form and field and answers the matches as options: what is typed (or scanned) is the search, and the choice
+    // posts the id. emitWidget adds the scan id as a hidden field.
+    const scanDropDown = (widget) => {
+        const field = fieldNodeOf(widget);
+        const names = { scanForm: attr(field && field.parent, "name") || "", scanField: attr(field, "name") || "" };
+        return `(() => {
+            const $value = String(${valueCall(widget)} || "");
+            const $w = $withRemote({kind:"dropDown",value:$value,options:$value ? [{value:$value,label:$value}] : [],serverSearch:true,allowEmpty:true,dependsOptional:true}, ${remoteExpr(widget, "scanResolve")}, "optionsUrl", "optionsParameters");
+            $w.optionsParameters = Object.assign({}, $w.optionsParameters || {}, ${JSON.stringify(names)});
+            return $w;
+        })()`;
+    };
     // Click to edit (qvt's m-editable): nothing for an empty text unless display-if-empty.
     const editableExpr = (widget) => {
         const widgetType = attr(widget, "widget-type") || "textarea";
@@ -428,6 +441,7 @@ $w("]");
             if (!steps.length) return base;
             return `(() => { const $w = ${base}; ${steps.join(" ")} return $w; })()`;
         }
+        if (widget.name === "scan-input") return scanDropDown(widget);
         if (widget.name === "text-area") {
             // D12: rich text is shown, never posted, so the stored HTML is not overwritten from the terminal.
             const editor = attr(widget, "editor-type");
@@ -547,6 +561,13 @@ $w("]");
         }
         const expr = fieldObject(field, sub, widget);
         if (!expr) return placeholderEmit(fieldIdOf(field) + "." + widget.name, widget.name);
+        // the scan intent of a terminal scan: an id made when the screen renders, so a second submit of the same render answers once
+        if (widget.name === "scan-input") {
+            const scanIdField = attr(widget, "scan-id-field") || "scanId";
+            return `$emit(${expr});
+$emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name:${jsString(scanIdField)},title:"",w:{kind:"hidden",value:String(ec.user.randomString(20))}});
+`;
+        }
         if (widget.name === "editable") return `{\n    const $node = ${expr};\n    if ($node) $emit($node);\n}\n`;
         return `$emit(${expr});\n`;
     };
@@ -1574,7 +1595,7 @@ ${items}$closeChildren();
     const formInternals = [
         "check", "date-find", "date-period", "date-time", "display", "display-entity", "drop-down", "dynamic-options",
         "editable", "file", "hidden", "ignored", "lookup", "password", "radio", "range-find", "reset", "submit",
-        "text-area", "text-find", "text-line", "entity-options", "list-options", "option", "depends-on", "field-layout",
+        "text-area", "text-find", "text-line", "scan-input", "entity-options", "list-options", "option", "depends-on", "field-layout",
         "field-ref", "form-list-column", "columns", "column", "auto-fields-entity", "auto-fields-service",
         "auto-widget-entity", "auto-widget-service", "exclude", "entity-find", "entity-find-one", "set",
         "hidden-parameters", "row-selection", "row-actions", "visible-when", "editable-load", "action", "first-row",

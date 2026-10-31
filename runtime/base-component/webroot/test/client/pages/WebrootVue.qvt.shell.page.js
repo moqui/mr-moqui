@@ -429,8 +429,17 @@ test("a form in the quick-create dialog closes it when it submits without errors
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
     ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
-    assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {4}<\/q-page-container>/);
+    // the tray and the call dock (WebrootCall.js) close the canvas
+    assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {8}<m-call-dock v-if="callsOn"><\/m-call-dock>\n {4}<\/q-page-container>/);
     assert.match(shell, /<m-shell-palette><\/m-shell-palette>/);
+    // a handheld screen: no drawer, menu button, launcher or footer; of the header's buttons only the account; the title at every width
+    assert.match(shell, /<q-drawer v-if="!handheld"/);
+    assert.match(shell, /<q-footer v-if="!handheld"/);
+    assert.match(shell, /<q-btn v-if="!handheld" flat round dense icon="menu"/);
+    assert.match(shell, /<q-btn v-if="!handheld" flat dense no-caps id="m-launcher"/);
+    assert.match(shell, /<template v-if="!handheld">\n {8}<q-btn flat dense no-caps id="m-search"/);
+    assert.match(shell, /<\/template>\n {8}<q-btn flat round dense id="m-account"/);
+    assert.match(shell, /id="m-app-screens" class="m-app-screens text-subtitle1 text-weight-medium" :class="handheld \? '' : 'gt-xs'"/);
     // the notify-history menu only without a Notifications tab
     assert.match(shell, /<q-btn v-if="!shellValues.trayNotifications" flat round dense icon="notifications" :aria-label="labels.notifyHistory">/);
     // the icon-only buttons are named for a screen reader, not by their icon ligature; the launcher opens the AppList
@@ -649,4 +658,55 @@ test("a menu whose root has no subscreens starts with the root as its app", () =
     assert.deepEqual(brief(moqui.drawerRows([{ name: "Hub", title: "Hub", path: "/apps/Hub" }])), [["app", 0, "Hub", true, true, true]]);
     const rows = moqui.drawerRows([{ name: "Hub", title: "Hub", path: "/apps/Hub" }, { name: "Home", title: "Home", path: "/apps/Hub/Home" }]);
     assert.deepEqual(brief(rows), [["app", 0, "Hub", true, false, true], ["screen", 1, "Home", true, true, true]]);
+});
+
+test("a handheld screen's density comes from the deepest screen of the path that sets one, and wins over compact", () => {
+    assert.equal(moqui.screenDensity([{ name: "apps" }, { name: "Warehouse", density: "handheld" }, { name: "Move" }]), "handheld");
+    assert.equal(moqui.screenDensity([{ name: "apps" }, { name: "Warehouse" }]), "");
+    assert.equal(moqui.screenDensity(null), "");
+    const body = document.body;
+    moqui.applyPreference("SHELL_DENSITY", "compact");
+    assert.ok(body.classList.contains("m-density-compact"));
+    moqui.setScreenDensity("handheld");
+    assert.ok(body.classList.contains("m-density-handheld"));
+    assert.ok(!body.classList.contains("m-density-compact"), "the screen's density wins over the preference");
+    moqui.applyPreference("SHELL_DENSITY", "compact");
+    assert.ok(!body.classList.contains("m-density-compact"), "still while the handheld screen is shown");
+    moqui.setScreenDensity("");
+    assert.ok(!body.classList.contains("m-density-handheld"));
+    assert.ok(body.classList.contains("m-density-compact"), "leaving it puts the preference back");
+    moqui.applyPreference("SHELL_DENSITY", null);
+    assert.ok(!body.classList.contains("m-density-compact"));
+});
+
+test("a scan's outcome is none, one or many matches; a match needs an id", () => {
+    assert.equal(qvt.scanOutcome(null).kind, "none");
+    assert.equal(qvt.scanOutcome({ matches: [{ identityType: "asset" }] }).kind, "none");
+    const one = qvt.scanOutcome({ matches: [{ identityType: "asset", id: "A1" }, { label: "no id" }] });
+    assert.equal(one.kind, "one");
+    assert.equal(one.match.id, "A1");
+    const many = qvt.scanOutcome({ matches: [{ id: "A1" }, { id: "LOT1" }] });
+    assert.equal(many.kind, "many");
+    assert.equal(many.matches.length, 2);
+    assert.equal(qvt.scanMatchText({ id: "A1", label: "Asset 1", detail: "Bin 7" }), "Asset 1 · Bin 7");
+    assert.equal(qvt.scanMatchText({ id: "A1" }), "A1");
+});
+
+test("the same text within two seconds is the same scan intent; other text or later is a new one", () => {
+    let next = 0;
+    const makeId = () => "S" + (++next);
+    const first = qvt.scanIntent(null, "A1", 1000, makeId);
+    assert.deepEqual(first, { text: "A1", id: "S1", time: 1000, repeat: false });
+    const twice = qvt.scanIntent(first, "A1", 2500, makeId);
+    assert.deepEqual(twice, { text: "A1", id: "S1", time: 2500, repeat: true });
+    assert.equal(qvt.scanIntent(twice, "A1", 4600, makeId).id, "S2", "later is a new intent");
+    assert.equal(qvt.scanIntent(twice, "B2", 2600, makeId).id, "S3", "other text is a new intent");
+    assert.ok(qvt.scanId() !== qvt.scanId());
+});
+
+test("a Tab ends a scan only after a burst of keys", () => {
+    assert.ok(qvt.scanEndsWithTab(12, 1000, 1200), "12 keys in 200 ms: a scanner");
+    assert.ok(!qvt.scanEndsWithTab(12, 1000, 3000), "12 keys in 2 s: a person");
+    assert.ok(!qvt.scanEndsWithTab(2, 1000, 1010), "too short to be a code");
+    assert.ok(!qvt.scanEndsWithTab(12, 0, 1000), "no keys timed");
 });

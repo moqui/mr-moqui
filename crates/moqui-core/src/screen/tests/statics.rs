@@ -454,8 +454,19 @@ fn the_qvt_fixture_screens_become_templates_that_compile() {
         "mobile",
         "views",
         "gated",
+        "scan",
     ] {
         let (html, report) = static_fixture(name);
+        if name == "scan" {
+            for expected in [
+                r#"<m-scan-input name="assetId" id="Move_assetId" resolve-url="/scanResolve""#,
+                r#":resolve-parameters="$mq.merge(null,{'facilityId':(facilityId),'scanForm':'Move','scanField':'assetId'})""#,
+                r#"'assetId_type':'','assetId_scanText':'','scanId':''"#,
+                r#"scan-id-field="countScanId" :auto-submit="false" confirm"#,
+            ] {
+                assert!(html.contains(expected), "{expected} in {html}");
+            }
+        }
         if name == "fields" {
             assert!(
                 html.contains(r#"<div class="q-ma-sm invoice-field"><m-text-line"#),

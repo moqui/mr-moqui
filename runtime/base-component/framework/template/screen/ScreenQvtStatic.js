@@ -461,6 +461,11 @@
                 out.push([name, plainValue(widget, field, at(widget, "default-value"))]);
             } else if (kind === "text-line" || kind === "text-area" || kind === "lookup") {
                 out.push([name, "$mq.str(" + base + ")"]);
+            } else if (kind === "scan-input") {
+                out.push([name, "$mq.str(" + base + ")"]);
+                out.push([name + "_type", "''"]);
+                out.push([name + "_scanText", "''"]);
+                out.push([at(widget, "scan-id-field") || "scanId", "''"]);
             } else if (kind === "check") {
                 // all-checked seeds every option key, ignoring the field's current value, as the merged mode does.
                 if (at(widget, "all-checked") === "true") out.push([name, "(" + optionsExpr(widget) + ").map((item) => item.value)"]);
@@ -579,6 +584,28 @@
             }
             Object.assign(out, bindAttrs(n, field, "$mq.str(" + baseValue(field, at(n, "default-value")) + ")"));
             w("<m-text-line" + A(out) + "></m-text-line>");
+        };
+
+        // A scan field (scan-input), as ScreenQvt.js writes it: the scanResolve transition with the form and field names and the
+        // parameter children, and the depends-on fields.
+        const scanInput = (n) => {
+            const field = fieldOf(n);
+            const name = nameOf(n);
+            const found = sri.staticUrl("scanResolve", "transition");
+            const deps = {};
+            kids(n, "depends-on").forEach((dep) => { deps[at(dep, "parameter") || at(dep, "field")] = at(dep, "field"); });
+            const out = Object.assign({ name, form: owner() }, idAttrs(n), {
+                "resolve-url": found.path,
+                ":resolve-parameters": allParams(n, { scanForm: sq(at(formOf(n), "name")), scanField: sq(fname(n)) }, withInline(found, found.parameters)),
+                ":depends-on": Object.keys(deps).length ? js_(deps) : null, "allowed-types": at(n, "allowed-types") || null,
+                "scan-id-field": at(n, "scan-id-field") || null, ":auto-submit": at(n, "auto-submit") === "false" ? "false" : null,
+                confirm: at(n, "confirm") === "true" ? true : null, size: at(n, "size") || null, maxlength: at(n, "maxlength") || null
+            });
+            labelAttr(n, out);
+            if (at(n, "placeholder")) textAttr(out, "placeholder", at(n, "placeholder"), n, true);
+            tipOf(n, out);
+            Object.assign(out, bindOnly(n, field, "$mq.str(" + baseValue(field, "") + ")"));
+            w("<m-scan-input" + A(out) + "></m-scan-input>");
         };
 
         const textArea = (n) => {
@@ -1345,7 +1372,7 @@
         };
 
         const widgetFns = {
-            "text-line": textLine, "lookup": textLine, "text-area": textArea, "password": password, "file": file, "hidden": hidden, "reset": reset_, "submit": submit,
+            "text-line": textLine, "lookup": textLine, "scan-input": scanInput, "text-area": textArea, "password": password, "file": file, "hidden": hidden, "reset": reset_, "submit": submit,
             "date-time": dateTime, "date-find": dateFind, "date-period": datePeriod, "range-find": rangeFind, "text-find": textFind, "drop-down": dropDown,
             "check": (n) => checkOrRadio(n, "checkbox"), "radio": (n) => checkOrRadio(n, "radio"), "display": displayWidget, "display-entity": displayEntity,
             "image": image, "label": labelWidget, "link": (n) => link(n, true), "editable": editable

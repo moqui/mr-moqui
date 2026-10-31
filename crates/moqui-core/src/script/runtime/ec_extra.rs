@@ -1059,29 +1059,37 @@ fn resource_gs1_check(ctx: Ctx<'_>, text: String) -> rquickjs::Result<bool> {
 fn resource_parse_gs1<'js>(ctx: Ctx<'js>, input: String) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         let parsed = moqui_lib::barcode::parse_gs1(&input).map_err(|e| throw_lib(&ctx, &e))?;
-        let mut identifiers = indexmap::IndexMap::new();
-        let elements = parsed
-            .elements
-            .into_iter()
-            .map(|e| {
-                identifiers.insert(e.application_identifier.clone(), Value::String(e.value.clone()));
-                Value::Map(indexmap::IndexMap::from([
-                    (
-                        "applicationIdentifier".to_string(),
-                        Value::String(e.application_identifier),
-                    ),
-                    ("value".to_string(), Value::String(e.value)),
-                ]))
-            })
-            .collect();
-        host_to_js(
-            &ctx,
-            Value::Map(indexmap::IndexMap::from([
-                ("elements".to_string(), Value::List(elements)),
-                ("applicationIdentifiers".to_string(), Value::Map(identifiers)),
-                ("elementString".to_string(), Value::String(parsed.element_string)),
-                ("humanReadable".to_string(), Value::String(parsed.human_readable)),
-            ])),
-        )
+        host_to_js(&ctx, gs1_value(&parsed))
     })
+}
+/// The GS1 fields of a parse as `ec.resource.parseGs1` answers them (and the `scanResolve` transition's `parsed`):
+/// `elements` in order, `applicationIdentifiers` by AI, `elementString` and `humanReadable`.
+pub fn gs1_value(parsed: &moqui_lib::barcode::Gs1Data) -> Value {
+    let mut identifiers = indexmap::IndexMap::new();
+    let elements = parsed
+        .elements
+        .iter()
+        .map(|e| {
+            identifiers.insert(e.application_identifier.clone(), Value::String(e.value.clone()));
+            Value::Map(indexmap::IndexMap::from([
+                (
+                    "applicationIdentifier".to_string(),
+                    Value::String(e.application_identifier.clone()),
+                ),
+                ("value".to_string(), Value::String(e.value.clone())),
+            ]))
+        })
+        .collect();
+    Value::Map(indexmap::IndexMap::from([
+        ("elements".to_string(), Value::List(elements)),
+        ("applicationIdentifiers".to_string(), Value::Map(identifiers)),
+        (
+            "elementString".to_string(),
+            Value::String(parsed.element_string.clone()),
+        ),
+        (
+            "humanReadable".to_string(),
+            Value::String(parsed.human_readable.clone()),
+        ),
+    ]))
 }
