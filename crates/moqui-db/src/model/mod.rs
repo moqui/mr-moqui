@@ -299,8 +299,9 @@ pub struct EntityModel {
 impl EntityModel {
     /// `conf` is a tree that contains `<database-list>`. Documents whose root is not `entities` are skipped.
     ///
-    /// As Java's `EntityFacadeImpl`, a full name defined again is a warning and the later definition is used, and an
-    /// `extend-entity` that matches no entity is skipped with a warning. An entity that does not parse, a view-entity
+    /// As Java's `EntityFacadeImpl`, a full name defined again is a warning and the later definition is used (when it
+    /// does not parse, the latest earlier one that does), and an `extend-entity` that matches no entity is skipped with
+    /// a warning. An entity that does not parse, a view-entity
     /// whose members do not resolve and a relationship to no entity are each logged as an error naming it and left
     /// out, and the rest load ([`Self::problems`]); Java finds them only when one is used.
     pub fn load(conf: &MNode, documents: &[MNode]) -> Result<Self, Error> {
@@ -316,6 +317,9 @@ impl EntityModel {
         let mut nodes: Vec<MNode> = Vec::new();
         let mut view_flags: Vec<bool> = Vec::new();
         let mut by_full: HashMap<String, usize> = HashMap::new();
+        // The definitions a full name defined again replaced, each with whether it is a view, the latest last: one is
+        // used when the definition that replaced it does not parse, so a file being edited does not lose the entity.
+        let mut replaced: Vec<Vec<(MNode, bool)>> = Vec::new();
         let mut extends = Vec::new();
         for document in documents {
             if !document.has_name("entities") {
@@ -339,13 +343,15 @@ impl EntityModel {
                                 where_of(&node),
                                 where_of(&nodes[index])
                             );
+                            let earlier = std::mem::replace(&mut nodes[index], node);
+                            replaced[index].push((earlier, view_flags[index]));
                             view_flags[index] = child.has_name("view-entity");
-                            nodes[index] = node;
                             continue;
                         }
                         by_full.insert(full_name, nodes.len());
                         view_flags.push(child.has_name("view-entity"));
                         nodes.push(node);
+                        replaced.push(Vec::new());
                     }
                     "extend-entity" => extends.push(child.clone()),
                     _ => {}
@@ -364,22 +370,28 @@ impl EntityModel {
 
         let mut entities = Vec::with_capacity(nodes.len());
         let mut wheres = Vec::with_capacity(nodes.len());
-        for (node, is_view) in nodes.iter().zip(view_flags) {
+        for ((node, is_view), earlier) in nodes.iter().zip(view_flags).zip(&replaced) {
             match parse_entity(node, is_view, &dictionary, legacy_names) {
                 Ok(definition) => {
                     entities.push(definition);
                     wheres.push(where_of(node));
                 }
                 Err(err) => {
-                    let name = entity_identity(node).map(|(name, package)| format!("{package}.{name}"));
-                    left_out(
-                        &mut problems,
-                        format!(
-                            "Left out entity {} at {}: {err}",
-                            name.unwrap_or_default(),
-                            where_of(node)
-                        ),
-                    );
+                    let name = entity_identity(node)
+                        .map(|(name, package)| format!("{package}.{name}"))
+                        .unwrap_or_default();
+                    let fallback = earlier.iter().rev().find_map(|(earlier_node, earlier_view)| {
+                        let extended = extended_copy(earlier_node, &name, &extends);
+                        let definition = parse_entity(&extended, *earlier_view, &dictionary, legacy_names).ok()?;
+                        Some((definition, where_of(earlier_node)))
+                    });
+                    let mut message = format!("Left out entity {name} at {}: {err}", where_of(node));
+                    if let Some((definition, place)) = fallback {
+                        message.push_str(&format!("; using its definition at {place}"));
+                        entities.push(definition);
+                        wheres.push(place);
+                    }
+                    left_out(&mut problems, message);
                 }
             }
         }
@@ -722,7 +734,25 @@ fn apply_extend(
         nodes[*index] = nodes[*index].deep_copy();
         copied[*index] = true;
     }
-    let entity_node = &nodes[*index];
+    extend_into(&nodes[*index], extend_node)
+}
+
+/// A copy of `node`, an earlier definition of `full_name`, with the `extends` of that name applied as they were to the
+/// definition that replaced it; an extend that fails was left out already.
+fn extended_copy(node: &MNode, full_name: &str, extends: &[MNode]) -> MNode {
+    let copy = node.deep_copy();
+    for extend_node in extends {
+        let names_it = entity_identity(extend_node)
+            .is_ok_and(|(entity_name, package_name)| format!("{package_name}.{entity_name}") == full_name);
+        if names_it {
+            let _ = extend_into(&copy, extend_node);
+        }
+    }
+    copy
+}
+
+/// Apply an `extend-entity` to the entity node it names, a copy of the one its document holds.
+fn extend_into(entity_node: &MNode, extend_node: &MNode) -> Result<(), Error> {
     entity_node.copy_attributes_from(extend_node);
     for field in extend_node.children_named("field") {
         let name = require_attr(&field, "name")?;

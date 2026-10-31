@@ -227,6 +227,48 @@ fn an_entity_defined_again_overrides_and_an_unmatched_extend_is_skipped() {
     assert_eq!(model.full_names().len(), 1);
 }
 
+/// A file being edited is often broken for a moment: a definition again that does not parse keeps the one before it,
+/// with its extends, and is a problem.
+#[test]
+fn an_entity_defined_again_that_does_not_parse_keeps_the_earlier_definition() {
+    let document = |name: &str, field: &str| {
+        MNode::parse_text(
+            name,
+            &format!(
+                r#"<entities>
+                    <entity entity-name="Twice" package="one.a" no-update-stamp="true">
+                        <field name="id" type="id" is-pk="true"/>{field}
+                    </entity>
+                </entities>"#
+            ),
+        )
+        .unwrap()
+    };
+    let extend = MNode::parse_text(
+        "extend.xml",
+        r#"<entities>
+            <extend-entity entity-name="Twice" package="one.a"><field name="extra" type="id"/></extend-entity>
+        </entities>"#,
+    )
+    .unwrap();
+    let documents = [
+        document("first.xml", r#"<field name="first" type="id"/>"#),
+        document("second.xml", r#"<field name="second" type="id"/>"#),
+        document("broken.xml", r#"<field type="id"/>"#),
+        extend,
+    ];
+    let model = EntityModel::load(&id_conf(), &documents).unwrap();
+    let twice = model.entity("one.a.Twice").expect("the earlier definition is kept");
+    assert!(twice.field("second").is_some() && twice.field("first").is_none());
+    assert!(twice.field("extra").is_some(), "the extend applies to it");
+    let problems = model.problems().join("\n");
+    assert!(
+        problems.contains("Left out entity one.a.Twice at broken.xml"),
+        "{problems}"
+    );
+    assert!(problems.contains("using its definition at second.xml"), "{problems}");
+}
+
 #[test]
 fn load_paths_reads_a_file_as_well_as_a_directory() {
     let dir = std::env::temp_dir().join(format!("moqui-model-paths-{}", std::process::id()));
