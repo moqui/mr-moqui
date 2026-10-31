@@ -34,7 +34,7 @@
                          │   [ ] CrvUsers                     Any user may read and join      Chat Room Visibility                  Ordered users     2          <today> hh:mm
                          │   [ ] OctApple                     Apple                           OpenID Connect Client Type            Plain                        <today> hh:mm
                          │   [ ] AgpsApproval                 Approval                        Agent Run Pause Kind                  Ordered approval  1          <today> hh:mm
-                         │   Rows 1–20 of 358 · Page 1/18
+                         │   Rows 1–20 of 360 · Page 1/18
                          │ Back to the Landing
                          │
                          │
