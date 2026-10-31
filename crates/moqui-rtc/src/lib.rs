@@ -25,10 +25,12 @@
 //! leg.
 //!
 //! The forwarding is the SFU's own, not str0m's, so [`tap`] can take each frame out (for the SIP mixer, recording and
-//! captions) and put frames in (a SIP leg's audio, as one more participant).
+//! captions) and put frames in (a SIP leg's audio, as one more participant). [`audio`] decodes, mixes and encodes that
+//! audio off the media thread: the codecs, resampling, the per-leg jitter buffer and the mix-minus mixer.
 
+pub mod audio;
 pub mod sfu;
 pub mod tap;
 pub mod turn;
 
-pub use sfu::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, Transmit};
+pub use sfu::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, TapId, Transmit};

@@ -13,8 +13,9 @@
  */
 
 //! The media driver thread: the one owner of the media socket and the [`Sfu`]. Each turn it takes the waiting commands,
-//! sends what the SFU has to send, and waits on the socket until the SFU's next timeout (at most [`MAX_WAIT`], so a
-//! command never waits long). A frame's reply, and the SFU's offers and events for a leg, go to the socket that leg's
+//! injects the frames of injected legs that are due ([`super::media`]), sends what the SFU has to send, and waits on
+//! the socket until the SFU's next timeout or the next injected frame (at most [`MAX_WAIT`], so a command never waits
+//! long). A frame's reply, and the SFU's offers and events for a leg, go to the socket that leg's
 //! last frame came from ([`Route`]): on this node straight to the socket, on another by `rtc-signal`.
 
 use std::collections::HashMap;
@@ -31,6 +32,7 @@ use moqui_lib::object::Value;
 use moqui_rtc::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
 use serde_json::{json, Value as Json};
 
+use super::media::Media;
 use super::tcp::{self, Streams};
 use super::Command;
 
@@ -64,6 +66,8 @@ struct Driver<'a> {
     /// The ICE-TCP address browsers are told, and the connections' streams.
     tcp: Option<(SocketAddr, Streams)>,
     revoke: Option<Revoke>,
+    /// The consumers' taps and the injected legs.
+    media: Media,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -89,6 +93,7 @@ pub(super) fn run(
         routes: HashMap::new(),
         tcp,
         revoke,
+        media: Media::default(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -102,7 +107,9 @@ pub(super) fn run(
                 }
                 driver.command(command);
             }
+            driver.media.turn(&mut driver.sfu, Instant::now());
             let next = driver.flush(&socket);
+            let next = driver.media.next_due().map_or(next, |due| due.min(next));
             let wait = next
                 .saturating_duration_since(Instant::now())
                 .clamp(Duration::from_millis(1), MAX_WAIT);
@@ -177,6 +184,7 @@ impl Driver<'_> {
                 if let Some(generation) = self.sfu.generation(&key) {
                     let _ = self.sfu.leave(Instant::now(), &key, generation);
                 }
+                self.media.leg_closed(&mut self.sfu, Instant::now(), &room, &leg);
                 if let Some(r) = self.routes.remove(&key) {
                     self.reply(
                         &r.route,
@@ -192,6 +200,7 @@ impl Driver<'_> {
             }
             Command::CloseRoom { room } => {
                 self.sfu.close_room(Instant::now(), &room);
+                self.media.room_closed(&room);
                 let legs: Vec<LegKey> = self
                     .routes
                     .keys()
@@ -211,6 +220,7 @@ impl Driver<'_> {
                     }
                 }
             }
+            Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
             Command::Stop => {}
         }
     }

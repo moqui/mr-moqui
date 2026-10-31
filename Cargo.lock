@@ -4659,6 +4659,7 @@ dependencies = [
  "base64 0.23.1",
  "hmac 0.13.0",
  "moqui-lib",
+ "opus-rs",
  "serde",
  "serde_json",
  "sha1 0.11.0",
@@ -4995,6 +4996,12 @@ dependencies = [
  "rand 0.9.5",
  "thiserror",
 ]
+
+[[package]]
+name = "opus-rs"
+version = "0.1.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d664b01dda81206fd3c80582eafd8dfef0e936eea1c2ac90ed408823bbb410c"
 
 [[package]]
 name = "ouroboros"

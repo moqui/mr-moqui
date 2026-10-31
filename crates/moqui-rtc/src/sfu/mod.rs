@@ -303,12 +303,41 @@ struct Injected {
     track: Arc<TrackIn>,
 }
 
+/// A tap added to a room, by the id [`Sfu::add_tap`] gave it.
+pub type TapId = u64;
+
 #[derive(Default)]
 struct Room {
     peers: Vec<PeerId>,
     injected: Vec<Injected>,
-    tap: Option<Box<dyn MediaTap>>,
+    taps: Vec<(TapId, Box<dyn MediaTap>)>,
     speaker: Speaker,
+}
+
+impl Room {
+    /// A room with no peers, injected sources or taps is let go.
+    fn is_empty(&self) -> bool {
+        self.peers.is_empty() && self.injected.is_empty() && self.taps.is_empty()
+    }
+
+    /// Shows a frame to every tap, then drops the taps whose consumer is gone.
+    fn tap(&mut self, frame: &TapFrame<'_>) {
+        if self.taps.is_empty() {
+            return;
+        }
+        for (_, tap) in &mut self.taps {
+            tap.on_frame(frame);
+        }
+        self.taps.retain(|(_, tap)| !tap.is_closed());
+    }
+
+    /// Tells every tap a leg left.
+    fn leave(&mut self, leg: &Arc<str>) {
+        for (_, tap) in &mut self.taps {
+            tap.on_leave(leg);
+        }
+        self.taps.retain(|(_, tap)| !tap.is_closed());
+    }
 }
 
 /// The room's active speaker, and the one about to be.
@@ -524,7 +553,8 @@ impl Sfu {
         Ok(())
     }
 
-    /// Ends a room: every peer is removed and its injected sources and tap dropped.
+    /// Ends a room: every peer is removed and its injected sources and taps dropped (their consumers see the queue
+    /// close).
     pub fn close_room(&mut self, now: Instant, room: &str) {
         let Some(r) = self.rooms.get(room) else { return };
         for id in r.peers.clone() {
@@ -534,20 +564,55 @@ impl Sfu {
         self.drive(now);
     }
 
-    /// Sets the tap that sees every frame published in a room.
-    pub fn set_tap(&mut self, room: &str, tap: Option<Box<dyn MediaTap>>) -> Result<(), SfuError> {
-        let r = self.rooms.get_mut(room).ok_or(SfuError::UnknownRoom)?;
-        r.tap = tap;
-        Ok(())
+    /// Adds a tap that sees every frame published in a room, a browser's or an injected source's; a room has as many as
+    /// its consumers (recording, captions, the SIP mixer). The room is made when it has no leg yet, and kept while the
+    /// tap is there. A tap whose consumer is gone ([`MediaTap::is_closed`]) is dropped at its next frame.
+    pub fn add_tap(&mut self, room: &str, tap: Box<dyn MediaTap>) -> Result<TapId, SfuError> {
+        let r = self.room_or_new(room)?;
+        let id = self.next_id;
+        self.next_id += 1;
+        if let Some(r) = self.rooms.get_mut(&r) {
+            r.taps.push((id, tap));
+        }
+        Ok(id)
     }
 
-    /// Adds a participant whose audio the caller writes with [`Sfu::inject`] (a phone leg's mix-minus, §5.1).
+    /// Removes a tap; false when the room has no such tap.
+    pub fn remove_tap(&mut self, room: &str, id: TapId) -> bool {
+        let Some(r) = self.rooms.get_mut(room) else {
+            return false;
+        };
+        let before = r.taps.len();
+        r.taps.retain(|(tap, _)| *tap != id);
+        let removed = r.taps.len() != before;
+        if r.is_empty() {
+            self.rooms.remove(room);
+        }
+        removed
+    }
+
+    /// The room's name, made when it is not there yet (within [`SfuConfig::max_rooms`]).
+    fn room_or_new(&mut self, room: &str) -> Result<Arc<str>, SfuError> {
+        if let Some((name, _)) = self.rooms.get_key_value(room) {
+            return Ok(name.clone());
+        }
+        if self.rooms.len() >= self.config.max_rooms {
+            return Err(SfuError::TooManyRooms);
+        }
+        let name: Arc<str> = room.into();
+        self.rooms.insert(name.clone(), Room::default());
+        Ok(name)
+    }
+
+    /// Adds a participant whose audio the caller writes with [`Sfu::inject`]: a phone leg's voice (§5.1). The room is
+    /// made when it has no leg yet (a call of phones only).
     pub fn add_injected_source(&mut self, now: Instant, room: &str, leg: &str) -> Result<(), SfuError> {
         let key = LegKey::new(room, leg);
         if self.by_leg.contains_key(&key) {
             return Err(SfuError::StaleGeneration);
         }
-        let r = self.rooms.get_mut(room).ok_or(SfuError::UnknownRoom)?;
+        let name = self.room_or_new(room)?;
+        let r = self.rooms.get_mut(&name).ok_or(SfuError::UnknownRoom)?;
         if r.injected.iter().any(|i| &*i.leg == leg) {
             return Ok(());
         }
@@ -567,11 +632,24 @@ impl Sfu {
         Ok(())
     }
 
-    /// Writes one Opus frame of an injected source to every peer of the room. `rtp_time` is at 48 kHz.
+    /// Writes one Opus frame of an injected source to every peer of the room, and shows it to the room's taps.
+    /// `rtp_time` is at 48 kHz.
     pub fn inject(&mut self, now: Instant, room: &str, leg: &str, rtp_time: u64, data: &[u8]) -> Result<(), SfuError> {
-        let r = self.rooms.get(room).ok_or(SfuError::UnknownRoom)?;
+        let r = self.rooms.get_mut(room).ok_or(SfuError::UnknownRoom)?;
         let inj = r.injected.iter().find(|i| &*i.leg == leg).ok_or(SfuError::UnknownLeg)?;
         let track = inj.track.clone();
+        r.tap(&TapFrame {
+            leg: &track.leg,
+            kind: Kind::Audio,
+            source: Source::Phone,
+            rid: None,
+            codec: "opus",
+            rtp_time,
+            clock_rate: 48_000,
+            data,
+            keyframe: false,
+            audio_level: None,
+        });
         let pids = r.peers.clone();
         let time = MediaTime::new(rtp_time, Frequency::FORTY_EIGHT_KHZ);
         for pid in pids {
@@ -586,7 +664,13 @@ impl Sfu {
     /// Removes an injected source.
     pub fn remove_injected_source(&mut self, now: Instant, room: &str, leg: &str) {
         if let Some(r) = self.rooms.get_mut(room) {
-            r.injected.retain(|i| &*i.leg != leg);
+            if let Some(at) = r.injected.iter().position(|i| &*i.leg == leg) {
+                let gone = r.injected.remove(at);
+                r.leave(&gone.leg);
+            }
+            if r.is_empty() {
+                self.rooms.remove(room);
+            }
         }
         self.drive(now);
     }
@@ -723,7 +807,8 @@ impl Sfu {
         }));
         if let Some(room) = self.rooms.get_mut(&peer.key.room) {
             room.peers.retain(|p| *p != id);
-            if room.peers.is_empty() && room.injected.is_empty() {
+            room.leave(&peer.key.leg);
+            if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
             }
         }
@@ -768,10 +853,10 @@ impl Sfu {
             return;
         };
         if let Propagated::MediaData(_, ref data, ref track) = item {
-            if let Some(tap) = room.tap.as_mut() {
+            if !room.taps.is_empty() {
                 let codec = data.params.spec().codec;
                 let rid = data.rid.as_ref().map(|r| r.to_string());
-                tap.on_frame(&TapFrame {
+                room.tap(&TapFrame {
                     leg: &track.leg,
                     kind: track.kind(),
                     source: track.source(),
@@ -822,3 +907,6 @@ mod testnet;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod audio_tests;

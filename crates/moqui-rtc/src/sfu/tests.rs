@@ -288,9 +288,7 @@ fn media_is_taken_out_and_put_in() {
     net.join("B", false);
     net.run(secs(1));
     let seen = Arc::new(Mutex::new(Vec::new()));
-    net.sfu
-        .set_tap(ROOM, Some(Box::new(Collect(seen.clone()))))
-        .expect("tapped");
+    net.sfu.add_tap(ROOM, Box::new(Collect(seen.clone()))).expect("tapped");
     let key = LegKey::new(ROOM, "A");
     let video_mid = net.client("A").video_mid.expect("a video mid").to_string();
     net.sfu

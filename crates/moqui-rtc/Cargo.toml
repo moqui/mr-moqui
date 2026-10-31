@@ -1,5 +1,6 @@
-# Calls: the WebRTC endpoint and the selective forwarding unit (SFU) on str0m (plans/Comms-Framework.md §6, D-W1). It is
-# sans-IO: no sockets, threads or clock of its own, and no ExecutionContext, so it sits on moqui-lib only. moqui-host
+# Calls: the WebRTC endpoint and the selective forwarding unit (SFU) on str0m (plans/Comms-Framework.md §6, D-W1), and
+# the audio core: Opus, G.711, G.722, resampling and the mix-minus mixer (§5.1, §6.2 "The M0 gate"). It is sans-IO: no
+# sockets, threads or clock of its own, and no ExecutionContext, so it sits on moqui-lib only. moqui-host
 # owns the media socket and the driver thread and links this crate under its rtc feature; the call state is the
 # framework's org.moqui.impl.CallServices.
 
@@ -15,6 +16,7 @@ publish.workspace = true
 base64 = { workspace = true }
 hmac = { workspace = true }
 moqui-lib = { workspace = true }
+opus-rs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }

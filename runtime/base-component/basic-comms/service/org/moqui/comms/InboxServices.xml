@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
                 'prepare#CreateFromMessage': [null, false],
                 'respond#Invitation': [null, true],
                 'get#MailboxHeader': [null, false],
-                'save#MessageFiles': [null, true],
+                'save#MessageFiles': ['org.moqui.comms.InboxServices.save#MessageFiles', true],
                 'get#ComposeData': ['org.moqui.comms.ComposeServices.get#ComposeData', false],
                 'search#Recipients': ['org.moqui.comms.ComposeServices.search#Recipients', false],
                 'send#Compose': ['org.moqui.comms.ComposeServices.send#Compose', true],
@@ -475,6 +475,103 @@ along with this software (see the LICENSE.md file). If not, see
             } else { notFound(); return }
             if (!location) { notFound(); return }
             inlineAllowed = /^image\/(png|jpe?g|gif|webp)$/i.test(contentType || '') || /\.(png|jpe?g|gif|webp|pdf)$/i.test(fileName || '') || /pdf/i.test(contentType || '')
+        ]]></script></actions>
+    </service>
+
+    <service verb="save" noun="MessageFiles">
+        <description>Save to Files: a copy of a mail message's attachments in a folder of a drive (save#FilesToDrive). id is one
+            attachment (store email, the id get#MessageAttachment reads, which checks that the user may read its message);
+            without an id, emailMessageId copies every file of that message, when get#Thread shows the message to the user.
+            The message keeps its own copies. A message the user may not read is "Attachment not found"; a folder the user
+            may not write is refused by FileServices.upload#Resource.</description>
+        <in-parameters>
+            <parameter name="store"/>
+            <parameter name="id"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="driveId" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="savedList" type="List"><description>{name, path, outcome created, replaced or renamed}</description></parameter>
+            <parameter name="failedList" type="List"><description>{name, error}</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            savedList = []
+            failedList = []
+            const files = []
+            if (id) {
+                const one = ec.service.sync().name('org.moqui.comms.InboxServices.get#MessageAttachment').parameters({store: store || 'email', id: id}).call()
+                if (ec.message.hasError()) return
+                files.push({name: one.fileName || 'attachment', location: one.location})
+            } else if (emailMessageId) {
+                ec.message.pushErrors()
+                let readable = false
+                try {
+                    const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('emailMessageId', emailMessageId).requireNewTransaction(true).call()
+                    readable = !ec.message.hasError() && Array.from(out.messageList || []).some((message) => message.emailMessageId === emailMessageId)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                if (!readable) { ec.message.addError(L('Attachment not found') + ': ' + emailMessageId); return }
+                for (const file of ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId).list()) {
+                    if (file.attachmentLocation) files.push({name: file.fileName || 'attachment', location: file.attachmentLocation})
+                }
+            } else { ec.message.addError(L('Name the file to save')); return }
+            const out = ec.service.sync().name('org.moqui.comms.InboxServices.save#FilesToDrive').parameters({fileList: files, driveId: driveId,
+                path: path || ''}).call()
+            if (ec.message.hasError()) return
+            savedList = out.savedList
+            failedList = out.failedList
+        ]]></script></actions>
+    </service>
+
+    <service verb="save" noun="FilesToDrive" allow-remote="false">
+        <description>Internal, for a Save to Files that checked the user may read each file (save#MessageFiles, an app's own
+            for its messages): a copy of each file ({name, location}) in a folder of a drive through
+            FileServices.upload#Resource as the user, keepBoth when the name is already there ("name (2).ext"). Each file is
+            saved in a transaction of its own: one that fails is named in failedList and logged, and the others are saved;
+            when none is saved the first failure is the error. No files is "This message has no files".</description>
+        <in-parameters>
+            <parameter name="fileList" type="List"/>
+            <parameter name="driveId" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="savedList" type="List"/>
+            <parameter name="failedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            savedList = []
+            failedList = []
+            // a mail attachment's name is the sender's: no folder in it, and "." or ".." is no name
+            const safe = (name) => {
+                const text = String(name || '').replace(/[\/\\?#%:*"<>|]/g, '_').substring(0, 120).trim()
+                return /^\.*$/.test(text) ? 'attachment' : text
+            }
+            const files = Array.from(fileList || [])
+            if (!files.length) { ec.message.addError(L('This message has no files')); return }
+            for (const file of files) {
+                const label = file.name || 'attachment'
+                ec.message.pushErrors()
+                try {
+                    const stream = file.location ? ec.resource.getLocationReference(file.location).openStream() : null
+                    if (!stream) throw new Error(L('Attachment not found') + ': ' + label)
+                    try {
+                        const out = ec.service.sync().name('org.moqui.impl.FileServices.upload#Resource').parameters({driveId: driveId, path: path || '',
+                            file: stream, relativePathList: [safe(label)], conflictPolicy: 'keepBoth', versionNote: L('Saved from a message')})
+                                .requireNewTransaction(true).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        const row = Array.from(out.uploadedList || [])[0]
+                        if (!row || row.outcome === 'failed') throw new Error((row && row.error) || L('Not saved'))
+                        savedList.push({name: row.name, path: row.path, outcome: row.outcome})
+                    } finally { if (stream.close) stream.close() }
+                } catch (err) {
+                    const why = err && err.message ? err.message : String(err)
+                    ec.logger.warn(`Save to Files: ${label} not saved: ${why}`)
+                    failedList.push({name: label, error: why})
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            if (!savedList.length && failedList.length) ec.message.addError(failedList[0].error)
         ]]></script></actions>
     </service>
 

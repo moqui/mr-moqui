@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of the drive picker (plans/Comms-Framework.md §7.4 DP): Compose's Attach from Files and the Inbox's Save to
+    Files include them (transition-include), each one by name. pickerData: the drives and the recent files, or with checkOnly
+    whether the user has a drive at all (the screens leave the buttons out when not); pickerFolder: a folder; pickerSearch: files
+    by name. Every read goes through org.moqui.comms.FilePickerServices and so FileServices' drive access. An app may replace
+    one with a screen-extend transition of its name (IronStone's pickerFolder names the records drive's folders by record). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="pickerData" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#PickerData').parameter('checkOnly', String(checkOnly) === 'true')
+                    .requireNewTransaction(true).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {hasDrive: false} : {hasDrive: out.hasDrive, personalDriveId: out.personalDriveId,
+                driveList: out.driveList, recentList: out.recentList})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="pickerFolder" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.list#PickerFolder').parameters({driveId: driveId || '', path: path || ''})
+                    .requireNewTransaction(true).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {fileList: out.fileList, breadcrumbList: out.breadcrumbList, canWrite: out.canWrite})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="pickerSearch" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.find#PickerFiles').parameters({text: text || '', limit: 50})
+                    .requireNewTransaction(true).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {fileList: out.fileList})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

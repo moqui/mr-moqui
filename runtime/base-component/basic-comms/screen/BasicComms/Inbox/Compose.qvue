@@ -103,7 +103,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </q-list>
                     </q-btn-dropdown>
                     <q-btn flat round dense icon="sym_o_attach_file" :aria-label="t('Attach files')" @click="pickFiles"><q-tooltip>{{t('Attach files')}}</q-tooltip></q-btn>
-                    <q-btn flat round dense icon="sym_o_add_to_drive" :aria-label="t('Attach from Files')" @click="openPicker"><q-tooltip>{{t('Attach from Files')}}</q-tooltip></q-btn>
+                    <q-btn v-if="hasDrive" flat round dense icon="sym_o_add_to_drive" :aria-label="t('Attach from Files')" @click="openPicker"><q-tooltip>{{t('Attach from Files')}}</q-tooltip></q-btn>
                     <q-btn flat round dense icon="sym_o_text_snippet" :aria-label="t('Text blocks')"><q-tooltip>{{t('Text blocks')}} (/)</q-tooltip>
                         <q-menu v-model="blocksOpen" @before-show="loadBlocks" anchor="top left" self="bottom left">
                             <div class="q-pa-sm" style="width:320px;max-width:90vw">
@@ -184,6 +184,8 @@ along with this software (see the LICENSE.md file). If not, see
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 let composeCount = 0;
+// whether the user has a drive for Attach from Files, asked once per transition URL (pickerData checkOnly)
+const driveChecks = {};
 // the chrome of each layout around the one form (its slot): the dock card, the pop-out dialog, the page's box, nothing
 const shellTemplate = '' +
     '<q-card v-if="layout === \'dock\'" flat bordered class="column no-wrap shadow-10" :style="dockStyle">' +
@@ -223,7 +225,7 @@ module.exports = {
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
             blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, signature: null, signaturePlacement: 'above', belowSignature: null,
-            loadedOnce: false, pageLayoutOverride: null,
+            loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -564,6 +566,12 @@ module.exports = {
         removeUpload(file) { this.draft.uploads = this.draft.uploads.filter((item) => item !== file); },
 
         // ---- Attach from Files ----
+        // the button only when the user has a drive at all
+        checkDrive() {
+            const url = this.url('pickerData');
+            if (!driveChecks[url]) driveChecks[url] = moqui.request(url, { params: { checkOnly: 'true' } }).then((result) => !!(result.json || {}).hasDrive, () => false);
+            driveChecks[url].then((has) => { this.hasDrive = has; });
+        },
         openPicker() {
             this.picker = { open: true, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: true, text: '', searching: true, chosen: {}, saving: false };
             moqui.request(this.url('pickerData')).then((result) => {
@@ -800,7 +808,7 @@ module.exports = {
             return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4] || 8), Number(match[5] || 0)).getTime();
         }
     },
-    mounted() { this.start(); },
+    mounted() { this.start(); this.checkDrive(); },
     beforeUnmount() {
         // a dock closed or a page left: what was written is kept
         if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; if (!this.sent && this.state === 'ready') this.save(); }

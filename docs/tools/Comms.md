@@ -20,6 +20,12 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   is set up for it: [Mail-OAuth](../interfaces/Mail-OAuth.md)).
 - **Compose.** A new message, a reply or a forward from an account the user may send from, with undo send and
   scheduled sending.
+- **Attach from Files and Save to Files.** Compose's Attach from Files opens the drive picker: the user's drives (My
+  files first), the recent files, a folder or a search by name. A picked file is copied onto the message; a file over
+  25 MB, or a folder, goes in as a view link instead. An attachment in the Inbox has Save to Files, which copies it into
+  the folder shown, as "name (2)" when the name is taken; the message keeps its own copy. The picker shows only what
+  the drives let the user open (`org.moqui.comms.FilePickerServices` over `FileServices`), and a user with no drive
+  sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
   and status in the account menu. The tray's Chat tab is the same view, smaller.
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
@@ -59,7 +65,9 @@ mount (the `appRoot` its root sets, `mScreen.path`).
 
 **screen-extend.** A file at `<app>/screen-extend/basic-comms/screen/BasicComms/<path>.xml` adds transitions,
 subscreens, actions and widgets to that screen, under every mount. Named places to add to: `SettingsCards` (the
-settings index's cards), `HomeRooms` and `HomeShortcuts` (Home's columns).
+settings index's cards), `HomeRooms` and `HomeShortcuts` (Home's columns). A transition of the same name replaces
+the screen's: IronStone replaces the drive picker's `pickerFolder` in `Inbox/Compose` and `Inbox/Mail` to name its
+records drive's folders by their records.
 
 **Provider hooks.** The app root's `shell-providers` names services the framework calls, as the app, through
 `org.moqui.impl.ShellServices.call#Providers` (each hook's contract is a `type="interface"` service in
@@ -88,6 +96,6 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui, the mail settings and Inbox of a user with no party, chat, the
-provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+`./moq test basic-comms`: every screen in qvt and tui, the mail settings and Inbox of a user with no party, the drive
+picker (`BasicCommsFiles`), chat, the provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).
