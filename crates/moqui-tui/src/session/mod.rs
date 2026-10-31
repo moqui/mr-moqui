@@ -242,6 +242,8 @@ pub struct Session {
     docs: Vec<(String, String)>,
     /// The screen's saved finds, for the drawer.
     finds: Vec<MenuItem>,
+    /// The screen's declared actions that open a screen (`extActions` of its menu data, screen/ext.rs), for the drawer.
+    ext_actions: Vec<ExtAction>,
     counts: BTreeMap<String, i64>,
     /// Files the server sent (exports), for the loop to save.
     downloads: Vec<RawBody>,
@@ -308,6 +310,7 @@ impl Session {
             palette_found: (String::new(), Vec::new()),
             docs: Vec::new(),
             finds: Vec::new(),
+            ext_actions: Vec::new(),
             counts: BTreeMap::new(),
             downloads: Vec::new(),
             previews: BTreeSet::new(),
@@ -1823,6 +1826,48 @@ impl Session {
             .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
             .collect();
         format!("{}?{}", location.path, query.join("&"))
+    }
+}
+
+/// A declared action of a screen (an `ext-action` that opens a screen) as the terminal lists it: its parameters come from
+/// the page's own parameters, and its condition is tested on them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ExtAction {
+    pub title: String,
+    pub url: String,
+    /// `(target parameter, page parameter)`.
+    pub parameters: Vec<(String, String)>,
+    /// `(field, op, value)` of its condition, if it has one.
+    pub condition: Option<(String, String, String)>,
+}
+
+impl ExtAction {
+    /// The url with its parameters from the page's, or None when the page lacks one or its condition fails.
+    pub(crate) fn link(&self, page: &BTreeMap<String, String>) -> Option<String> {
+        if let Some((field, op, value)) = &self.condition {
+            let found = page.get(field).map(String::as_str).unwrap_or("");
+            let truthy = !found.is_empty() && found != "false" && found != "N";
+            let pass = match op.as_str() {
+                "truthy" => truthy,
+                "falsy" => !truthy,
+                "equals" => found == value,
+                "not-equals" => found != value,
+                _ => false,
+            };
+            if !pass {
+                return None;
+            }
+        }
+        let mut query = Vec::new();
+        for (name, from) in &self.parameters {
+            let value = page.get(from).filter(|value| !value.is_empty())?;
+            query.push(format!("{}={}", encode(name), encode(value)));
+        }
+        Some(if query.is_empty() {
+            self.url.clone()
+        } else {
+            format!("{}?{}", self.url, query.join("&"))
+        })
     }
 }
 

@@ -689,6 +689,8 @@ pub struct ScreenDef {
     pub has_tab_menu: bool,
     /// The `shell-providers` of an app root, for the shell data (`shell.rs`).
     pub shell_providers: Option<super::shell::ShellProviders>,
+    /// The declared `ext-action` and `ext-panel` items (`ext.rs`), after `screen-extend`.
+    pub ext_items: super::ext::ExtItems,
     /// The merged screen XML, after `screen-extend`.
     pub source: XmlFragment,
     pub sources: Vec<Source>,
@@ -1080,6 +1082,7 @@ impl ScreenDef {
             trees,
             has_tab_menu,
             shell_providers: super::shell::ShellProviders::of(node, location),
+            ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
@@ -1182,6 +1185,15 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             Some(base) => base.merge_node_with_child_key(&over, "subscreens-item", &["name"], None),
             None => screen.append_node(over.deep_copy()),
         }
+    }
+    if let Some(over) = extend.first_named("shell-providers") {
+        match screen.first_named("shell-providers") {
+            Some(base) => super::shell::merge_extend(&base, &over),
+            None => screen.append_node(over.deep_copy()),
+        }
+    }
+    for kind in ["ext-action", "ext-panel"] {
+        super::ext::merge_extend(screen, extend, kind);
     }
     for actions_extend in extend.children_named("actions-extend") {
         let kind = actions_extend

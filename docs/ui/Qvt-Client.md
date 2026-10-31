@@ -238,6 +238,13 @@ once per page load:
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,
   and one whose screen does not exist is logged and left out. `requiresRecord` kinds are offered only while `screenContext.record` is set.
   `action` of a key is a client action of the shell (`palette`, `quickCreate`) for a key with no `url`.
+- Another component adds to an app root's providers with a `screen-extend` of it: each child merges by its element and key (a
+  quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's
+  `screen-extend` lists them). An equal key is replaced where it was, a new one is added at the end, and labels never key.
+- The provider hooks (`inbox-source`, `record-link` and the others of plans/Comms-Framework.md §3.3) are not in the shell data: the
+  server calls them through `org.moqui.impl.ShellServices.call#Providers`, each as the app that declares it, and combines what they
+  answer (`results` with each `sourceId`, `failedParts`, `unavailable`); `get#Providers` lists them. Both work outside a render (a
+  service, a job), from the apps the current user may open.
 - `shell` are theme values of the user's theme for `STT_INTERNAL_QUASAR`, found as a render finds a theme (the user's `UserScreenTheme`, a
   group's, the type's `enumCode`, a `DEFAULT` theme of the type) and `DEFAULT_QUASAR` when there is none. They are sent here and not in
   `moqui-config`. `STRT_TRAY_TODAY`, `STRT_TRAY_CHAT`, `STRT_TRAY_NOTIFICATIONS`, `STRT_QUICK_CREATE`, `STRT_MAIL_SCREEN` and
@@ -800,6 +807,40 @@ A closed socket tries again after 30 seconds, six times; the browser coming back
 with its six tries again.
 
 A listener may unregister itself, or another, while it is called: the other listeners of that message still get it.
+
+## Declared actions and panels
+
+A component adds actions and panels to a screen it does not own with `<ext-action>` and `<ext-panel>` in a `screen-extend`
+of that screen (`xml-screen-3.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/Comms-Framework.md §3.3). Each names a
+`slot` of the screen; the screen's `.qvue` decides where a slot's items show:
+
+```html
+<q-menu><q-list>
+    <q-item clickable @click="reply(message)">Reply</q-item>
+    <m-ext-actions slot="message-actions" :item="message" @done="reload"></m-ext-actions>
+</q-list></q-menu>
+<m-ext-panel slot="room-panel" :item="room"></m-ext-panel>
+```
+
+**`GET /extItems/<screen path>`** answers the screen's `{actions, panels}` for the user, and the menu data of the page's screen
+carries the same lists as `extActions` and `extPanels`:
+
+```
+{ name, slot, sequence, label, icon, kind: "screen" | "transition", target: "dialog" | "page", url, confirm,
+  condition: { field, op: "truthy" | "falsy" | "equals" | "not-equals", value } | null,
+  parameters: [ { name, from } ] }
+```
+
+- A target the user may not view is left out, and a `transition` the screen does not have is logged and left out. The target
+  checks access again when it is called; a `condition` only hides an item, it is never an authorization rule.
+- Only the mapped fields of the item (`parameters`, `from` a field of the item) reach the target, never the whole item.
+- A `screen` action opens in the shell's dialog (`target="page"`: as the page), with the parameters in its query; a
+  `transition` action is posted with them, and `m-ext-actions` emits `done` after it. `as="buttons"` draws buttons in place of
+  menu items.
+- Each panel loads its screen in an `m-dynamic-container` of its own; one that fails shows the not-found state, and the others
+  still render.
+- The terminal client lists the page screen's `screen` actions in its drawer under Actions, their parameters taken from the
+  page's own.
 
 ## Install and Web Push
 

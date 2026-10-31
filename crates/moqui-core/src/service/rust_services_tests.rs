@@ -36,6 +36,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::images::image_writer_mime_types",
         "moqui_core::service::images::upload_rich_text_image",
         "moqui_core::service::images::write_image_service",
+        "moqui_core::service::shell::call_providers",
+        "moqui_core::service::shell::get_providers",
         "moqui_core::service::shell::get_shell_counts",
         "moqui_core::service::shell::publish_shell_counts",
         "moqui_core::service::spreadsheet::load_spreadsheet_entity",

@@ -966,6 +966,18 @@ fn sri_get_menu_data<'js>(ctx: Ctx<'js>, names: Vec<String>) -> rquickjs::Result
     })
 }
 
+/// `sri.getExtItems(pathNames)`: the declared actions and panels of the screen at the path (`screen/ext.rs`), or null
+/// after an error was sent.
+fn sri_get_ext_items<'js>(ctx: Ctx<'js>, names: Vec<String>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let found = with_render(&ctx, false, |state| crate::screen::ext::ext_items(state, &names))?;
+        match found {
+            Some(value) => collection_to_js(&ctx, value),
+            None => Null.into_js(&ctx),
+        }
+    })
+}
+
 /// `sri.getShellData()`: the shell data of the `shellData` transition (`screen/shell.rs`), or null after an error was sent.
 fn sri_get_shell_data<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
@@ -1270,6 +1282,7 @@ pub(super) fn sri_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     method!("getFieldTransitionValue", sri_get_field_transition_value);
     method!("getMenuItems", sri_get_menu_items);
     method!("getMenuData", sri_get_menu_data);
+    method!("getExtItems", sri_get_ext_items);
     method!("getShellData", sri_get_shell_data);
     method!("getShellProviders", sri_get_shell_providers);
     method!("getShellSearch", sri_get_shell_search);

@@ -16,7 +16,11 @@ along with this software (see the LICENSE.md file). If not, see
     its counts service in the theme value STRT_SHELL_COUNTS_SERVICE of its Quasar themes (IronStone BOSS seeds
     mantle.party.PartyServices.get#ShellCounts), so the framework stays free of its data model. The bodies are Rust:
     crates/moqui-core/src/service/shell.rs. The shell and its topic: docs/ui/Qvt-Client.md, "Shell data and
-    providers". -->
+    providers".
+
+    The providers of an app root's shell-providers (inbox-source, record-link and the other hooks of
+    plans/Comms-Framework.md §3.3) are called through call#Providers: several apps answer one hook, each as its own app,
+    and the framework stays free of what they read. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="ShellCounts" type="rust" location="moqui_core::service::shell::get_shell_counts" transaction="ignore">
         <description>The shell counts of a user: the service named by STRT_SHELL_COUNTS_SERVICE in the user's theme for
@@ -43,5 +47,33 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="userIdList" type="List" required="true"><description>A list of userId, or a comma separated
                 text</description></parameter>
         </in-parameters>
+    </service>
+    <service verb="get" noun="Providers" type="rust" location="moqui_core::service::shell::get_providers" transaction="ignore">
+        <description>The providers of hook declared in the shell-providers of the app roots the current user may open, in
+            sequence order: sourceId (the provider's name), app and service. A screen offers a feature that needs a provider
+            (the Internal account, filing on a record) only when there is one.</description>
+        <in-parameters><parameter name="hook" required="true"/></in-parameters>
+        <out-parameters><parameter name="providerList" type="List"/></out-parameters>
+    </service>
+    <service verb="call" noun="Providers" type="rust" location="moqui_core::service::shell::call_providers" transaction="ignore">
+        <description>Call each provider of hook declared by the app roots the current user may open, or only the one named
+            sourceId, with parameters, as the app that declares it (its screen is the artifact the call runs under, so its
+            authorization and entity filters apply; a userId or app passed in parameters grants nothing). A read (the
+            default) runs each provider in its own transaction: one that fails is logged by name and listed in failedParts
+            ({sourceId, error}) and the others still answer. A mutation (record-link, create-from, invitation) runs in the
+            caller's transaction and stops at the first failure, which is an error. results holds each provider's answer
+            with its sourceId, in order; each source pages itself, and pages are never joined into one. unavailable is true
+            when no app the user may open declares the hook, which is not the same as providers that answer nothing.</description>
+        <in-parameters>
+            <parameter name="hook" required="true"/>
+            <parameter name="parameters" type="Map"/>
+            <parameter name="sourceId"/>
+            <parameter name="mutation" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="failedParts" type="List"/>
+            <parameter name="unavailable" type="Boolean"/>
+        </out-parameters>
     </service>
 </services>

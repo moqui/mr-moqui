@@ -119,7 +119,15 @@ fn started() -> (Session, FakeLink) {
         serde_json::json!([{ "title": "App" }, {
             "title": "Main",
             "screenDocList": [{ "title": "How to", "index": "1" }],
-            "savedFinds": [{ "name": "F1", "title": "Open things", "pathWithParams": "/apps/app/Main?formListFindId=F1" }]
+            "savedFinds": [{ "name": "F1", "title": "Open things", "pathWithParams": "/apps/app/Main?formListFindId=F1" }],
+            "extActions": [
+                { "name": "x.report", "label": "Report", "kind": "screen", "url": "/apps/app/Main/Report", "parameters": [] },
+                { "name": "x.post", "label": "Post", "kind": "transition", "url": "/apps/app/Main/post", "parameters": [] },
+                { "name": "x.record", "label": "Record", "kind": "screen", "url": "/apps/app/Record",
+                  "parameters": [{ "name": "recordId", "from": "thingId" }] },
+                { "name": "x.closed", "label": "Closed only", "kind": "screen", "url": "/apps/app/Closed", "parameters": [],
+                  "condition": { "field": "status", "op": "equals", "value": "Closed" } }
+            ]
         }]),
     );
     let mut session = Session::start("/apps/app/Main");
@@ -249,6 +257,17 @@ fn the_help_lists_the_screen_documents_and_opens_one() {
         drawer.contains(&"Saved finds".to_string()) && drawer.contains(&"Open things".to_string()),
         "{drawer:?}"
     );
+    // The declared actions that open a screen are there too: not a transition, not one whose parameter or condition the
+    // page does not meet (screen/ext.rs).
+    let actions: Vec<(String, String)> = session
+        .drawer_rows()
+        .into_iter()
+        .skip_while(|row| row.title != "Actions")
+        .skip(1)
+        .take_while(|row| row.depth == 1)
+        .map(|row| (row.title, row.url))
+        .collect();
+    assert_eq!(actions, [("Report".to_string(), "/apps/app/Main/Report".to_string())]);
 }
 
 #[test]

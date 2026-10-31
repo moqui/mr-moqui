@@ -22,6 +22,7 @@ pub(crate) mod aggregate;
 mod cache;
 mod definition;
 mod dispatch;
+pub mod ext;
 pub mod form;
 pub mod gate;
 pub mod generate;

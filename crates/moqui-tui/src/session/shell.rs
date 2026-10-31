@@ -158,6 +158,16 @@ impl Session {
             rows.push(DrawerRow::new("Saved finds", "", 0));
             rows.extend(self.finds.iter().map(|find| DrawerRow::new(&find.title, &find.url, 1)));
         }
+        let page = self.parameters();
+        let actions: Vec<DrawerRow> = self
+            .ext_actions
+            .iter()
+            .filter_map(|action| action.link(page).map(|url| DrawerRow::new(&action.title, &url, 1)))
+            .collect();
+        if !actions.is_empty() {
+            rows.push(DrawerRow::new("Actions", "", 0));
+            rows.extend(actions);
+        }
         if !rows.is_empty() {
             rows.push(DrawerRow::new("Home", "/apps", 0));
         }
@@ -797,6 +807,31 @@ impl Session {
             .into_iter()
             .flatten()
             .map(|doc| (json_text(doc, "title"), json_text(doc, "index")))
+            .collect();
+        self.ext_actions = screen
+            .get("extActions")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|action| json_text(action, "kind") == "screen")
+            .map(|action| super::ExtAction {
+                title: json_text(action, "label"),
+                url: json_text(action, "url"),
+                parameters: action
+                    .get("parameters")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|parameter| (json_text(parameter, "name"), json_text(parameter, "from")))
+                    .collect(),
+                condition: action.get("condition").filter(|test| test.is_object()).map(|test| {
+                    (
+                        json_text(test, "field"),
+                        json_text(test, "op"),
+                        json_text(test, "value"),
+                    )
+                }),
+            })
             .collect();
         self.finds = screen
             .get("savedFinds")

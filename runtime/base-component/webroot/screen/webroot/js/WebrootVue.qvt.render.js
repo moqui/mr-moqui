@@ -3658,6 +3658,84 @@
               return (_openBlock(), _createElementBlock("span", { class: "m-elapsed" }, _toDisplayString(_ctx.text), 1))
             }
         } },
+        "m-ext-actions": { hash: "4d9b8ce6", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_ctx.as === 'buttons')
+                ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.visible, (action) => {
+                    return (_openBlock(), _createBlock(_component_q_btn, {
+                      key: action.name,
+                      "data-ext-action": action.name,
+                      dense: "",
+                      flat: "",
+                      "no-caps": "",
+                      icon: action.icon || undefined,
+                      label: action.label,
+                      onClick: $event => (_ctx.run(action))
+                    }, null, 8, ["data-ext-action", "icon", "label", "onClick"]))
+                  }), 128))
+                : (_openBlock(true), _createElementBlock(_Fragment, { key: 1 }, _renderList(_ctx.visible, (action) => {
+                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                      key: action.name,
+                      "data-ext-action": action.name,
+                      clickable: "",
+                      onClick: $event => (_ctx.run(action))
+                    }, {
+                      default: _withCtx(() => [
+                        (action.icon)
+                          ? (_openBlock(), _createBlock(_component_q_item_section, {
+                              key: 0,
+                              avatar: ""
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_icon, {
+                                  name: action.icon
+                                }, null, 8, ["name"])
+                              ]),
+                              _: 2
+                            }, 1024))
+                          : _createCommentVNode("", true),
+                        _createVNode(_component_q_item_section, null, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(action.label), 1)
+                          ]),
+                          _: 2
+                        }, 1024)
+                      ]),
+                      _: 2
+                    }, 1032, ["data-ext-action", "onClick"])), [
+                      [_directive_close_popup]
+                    ])
+                  }), 128))
+            }
+        } },
+        "m-ext-panel": { hash: "9bcc7da4", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
+
+              return (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.visible, (entry) => {
+                return (_openBlock(), _createElementBlock("div", {
+                  key: entry.panel.name + entry.url,
+                  class: "m-ext-panel",
+                  "data-ext-panel": entry.panel.name
+                }, [
+                  _createVNode(_component_m_dynamic_container, {
+                    id: 'm-ext-panel-' + entry.panel.name,
+                    url: entry.url
+                  }, null, 8, ["id", "url"])
+                ], 8, ["data-ext-panel"]))
+              }), 128))
+            }
+        } },
         "m-field": { hash: "15d75803", make: function (Vue) {
             const { renderSlot: _renderSlot, resolveComponent: _resolveComponent, mergeProps: _mergeProps, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
