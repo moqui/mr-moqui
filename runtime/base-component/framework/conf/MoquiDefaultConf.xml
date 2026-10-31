@@ -203,7 +203,8 @@
         a host binds every address); sip_tls_ca_file the CA certificates for TLS to trunks (the system bundle by default).
         Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
         (0 turns one off): sip_request_rate new requests a second from one source, sip_request_burst of them at once;
-        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once. -->
+        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once,
+        and sip_max_connections_per_source of them from one source. -->
     <default-property name="sip_port" value=""/>
     <default-property name="sip_host" value="127.0.0.1"/>
     <default-property name="sip_tls_port" value=""/>
@@ -216,6 +217,7 @@
     <default-property name="sip_request_burst" value="100"/>
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
+    <default-property name="sip_max_connections_per_source" value="100"/>
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
         true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
         to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's

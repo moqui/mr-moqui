@@ -91,7 +91,8 @@ pub(crate) struct SipSettings {
     pub rtp_ports: String,
     pub public: Option<IpAddr>,
     pub ca_file: Option<PathBuf>,
-    /// The flood caps: `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`.
+    /// The flood caps: `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`,
+    /// `sip_max_connections_per_source`.
     pub limits: RequestLimits,
     /// The realm of the digest challenges and the domain phones register to: `sip_domain`, else the public address,
     /// else `moqui`.
@@ -119,6 +120,11 @@ fn limits_from(property: &dyn Fn(&str) -> String) -> RequestLimits {
         burst: read(property, "sip_request_burst", defaults.burst),
         max_transactions: read(property, "sip_max_transactions", defaults.max_transactions),
         max_connections: read(property, "sip_max_connections", defaults.max_connections),
+        max_connections_per_source: read(
+            property,
+            "sip_max_connections_per_source",
+            defaults.max_connections_per_source,
+        ),
     }
 }
 
@@ -608,7 +614,7 @@ struct Leg {
     local: LocalMedia,
     caller: String,
     answered: bool,
-    /// A desk or soft phone's leg (V4): its device's username, which `dropDevice` hangs up.
+    /// A desk or soft phone's leg (V4): its device (`sipDeviceId`), whose legs `dropDevice` hangs up.
     device: Option<String>,
     /// A device leg's SDP with SRTP keys, for a binding over TLS, until a binding answers.
     srtp_local: Option<LocalMedia>,

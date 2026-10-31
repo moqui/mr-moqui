@@ -38,7 +38,8 @@ Every listener is off until its setting is set.
 | `sip_request_rate`, `sip_request_burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
 | `sip_max_transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
 | `sip_max_connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
-| `sip_registrar_enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on |
+| `sip_max_connections_per_source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
+| `sip_registrar_enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
 | `sip_domain` | `sip_public_address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
 | `sip_registrar_min_expires`, `sip_registrar_max_expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |
 | `sip_registrar_default_expires` | `600` | The expiry of a binding whose phone asks none |
@@ -214,7 +215,7 @@ notice that comes while another plays waits for it.
 Desk phones (Yealink, Polycom, Grandstream) and soft phones (Linphone, Zoiper, Groundwire, on a computer or a mobile, the
 native-calls path of §7.2) register with the SIP engine, which is their registrar (plans/Comms-Framework.md §5.2
 "Registrar for phones", V4). It is off unless `sip_registrar_enabled` is true, even with the listeners on; until then a
-REGISTER is refused as before, and phones may be added but cannot register or ring.
+REGISTER is refused (403) without a challenge, so a phone pointed here is not blocked for failed digests, and phones may be added but cannot register or ring.
 
 **Phones and their credentials.** A user adds a phone in Comms, Settings, Desk and soft phones
 (`SipDeviceServices.create#SipDevice`). Its credentials are generated: a ten-digit username and a 22-character random
@@ -297,7 +298,8 @@ Scanners probe SIP listeners for weak credentials, then place international call
 gate.
 
 - **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
-  dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections` are closed
+  dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
+  `sip_max_connections_per_source` from one source, are closed
   ([Settings](#settings); `moqui-sip` `guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be

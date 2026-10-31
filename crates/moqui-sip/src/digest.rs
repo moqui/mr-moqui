@@ -429,6 +429,12 @@ impl NonceBook {
         Verdict::Valid
     }
 
+    /// Whether an answer is to a challenge of this book: a nonce it issued, for its realm. One that is not fails
+    /// [`NonceBook::verify_ha1`] whatever the verifier, so a caller may skip looking the username up for it.
+    pub fn answers_ours(&self, auth: &Authorization) -> bool {
+        self.issued_at(&auth.nonce).is_some() && auth.realm.eq_ignore_ascii_case(&self.realm)
+    }
+
     fn issued_at(&self, nonce: &str) -> Option<u64> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(nonce).ok()?;
         let (time, rest) = bytes.split_at_checked(8)?;

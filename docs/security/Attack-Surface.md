@@ -471,7 +471,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   (profile "PBX on a private network") answer it: a provider trunk's are the provider account's password, so a digest
   with them is refused and counted as a failure, and a provider's calls come only from its addresses. A listed address
   range is at most a /8 (IPv4) or a /32 (IPv6); the services refuse a wider one and the engine ignores it. Other requests from addresses that
-  are not a trunk's are not answered. Without the registrar, REGISTER is refused after the checks. Over UDP a
+  are not a trunk's are not answered. Without the registrar, REGISTER is refused (403) without a
+  challenge, so it counts no failures. Over UDP a
   source address can be forged, so a trunk taken by its address is best on TLS (the default) or TCP.
 - **The registrar (V4).** Off unless `sip_registrar_enabled` is true, even with the listeners on. With it, a REGISTER
   and a phone's INVITE answer the same challenge with a desk or soft phone's credentials: a generated username and a
@@ -512,7 +513,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 - **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests (outside a
   dialog) to `sip_request_rate` a second per source (`sip_request_burst` at once; 20 and 100 by default, an IPv6
   source as its /64), drops them while `sip_max_transactions` (2,000) run, and closes TCP and TLS connections past
-  `sip_max_connections` (500). What is over is dropped unanswered; requests in a dialog and responses pass, so calls
+  `sip_max_connections` (500), or past `sip_max_connections_per_source` (100) from one source, so one source cannot
+  hold the connections the registrar's phones keep open. What is over is dropped unanswered; requests in a dialog and responses pass, so calls
   going on are not cut. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.

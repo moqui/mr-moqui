@@ -38,11 +38,14 @@ const PASSWORD: &str = "Rk7v-desk-phone-secret";
 #[derive(Default)]
 struct Directory {
     devices: Mutex<HashMap<String, PhoneDevice>>,
+    /// How many times it was asked: a service call each in the host.
+    lookups: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait::async_trait]
 impl DeviceDirectory for Directory {
     async fn device(&self, username: &str) -> Option<PhoneDevice> {
+        self.lookups.fetch_add(1, Ordering::Relaxed);
         lock(&self.devices).get(username).cloned()
     }
 }
@@ -760,4 +763,83 @@ impl StreamReader {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn with_the_registrar_off_a_register_is_refused_without_a_challenge() {
+    let (tx, mut events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: REALM.to_string(),
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let udp = ua.bound().udp.unwrap();
+    let phone = UdpPhone::new().await;
+    for cseq in 1..=4 {
+        let r = Reg {
+            cseq,
+            ..Default::default()
+        };
+        phone
+            .send(&register_text(&r, "UDP", &phone.addr.to_string(), udp, None), udp)
+            .await;
+        assert_eq!(code(&phone.response().await), 403, "no challenge to answer");
+    }
+    // nothing counted against the phone's address, which a misconfigured phone retrying would otherwise get blocked
+    while let Ok(event) = events.try_recv() {
+        assert!(!matches!(event, UaEvent::AuthFailure { .. }), "{event:?}");
+    }
+    ua.shutdown();
+}
+
+#[tokio::test]
+async fn a_forged_nonce_is_not_looked_up_and_a_via_does_not_choose_the_transport() {
+    let mut h = Harness::start(RegistrarLimits::default()).await;
+    let phone = UdpPhone::new().await;
+    // an answer to a nonce this side never issued fails whoever it names, without a lookup of the username
+    let forged = format!(
+        "Digest username=\"p100\", realm=\"{REALM}\", nonce=\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\", \
+         uri=\"sip:{}\", response=\"{}\", algorithm=SHA-256, qop=auth, nc=00000001, cnonce=\"c1\"",
+        h.udp,
+        "0".repeat(64)
+    );
+    let r = Reg::default();
+    phone
+        .send(
+            &register_text(&r, "UDP", &phone.addr.to_string(), h.udp, Some(&forged)),
+            h.udp,
+        )
+        .await;
+    assert_eq!(code(&phone.response().await), 403);
+    h.event(|e| matches!(e, UaEvent::AuthFailure { .. }).then_some(()))
+        .await;
+    assert_eq!(h.directory.lookups.load(Ordering::Relaxed), 0);
+    // a REGISTER over UDP whose Via says TCP: its binding is the UDP flow it came over, so a call to it goes there
+    let r = Reg {
+        call_id: "reg-via",
+        ..Default::default()
+    };
+    phone
+        .send(&register_text(&r, "TCP", &phone.addr.to_string(), h.udp, None), h.udp)
+        .await;
+    let challenge = phone.response().await;
+    assert_eq!(code(&challenge), 401);
+    let auth = authorization(&challenge, &r, h.udp);
+    let signed = Reg { cseq: 2, ..r };
+    phone
+        .send(
+            &register_text(&signed, "TCP", &phone.addr.to_string(), h.udp, Some(&auth)),
+            h.udp,
+        )
+        .await;
+    assert_eq!(code(&phone.response().await), 200);
+    assert_eq!(h.directory.lookups.load(Ordering::Relaxed), 1);
+    let added = h.binding(BindingChange::Added).await;
+    assert_eq!((added.flow.transport, added.flow.source), (Transport::Udp, phone.addr));
+    h.ua.shutdown();
 }

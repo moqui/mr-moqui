@@ -14,8 +14,8 @@
 
 //! The user agent's registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones (V4)").
 //!
-//! On only when the host gives [`UaConfig::registrar`] (`sip_registrar_enabled`); without it a REGISTER is refused as
-//! in V1. With it:
+//! On only when the host gives [`UaConfig::registrar`] (`sip_registrar_enabled`); without it a REGISTER is refused
+//! (403) without a challenge. With it:
 //!
 //! - **REGISTER** is challenged ([`crate::digest::NonceBook`]: SHA-256 first, then MD5, RFC 8760 §2.4), and the
 //!   answer is checked against the device's stored verifiers ([`DeviceDirectory`]): an HA1 per algorithm for this
@@ -181,11 +181,24 @@ pub(super) fn sweep(inner: &Arc<Inner>) {
     });
 }
 
-/// A request's transport and whether its Via's sent-by is not where it came from (a NAT between).
+/// The transport a request came over: its connection's (a TCP or TLS stream, else the UDP listener), never what its Via
+/// claims, so a phone cannot have its calls sent over another transport than the flow it opened.
+pub(super) fn transport_in(tx: &Transaction) -> Transport {
+    match tx.connection.as_ref() {
+        Some(connection) if connection.is_reliable() => connection
+            .get_remote_addr()
+            .and_then(|remote| remote.r#type)
+            .and_then(transport_of)
+            .unwrap_or(Transport::Tcp),
+        _ => Transport::Udp,
+    }
+}
+
+/// A request's flow and whether its Via's sent-by is not where it came from (a NAT between).
 fn flow_of(tx: &Transaction, source: SocketAddr) -> Option<(Flow, bool)> {
     let via = tx.original.via_header().ok()?;
     let typed = via.first_value().ok()?.typed().ok()?;
-    let transport = transport_of(typed.transport)?;
+    let transport = transport_in(tx);
     let sent_by = typed.uri.host_with_port;
     let sent_ip: Option<std::net::IpAddr> = sent_by.host.to_string().trim_matches(['[', ']']).parse().ok();
     let sent_port: Option<u16> = sent_by.port.map(|p| p.value());
@@ -371,13 +384,15 @@ impl Inner {
         auth: &crate::digest::Authorization,
         method: &str,
     ) -> (crate::digest::Verdict, Option<PhoneDevice>) {
+        // a forged or foreign nonce fails whoever it names: the directory (a service call) is not asked for it
+        let ours = lock(&self.nonces).answers_ours(auth);
         let device = match self.phones.as_ref() {
-            Some(phones) => phones
+            Some(phones) if ours => phones
                 .directory
                 .device(&auth.username)
                 .await
                 .filter(|d| d.username == auth.username),
-            None => None,
+            _ => None,
         };
         let verifier = device.as_ref().and_then(|d| {
             d.verifiers

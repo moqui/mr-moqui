@@ -183,7 +183,7 @@ impl SourceGuard {
 }
 
 /// The caps of [`RequestGate`], from the host's properties (`sip_request_rate`, `sip_request_burst`,
-/// `sip_max_transactions`, `sip_max_connections`). 0 turns one off.
+/// `sip_max_transactions`, `sip_max_connections`, `sip_max_connections_per_source`). 0 turns one off.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RequestLimits {
     /// New requests a second from one source, refilled continuously.
@@ -194,6 +194,9 @@ pub struct RequestLimits {
     pub max_transactions: usize,
     /// TCP and TLS connections open at once; one past it is closed.
     pub max_connections: usize,
+    /// TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every
+    /// connection the registrar's phones keep open; one past it is closed.
+    pub max_connections_per_source: usize,
 }
 
 impl Default for RequestLimits {
@@ -203,6 +206,7 @@ impl Default for RequestLimits {
             burst: 100,
             max_transactions: 2_000,
             max_connections: 500,
+            max_connections_per_source: 100,
         }
     }
 }
@@ -227,6 +231,8 @@ pub struct RequestGate {
     limits: RequestLimits,
     buckets: HashMap<IpAddr, Bucket>,
     connections: usize,
+    /// The connections open from each source, while it has any.
+    by_source: HashMap<IpAddr, usize>,
 }
 
 impl RequestGate {
@@ -235,6 +241,7 @@ impl RequestGate {
             limits,
             buckets: HashMap::new(),
             connections: 0,
+            by_source: HashMap::new(),
         }
     }
 
@@ -275,15 +282,34 @@ impl RequestGate {
         Admit::Pass
     }
 
-    /// A stream connection opened: false when it is past the cap and must be closed (its close is still told to
-    /// [`Self::connection_closed`]).
-    pub fn connection_opened(&mut self) -> bool {
+    /// A stream connection opened from `source` (when known): false when it is past a cap, overall or for its
+    /// source, and must be closed (its close is still told to [`Self::connection_closed`]).
+    pub fn connection_opened(&mut self, source: Option<IpAddr>) -> bool {
         self.connections += 1;
-        self.limits.max_connections == 0 || self.connections <= self.limits.max_connections
+        let from_source = match source {
+            Some(source) => {
+                let count = self.by_source.entry(key_of(source)).or_insert(0);
+                *count += 1;
+                *count
+            }
+            None => 0,
+        };
+        let per_source = self.limits.max_connections_per_source;
+        (self.limits.max_connections == 0 || self.connections <= self.limits.max_connections)
+            && (per_source == 0 || from_source <= per_source)
     }
 
-    pub fn connection_closed(&mut self) {
+    pub fn connection_closed(&mut self, source: Option<IpAddr>) {
         self.connections = self.connections.saturating_sub(1);
+        if let Some(source) = source {
+            let key = key_of(source);
+            if let Some(count) = self.by_source.get_mut(&key) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.by_source.remove(&key);
+                }
+            }
+        }
     }
 }
 
@@ -298,6 +324,7 @@ mod tests {
             burst: 5,
             max_transactions: 0,
             max_connections: 0,
+            max_connections_per_source: 0,
         });
         let t0 = Instant::now();
         let flood: IpAddr = "203.0.113.9".parse().unwrap();
@@ -327,23 +354,52 @@ mod tests {
             burst: 0,
             max_transactions: 10,
             max_connections: 2,
+            max_connections_per_source: 0,
         });
         let t0 = Instant::now();
         let source: IpAddr = "198.51.100.4".parse().unwrap();
         assert_eq!(gate.admit(source, 9, t0), Admit::Pass);
         assert_eq!(gate.admit(source, 10, t0), Admit::Busy);
-        assert!(gate.connection_opened());
-        assert!(gate.connection_opened());
-        assert!(!gate.connection_opened(), "the third is closed");
-        gate.connection_closed();
+        assert!(gate.connection_opened(None));
+        assert!(gate.connection_opened(None));
+        assert!(!gate.connection_opened(None), "the third is closed");
+        gate.connection_closed(None);
         assert!(
-            !gate.connection_opened(),
+            !gate.connection_opened(None),
             "still two open with the one past the cap counted until its close"
         );
-        gate.connection_closed();
-        gate.connection_closed();
-        assert!(gate.connection_opened());
+        gate.connection_closed(None);
+        gate.connection_closed(None);
+        assert!(gate.connection_opened(None));
         assert_eq!(RequestLimits::default().max_connections, 500);
+    }
+
+    #[test]
+    fn one_source_cannot_hold_every_connection() {
+        let mut gate = RequestGate::new(RequestLimits {
+            max_connections: 10,
+            max_connections_per_source: 2,
+            ..Default::default()
+        });
+        let flood: IpAddr = "203.0.113.9".parse().unwrap();
+        let office: IpAddr = "198.51.100.4".parse().unwrap();
+        assert!(gate.connection_opened(Some(flood)));
+        assert!(gate.connection_opened(Some(flood)));
+        assert!(
+            !gate.connection_opened(Some(flood)),
+            "the third from one source is closed"
+        );
+        assert!(gate.connection_opened(Some(office)), "another source still connects");
+        // the one past the cap closes, then one of the two: the source may open one again
+        gate.connection_closed(Some(flood));
+        gate.connection_closed(Some(flood));
+        assert!(gate.connection_opened(Some(flood)));
+        // the same /64 is the same source
+        let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2::2".parse().unwrap();
+        assert!(gate.connection_opened(Some(a)));
+        assert!(gate.connection_opened(Some(b)));
+        assert!(!gate.connection_opened(Some(a)));
     }
 
     #[test]

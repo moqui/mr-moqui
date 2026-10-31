@@ -435,7 +435,7 @@ impl TransportEventInspector for BlockInspector {
                 }
             }
             TransportEvent::New(connection) if connection.is_reliable() => {
-                if !lock(&self.gate).connection_opened() {
+                if !lock(&self.gate).connection_opened(remote_ip(connection)) {
                     tracing::warn!("SIP: too many connections, {} closed", connection.get_addr());
                     let connection = connection.clone();
                     tokio::spawn(async move {
@@ -444,7 +444,7 @@ impl TransportEventInspector for BlockInspector {
                 }
             }
             TransportEvent::Closed(connection) if connection.is_reliable() => {
-                lock(&self.gate).connection_closed();
+                lock(&self.gate).connection_closed(remote_ip(connection));
                 if let Some((registrar, events)) = &self.phones {
                     phones::connection_closed(registrar, events, connection);
                 }
@@ -453,6 +453,14 @@ impl TransportEventInspector for BlockInspector {
         }
         Some(event)
     }
+}
+
+/// The address a stream connection is from.
+fn remote_ip(connection: &SipConnection) -> Option<IpAddr> {
+    connection
+        .get_remote_addr()
+        .and_then(|remote| remote.get_socketaddr().ok())
+        .map(|addr| addr.ip())
 }
 
 fn now_secs() -> u64 {
@@ -1274,23 +1282,24 @@ impl Inner {
             // anything else from a stranger is not answered
             _ => return,
         }
-        if method == Method::Register && self.phones.is_some() {
-            // the registrar (V4): a phone's REGISTER, from wherever it is
-            self.register_phone(tx, source).await;
+        if method == Method::Register {
+            if self.phones.is_some() {
+                // the registrar (V4): a phone's REGISTER, from wherever it is
+                self.register_phone(tx, source).await;
+            } else {
+                // a trunk does not register here, and with the registrar off no one can: refused without a
+                // challenge, so a phone pointed here does not count failures against its source until it is blocked
+                let _ = tx.reply(StatusCode::Forbidden).await;
+            }
             return;
         }
         let caller = match trunk {
             Some(trunk) => Caller::Trunk(trunk),
-            None => match self.authenticate(&mut tx, source, method == Method::Invite).await {
+            None => match self.authenticate(&mut tx, source, true).await {
                 Some(caller) => caller,
                 None => return,
             },
         };
-        if method == Method::Register {
-            // a trunk does not register here; phones register with the registrar, when it is on
-            let _ = tx.reply(StatusCode::Forbidden).await;
-            return;
-        }
         self.new_call(tx, caller, source).await;
     }
 
@@ -1398,15 +1407,7 @@ impl Inner {
         // a trunk's call, or a registered phone's over the transport it came by
         let (trunk_id, device, transport) = match caller {
             Caller::Trunk(trunk) => (trunk.id, None, trunk.transport),
-            Caller::Device(device) => {
-                let transport = request
-                    .via_header()
-                    .ok()
-                    .and_then(|v| SipConnection::parse_target_from_via(v).ok())
-                    .and_then(|(t, _)| phones::transport_of(t))
-                    .unwrap_or(Transport::Udp);
-                (String::new(), Some(device.id), transport)
-            }
+            Caller::Device(device) => (String::new(), Some(device.id), phones::transport_in(&tx)),
         };
         let to = user_of(&request.uri);
         let (from, from_name) = match request.from_header().ok().and_then(|h| h.typed().ok()) {
