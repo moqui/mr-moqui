@@ -57,6 +57,22 @@ impl EntityFacade {
         let directories: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         let model = EntityModel::load_paths(&conf, &directories)?;
         let old = self.inner.model.model();
+        // The load leaves out what does not parse or link, so a boot goes on; a relink keeps the model there was
+        // instead, as a file being edited is often broken for a moment. What the old model already left out does
+        // not stop it.
+        let known: HashSet<&str> = old.problems().iter().map(String::as_str).collect();
+        let new_problems: Vec<&str> = model
+            .problems()
+            .iter()
+            .map(String::as_str)
+            .filter(|problem| !known.contains(problem))
+            .collect();
+        if !new_problems.is_empty() {
+            return Err(Error::new(format!(
+                "the entity model was not relinked: {}",
+                new_problems.join("; ")
+            )));
+        }
         let before: HashSet<&str> = old.entities().iter().map(|entity| entity.full_name.as_str()).collect();
         let after: HashSet<&str> = model
             .entities()
