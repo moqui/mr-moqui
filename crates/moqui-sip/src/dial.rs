@@ -16,6 +16,10 @@
 //! The voice services decide a call with the same rules (`Voice.js`); the engine checks them again before it sends an
 //! INVITE, so a call the deployment does not allow never reaches a trunk whatever asked for it. Emergency numbers come
 //! first: they are dialed as they are, before any other rule.
+//!
+//! Country code 1 is shared by the North American Numbering Plan's countries, so with a home country of 1 a number
+//! whose area code belongs to another of them (the Caribbean's and Bermuda's, [`NANP_OTHER_COUNTRIES`]) is
+//! international, not domestic: they are the usual toll-fraud destinations that dial like domestic numbers.
 
 /// The deployment's dial rules (`VoicePolicy`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +45,13 @@ impl Default for DialPolicy {
         }
     }
 }
+
+/// The area codes of the North American Numbering Plan's countries other than the United States (and its
+/// territories) and Canada: `+1` and these are international from a home country of 1. Keep in step with `Voice.js`.
+pub const NANP_OTHER_COUNTRIES: [&str; 21] = [
+    "242", "246", "264", "268", "284", "345", "441", "473", "649", "658", "664", "721", "758", "767", "784", "809",
+    "829", "849", "868", "869", "876",
+];
 
 /// A number's class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +124,7 @@ pub fn normalize(dialed: &str, policy: &DialPolicy) -> Option<String> {
         format!("+{}{national}", policy.home_country)
     };
     let len = e164.len() - 1;
-    ((8..=15).contains(&len) && !e164[1..].starts_with('0')).then_some(e164)
+    ((7..=15).contains(&len) && !e164[1..].starts_with('0')).then_some(e164)
 }
 
 /// The class of a dialed number with its E.164 form (an emergency number as dialed). `None` when it is not a number.
@@ -128,12 +139,21 @@ pub fn classify(dialed: &str, policy: &DialPolicy) -> Option<(String, Destinatio
         .any(|p| !p.is_empty() && number.starts_with(p.as_str()))
     {
         DestinationClass::Premium
-    } else if number.starts_with(&format!("+{}", policy.home_country)) {
+    } else if number.starts_with(&format!("+{}", policy.home_country)) && !other_nanp_country(&number, policy) {
         DestinationClass::Domestic
     } else {
         DestinationClass::International
     };
     Some((number, class))
+}
+
+/// Whether an E.164 number is in another country of the North American Numbering Plan than the home one.
+fn other_nanp_country(number: &str, policy: &DialPolicy) -> bool {
+    policy.home_country == "1"
+        && number
+            .strip_prefix("+1")
+            .and_then(|rest| rest.get(..3))
+            .is_some_and(|area| NANP_OTHER_COUNTRIES.contains(&area))
 }
 
 /// Whether the deployment allows a call to this class at all; the user's own grants are the services'. An emergency
@@ -179,6 +199,23 @@ mod tests {
         assert_eq!(
             classify("1-900-555-0100", &policy).unwrap().1,
             DestinationClass::Premium
+        );
+        // the Caribbean dials like a domestic number but is another country
+        assert_eq!(
+            classify("1 876 555 0100", &policy).unwrap(),
+            ("+18765550100".to_string(), DestinationClass::International)
+        );
+        assert_eq!(
+            classify("809-555-0100", &policy).unwrap().1,
+            DestinationClass::International
+        );
+        assert_eq!(
+            classify("+1 787 555 0100", &policy).unwrap().1,
+            DestinationClass::Domestic
+        );
+        assert_eq!(
+            classify("+44 876 555 0100", &policy).unwrap().1,
+            DestinationClass::International
         );
         assert_eq!(
             deployment_allows(DestinationClass::International, &policy),

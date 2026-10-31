@@ -466,25 +466,32 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 ([SIP](../interfaces/SIP.md) "Fraud controls"):
 
 - **Who is answered.** An INVITE from a trunk's host or listed signaling addresses is a trunk's call; any other
-  INVITE or REGISTER is challenged with SIP Digest (SHA-256 and MD5, nonces that expire after 5 minutes and carry a
-  MAC under a per-process key, nonce counts that must go up). Other requests from addresses that are not a trunk's
-  are not answered. There is no registrar yet: REGISTER is refused after the checks.
+  INVITE or REGISTER is challenged with SIP Digest (SHA-256 and MD5, nonces that expire after 5 minutes and carry
+  random bytes and a MAC under a per-process key, nonce counts that must go up). Other requests from addresses that
+  are not a trunk's are not answered. There is no registrar yet: REGISTER is refused after the checks. Over UDP a
+  source address can be forged, so a trunk taken by its address is best on TLS (the default) or TCP.
 - **Failed digests block the source.** `authFailureLimit` failures in `authFailureWindowSeconds` from one address
   block it for `authBlockSeconds` (5 in 10 minutes, for an hour, by default): its datagrams and stream messages are
   dropped before a transaction is made, nothing is answered, and the block is kept in `VoiceAuthFailure` across
-  restarts. No account is locked or counted.
+  restarts (the engine counts failures in memory and writes only the block). An IPv6 source counts as its /64. The
+  engine tracks at most 50,000 sources; when full, the ones not blocked go first, so rotating addresses does not lift
+  the blocks. No account is locked or counted.
 - **What an incoming call reaches.** Only a number in `PhoneNumber` rings anyone, through the call services'
   ringing; the SDP must be audio with a codec in common, and SRTP when the trunk's profile requires it (488
   otherwise).
 - **Outbound.** Calls go out only from `send#SipControl` (the `rtc-signal` cluster topic, kind `sip`, to that node),
   which only the voice services send, after their checks (caller ID grant, outbound enabled, international and
-  premium off by default, concurrency and daily limits, the emergency path). The engine checks the number's class,
-  the emergency trunk and the concurrency limit again before an INVITE goes out.
+  premium off by default, concurrency and daily limits, the emergency path). With home country 1, the area codes of
+  the plan's other countries (the Caribbean's, Bermuda's) are international. The engine checks the number's class,
+  the emergency trunk and the concurrency limit again before an INVITE goes out. A display name or extra header with
+  a line break or a quote is cleaned or left out, so it cannot add headers (a `P-Asserted-Identity`) to the INVITE.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
   allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
 - **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;
-  a packet that fails its tag or replay window is dropped. RTP goes back where the leg's packets come from (with
-  plain RTP, the first source is kept). RTCP is dropped.
+  a packet that fails its tag or replay window is dropped. RTP goes back where the leg's authenticated packets come
+  from. Plain RTP is taken only from the SDP's address and, once the first packet latched, only from that source;
+  anything else is dropped, so a guessed port neither injects audio nor takes the call's audio. RTCP is dropped.
+  rsipstack logs whole SIP messages (SDES keys, digest answers) at INFO, so the host keeps only its warnings.
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
 

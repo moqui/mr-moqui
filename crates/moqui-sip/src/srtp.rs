@@ -80,9 +80,14 @@ impl MasterKey {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
-    /// From an `inline:<base64>[|lifetime][|mki:len]` key parameter.
+    /// From an `inline:<base64>[|lifetime]` key parameter. A key with an MKI (`|mki:len`) is not taken: its packets
+    /// carry the MKI, which this side does not handle, so the stream is refused rather than fail every packet.
     pub fn from_inline(text: &str) -> Option<Self> {
-        let encoded = text.trim().strip_prefix("inline:")?.split('|').next()?;
+        let mut parts = text.trim().strip_prefix("inline:")?.split('|');
+        let encoded = parts.next()?;
+        if parts.any(|p| p.contains(':')) {
+            return None;
+        }
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
         Self::from_bytes(&bytes)
     }
@@ -182,7 +187,7 @@ impl Sender {
 
     /// Encrypts an RTP packet's payload in place and appends its tag.
     pub fn protect(&mut self, packet: &mut Vec<u8>) -> Result<(), SrtpError> {
-        let parsed = crate::rtp::parse(packet).ok_or(SrtpError::Malformed)?;
+        let parsed = crate::rtp::parse_header(packet).ok_or(SrtpError::Malformed)?;
         let seq = parsed.header.sequence;
         if let Some(last) = self.last_seq {
             if seq < last && last - seq > 0x8000 {
@@ -242,7 +247,8 @@ impl Receiver {
             return Err(SrtpError::Malformed);
         }
         let body_len = packet.len() - TAG_LEN;
-        let parsed = crate::rtp::parse(&packet[..body_len]).ok_or(SrtpError::Malformed)?;
+        // the padding count is in the encrypted payload: not read before decrypting
+        let parsed = crate::rtp::parse_header(&packet[..body_len]).ok_or(SrtpError::Malformed)?;
         let seq = parsed.header.sequence;
         let roc = self.guess_roc(seq);
         let index = (u64::from(roc) << 16) | u64::from(seq);

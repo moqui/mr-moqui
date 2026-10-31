@@ -22,6 +22,9 @@ use moqui_core::context::ExecutionContextFactory;
 
 pub(crate) struct SipNode;
 
+/// Nothing to install: without the sip feature rustls has only aws-lc-rs.
+pub(crate) fn install_crypto() {}
+
 pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     for name in ["sip_port", "sip_tls_port"] {
         if !moqui_lib::env::get_prop_or_env(name).trim().is_empty() {

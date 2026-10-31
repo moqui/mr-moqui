@@ -846,3 +846,16 @@ async fn a_call_over_tls_with_srtp_between_two_user_agents() {
     near.shutdown();
     far.shutdown();
 }
+
+#[test]
+fn a_display_name_or_header_cannot_add_headers() {
+    assert_eq!(
+        display_name("Pat\r\nP-Asserted-Identity: <tel:+15551230000>"),
+        "PatP-Asserted-Identity: <tel:+15551230000>"
+    );
+    assert_eq!(display_name("Pat \"the\" \\Caller\\"), "Pat the Caller");
+    assert_eq!(display_name(&"x".repeat(100)).len(), 60);
+    assert!(header_safe("P-Asserted-Identity", "<tel:+15551230000>"));
+    assert!(!header_safe("P-Asserted-Identity", "<tel:+1>\r\nX-Evil: 1"));
+    assert!(!header_safe("Bad Name", "x"));
+}

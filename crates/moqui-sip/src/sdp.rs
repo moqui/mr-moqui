@@ -212,8 +212,15 @@ fn static_pt(name: &str) -> Option<u8> {
     }
 }
 
-/// The SDP text of a stream with these formats.
-fn write_sdp(local: &LocalMedia, formats: &[(u8, &str)], events: &[(u8, u32)], direction: Direction) -> String {
+/// The SDP text of a stream with these formats. `crypto_tag` is the `a=crypto` tag: 1 in an offer, the offer's chosen
+/// one in an answer (RFC 4568 §5.1.2).
+fn write_sdp(
+    local: &LocalMedia,
+    formats: &[(u8, &str)],
+    events: &[(u8, u32)],
+    direction: Direction,
+    crypto_tag: u32,
+) -> String {
     let at = addr_type(local.address);
     let proto = if local.key.is_some() { "RTP/SAVP" } else { "RTP/AVP" };
     let mut out = String::new();
@@ -238,7 +245,7 @@ fn write_sdp(local: &LocalMedia, formats: &[(u8, &str)], events: &[(u8, u32)], d
     out.push_str("a=ptime:20\r\n");
     let _ = write!(out, "a={}\r\n", direction.attribute());
     if let Some(key) = &local.key {
-        let _ = write!(out, "a=crypto:1 {SUITE} inline:{}\r\n", key.inline());
+        let _ = write!(out, "a=crypto:{crypto_tag} {SUITE} inline:{}\r\n", key.inline());
     }
     out
 }
@@ -254,7 +261,7 @@ pub fn offer(local: &LocalMedia) -> String {
     if local.codecs.contains(&"opus") {
         events.push((EVENT_48K_PT, 48_000));
     }
-    write_sdp(local, &formats, &events, local.direction)
+    write_sdp(local, &formats, &events, local.direction, 1)
 }
 
 /// The audio stream of an SDP.
@@ -445,7 +452,8 @@ pub fn answer(offer: &RemoteMedia, local: &LocalMedia) -> Result<(String, Negoti
     let dtmf = telephone_event(offer, codec.clock_rate);
     let direction = offer.direction.answer_to(local.direction);
     let events: Vec<(u8, u32)> = dtmf.into_iter().collect();
-    let mut sdp = write_sdp(local, &[(codec.payload_type, codec.name)], &events, direction);
+    let tag = offer.crypto.as_ref().map(|(tag, _)| *tag).unwrap_or(1);
+    let mut sdp = write_sdp(local, &[(codec.payload_type, codec.name)], &events, direction, tag);
     for refused in &offer.other_media {
         let _ = write!(sdp, "m={refused}\r\n");
     }

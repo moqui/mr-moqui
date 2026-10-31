@@ -280,7 +280,7 @@ impl Worker {
     fn command(&mut self, command: LegCommand) {
         match command {
             LegCommand::Settled(settled) => match self.media.as_mut() {
-                Some(media) if media.codec() == settled.codec => media.update(&settled),
+                Some(media) if media.takes(&settled) => media.update(&settled),
                 _ => match PhoneMedia::new(&settled) {
                     Ok(media) => self.media = Some(media),
                     Err(err) => tracing::warn!("SIP leg {}: its media did not start: {err}", self.leg),

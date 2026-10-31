@@ -203,10 +203,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="record" noun="AuthFailure" authenticate="false" allow-remote="false">
         <description>Internal (the SIP engine): a failed digest attempt from sourceAddress (as
             username). Counted per source within the policy's window; at its limit the source is blocked for authBlockSeconds
-            and the voice admins are told once per block. It never touches a UserAccount: a scanner cannot lock a user out.</description>
+            and the voice admins are told once per block. The engine counts failures itself and calls this only when it blocks a
+            source (blocked true: block it now), so a flood from many addresses is not a database write each. It never touches
+            a UserAccount: a scanner cannot lock a user out.</description>
         <in-parameters>
             <parameter name="sourceAddress" required="true"/>
             <parameter name="username"/>
+            <parameter name="blocked" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="blocked" type="Boolean"/>

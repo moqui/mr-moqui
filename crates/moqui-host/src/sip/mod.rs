@@ -22,8 +22,8 @@
 //! - **The user agent** is [`moqui_sip::ua::Ua`] on a small Tokio runtime of its own: signaling only, no business logic.
 //!   What a call may do is the voice services' (`org.moqui.impl.VoiceServices`), called on a request worker: the engine
 //!   reads its trunks and policy with `get#EngineConfig`, hands an incoming call to `receive#PhoneCall`, reports each
-//!   leg with `note#PhoneLeg`, a trunk's registration with `note#TrunkStatus` and a failed digest with
-//!   `record#AuthFailure`, and registers itself every 20 seconds (`register#SipNode`).
+//!   leg with `note#PhoneLeg`, a trunk's registration with `note#TrunkStatus` and a source its failed digests blocked
+//!   with `record#AuthFailure`, and registers itself every 20 seconds (`register#SipNode`).
 //! - **Control.** The services tell it to dial, answer, hang up, hold, resume, send digits or reload with
 //!   `send#SipControl`, on the `rtc-signal` topic with kind `sip`, to this node only.
 //! - **Fraud, again.** Before a dial goes out the engine checks the number's class against the deployment's policy
@@ -152,6 +152,14 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
         public,
         ca_file,
     }))
+}
+
+/// Makes aws-lc-rs the process's default rustls provider, first thing in the process: rsipstack's TLS turns on rustls's
+/// ring provider beside aws-lc-rs, and with two providers built in, a library that builds its rustls config from the
+/// process default (the MySQL driver, hyper-rustls) would panic without one. aws-lc-rs is what the host uses
+/// everywhere, so nothing changes for the code that names its provider.
+pub(crate) fn install_crypto() {
+    moqui_sip::install_crypto();
 }
 
 /// The SIP listeners' bound addresses once started, for `Server::sip_address`.
@@ -698,7 +706,11 @@ impl Engine {
             UaEvent::Incoming(call) => self.incoming(call).await,
             UaEvent::Ringing { .. } => {}
             UaEvent::Answered { leg, answer } => {
-                let Some(entry) = self.legs.get(&leg) else { return };
+                let Some(entry) = self.legs.get(&leg) else {
+                    // the leg was hung up here as the answer came: end the answered call too
+                    self.ua.hangup(&leg);
+                    return;
+                };
                 let room = entry.room.clone();
                 match sdp::parse(&answer).and_then(|a| sdp::accept(&entry.local, &a)) {
                     Ok(settled) => {
@@ -751,12 +763,16 @@ impl Engine {
                 username,
                 blocked,
             } => {
-                if blocked {
-                    tracing::warn!("SIP: {source} is blocked after failed digests (last for {username:?})");
+                // the block is kept by the services; each failure before it is only counted here, so a flood of failures
+                // from many addresses is not a service call and a database write each
+                if !blocked {
+                    tracing::debug!("SIP: a failed digest from {source}");
+                    return;
                 }
+                tracing::warn!("SIP: {source} is blocked after failed digests (last for {username:?})");
                 self.note(
                     AUTH_FAILURE_SERVICE,
-                    serde_json::json!({"sourceAddress": source.to_string(), "username": username}),
+                    serde_json::json!({"sourceAddress": source.to_string(), "username": username, "blocked": true}),
                 );
             }
         }
@@ -829,8 +845,19 @@ impl Engine {
         });
         match started {
             Ok((answer, media, local)) => {
-                self.legs.insert(leg.clone(), Leg { room, media, local });
-                let _ = call.reply.send(Decision::Ring { leg, answer });
+                let ring = Decision::Ring {
+                    leg: leg.clone(),
+                    answer,
+                };
+                if call.reply.send(ring).is_err() {
+                    // the user agent stopped waiting (the services took longer than it waits) and refused the call:
+                    // the leg's media goes, and the call ends
+                    tracing::warn!("SIP call {leg}: decided too late, the call was refused");
+                    drop(media);
+                    self.note_leg(&room, &leg, "failed", Some(480), "decided too late");
+                    return;
+                }
+                self.legs.insert(leg, Leg { room, media, local });
             }
             Err(err) => {
                 tracing::warn!("SIP call {leg}: its media did not start: {err}");

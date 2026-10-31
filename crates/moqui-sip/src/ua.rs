@@ -918,17 +918,21 @@ impl Inner {
         let mut authorization: Option<Header> = None;
         // the host's hangup, once (a oneshot is not polled again after it fired)
         let mut given_up = false;
+        // a display name or header value goes into the INVITE as it is: one with a line break or a quote could add
+        // headers of its own (a P-Asserted-Identity the provider trusts), so they are cleaned first
+        let display_name = request.from_name.as_deref().map(display_name).filter(|n| !n.is_empty());
         for _attempt in 0..2 {
             let mut headers: Vec<Header> = request
                 .headers
                 .iter()
+                .filter(|(name, value)| header_safe(name, value))
                 .map(|(name, value)| Header::Other(name.clone(), value.clone()))
                 .collect();
             if let Some(auth) = &authorization {
                 headers.push(auth.clone());
             }
             let option = InviteOption {
-                caller_display_name: request.from_name.clone(),
+                caller_display_name: display_name.clone(),
                 caller: caller.clone(),
                 callee: callee.clone(),
                 destination: Some(target.clone()),
@@ -957,7 +961,8 @@ impl Inner {
                             let _ = dialog.cancel().await;
                         }
                     }
-                    _ = tokio::time::sleep_until(deadline) => {
+                    // once the race has an outcome its deadline is past: waiting on it again would spin
+                    _ = tokio::time::sleep_until(deadline), if race.outcome().is_none() => {
                         if race.poll(Instant::now()) == race::Action::Cancel {
                             let _ = dialog.cancel().await;
                         }
@@ -1324,6 +1329,29 @@ impl Inner {
             }
         }
     }
+}
+
+/// A display name for a From header: no control characters, quotes or backslashes, at most 60 characters.
+fn display_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_control() && *c != '"' && *c != '\\')
+        .take(60)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Whether an extra header can go into a request as it is: a token name, and a value with no control characters.
+fn header_safe(name: &str, value: &str) -> bool {
+    let ok = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-.!%*_+`'~".contains(c))
+        && !value.chars().any(char::is_control);
+    if !ok {
+        tracing::warn!("SIP: the header {name:?} is not sent, it is not a plain header");
+    }
+    ok
 }
 
 fn gave_up_reason(race: &Race) -> EndReason {

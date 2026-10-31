@@ -1743,6 +1743,7 @@ pub fn build_features() -> Vec<&'static str> {
 
 /// Tell the framework this build's package and host features, once.
 fn register_build() {
+    sip::install_crypto();
     moqui_core::build_info::set_host(build_package(), &build_features());
 }
 

@@ -67,6 +67,11 @@ fn packets_round_trip_across_a_rollover_and_tampering_and_replays_are_refused() 
         MasterKey::from_inline(&format!("inline:{}|2^31", master.inline())),
         Some(master.clone())
     );
+    // a key with an MKI is not taken: its packets would carry it
+    assert_eq!(
+        MasterKey::from_inline(&format!("inline:{}|2^20|1:4", master.inline())),
+        None
+    );
     let mut sender = Sender::new(&master);
     let mut receiver = Receiver::new(&master);
     for seq in [65_533u16, 65_534, 65_535, 0, 1, 2] {

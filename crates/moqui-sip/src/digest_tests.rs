@@ -149,3 +149,31 @@ fn the_server_side_checks_nonces_counts_and_staleness() {
         Verdict::Stale
     );
 }
+
+#[test]
+fn two_calls_challenged_in_the_same_second_are_not_replays() {
+    // a PBX placing two calls at once: each INVITE is challenged, each retry starts its count at 1
+    let mut book = NonceBook::new("moqui.example", 300);
+    let credentials = Credentials {
+        username: "pbx".to_string(),
+        password: "s3cret".to_string(),
+        ..Default::default()
+    };
+    let first = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false)[0]).unwrap();
+    let second = Challenge::parse(&book.challenges(2_000, &[Algorithm::Sha256], false)[0]).unwrap();
+    assert_ne!(first.nonce, second.nonce);
+    for (challenge, cnonce) in [(&first, "a"), (&second, "b")] {
+        let value = answer(
+            &credentials,
+            challenge,
+            "INVITE",
+            "sip:+15551230000@moqui.example",
+            cnonce,
+        )
+        .unwrap();
+        assert_eq!(
+            book.verify(&Authorization::parse(&value).unwrap(), "INVITE", Some("s3cret"), 2_001),
+            Verdict::Valid
+        );
+    }
+}

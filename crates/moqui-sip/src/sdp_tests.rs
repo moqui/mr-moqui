@@ -118,3 +118,18 @@ fn hold_by_reinvite_is_mirrored_in_the_answer() {
     let (_, settled) = answer(&parse(&offer(&holder)).unwrap(), &local(20_000, false)).unwrap();
     assert_eq!(settled.direction, Direction::SendRecv);
 }
+
+#[test]
+fn the_answer_names_the_offers_crypto_tag() {
+    // an offer whose AES_CM_128_HMAC_SHA1_80 key is its second crypto line, tag 2
+    let key = MasterKey::random();
+    let offer_text = format!(
+        "v=0\r\no=- 1 1 IN IP4 198.51.100.7\r\ns=-\r\nc=IN IP4 198.51.100.7\r\nt=0 0\r\nm=audio 4000 RTP/SAVP 0\r\n\
+         a=crypto:1 AES_256_CM_HMAC_SHA1_80 inline:AAAA\r\na=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:{}\r\n",
+        key.inline()
+    );
+    let parsed = parse(&offer_text).unwrap();
+    let (text, settled) = answer(&parsed, &local(20_004, true)).unwrap();
+    assert_eq!(settled.remote_key, Some(key));
+    assert!(text.contains("a=crypto:2 AES_CM_128_HMAC_SHA1_80 inline:"), "{text}");
+}

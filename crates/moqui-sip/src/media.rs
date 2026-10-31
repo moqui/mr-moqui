@@ -25,7 +25,11 @@
 //!   resamples it to the codec's rate, encodes it and writes the packet, or an RFC 4733 event while a digit is sent.
 //!   Nothing is sent while the other side holds the call.
 //! - **Symmetric RTP.** Packets go back to where the leg's packets come from (RFC 4961), the SDP's address until the
-//!   first one: a trunk behind NAT is reached. With SRTP only an authenticated packet moves it.
+//!   first one: a trunk behind NAT is reached. With SRTP only an authenticated packet moves it, so a guessed port
+//!   can neither inject audio nor take the call's audio away (the RTP-bleed class). Plain RTP has no such proof: it
+//!   takes packets only from the SDP's address (on any port, for a NAT that changes ports), latches to the first
+//!   one's port, and drops everything else. Plain RTP is for a PBX on a private network, where the SDP's address is
+//!   where the media comes from.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
@@ -81,6 +85,10 @@ pub struct PhoneMedia {
     tx: Option<srtp::Sender>,
     rx: Option<srtp::Receiver>,
     remote: SocketAddr,
+    /// The address in the SDP: plain RTP is taken only from it.
+    signaled: std::net::IpAddr,
+    /// The other side's SRTP key: a re-INVITE with another needs a new leg media.
+    remote_key: Option<crate::srtp::MasterKey>,
     latched: bool,
     direction: Direction,
     // sending
@@ -133,6 +141,8 @@ impl PhoneMedia {
             tx,
             rx,
             remote: settled.remote,
+            signaled: settled.remote.ip(),
+            remote_key: settled.remote_key.clone(),
             latched: false,
             direction: settled.direction,
             ssrc: random_u32(),
@@ -169,11 +179,18 @@ impl PhoneMedia {
         self.stats
     }
 
+    /// Whether a new settlement can [`update`](Self::update) this media: the same codec and keys. Otherwise it needs a
+    /// new leg media.
+    pub fn takes(&self, settled: &Negotiated) -> bool {
+        self.choice == settled.codec && self.remote_key == settled.remote_key
+    }
+
     /// A re-INVITE's new settlement (hold, resume, a new address). A changed codec or keys need a new leg media.
     pub fn update(&mut self, settled: &Negotiated) {
         self.direction = settled.direction;
         if settled.remote != self.remote && !settled.remote.ip().is_unspecified() {
             self.remote = settled.remote;
+            self.signaled = settled.remote.ip();
             self.latched = false;
         }
     }
@@ -204,6 +221,19 @@ impl PhoneMedia {
     pub fn receive(&mut self, from: SocketAddr, datagram: &[u8]) -> Received {
         if rtp::is_rtcp(datagram) {
             return Received::Ignored;
+        }
+        // plain RTP: only from the SDP's address, and once latched only from the latched source (unless the SDP had
+        // no address: then the first packet latches)
+        if self.rx.is_none() {
+            let allowed = if self.latched {
+                from == self.remote
+            } else {
+                self.signaled.is_unspecified() || from.ip() == self.signaled
+            };
+            if !allowed {
+                self.stats.rejected += 1;
+                return Received::Rejected;
+            }
         }
         let mut packet = datagram.to_vec();
         if let Some(rx) = self.rx.as_mut() {

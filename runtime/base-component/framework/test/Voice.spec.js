@@ -193,15 +193,18 @@ feature("international calls are refused until the deployment and the user both 
         policy({internationalEnabled: "N"})
         const offAgain = placeA({phoneNumber: ABROAD})
         const premium = placeA({phoneNumber: "+19005550100"})
-        return {off, deploymentOnly, both, offAgain, premium}
+        // Jamaica dials like a domestic number from country code 1, but it is another country
+        const caribbean = placeA({phoneNumber: "1 876 555 0100"})
+        return {off, deploymentOnly, both, offAgain, premium, caribbean}
     },
-    then({off, deploymentOnly, both, offAgain, premium}) {
+    then({off, deploymentOnly, both, offAgain, premium, caribbean}) {
         off.reasonCode == "internationalNotEnabled"
         deploymentOnly.reasonCode == "internationalNotEnabled"
         both.errors == ""
         both.destinationClass == "international"
         offAgain.reasonCode == "internationalNotEnabled"
         premium.reasonCode == "premiumNotEnabled"
+        caribbean.reasonCode == "internationalNotEnabled"
     }
 })
 
@@ -235,23 +238,26 @@ feature("failed digest attempts block their source, not the account", {
         const before = sys(() => ec.entity.find("moqui.security.UserAccount").condition("userId", A).one())
         const tries = [1, 2, 3].map(() => as(null, "record#AuthFailure", {sourceAddress: "203.0.113.5", username: username(A)}))
         const elsewhere = as(null, "record#AuthFailure", {sourceAddress: "203.0.113.6", username: username(A)})
+        // the engine reports a source only when it blocked it: blocked at once
+        const engineBlocked = as(null, "record#AuthFailure", {sourceAddress: "203.0.113.7", username: username(A), blocked: true})
         const after = sys(() => ec.entity.find("moqui.security.UserAccount").condition("userId", A).one())
         const config = as(null, "get#EngineConfig")
         const blocks = admin("find#AuthBlocks")
         const cleared = admin("clear#AuthBlock", {sourceAddress: "203.0.113.5"})
         const alerts = sys(() => ec.entity.find("moqui.security.user.NotificationMessage").condition("topic", "VoiceAlert").count())
-        return {tries, elsewhere, before, after, config, blocks, cleared, alerts}
+        return {tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts}
     },
-    then({tries, elsewhere, before, after, config, blocks, cleared, alerts}) {
+    then({tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts}) {
         tries[0].blocked == false
         tries[1].blocked == false
         tries[2].blocked == true
         tries[2].blockedUntil > Date.now()
         elsewhere.blocked == false
+        engineBlocked.blocked == true
         after.disabled == before.disabled
         after.disabled != "Y"
         String(after.successiveFailedLogins || 0) == String(before.successiveFailedLogins || 0)
-        config.blockedSourceList.map(b => b.sourceAddress).join() == "203.0.113.5"
+        config.blockedSourceList.map(b => b.sourceAddress).sort().join() == "203.0.113.5,203.0.113.7"
         config.trunkList.length == 1
         config.trunkList[0].password == "secret-1"
         config.trunkList[0].algorithms.join() == "SHA-256,MD5"

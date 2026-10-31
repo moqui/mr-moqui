@@ -16,9 +16,13 @@
 //! SIP listener for weak credentials; `limit` failures from one address within `window` block that address for
 //! `block`, and everything it sends is then dropped without an answer. The account a scanner names is never locked,
 //! which would let it lock users out. Sans-IO: the caller passes the time.
+//!
+//! An IPv6 source counts as its /64 (one subscriber's network, which a scanner can rotate through freely), and an
+//! IPv4-mapped one as its IPv4 address. The table is bounded: when it is full, sources not blocked go first, then the
+//! blocks that end soonest, so rotating addresses cannot clear the blocks already made.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
 /// How many failures block a source, and for how long.
@@ -62,8 +66,19 @@ pub struct SourceGuard {
     entries: HashMap<IpAddr, Entry>,
 }
 
-/// The most sources tracked; past this the ones not blocked and oldest go first.
+/// The most sources tracked; past this the ones not blocked go first, then the blocks that end soonest.
 const MAX_SOURCES: usize = 50_000;
+
+/// The key a source counts under: an IPv4 address, or an IPv6 address's /64.
+fn key_of(source: IpAddr) -> IpAddr {
+    match source {
+        IpAddr::V4(_) => source,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !u128::from(u64::MAX))),
+        },
+    }
+}
 
 impl SourceGuard {
     pub fn new(policy: GuardPolicy) -> Self {
@@ -79,6 +94,7 @@ impl SourceGuard {
 
     /// Whether `source` is blocked at `now`.
     pub fn is_blocked(&mut self, source: IpAddr, now: Instant) -> bool {
+        let source = key_of(source);
         match self.entries.get(&source).and_then(|e| e.blocked_until) {
             Some(until) if until > now => true,
             Some(_) => {
@@ -91,6 +107,7 @@ impl SourceGuard {
 
     /// A failed digest from `source` at `now`.
     pub fn failure(&mut self, source: IpAddr, now: Instant) -> Failure {
+        let source = key_of(source);
         if self.is_blocked(source, now) {
             return Failure::StillBlocked;
         }
@@ -118,6 +135,7 @@ impl SourceGuard {
 
     /// A request from `source` passed: its count starts over.
     pub fn success(&mut self, source: IpAddr) {
+        let source = key_of(source);
         if self.entries.get(&source).is_some_and(|e| e.blocked_until.is_none()) {
             self.entries.remove(&source);
         }
@@ -125,8 +143,12 @@ impl SourceGuard {
 
     /// A block known from before (the voice services keep them across restarts), or `None` to clear one.
     pub fn set_block(&mut self, source: IpAddr, until: Option<Instant>) {
+        let source = key_of(source);
         match until {
             Some(until) => {
+                if self.entries.len() >= MAX_SOURCES && !self.entries.contains_key(&source) {
+                    self.evict(Instant::now());
+                }
                 let entry = self.entries.entry(source).or_insert(Entry {
                     count: 0,
                     first: until,
@@ -143,7 +165,13 @@ impl SourceGuard {
     fn evict(&mut self, now: Instant) {
         self.entries.retain(|_, e| e.blocked_until.is_some_and(|u| u > now));
         if self.entries.len() >= MAX_SOURCES {
-            self.entries.clear();
+            // every one is blocked: the tenth whose blocks end soonest go, the others stay blocked
+            let mut ends: Vec<Instant> = self.entries.values().filter_map(|e| e.blocked_until).collect();
+            let cut = MAX_SOURCES / 10;
+            ends.select_nth_unstable(cut);
+            let threshold = ends[cut];
+            self.entries
+                .retain(|_, e| e.blocked_until.is_some_and(|u| u > threshold));
         }
     }
 }
@@ -187,5 +215,42 @@ mod tests {
         assert!(guard.is_blocked(trunk, t0 + Duration::from_secs(130)));
         guard.set_block(trunk, None);
         assert!(!guard.is_blocked(trunk, t0 + Duration::from_secs(130)));
+    }
+
+    #[test]
+    fn an_ipv6_source_counts_as_its_64_and_a_full_table_keeps_its_blocks() {
+        let policy = GuardPolicy {
+            limit: 2,
+            window: Duration::from_secs(60),
+            block: Duration::from_secs(600),
+        };
+        let mut guard = SourceGuard::new(policy);
+        let t0 = Instant::now();
+        let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+        let other: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert_eq!(guard.failure(a, t0), Failure::Counted(1));
+        assert_eq!(guard.failure(b, t0), Failure::Blocked, "the same /64");
+        assert!(!guard.is_blocked(other, t0));
+        let mapped: IpAddr = "::ffff:203.0.113.9".parse().unwrap();
+        let v4: IpAddr = "203.0.113.9".parse().unwrap();
+        guard.failure(mapped, t0);
+        assert_eq!(
+            guard.failure(v4, t0),
+            Failure::Blocked,
+            "an IPv4-mapped address is its IPv4 one"
+        );
+        // a scanner rotating through more sources than the table holds does not clear the blocks
+        let mut blocked = 0u32;
+        for i in 0..(MAX_SOURCES as u32 + 10) {
+            let ip = IpAddr::V4(std::net::Ipv4Addr::from(0x0a00_0000 + i));
+            guard.failure(ip, t0);
+            if i < 5 {
+                blocked += u32::from(guard.failure(ip, t0) == Failure::Blocked);
+            }
+        }
+        assert_eq!(blocked, 5);
+        assert!(guard.is_blocked(a, t0 + Duration::from_secs(1)));
+        assert!(guard.entries.len() <= MAX_SOURCES);
     }
 }

@@ -19,8 +19,8 @@
 //! and refuses one for another realm or only with an algorithm the credentials do not allow, so a server cannot have a
 //! response computed for a realm it chose. The answer uses `qop=auth` when offered, with a fresh client nonce.
 //!
-//! **Challenging a request.** [`NonceBook`] issues nonces that carry their time and a MAC under a secret of this
-//! process, so they need no table to check; one older than its lifetime is answered `stale` (a client may retry with
+//! **Challenging a request.** [`NonceBook`] issues nonces that carry their time, random bytes and a MAC under a secret
+//! of this process, so they need no table to check, and two challenges in the same second differ; one older than its lifetime is answered `stale` (a client may retry with
 //! a new one). Each nonce's last nonce count is kept for its lifetime, and a count that does not go up is a replay.
 //! A request without `qop` may use a nonce once. Responses are compared in constant time.
 
@@ -309,6 +309,8 @@ pub struct NonceBook {
 /// The most nonces whose counts are kept; past this the oldest go (a nonce they drop can be replayed only within
 /// its lifetime, and only after this many newer ones were used).
 const MAX_SEEN: usize = 100_000;
+/// The random bytes in a nonce.
+const NONCE_SALT: usize = 8;
 
 impl NonceBook {
     pub fn new(realm: &str, lifetime_secs: u64) -> Self {
@@ -326,9 +328,10 @@ impl NonceBook {
         &self.realm
     }
 
-    fn mac(&self, time: u64) -> [u8; 16] {
+    fn mac(&self, time: u64, salt: &[u8]) -> [u8; 16] {
         let mut mac = hmac::Hmac::<Sha256>::new_from_slice(&self.key).expect("HMAC takes a key of any length");
         mac.update(&time.to_be_bytes());
+        mac.update(salt);
         mac.update(self.realm.as_bytes());
         let full = mac.finalize().into_bytes();
         let mut out = [0u8; 16];
@@ -336,11 +339,15 @@ impl NonceBook {
         out
     }
 
-    /// A nonce issued at `now_secs`.
+    /// A nonce issued at `now_secs`: the time, 8 random bytes (each challenge its own nonce, so the nonce counts of two
+    /// clients challenged in the same second are not taken for a replay) and their MAC.
     pub fn nonce(&self, now_secs: u64) -> String {
-        let mut bytes = Vec::with_capacity(24);
+        let mut salt = [0u8; NONCE_SALT];
+        let _ = getrandom::fill(&mut salt);
+        let mut bytes = Vec::with_capacity(8 + NONCE_SALT + 16);
         bytes.extend_from_slice(&now_secs.to_be_bytes());
-        bytes.extend_from_slice(&self.mac(now_secs));
+        bytes.extend_from_slice(&salt);
+        bytes.extend_from_slice(&self.mac(now_secs, &salt));
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
@@ -410,9 +417,10 @@ impl NonceBook {
 
     fn issued_at(&self, nonce: &str) -> Option<u64> {
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(nonce).ok()?;
-        let (time, mac) = bytes.split_at_checked(8)?;
+        let (time, rest) = bytes.split_at_checked(8)?;
+        let (salt, mac) = rest.split_at_checked(NONCE_SALT)?;
         let time = u64::from_be_bytes(time.try_into().ok()?);
-        constant_eq(&self.mac(time), mac).then_some(time)
+        constant_eq(&self.mac(time, salt), mac).then_some(time)
     }
 
     fn forget_expired(&mut self, now_secs: u64) {

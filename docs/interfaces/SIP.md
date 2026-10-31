@@ -146,7 +146,9 @@ Each provider is unverified until its own live check.
   browsers' Opus (moqui-rtc's audio core).
 - **Symmetric RTP.** Media goes back where the phone's packets come from (RFC 4961).
   - With SRTP, only an authenticated packet moves it.
-  - With plain RTP, the first packet does. Keep plain RTP to private networks.
+  - With plain RTP, only packets from the SDP's address are taken (on any port, for a NAT), the first one latches,
+    and from then on only that source is taken. A NAT that changes the address, not only the port, needs SRTP. Keep
+    plain RTP to private networks.
 - **DTMF** is RFC 4733 telephone-event, both ways.
   - The in-call keypad of `m-call` sends digits (`send#PhoneDtmf`).
   - The digits a phone sends are noted (`note#PhoneLeg` `dtmf`), for the IVR and queues later.
@@ -172,22 +174,33 @@ gate.
   - Each failed answer counts against its source.
   - At `authFailureLimit` (5) failures in `authFailureWindowSeconds` (600), the address is blocked for
     `authBlockSeconds` (3600). Everything it sends is dropped unanswered, before a transaction is made.
-  - The block is kept in `VoiceAuthFailure` (so it holds after a restart), and the admins get one alert for it.
+  - The engine counts failures in memory; the block is kept in `VoiceAuthFailure` (so it holds after a restart), and
+    the admins get one alert for it.
+  - An IPv6 source counts as its /64. At most 50,000 sources are tracked; past that the ones not blocked go first.
   - No user account is ever locked or counted. An admin clears a block in System, Voice, Fraud.
 - **International and premium destinations are off.**
   - They need the deployment's `VoicePolicy` and the user's `VoiceUserSetting` both.
   - Premium is the policy's E.164 prefixes (`+1900`, `+1976` by default).
   - Numbers are classed by the policy's home country code (1 by default).
+  - With home country 1, the area codes of the plan's other countries (Bahamas, Barbados, Jamaica, the Dominican
+    Republic and the rest of the Caribbean, Bermuda) are international: they dial like domestic numbers and are the
+    usual toll-fraud destinations. US territories (Puerto Rico, the US Virgin Islands, Guam) stay domestic.
 - **Outbound calling is per user.** A user needs outbound enabled in their setting.
 - **Caller ID is authorized per user.** A user presents only a number granted to them (`PhoneNumberUser`).
 - **Limits.**
   - Concurrent phone calls: 20 in all, 2 per user.
   - Calls a day: 100 per user, 1,000 in all.
-  - Each is a `VoicePolicy` value, and a user's own setting can lower its own.
+  - Each is a `VoicePolicy` value, and a user's own setting can lower its own, never raise it.
   - Provider spending limits are set at the provider.
 - **The engine checks again.** Before an INVITE goes to a trunk, the engine classes the number itself. It refuses
   international or premium numbers the deployment does not allow, an emergency number outside the emergency path, a
   non-emergency trunk for one, and calls past the concurrency limit, whatever asked for the call.
+- **No header injection.** The caller's display name is cleaned of line breaks and quotes, and an extra header with
+  a line break is not sent, so a user's name cannot add a `P-Asserted-Identity` the provider trusts.
+- **IP-authenticated trunks over UDP.** A UDP source address can be forged. Prefer TLS (the default) or TCP for a
+  trunk taken by its address.
+- **Logs.** rsipstack logs whole SIP messages at INFO, SDES keys and digest answers included; the host keeps only
+  its warnings and errors.
 
 ## Emergency readiness
 

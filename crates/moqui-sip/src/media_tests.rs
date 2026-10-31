@@ -130,11 +130,20 @@ fn reordered_and_lost_packets_are_put_back_and_concealed() {
     let stats = theirs.stats();
     assert_eq!(stats.played, 11);
     assert!(stats.concealed >= 1, "{stats:?}");
-    // symmetric RTP: plain RTP latches to the first source
+    // symmetric RTP: plain RTP latches to the first source at the SDP's address (another port: a NAT)
     let elsewhere: SocketAddr = "127.0.0.1:41000".parse().unwrap();
     let mut fresh = pair(&["pcmu"], false);
     let p = fresh.0.send(&tone(500.0, 0)).unwrap();
-    fresh.1.receive(elsewhere, &p);
+    // a packet from another address is not taken and does not latch (a guessed port cannot hijack the call)
+    let stranger: SocketAddr = "192.0.2.66:41000".parse().unwrap();
+    assert_eq!(fresh.1.receive(stranger, &p), Received::Rejected);
+    assert_ne!(fresh.1.remote(), stranger);
+    assert_eq!(fresh.1.receive(elsewhere, &p), Received::Audio);
+    assert_eq!(fresh.1.remote(), elsewhere);
+    // once latched, another port at the same address is not taken either
+    let p2 = fresh.0.send(&tone(500.0, 1)).unwrap();
+    let same_host: SocketAddr = "127.0.0.1:42000".parse().unwrap();
+    assert_eq!(fresh.1.receive(same_host, &p2), Received::Rejected);
     assert_eq!(fresh.1.remote(), elsewhere);
     // garbage and a forged SRTP packet are rejected
     let (_, mut secure, at, _) = pair(&["pcmu"], true);

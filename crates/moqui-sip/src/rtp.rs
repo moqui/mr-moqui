@@ -42,6 +42,16 @@ pub fn is_rtcp(packet: &[u8]) -> bool {
 
 /// The header of an RTP packet; `None` for anything else.
 pub fn parse(packet: &[u8]) -> Option<Parsed> {
+    parse_inner(packet, true)
+}
+
+/// [`parse`] without reading the padding (its count is the last byte of the payload, encrypted under SRTP):
+/// `payload_end` is the packet's end.
+pub fn parse_header(packet: &[u8]) -> Option<Parsed> {
+    parse_inner(packet, false)
+}
+
+fn parse_inner(packet: &[u8], padding: bool) -> Option<Parsed> {
     let [first, second, s0, s1, t0, t1, t2, t3, c0, c1, c2, c3, ..] = packet else {
         return None;
     };
@@ -55,7 +65,7 @@ pub fn parse(packet: &[u8]) -> Option<Parsed> {
         header_len += 4 + 4 * usize::from(u16::from_be_bytes([ext[2], ext[3]]));
     }
     let mut payload_end = packet.len();
-    if first & 0x20 != 0 {
+    if padding && first & 0x20 != 0 {
         let pad = usize::from(*packet.last()?);
         payload_end = payload_end.checked_sub(pad)?;
     }

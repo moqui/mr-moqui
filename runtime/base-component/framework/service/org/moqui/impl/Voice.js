@@ -37,6 +37,13 @@ const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
 const STATUS_BY_REPORT = { registered: 'VtsRegistered', ok: 'VtsOk', failed: 'VtsFailed', unregistered: 'VtsUnknown' }
 const ALGORITHMS = ['SHA-256', 'SHA-512-256', 'MD5']
+/**
+ * The area codes of the North American Numbering Plan's countries other than the United States (and its territories)
+ * and Canada: international from a home country of 1, though they dial like domestic numbers. moqui-sip dial.rs
+ * NANP_OTHER_COUNTRIES has the same list, for the engine's check.
+ */
+const NANP_OTHER_COUNTRIES = ['242', '246', '264', '268', '284', '345', '441', '473', '649', '658', '664', '721', '758', '767',
+  '784', '809', '829', '849', '868', '869', '876']
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -111,6 +118,7 @@ function toE164(raw, homeCountryCode) {
     else if (homeCountryCode === '1' && text.startsWith('011')) text = '+' + text.slice(3)
     else if (homeCountryCode === '1' && text.length === 10) text = '+1' + text
     else if (homeCountryCode === '1' && text.length === 11 && text.startsWith('1')) text = '+' + text
+    else if (homeCountryCode === '1') return null
     else if (text.startsWith('0')) text = '+' + homeCountryCode + text.slice(1)
     else text = '+' + homeCountryCode + text
   }
@@ -118,17 +126,20 @@ function toE164(raw, homeCountryCode) {
 }
 
 /**
- * What a dialed number is: emergency (one of the policy's emergency numbers, as dialed), premium (a premium prefix),
- * international (outside the home country code) or domestic; null when it is not a number. Emergency comes first.
+ * What a dialed number is: emergency (one of the policy's emergency numbers, exactly as dialed), premium (a premium
+ * prefix), international (outside the home country code, or another country of the North American plan from a home
+ * country of 1) or domestic; null when it is not a number. Emergency comes first. The engine classes a number again
+ * with the same rules (moqui-sip dial.rs).
  */
 function classify(raw, pol) {
   const dialed = cleanNumber(raw)
   if (!dialed) return null
-  if (list(pol.emergencyNumbers).includes(dialed.replace(/^\+/, ''))) return { destinationClass: 'emergency', number: dialed.replace(/^\+/, '') }
+  if (list(pol.emergencyNumbers).includes(dialed)) return { destinationClass: 'emergency', number: dialed }
   const number = toE164(raw, pol.homeCountryCode)
   if (!number) return null
   if (list(pol.premiumPrefixes).some((prefix) => number.startsWith(prefix))) return { destinationClass: 'premium', number }
   if (!number.startsWith('+' + pol.homeCountryCode)) return { destinationClass: 'international', number }
+  if (pol.homeCountryCode === '1' && NANP_OTHER_COUNTRIES.includes(number.slice(2, 5))) return { destinationClass: 'international', number }
   return { destinationClass: 'domestic', number }
 }
 
@@ -315,12 +326,13 @@ function place(p) {
   if (dest.destinationClass === 'premium' && !(pol.premiumEnabled === 'Y' && setting.premiumEnabled === 'Y')) {
     return refuse('premiumNotEnabled', 'Calls to premium numbers are not enabled for you')
   }
-  const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Number(setting.maxConcurrent)
+  // a user's own setting can lower the policy's limits, never raise them
+  const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
   if (countPhoneCalls({ startedByUserId: me }) >= perUser || countPhoneCalls({}) >= pol.maxConcurrentCalls) {
     return refuse('tooManyCalls', 'Too many phone calls at once; try again when one ends')
   }
   const dayStart = nowMs() - 86400000
-  const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Number(setting.maxPerDay)
+  const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
   if (countPhoneCalls({ startedByUserId: me, directionEnumId: 'CdrOutbound' }, dayStart) >= perDay ||
     countPhoneCalls({ directionEnumId: 'CdrOutbound' }, dayStart) >= pol.maxCallsPerDay) {
     return refuse('dailyLimit', 'The limit of phone calls for a day is reached')
@@ -472,7 +484,11 @@ function trunkStatus(p) {
   return {}
 }
 
-/** A failed digest attempt from a source: counted in the window, blocked at the limit. Never touches a UserAccount. */
+/**
+ * A failed digest attempt from a source: counted in the window, blocked at the limit. The SIP engine counts them itself
+ * and reports a source only when it blocks it (blocked), so a flood of failures from many addresses is not a write each;
+ * that block is kept here as it is. Never touches a UserAccount.
+ */
 function authFailure(p) {
   const pol = policy()
   const source = String(p.sourceAddress || '').trim().slice(0, 200)
@@ -491,7 +507,7 @@ function authFailure(p) {
     count = 0
     first = now
   }
-  count += 1
+  count = yes(p.blocked) ? Math.max(count + 1, pol.authFailureLimit) : count + 1
   const fields = { failureCount: count, firstFailureDate: new Date(first), lastFailureDate: new Date(now),
     lastUsername: p.username ? String(p.username).slice(0, 200) : null }
   let until = blockedUntil > now ? blockedUntil : null
