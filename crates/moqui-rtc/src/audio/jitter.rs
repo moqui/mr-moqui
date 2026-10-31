@@ -20,7 +20,11 @@
 use std::collections::BTreeMap;
 
 use super::opus::OpusDecoder;
-use super::{CodecError, FRAME};
+use super::{CodecError, FRAME, RATE};
+
+/// A frame this far behind the one playing (1 s) is not late but a new RTP timeline (the sender restarted its
+/// stream): the buffer starts over at it rather than dropping the leg's audio as late until it goes quiet.
+const RESTART_BEHIND: u64 = RATE as u64;
 
 /// How a leg's frames are buffered.
 #[derive(Debug, Clone, Copy)]
@@ -112,9 +116,14 @@ impl LegDecoder {
         if data.is_empty() {
             return;
         }
-        if self.next.is_some_and(|next| rtp_time < next) {
-            self.stats.late += 1;
-            return;
+        if let Some(next) = self.next.filter(|next| rtp_time < *next) {
+            if next - rtp_time <= RESTART_BEHIND {
+                self.stats.late += 1;
+                return;
+            }
+            self.frames.clear();
+            self.pcm.clear();
+            self.next = None;
         }
         self.frames.entry(rtp_time).or_insert_with(|| data.to_vec());
         while self.frames.len() > self.config.max_frames {

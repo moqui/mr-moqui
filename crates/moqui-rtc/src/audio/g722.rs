@@ -323,7 +323,7 @@ impl G722Decoder {
     }
 }
 
-/// G.722 behind the [`Codec`] trait. A lost frame is silence, through the decoder so its state follows.
+/// G.722 behind the [`Codec`] trait. A lost frame is silence; the decoder's state carries on from the last frame.
 #[derive(Clone, Default)]
 pub struct G722 {
     encoder: G722Encoder,

@@ -20,7 +20,7 @@ use moqui_rtc::audio::opus::OpusDecoder;
 use moqui_rtc::audio::{level_dbov, FRAME};
 use moqui_rtc::{Sfu, SfuConfig, Source};
 
-use super::{add_pcm_source, attach, Kinds, Media, Pacer, TICK};
+use super::{add_pcm_source, attach, Kinds, Media, Pacer, TapEvent, TICK};
 use crate::rtc::Command;
 
 fn tone_frame(start: usize) -> Vec<i16> {
@@ -62,6 +62,19 @@ fn the_pacer_waits_for_two_frames_then_sends_one_each_tick() {
     pacer.due(start + TICK * 4 + Duration::from_secs(1), &mut due);
     assert_eq!(due.len(), 1);
     assert!(due[0].0 >= 50 * 960, "the RTP time followed the clock: {}", due[0].0);
+
+    // frames queued up during a stall do not add to the delay: the newest two are kept
+    let stalled_at = pacer.next_due().expect("started");
+    for n in 0..8u8 {
+        pacer.push(vec![n]);
+    }
+    due.clear();
+    pacer.due(stalled_at + Duration::from_millis(500), &mut due);
+    assert_eq!(due.len(), 1, "{due:?}");
+    assert_eq!(due[0].1, vec![6]);
+    due.clear();
+    pacer.due(pacer.next_due().expect("next"), &mut due);
+    assert_eq!(due[0].1, vec![7]);
 }
 
 #[test]
@@ -103,7 +116,10 @@ fn an_injected_leg_reaches_a_consumer_on_the_driver_side() {
         media.turn(&mut sfu, start + TICK * tick);
     }
     let seen: Vec<(u64, Vec<u8>)> = std::iter::from_fn(|| frames.try_recv().ok())
-        .map(|f| {
+        .map(|event| {
+            let TapEvent::Frame(f) = event else {
+                panic!("a frame: {event:?}")
+            };
             assert_eq!((&*f.leg, f.source), ("PH", Source::Phone));
             (f.rtp_time, f.data)
         })
@@ -150,7 +166,10 @@ fn a_consumer_hears_a_pcm_source_through_the_hooks() {
     let mut decoder = OpusDecoder::new().expect("a decoder");
     let mut pcm = Vec::new();
     let mut times = Vec::new();
-    while let Ok(frame) = consumer.recv_timeout(Duration::from_millis(200)) {
+    while let Ok(event) = consumer.recv_timeout(Duration::from_millis(200)) {
+        let TapEvent::Frame(frame) = event else {
+            panic!("a frame: {event:?}")
+        };
         assert_eq!(&*frame.leg, "PH");
         times.push(frame.rtp_time);
         decoder.decode(&frame.data, &mut pcm).expect("decoded");

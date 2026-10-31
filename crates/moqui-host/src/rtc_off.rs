@@ -35,6 +35,7 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> 
 )]
 pub(crate) mod media {
     use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+    use std::sync::Arc;
     use std::time::Duration;
 
     /// Which frames a consumer takes.
@@ -44,8 +45,44 @@ pub(crate) mod media {
         All,
     }
 
-    /// No frame is ever taken out.
-    pub(crate) enum OwnedFrame {}
+    /// The kind of a track.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub(crate) enum Kind {
+        Audio,
+        Video,
+    }
+
+    /// Where a track comes from.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub(crate) enum Source {
+        Microphone,
+        Camera,
+        Screen,
+        ScreenAudio,
+        Phone,
+    }
+
+    /// A frame taken out of a room; never made here, its fields as with calls.
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct OwnedFrame {
+        pub(crate) leg: Arc<str>,
+        pub(crate) kind: Kind,
+        pub(crate) source: Source,
+        pub(crate) rid: Option<String>,
+        pub(crate) codec: &'static str,
+        pub(crate) rtp_time: u64,
+        pub(crate) clock_rate: u32,
+        pub(crate) data: Vec<u8>,
+        pub(crate) keyframe: bool,
+        pub(crate) audio_level: Option<i8>,
+    }
+
+    /// What a consumer receives.
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) enum TapEvent {
+        Frame(OwnedFrame),
+        Left(Arc<str>),
+    }
 
     /// No consumer can be attached.
     pub(crate) enum Consumer {}
@@ -62,11 +99,11 @@ pub(crate) mod media {
     }
 
     impl Consumer {
-        pub(crate) fn recv_timeout(&self, _wait: Duration) -> Result<OwnedFrame, RecvTimeoutError> {
+        pub(crate) fn recv_timeout(&self, _wait: Duration) -> Result<TapEvent, RecvTimeoutError> {
             match *self {}
         }
 
-        pub(crate) fn try_recv(&self) -> Result<OwnedFrame, TryRecvError> {
+        pub(crate) fn try_recv(&self) -> Result<TapEvent, TryRecvError> {
             match *self {}
         }
 

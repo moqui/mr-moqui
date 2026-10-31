@@ -26,7 +26,7 @@ use super::opus::{OpusDecoder, OpusEncoder, VOICE_BITRATE};
 use super::resample::Resampler;
 use super::room::AudioRoom;
 use super::{level_dbov, FRAME, SILENT_DBOV};
-use crate::tap::{Kind, Kinds, MediaTap, OwnedFrame, QueueTap, TapFrame};
+use crate::tap::{Kind, Kinds, MediaTap, OwnedFrame, QueueTap, TapEvent, TapFrame};
 use crate::Source;
 
 /// A tone at `hz`, `amplitude` peak, `n` samples at `rate`.
@@ -346,6 +346,22 @@ fn the_jitter_buffer_recovers_conceals_and_drops_late_frames() {
         leg.push(later + time, &data);
     }
     assert_eq!(leg.pull(&mut frame), Pulled::Played);
+
+    // the sender restarts its stream at an RTP time far behind: not late frames, a new timeline
+    let mut leg = LegDecoder::new(JitterConfig::default()).expect("a decoder");
+    let far = 10_000_000;
+    for (time, data) in tone_packets(440.0, 5) {
+        leg.push(far + time, &data);
+        leg.pull(&mut frame);
+    }
+    let late = leg.stats().late;
+    let mut restarted = Vec::new();
+    for (time, data) in tone_packets(440.0, 4) {
+        leg.push(time, &data);
+        restarted.push(leg.pull(&mut frame));
+    }
+    assert_eq!(leg.stats().late, late, "nothing dropped as late");
+    assert_eq!(restarted.last(), Some(&Pulled::Played), "{restarted:?}");
 }
 
 #[test]
@@ -433,6 +449,9 @@ fn a_room_decodes_and_mixes_three_legs() {
     for (_, hz) in &legs {
         assert!(share_at(&all, *hz, 48_000) > 0.2, "{hz} Hz in the mix");
     }
+    // a leg that left goes now
+    room.take(&TapEvent::Left(legs[2].0.clone()));
+    assert_eq!(room.legs().count(), 2);
     // video and other codecs are not audio to mix
     let mut video = opus_frame(&legs[0].0, 0, vec![1, 2, 3]);
     video.kind = Kind::Video;
@@ -461,10 +480,94 @@ fn a_full_queue_drops_and_counts_rather_than_blocks() {
     }
     tap.on_frame(&frame(Kind::Video));
     assert_eq!((rx.stats().delivered(), rx.stats().dropped()), (4, 6));
-    let first = rx.try_recv().expect("a frame");
+    let Ok(TapEvent::Frame(first)) = rx.try_recv() else {
+        panic!("a frame")
+    };
     assert_eq!((&*first.leg, first.data.as_slice()), ("A", &b"frame"[..]));
+
+    // a leave that finds the queue full is held, not dropped, and comes before the next frame
+    tap.on_frame(&frame(Kind::Audio));
+    tap.on_leave(&leg);
+    for _ in 0..4 {
+        assert!(matches!(rx.try_recv(), Ok(TapEvent::Frame(_))));
+    }
+    tap.on_frame(&frame(Kind::Audio));
+    assert_eq!(rx.try_recv(), Ok(TapEvent::Left(leg.clone())));
+    assert!(matches!(rx.try_recv(), Ok(TapEvent::Frame(_))));
+    assert_eq!(rx.stats().dropped(), 6, "the frame behind the held leave went through");
+
     assert!(!tap.is_closed());
     drop(rx);
-    tap.on_frame(&frame(Kind::Audio));
-    assert!(tap.is_closed(), "the consumer went away");
+    assert!(tap.is_closed(), "the consumer went away, seen before any frame");
+}
+
+#[test]
+fn malformed_opus_packets_are_dropped_not_a_panic() {
+    let packets = tone_packets(440.0, 4);
+    let mut leg = LegDecoder::new(JitterConfig::default()).expect("a decoder");
+    let mut frame = vec![0i16; FRAME];
+    let mut seed = 7u64;
+    let mut next = move || {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (seed >> 33) as u32
+    };
+    // random packets, and real ones with a byte flipped and cut short, between good frames
+    for i in 0..200u64 {
+        let data: Vec<u8> = if i % 2 == 0 {
+            (0..1 + next() % 120).map(|_| next() as u8).collect()
+        } else {
+            let mut p = packets[(i % 4) as usize].1.clone();
+            let at = next() as usize % p.len();
+            p[at] ^= next() as u8;
+            p.truncate(1 + next() as usize % p.len());
+            p
+        };
+        leg.push(i * FRAME as u64, &data);
+        leg.pull(&mut frame);
+    }
+    let base = 200 * FRAME as u64;
+    for (time, data) in &packets {
+        leg.push(base + time, data);
+    }
+    let pulled = leg.pull(&mut frame);
+    assert_ne!(pulled, Pulled::Idle, "{:?}", leg.stats());
+}
+
+#[test]
+fn a_legs_microphone_and_screen_audio_are_two_streams_of_one_input() {
+    let a: Arc<str> = "A".into();
+    let b: Arc<str> = "B".into();
+    let mic = tone_packets(440.0, 30);
+    let screen = tone_packets(2_500.0, 30);
+    let other = tone_packets(1_000.0, 30);
+    let mut room = AudioRoom::default();
+    let (mut heard_by_a, mut heard_by_b, mut a_mic) = (Vec::new(), Vec::new(), Vec::new());
+    for tick in 0..30 {
+        room.push(&opus_frame(&a, mic[tick].0, mic[tick].1.clone()));
+        // the screen share's own RTP timeline, far from the microphone's
+        let mut share = opus_frame(&a, 5_000_000 + screen[tick].0, screen[tick].1.clone());
+        share.source = Source::ScreenAudio;
+        room.push(&share);
+        room.push(&opus_frame(&b, other[tick].0, other[tick].1.clone()));
+        let mixer = room.tick();
+        if tick >= 10 {
+            heard_by_a.extend_from_slice(mixer.minus("A"));
+            heard_by_b.extend_from_slice(mixer.minus("B"));
+            a_mic.extend_from_slice(room.source_audio("A", Source::Microphone).expect("A's microphone"));
+        }
+    }
+    assert_eq!(
+        room.stats("A").expect("A").late,
+        0,
+        "neither stream is late to the other"
+    );
+    assert_eq!(room.legs().count(), 2);
+    // B hears both of A's streams; A hears neither of its own
+    assert!(share_at(&heard_by_b, 440.0, 48_000) > 0.2);
+    assert!(share_at(&heard_by_b, 2_500.0, 48_000) > 0.2);
+    assert!(share_at(&heard_by_a, 440.0, 48_000) < 0.01);
+    assert!(share_at(&heard_by_a, 2_500.0, 48_000) < 0.01);
+    assert!(share_at(&a_mic, 2_500.0, 48_000) < 0.01, "the microphone alone");
 }

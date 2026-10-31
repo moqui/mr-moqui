@@ -330,6 +330,14 @@ impl Room {
         }
         self.taps.retain(|(_, tap)| !tap.is_closed());
     }
+
+    /// Tells every tap a leg left.
+    fn leave(&mut self, leg: &Arc<str>) {
+        for (_, tap) in &mut self.taps {
+            tap.on_leave(leg);
+        }
+        self.taps.retain(|(_, tap)| !tap.is_closed());
+    }
 }
 
 /// The room's active speaker, and the one about to be.
@@ -656,7 +664,10 @@ impl Sfu {
     /// Removes an injected source.
     pub fn remove_injected_source(&mut self, now: Instant, room: &str, leg: &str) {
         if let Some(r) = self.rooms.get_mut(room) {
-            r.injected.retain(|i| &*i.leg != leg);
+            if let Some(at) = r.injected.iter().position(|i| &*i.leg == leg) {
+                let gone = r.injected.remove(at);
+                r.leave(&gone.leg);
+            }
             if r.is_empty() {
                 self.rooms.remove(room);
             }
@@ -796,6 +807,7 @@ impl Sfu {
         }));
         if let Some(room) = self.rooms.get_mut(&peer.key.room) {
             room.peers.retain(|p| *p != id);
+            room.leave(&peer.key.leg);
             if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
             }

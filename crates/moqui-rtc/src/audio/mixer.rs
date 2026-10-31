@@ -79,6 +79,27 @@ impl Mixer {
         self.inputs.insert(leg.clone(), Input { pcm: frame, level });
     }
 
+    /// Adds a frame to what a leg put this tick, saturated: a leg that sends two audio tracks (a microphone and a
+    /// screen share's audio) is one input, which its own mix-minus leaves out whole.
+    pub fn add(&mut self, leg: &Arc<str>, pcm: &[i16]) {
+        let Some(old) = self.inputs.get(leg) else {
+            self.put(leg, pcm);
+            return;
+        };
+        let mixed: Vec<i16> = old
+            .pcm
+            .iter()
+            .zip(pcm.iter().copied().chain(std::iter::repeat(0)))
+            .map(|(a, b)| saturate(i32::from(*a) + i32::from(b)))
+            .collect();
+        self.put(leg, &mixed);
+    }
+
+    /// A leg's frame this tick ([`FRAME`] samples), `None` when it put none.
+    pub fn frame(&self, leg: &str) -> Option<&[i16]> {
+        self.inputs.get(leg).map(|i| i.pcm.as_slice())
+    }
+
     /// The legs that put a frame this tick.
     pub fn legs(&self) -> impl Iterator<Item = &Arc<str>> {
         self.inputs.keys()

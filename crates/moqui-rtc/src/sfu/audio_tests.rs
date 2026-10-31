@@ -23,7 +23,7 @@ use super::testnet::{Net, ROOM};
 use crate::audio::opus::{OpusDecoder, OpusEncoder, VOICE_BITRATE};
 use crate::audio::room::AudioRoom;
 use crate::audio::FRAME;
-use crate::tap::{Kinds, QueueTap};
+use crate::tap::{Kinds, QueueTap, TapEvent};
 
 /// The power of `pcm` at `hz` (Goertzel), as a share of its total power.
 fn share_at(pcm: &[i16], hz: f64) -> f64 {
@@ -110,8 +110,8 @@ fn a_mix_minus_goes_out_through_an_injected_leg_and_is_heard() {
     let mut rtp_time = 0;
     for _ in 0..75 {
         net.run(Duration::from_millis(20));
-        while let Ok(frame) = frames.try_recv() {
-            room.push(&frame);
+        while let Ok(event) = frames.try_recv() {
+            room.take(&event);
         }
         let mix = room.tick().minus("PH").to_vec();
         let packet = encoder.encode(&mix).expect("encoded").to_vec();
@@ -140,4 +140,19 @@ fn a_mix_minus_goes_out_through_an_injected_leg_and_is_heard() {
         share_at(heard, 1_000.0)
     );
     assert!(crate::audio::level_dbov(heard) > -30.0);
+
+    // the phone leg hangs up: the tap hears it left, after its frames
+    let now = net.now;
+    net.sfu.remove_injected_source(now, ROOM, "PH");
+    let events: Vec<TapEvent> = std::iter::from_fn(|| frames.try_recv().ok()).collect();
+    let left = events
+        .iter()
+        .position(|e| *e == TapEvent::Left("PH".into()))
+        .expect("PH left");
+    assert!(
+        !events[left..]
+            .iter()
+            .any(|e| matches!(e, TapEvent::Frame(f) if &*f.leg == "PH")),
+        "no frame of PH after it left"
+    );
 }

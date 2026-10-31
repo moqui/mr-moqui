@@ -82,7 +82,8 @@ impl OpusDecoder {
         let n = self
             .inner
             .decode(packet, MAX_PACKET_SAMPLES, &mut self.pcm)
-            .map_err(|e| CodecError(format!("opus decode: {e}")))?;
+            .map_err(|e| CodecError(format!("opus decode: {e}")))?
+            .min(self.pcm.len());
         out.extend(self.pcm[..n].iter().copied().map(to_i16));
         Ok(n)
     }
@@ -90,7 +91,7 @@ impl OpusDecoder {
     /// Conceals a lost packet of `samples` (a multiple of 2.5 ms), appending them to `out`.
     pub fn conceal(&mut self, samples: usize, out: &mut Vec<i16>) {
         let samples = samples.min(MAX_PACKET_SAMPLES);
-        let n = self.inner.decode(&[], samples, &mut self.pcm).unwrap_or(0);
+        let n = self.inner.decode(&[], samples, &mut self.pcm).unwrap_or(0).min(samples);
         out.extend(self.pcm[..n].iter().copied().map(to_i16));
         out.resize(out.len() + samples - n, 0);
     }
@@ -101,8 +102,9 @@ impl OpusDecoder {
         let samples = samples.min(MAX_PACKET_SAMPLES);
         match self.inner.decode_fec(next, samples, &mut self.pcm) {
             Ok(n) => {
+                let n = n.min(samples);
                 out.extend(self.pcm[..n].iter().copied().map(to_i16));
-                out.resize(out.len() + samples - n.min(samples), 0);
+                out.resize(out.len() + samples - n, 0);
             }
             Err(_) => self.conceal(samples, out),
         }

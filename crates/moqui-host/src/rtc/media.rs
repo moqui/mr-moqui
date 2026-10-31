@@ -18,15 +18,18 @@
 //!
 //! **Taking frames out: [`attach`].** `attach(room, kinds, capacity)` adds a [`moqui_rtc::tap::QueueTap`] to the
 //! room (the `callSessionId`) and gives a [`Consumer`]: every frame published in the room, a browser's or an injected
-//! leg's, copied encoded ([`OwnedFrame`]: leg, kind, source, codec, RTP time, payload, audio level) into a queue of
-//! `capacity` frames. When the consumer falls behind, frames are dropped and counted ([`Consumer::dropped`]); the media
-//! thread never waits. A room has a consumer for each `attach`, and each sees every frame. Dropping the consumer
-//! detaches it; when the room closes its queue disconnects (`recv_timeout` gives `Disconnected`).
+//! leg's, copied encoded ([`TapEvent::Frame`] of an [`OwnedFrame`]: leg, kind, source, codec, RTP time, payload, audio
+//! level) into a queue of `capacity` frames, and each leg that leaves ([`TapEvent::Left`], after its last frame; a leg
+//! that comes back starts a new RTP timeline). When the consumer falls behind, frames are dropped and counted
+//! ([`Consumer::dropped`]); a leave is held until there is room, never dropped. The media thread never waits. A room
+//! has a consumer for each `attach`, and each sees every frame. Dropping the consumer detaches it; when the room
+//! closes its queue disconnects (`recv_timeout` gives `Disconnected`).
 //!
 //! - The recorder takes `Kinds::All` and writes each track's Opus and VP8 as they come (§6.4: no transcoding).
 //! - The mixed recording, captions and SIP legs take `Kinds::Audio` and feed a [`moqui_rtc::audio::room::AudioRoom`]
-//!   on their own thread: `push` each frame, `tick` every 20 ms, then read the mixer (`minus(leg)` for a phone leg,
-//!   `all()` for the mixed recording) or `leg_audio(leg)` for one speaker's captions.
+//!   on their own thread: `take` each event, `tick` every 20 ms, then read the mixer (`minus(leg)` for a phone leg,
+//!   `all()` for the mixed recording) or `leg_audio(leg)` for one speaker's captions (`source_audio(leg, source)` for
+//!   their microphone alone).
 //!
 //! **Putting audio in: [`add_pcm_source`].** `add_pcm_source(room, leg)` adds an injected participant (a SIP leg's
 //! voice, §5.1) and gives a [`PcmSource`]. Its owner pushes 20 ms of 48 kHz mono PCM at a time
@@ -54,8 +57,16 @@ use std::time::{Duration, Instant};
 
 use moqui_rtc::audio::opus::{OpusEncoder, VOICE_BITRATE};
 use moqui_rtc::audio::FRAME;
-pub(crate) use moqui_rtc::tap::{Kinds, OwnedFrame};
+pub(crate) use moqui_rtc::tap::{Kinds, TapEvent};
 use moqui_rtc::tap::{MediaTap, QueueTap, TapReceiver};
+#[allow(
+    unused_imports,
+    reason = "the frame's types, for the consumers here and rtc_off.rs's same API"
+)]
+pub(crate) use moqui_rtc::{
+    tap::{Kind, OwnedFrame},
+    Source,
+};
 use moqui_rtc::{Sfu, TapId};
 
 use super::{command, Command};
@@ -125,13 +136,13 @@ pub(crate) fn attach(room: &str, kinds: Kinds, capacity: usize) -> Result<Consum
 }
 
 impl Consumer {
-    /// The next frame, waiting up to `wait`. `Err(Disconnected)` once the room closed.
-    pub(crate) fn recv_timeout(&self, wait: Duration) -> Result<OwnedFrame, RecvTimeoutError> {
+    /// The next frame or leave, waiting up to `wait`. `Err(Disconnected)` once the room closed.
+    pub(crate) fn recv_timeout(&self, wait: Duration) -> Result<TapEvent, RecvTimeoutError> {
         self.frames.recv_timeout(wait)
     }
 
-    /// The next frame if one is waiting. `Err(Disconnected)` once the room closed.
-    pub(crate) fn try_recv(&self) -> Result<OwnedFrame, TryRecvError> {
+    /// The next frame or leave if one is waiting. `Err(Disconnected)` once the room closed.
+    pub(crate) fn try_recv(&self) -> Result<TapEvent, TryRecvError> {
         self.frames.try_recv()
     }
 
@@ -265,6 +276,11 @@ impl Pacer {
             let skipped = (behind.as_millis() / TICK.as_millis()) as u32;
             next += TICK * skipped;
             self.rtp_time += u64::from(skipped) * FRAME as u64;
+            // what queued up during the stall is as late as the ticks skipped: keep the newest, as at the start, so
+            // the leg's delay does not grow by the stall
+            while self.pending.len() > PREFILL {
+                self.pending.pop_front();
+            }
         }
         while next <= now {
             if let Some(frame) = self.pending.pop_front() {
@@ -282,7 +298,7 @@ impl Pacer {
     }
 }
 
-struct Source {
+struct Injected {
     room: String,
     leg: String,
     frames: Receiver<Vec<u8>>,
@@ -293,7 +309,7 @@ struct Source {
 #[derive(Default)]
 pub(super) struct Media {
     taps: HashMap<u64, (String, TapId)>,
-    sources: Vec<Source>,
+    sources: Vec<Injected>,
     due: Vec<(u64, Vec<u8>)>,
 }
 
@@ -319,7 +335,7 @@ impl Media {
             } => {
                 let result = sfu.add_injected_source(now, &room, &leg).map(|()| {
                     self.sources.retain(|s| !(s.room == room && s.leg == leg));
-                    self.sources.push(Source {
+                    self.sources.push(Injected {
                         room,
                         leg,
                         frames,
