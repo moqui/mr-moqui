@@ -114,7 +114,7 @@ sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"
 sha1 = { version = "0.11", features = ["oid"] }
-base64 = "0.22"
+base64 = "0.23"
 # SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The rsa release candidate is the one russh and huskarl already
 # resolve, so the graph has one rsa. Its digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix).
 # plans/archive/License-Review.md records RUSTSEC-2023-0071.
@@ -191,7 +191,7 @@ prost = "0.14"
 # The OTLP/gRPC receiver (moqui-host `grpc` feature): the server half only; opentelemetry-proto's gen-tonic has the services.
 tonic = { version = "0.14", default-features = false, features = ["server", "router", "gzip"] }
 # CSPRNG for CHANGEME secrets written to runtime/.env. No /dev/urandom.
-getrandom = { version = "0.3", features = ["std"] }
+getrandom = { version = "0.4", features = ["std"] }
 # Exact: `keep_assigned` in moqui-core script/runtime/entities.rs depends on how this version owns the value an
 # exotic set is given. Re-check it, and its test, before moving this.
 rquickjs = "=0.14.0"

@@ -4330,13 +4330,13 @@ dependencies = [
  "aes-gcm",
  "ammonia",
  "argon2",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "calamine",
  "croner",
  "encoding_rs",
  "flate2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hkdf",
  "hmac 0.13.0",
  "html5ever",
@@ -4377,9 +4377,9 @@ dependencies = [
 name = "moqui-dav"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "encoding_rs",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "indexmap",
  "jiff",
  "moqui-core",
@@ -4421,7 +4421,7 @@ dependencies = [
 name = "moqui-drivers"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "fallible-iterator 0.2.0",
  "flate2",
@@ -4444,11 +4444,11 @@ name = "moqui-entity"
 version = "0.1.0"
 dependencies = [
  "aes 0.9.3",
- "base64 0.22.1",
+ "base64 0.23.1",
  "cbc",
  "csv",
  "des",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "indexmap",
  "inventory",
  "jiff",
@@ -4468,10 +4468,10 @@ dependencies = [
 name = "moqui-git"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "flate2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "gix",
  "gix-pack",
  "hmac 0.13.0",
@@ -4496,7 +4496,7 @@ name = "moqui-host"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "calamine",
  "dev-aide",
@@ -4556,10 +4556,10 @@ dependencies = [
 name = "moqui-lib"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "datamatrix",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "indexmap",
  "jiff",
  "pulldown-cmark",
@@ -4579,9 +4579,9 @@ dependencies = [
 name = "moqui-llm"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hmac 0.13.0",
  "indexmap",
  "inventory",
@@ -4602,9 +4602,9 @@ dependencies = [
 name = "moqui-mail"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "calamine",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "imap",
  "indexmap",
  "jiff",
@@ -4624,11 +4624,11 @@ dependencies = [
 name = "moqui-report"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "calamine",
  "croner",
  "flate2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hmac 0.13.0",
  "indexmap",
  "jiff",
@@ -4647,7 +4647,7 @@ dependencies = [
 name = "moqui-rtc"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "hmac 0.13.0",
  "moqui-lib",
  "serde",
@@ -4663,7 +4663,7 @@ dependencies = [
 name = "moqui-tui"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "inventory",
  "jiff",
  "pulldown-cmark",
