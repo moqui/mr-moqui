@@ -776,6 +776,8 @@ function expireItem(p) {
   if (!session || session.statusId === 'CssEnded') return { done: false }
   const participant = one(PARTICIPANT, { callParticipantId: current.callParticipantId })
   if (p.itemKind === 'offered' && current.statusId === 'ClsOffered') {
+    // a phone call that rings longer than call_ring_seconds before voicemail (its box's rings, V2) keeps ringing until then
+    if (session.statusId === 'CssRinging' && (ms(session.ringExpireDate) || 0) > nowMs()) return { done: false }
     closeLeg(current, 'ClsTimedOut', 'CerNoAnswer')
     if (participant?.userId) {
       const log = one(USER_LOG, { callSessionId: session.callSessionId, userId: participant.userId })

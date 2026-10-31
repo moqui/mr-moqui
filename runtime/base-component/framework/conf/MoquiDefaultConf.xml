@@ -224,12 +224,14 @@
         voicemail_trash_days: messages in a trash are deleted after this many days (0 keeps them).
         voicemail_transcribe: true sends each message to the speech provider (the model bound to transcribe) for a
         transcript; off by default, as the deployment's recording and transcription policy decides it.
-        voicemail_transcribe_language: an ISO 639-1 code, empty to let the model tell. -->
+        voicemail_transcribe_language: an ISO 639-1 code, empty to let the model tell. voicemail_pin_min_digits: the fewest
+        digits a new phone-access PIN has (4 to 12; at the box's limit of about 240 guesses a day four digits fall in weeks). -->
     <default-property name="voicemail_max_seconds" value="120"/>
     <default-property name="voicemail_prompt_location" value=""/>
     <default-property name="voicemail_trash_days" value="30"/>
     <default-property name="voicemail_transcribe" value="false"/>
     <default-property name="voicemail_transcribe_language" value=""/>
+    <default-property name="voicemail_pin_min_digits" value="6"/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>

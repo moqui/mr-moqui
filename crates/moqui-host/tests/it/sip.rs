@@ -540,3 +540,200 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
     assert_eq!(text(&missed, "missedCount"), "1", "john missed the call");
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
 }
+
+/// A 16-bit PCM mono WAV at 8 kHz: `millis` of a 440 Hz tone.
+fn wav_tone(millis: usize) -> Vec<u8> {
+    let samples: Vec<i16> = (0..millis * 8)
+        .map(|i| (8000.0 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 8000.0).sin()) as i16)
+        .collect();
+    let data_len = u32::try_from(samples.len() * 2).unwrap();
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&8000u32.to_le_bytes());
+    wav.extend_from_slice(&16_000u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    for sample in samples {
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    wav
+}
+
+/// Phone access (V2) on a real server: a caller on the access number keys john's box number and `#`, his PIN and `#`;
+/// the engine checks it, plays his new message (Ogg Opus decoded to the leg), and `7` sends it to the trash; then no more
+/// messages, goodbye, and the engine hangs up.
+#[test]
+fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
+    if !crate::common::own_process() {
+        return;
+    }
+    const ACCESS: &str = "+15551239999";
+    let trunk = Trunk::new();
+    let gate = crate::common::start_with_properties(
+        "sip-voicemail-access",
+        None,
+        &[
+            ("rtc_media_port", "0"),
+            ("sip_port", "0"),
+            ("sip_rtp_ports", "42500-42599"),
+        ],
+    );
+    let sip_at = gate.server.sip_address().expect("the SIP listener is up");
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let voicemail_id = "VM_IT_ACCESS";
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
+            if up("sipNodeList") && up("mediaNodeList") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let trunk_id = text(
+            &call(
+                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                &[
+                    ("name", Value::string("Fake trunk")),
+                    ("host", Value::string("127.0.0.1")),
+                    ("port", Value::I32(i32::from(trunk.addr().port()))),
+                    ("transportEnumId", Value::string("VtrUdp")),
+                    ("mediaEncryptionEnumId", Value::string("VmePlain")),
+                    ("providerProfileEnumId", Value::string("VppPlainLan")),
+                    ("username", Value::string("acct")),
+                    ("password", Value::string("pw-of-acct")),
+                    ("registerFlag", Value::string("Y")),
+                ],
+            ),
+            "voiceTrunkId",
+        );
+        let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
+        for (number, route, route_id) in [(NUMBER, "PnrUser", john.as_str()), (ACCESS, "PnrVoicemail", "")] {
+            call(
+                "org.moqui.impl.VoiceServices.store#PhoneNumber",
+                &[
+                    ("phoneNumber", Value::string(number)),
+                    ("voiceTrunkId", Value::string(&trunk_id)),
+                    ("routeTypeEnumId", Value::string(route)),
+                    ("routeId", Value::string(route_id)),
+                ],
+            );
+        }
+        call(
+            "org.moqui.impl.VoicemailServices.set#VoicemailPin",
+            &[("pin", Value::string("471935"))],
+        );
+        let settings = call("org.moqui.impl.VoicemailServices.get#VoicemailSettings", &[]);
+        let Some(Value::Map(mailbox)) = settings.get("box") else {
+            panic!("john has a box: {settings:?}")
+        };
+        let box_id = mailbox.get("voicemailBoxId").map(to_plain_string).unwrap_or_default();
+        // the message: a second of tone, made Ogg Opus by the greeting conversion
+        let source = "dbresource://moqui/call/voicemail/greeting/it/message.wav";
+        let audio = "dbresource://moqui/call/voicemail/greeting/it/message.ogg";
+        {
+            let _authz = moqui_core::context::ExecutionContext::with_current(
+                moqui_core::context::ExecutionContext::disable_authz,
+            );
+            factory.resource().write_bytes(source, &wav_tone(1000)).unwrap();
+        }
+        call(
+            "org.moqui.impl.VoicemailServices.convert#GreetingAudio",
+            &[
+                ("sourceLocation", Value::string(source)),
+                ("targetLocation", Value::string(audio)),
+            ],
+        );
+        call(
+            "store#moqui.call.Voicemail",
+            &[
+                ("voicemailId", Value::string(voicemail_id)),
+                ("voicemailBoxId", Value::string(&box_id)),
+                ("fromNumber", Value::string(OUTSIDE)),
+                ("durationMs", Value::I64(1000)),
+                ("audioLocation", Value::string(audio)),
+                ("folder", Value::string("inbox")),
+                ("statusId", Value::string("VmsStored")),
+            ],
+        );
+    }
+    let (register, from) = trunk.request("REGISTER");
+    let contact = values(&register.headers, "Contact")[0].clone();
+    trunk.reply(&register, from, 200, &format!("Contact: {contact};expires=300\r\n"), "");
+
+    let started = Instant::now();
+    let phone_local = trunk.local_media();
+    let offer = sdp::offer(&phone_local);
+    let invite = format!(
+        "INVITE sip:{ACCESS}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-va1\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=va1\r\nTo: <sip:{ACCESS}@{sip_at}>\r\nCall-ID: va-call-1\r\nCSeq: 1 INVITE\r\n\
+         Contact: <sip:trunk@{}>\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{offer}",
+        trunk.addr(),
+        trunk.addr(),
+        offer.len()
+    );
+    trunk.send(&invite, sip_at);
+    let ok = trunk.response(200);
+    let settled = sdp::accept(&phone_local, &sdp::parse(&String::from_utf8_lossy(&ok.body)).unwrap()).unwrap();
+    let to = ok.to_header().unwrap().value().to_string();
+    let ack = format!(
+        "ACK sip:{ACCESS}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-vaack\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=va1\r\nTo: {to}\r\nCall-ID: va-call-1\r\nCSeq: 1 ACK\r\nContent-Length: 0\r\n\r\n",
+        trunk.addr()
+    );
+    trunk.send(&ack, sip_at);
+    let mut phone = PhoneMedia::new(&settled).unwrap();
+
+    // the box number (the last digits of john's number) and #, the PIN and # (13 digits, 160 ms each); then 7 while
+    // the message plays
+    assert_eq!(phone.send_digits("30000#471935#"), 13);
+    let mut buf = vec![0u8; 2048];
+    let mut next = Instant::now();
+    // the PIN is checked by about 2.3 s; the message, then its menu three times, takes until about 5 s
+    let seven_at = Instant::now() + Duration::from_millis(3400);
+    let until = Instant::now() + Duration::from_millis(3800);
+    let mut pressed = false;
+    let silence = vec![0i16; 960];
+    while Instant::now() < until {
+        if Instant::now() >= next {
+            next += Duration::from_millis(20);
+            if !pressed && Instant::now() >= seven_at {
+                phone.send_digits("7");
+                pressed = true;
+            }
+            if let Some(packet) = phone.send(&silence) {
+                trunk.rtp.send_to(&packet, phone.remote()).unwrap();
+            }
+        }
+        while let Ok((len, from)) = trunk.rtp.recv_from(&mut buf) {
+            phone.receive(from, &buf[..len]);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // no more messages, goodbye, then the engine hangs up
+    let (bye, from) = trunk.request("BYE");
+    trunk.reply(&bye, from, 200, "", "");
+
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let trash = call(
+        "org.moqui.impl.VoicemailServices.find#Voicemails",
+        &[("folder", Value::string("trash"))],
+    );
+    let in_trash = matches!(trash.get("voicemailList"), Some(Value::List(list))
+        if list.iter().any(|v| matches!(v, Value::Map(m) if m.get("voicemailId").map(to_plain_string).as_deref() == Some(voicemail_id))));
+    assert!(in_trash, "7 sent the message to the trash: {trash:?}");
+    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
+}

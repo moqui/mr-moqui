@@ -512,8 +512,8 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   number and a PIN. `check#VoicemailPin` (internal) checks it against the box's argon2 hash and limits failures per
   box (5 in 15 minutes, then 15 minutes refused from any caller) and per source (the caller's number, 10 in an hour,
   then an hour). The source is a caller ID the caller can fake, so the box's limit is the one that holds: about 240
-  guesses a day, which tries every four-digit PIN in six weeks and every six-digit one in eleven years (the Phone
-  settings ask for 4 to 12 digits; six or more is the advice). A box that does not exist, has no PIN, or is blocked is refused in
+  guesses a day, which tries every four-digit PIN in six weeks and every six-digit one in eleven years, so a new PIN
+  has at least `voicemail_pin_min_digits` (6 by default) digits. A box that does not exist, has no PIN, or is blocked is refused in
   the same words after the same hash work and is counted the same way, so the answers say nothing of which boxes
   exist. Three refusals end the call. The PIN is never logged, and weak ones (one digit repeated, a run) are refused
   when set. Accepted, the caller hears only that box's new messages, and its keys act only on them (`act#PhoneVoicemail`

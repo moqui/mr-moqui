@@ -162,6 +162,33 @@ feature("a busy user's caller goes straight to voicemail; a free one rings for t
     }
 })
 
+feature("a box that rings longer than call_ring_seconds keeps its user ringing until its voicemail", {
+    when() {
+        as(A, "update#VoicemailSettings", {rings: 10})
+        const long = receive(NUMBER_A)
+        const backdate = (entity, field, idField, id, seconds) => sys(() => {
+            const row = ec.entity.find(entity).condition(idField, id).one()
+            row.set(field, new Date(Date.now() - seconds * 1000))
+            row.update()
+        })
+        // rung 50 s: past call_ring_seconds (45), before its voicemail (60) and ring expiry (90)
+        backdate("moqui.call.CallLeg", "offeredDate", "callLegId", userLeg(long.callSessionId, A).callLegId, 50)
+        engine("org.moqui.impl.CallServices.expire#Calls")
+        const ringing = userLeg(long.callSessionId, A).statusId
+        // past its ring expiry the call ends as before
+        backdate("moqui.call.CallSession", "ringExpireDate", "callSessionId", long.callSessionId, 1)
+        engine("org.moqui.impl.CallServices.expire#Calls")
+        const expired = userLeg(long.callSessionId, A).statusId
+        as(A, "update#VoicemailSettings", {rings: 2})
+        return {long, ringing, expired}
+    },
+    then({long, ringing, expired}) {
+        long.voicemailSeconds == 60
+        ringing == "ClsOffered"
+        expired != "ClsOffered"
+    }
+})
+
 feature("begin#Voicemail moves the call there: the user missed it and the box answers", {
     when() {
         setStatus(A, "Y")
@@ -250,28 +277,33 @@ feature("a stored message is its owner's: the same voicemail is refused for anot
     }
 })
 
-feature("the PIN: weak ones refused, a wrong one refused over the phone and the right one opens the new messages", {
+feature("the PIN: short and weak ones refused, a wrong one refused over the phone and the right one opens the new messages", {
     when() {
-        const weak = as(A, "set#VoicemailPin", {pin: "1234"})
-        const short = as(A, "set#VoicemailPin", {pin: "12"})
-        const set = as(A, "set#VoicemailPin", {pin: "4719"})
+        const weak = as(A, "set#VoicemailPin", {pin: "123456"})
+        const short = as(A, "set#VoicemailPin", {pin: "4719"})
+        const fourWhenAllowed = withProperty("voicemail_pin_min_digits", "4", () => as(A, "set#VoicemailPin", {pin: "4719"}))
+        const settings = as(A, "get#VoicemailSettings")
+        const set = as(A, "set#VoicemailPin", {pin: "471935"})
         const hash = boxOf(A).pinHash
-        const wrong = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "4718", fromNumber: CALLER})
-        const right = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "4719", fromNumber: CALLER})
+        const wrong = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "471936", fromNumber: CALLER})
+        const right = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "471935", fromNumber: CALLER})
         // the access number: the box by its number
-        const byNumber = engine("check#VoicemailPin", {boxNumber: NUMBER_A.slice(2), pin: "4719", fromNumber: CALLER})
-        const noBox = engine("check#VoicemailPin", {boxNumber: "5550179999", pin: "4719", fromNumber: CALLER})
-        const noPin = engine("check#VoicemailPin", {boxNumber: NUMBER_B.slice(2), pin: "4719", fromNumber: CALLER})
-        const wrongByNumber = engine("check#VoicemailPin", {boxNumber: NUMBER_A.slice(2), pin: "4718", fromNumber: CALLER})
-        return {weak, short, set, hash, wrong, right, byNumber, noBox, noPin, wrongByNumber}
+        const byNumber = engine("check#VoicemailPin", {boxNumber: NUMBER_A.slice(2), pin: "471935", fromNumber: CALLER})
+        const noBox = engine("check#VoicemailPin", {boxNumber: "5550179999", pin: "471935", fromNumber: CALLER})
+        const noPin = engine("check#VoicemailPin", {boxNumber: NUMBER_B.slice(2), pin: "471935", fromNumber: CALLER})
+        const wrongByNumber = engine("check#VoicemailPin", {boxNumber: NUMBER_A.slice(2), pin: "471936", fromNumber: CALLER})
+        return {weak, short, fourWhenAllowed, settings, set, hash, wrong, right, byNumber, noBox, noPin, wrongByNumber}
     },
-    then({weak, short, set, hash, wrong, right, byNumber, noBox, noPin, wrongByNumber}) {
+    then({weak, short, fourWhenAllowed, settings, set, hash, wrong, right, byNumber, noBox, noPin, wrongByNumber}) {
         weak.reasonCode == "weakPin"
+        // six digits at least by default (voicemail_pin_min_digits); a deployment may allow four
         short.reasonCode == "badPin"
+        fourWhenAllowed.errors == ""
+        settings.pinMinDigits == 6
         set.errors == ""
         set.box.hasPin == true
         hash.startsWith("$argon2")
-        !hash.includes("4719")
+        !hash.includes("471935")
         wrong.errors == ""
         wrong.accepted == false
         wrong.blocked == false
@@ -292,21 +324,30 @@ feature("failed PINs are limited per box and per source, and a block refuses the
     when() {
         sys(() => ec.entity.find("moqui.call.VoicemailPinFailure").deleteAll())
         // setting the PIN clears the box's count of the last feature's wrong tries
-        as(A, "set#VoicemailPin", {pin: "4719"})
+        as(A, "set#VoicemailPin", {pin: "471935"})
         const tries = []
-        for (let i = 0; i < 5; i++) tries.push(engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "1111", fromNumber: "+1555000000" + i}))
-        const blockedRight = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "4719", fromNumber: "+15550009999"})
+        for (let i = 0; i < 5; i++) tries.push(engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "111111", fromNumber: "+1555000000" + i}))
+        const blockedRight = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "471935", fromNumber: "+15550009999"})
         // a source that guesses across boxes, the boxes not there among them, is blocked on its own
         const source = []
-        for (let i = 0; i < 10; i++) source.push(engine("check#VoicemailPin", {boxNumber: "55501800" + String(i).padStart(2, "0"), pin: "2580", fromNumber: "+15559990000"}))
+        for (let i = 0; i < 10; i++) source.push(engine("check#VoicemailPin", {boxNumber: "55501800" + String(i).padStart(2, "0"), pin: "258014", fromNumber: "+15559990000"}))
         const sourceRow = sys(() => ec.entity.find("moqui.call.VoicemailPinFailure").condition("failureKey", "source:+15559990000").one())
         // the box's owner sets a new PIN, which clears the box's block
-        as(A, "set#VoicemailPin", {pin: "4720"})
-        const afterReset = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "4720", fromNumber: "+15550009998"})
-        const fromBlockedSource = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "4720", fromNumber: "+15559990000"})
-        return {tries, blockedRight, source, sourceRow, afterReset, fromBlockedSource}
+        as(A, "set#VoicemailPin", {pin: "582046"})
+        const afterReset = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "582046", fromNumber: "+15550009998"})
+        const fromBlockedSource = engine("check#VoicemailPin", {voicemailBoxId: boxA, pin: "582046", fromNumber: "+15559990000"})
+        // the trash job drops failure counts a day old, and keeps a fresh one
+        sys(() => {
+            const stale = ec.entity.find("moqui.call.VoicemailPinFailure").condition("failureKey", "source:+15550000000").one()
+            stale.set("lastFailureDate", new Date(Date.now() - 2 * 86400000))
+            stale.update()
+        })
+        engine("expire#VoicemailTrash")
+        const staleGone = sys(() => ec.entity.find("moqui.call.VoicemailPinFailure").condition("failureKey", "source:+15550000000").count()) == 0
+        const freshKept = sys(() => ec.entity.find("moqui.call.VoicemailPinFailure").condition("failureKey", "source:+15559990000").count()) == 1
+        return {tries, blockedRight, source, sourceRow, afterReset, fromBlockedSource, staleGone, freshKept}
     },
-    then({tries, blockedRight, source, sourceRow, afterReset, fromBlockedSource}) {
+    then({tries, blockedRight, source, sourceRow, afterReset, fromBlockedSource, staleGone, freshKept}) {
         tries.slice(0, 4).every(t => !t.accepted && !t.blocked)
         tries[4].blocked == true
         blockedRight.accepted == false
@@ -317,6 +358,8 @@ feature("failed PINs are limited per box and per source, and a block refuses the
         afterReset.accepted == true
         fromBlockedSource.accepted == false
         fromBlockedSource.blocked == true
+        staleGone
+        freshKept
     }
 })
 

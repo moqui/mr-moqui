@@ -25,7 +25,8 @@
 //! - **Phone access.** `*` during the greeting, or the access number after a box number and `#`, asks for the PIN and
 //!   `#` (`check#VoicemailPin`, which limits failures per box and per source). Then the new messages one by one: `7`
 //!   deletes, `9` saves (heard), `#` skips to the next; after the last, goodbye. Three refusals in a call, or a block, end
-//!   it.
+//!   it. A caller who keys nothing for [`IDLE_SECONDS`] after a box-number or PIN prompt hears it again, and the third
+//!   time the call ends, so a silent caller does not hold a call.
 //!
 //! The prompts are tone patterns; the deployment's recorded speech plays after each when `voicemail_prompt_location`
 //! names a folder with `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`,
@@ -56,8 +57,10 @@ pub(crate) const SPOOL: &str = "tmp/voicemail";
 pub(crate) const MIN_MESSAGE_MS: u64 = 1000;
 /// The PIN refusals one call takes before it ends.
 pub(crate) const MAX_TRIES: u32 = 3;
-/// How often the menu after a message is played before the call ends with no key.
+/// How often the menu after a message, or a box-number or PIN prompt, is played before the call ends with no key.
 const MENU_REPEATS: u32 = 3;
+/// How long a box-number or PIN prompt waits for a key before it plays again.
+pub(crate) const IDLE_SECONDS: u64 = 10;
 /// The longest message played over the phone.
 const MAX_PLAY_SECONDS: usize = 600;
 /// The digits a box number or a PIN may have.
@@ -136,6 +139,8 @@ pub(crate) enum Action {
         voicemail_id: String,
         op: &'static str,
     },
+    /// Tell `Idle(id)` after [`IDLE_SECONDS`].
+    Wait(u32),
     Hangup,
 }
 
@@ -161,6 +166,8 @@ pub(crate) enum Event {
     /// The recording ended (the `#` key, its limit, or a failure).
     Recorded,
     Pin(PinAnswer),
+    /// The time of a [`Action::Wait`] passed.
+    Idle(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +197,11 @@ pub(crate) struct Machine {
     tries: u32,
     access: bool,
     messages: Vec<Message>,
+    /// The wait for a box number or a PIN ([`Action::Wait`]): its id, whether a key came since it began, and how many
+    /// passed with none.
+    wait: u32,
+    keyed: bool,
+    idles: u32,
 }
 
 impl Machine {
@@ -216,7 +228,15 @@ impl Machine {
             tries: 0,
             access,
             messages: Vec::new(),
+            wait: 0,
+            keyed: false,
+            idles: 0,
         }
+    }
+
+    /// The tag of the prompt that should be playing; an older one that is ready late is not played.
+    pub(crate) fn tag(&self) -> u32 {
+        self.tag
     }
 
     #[cfg(test)]
@@ -263,6 +283,9 @@ impl Machine {
     /// ignored.
     pub(crate) fn on(&mut self, event: Event) -> Vec<Action> {
         let current = |tag: u32, machine: &Machine| tag == machine.tag;
+        if matches!(self.phase, Phase::BoxNumber | Phase::Pin) && matches!(event, Event::Digit(_)) {
+            self.keyed = true;
+        }
         match (self.phase, event) {
             (Phase::Greeting, Event::Played(tag)) if current(tag, self) => {
                 self.phase = Phase::Recording;
@@ -304,6 +327,30 @@ impl Machine {
                     self.digits.push(digit);
                 }
                 Vec::new()
+            }
+            // a box-number or PIN prompt ended: wait for keys
+            (Phase::BoxNumber | Phase::Pin, Event::Played(tag)) if current(tag, self) => {
+                self.keyed = false;
+                self.wait += 1;
+                vec![Action::Wait(self.wait)]
+            }
+            (Phase::BoxNumber | Phase::Pin, Event::Idle(wait)) if wait == self.wait => {
+                if std::mem::take(&mut self.keyed) {
+                    self.idles = 0;
+                    self.wait += 1;
+                    return vec![Action::Wait(self.wait)];
+                }
+                self.idles += 1;
+                if self.idles >= MENU_REPEATS {
+                    return self.end(Vec::new());
+                }
+                self.digits.clear();
+                let ask = if self.phase == Phase::BoxNumber {
+                    Say::EnterBox
+                } else {
+                    Say::EnterPin
+                };
+                vec![self.play(vec![ask])]
             }
             (Phase::Checking, Event::Pin(PinAnswer::Accepted(messages))) => {
                 self.messages = messages;
@@ -759,6 +806,13 @@ impl Engine {
                         serde_json::json!({"voicemailBoxId": box_id, "voicemailId": voicemail_id, "op": op}),
                     );
                 }
+                Action::Wait(wait) => {
+                    let (commands, leg) = (self.commands.clone(), leg.to_string());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(IDLE_SECONDS)).await;
+                        let _ = commands.send(Command::VmIdle { leg, wait });
+                    });
+                }
                 Action::Hangup => {
                     let room = call.room.clone();
                     self.voicemail.remove(leg);
@@ -769,8 +823,13 @@ impl Engine {
         }
     }
 
-    /// A prompt of a voicemail call is ready: it plays in place of what was playing.
+    /// A prompt of a voicemail call is ready: it plays in place of what was playing. Prompts are made on their own
+    /// threads, so one can be ready after a newer one (a long message after the goodbye a key asked for); only the
+    /// machine's current one plays, or the newer would be replaced and its end, which the machine waits for, never told.
     pub(super) fn voicemail_play(&mut self, leg: &str, tag: u32, prompt: Prompt) {
+        if self.voicemail.get(leg).is_none_or(|call| call.machine.tag() != tag) {
+            return;
+        }
         if let Some(entry) = self.legs.get(leg) {
             entry.media.send(LegCommand::Play { tag, prompt });
         }

@@ -70,6 +70,7 @@ along with this software (see the LICENSE.md file). If not, see
         ringOptions = [{key: '', text: ec.resource.expand('Default (${s} seconds)', '', {s: out.ringSeconds || 45})}]
         for (let n = 1; n <= Number(out.maxRings || 10); n++) ringOptions.push({key: String(n), text: n + ' (' + n * Number(out.ringSecondsEach || 6) + ' s)'})
         pinForm = {pin: ''}
+        pinMinDigits = Number(out.pinMinDigits || 6)
     ]]></script></actions>
 
     <widgets>
@@ -83,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header title="Voicemail PIN"/><box-body>
             <label type="p" text="${pinText}"/>
             <form-single name="PinForm" transition="setPin" map="pinForm">
-                <field name="pin"><default-field title="New PIN (4 to 12 digits)"><password size="12"/></default-field></field>
+                <field name="pin"><default-field title="New PIN (${pinMinDigits} to 12 digits)"><password size="12"/></default-field></field>
                 <field name="submitButton"><default-field title="Save PIN"><submit/></default-field></field>
             </form-single>
             <link url="clearPin" text="Remove the PIN" icon="sym_o_lock_open" condition="hasPin" confirmation="Remove the PIN? Your voicemail can no longer be reached by phone."/>

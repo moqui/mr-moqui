@@ -224,6 +224,52 @@ fn the_access_number_asks_for_the_box_then_the_pin() {
     );
 }
 
+/// A caller who keys nothing after a box-number or PIN prompt hears it again, and the third time the call ends; a key
+/// keeps the wait going, and a wait that a newer one replaced means nothing.
+#[test]
+fn a_silent_caller_is_asked_again_then_the_call_ends() {
+    let (mut machine, start) = Machine::access();
+    let (tag, _) = played(&start);
+    assert_eq!(machine.on(Event::Played(tag)), vec![Action::Wait(1)]);
+    // a key since the wait began: it waits again, without a prompt
+    keys(&mut machine, "555");
+    assert_eq!(machine.on(Event::Idle(1)), vec![Action::Wait(2)]);
+    assert!(machine.on(Event::Idle(1)).is_empty(), "a replaced wait is ignored");
+    // nothing keyed: the prompt again, digits started over
+    let (tag, says) = played(&machine.on(Event::Idle(2)));
+    assert_eq!(says, vec![Say::EnterBox]);
+    assert_eq!(machine.tag(), tag);
+    assert_eq!(machine.on(Event::Played(tag)), vec![Action::Wait(3)]);
+    let (tag, _) = played(&machine.on(Event::Idle(3)));
+    assert_eq!(machine.on(Event::Played(tag)), vec![Action::Wait(4)]);
+    let (tag, says) = played(&machine.on(Event::Idle(4)));
+    assert_eq!(says, vec![Say::Goodbye]);
+    assert_eq!(machine.on(Event::Played(tag)), vec![Action::Hangup]);
+    assert!(machine.is_done());
+
+    // the PIN prompt waits the same way, and the keys typed before a re-ask are dropped
+    let (mut machine, start) = Machine::deposit();
+    let _ = start;
+    let (tag, says) = played(&machine.on(Event::Digit('*')));
+    assert_eq!(says, vec![Say::EnterPin]);
+    assert_eq!(machine.on(Event::Played(tag)), vec![Action::Wait(1)]);
+    keys(&mut machine, "47");
+    assert_eq!(machine.on(Event::Idle(1)), vec![Action::Wait(2)]);
+    let (_, says) = played(&machine.on(Event::Idle(2)));
+    assert_eq!(says, vec![Say::EnterPin]);
+    assert_eq!(
+        keys(&mut machine, "471935#"),
+        vec![Action::CheckPin {
+            pin: "471935".to_string(),
+            box_number: None
+        }]
+    );
+    assert!(
+        machine.on(Event::Idle(2)).is_empty(),
+        "no wait while the PIN is checked"
+    );
+}
+
 /// Prompts are tones with the deployment's audio after them; the user's own greeting plays alone, with no tones.
 #[test]
 fn prompts_are_tones_then_the_deployment_s_audio() {

@@ -227,6 +227,11 @@ enum Command {
         tag: u32,
         prompt: Prompt,
     },
+    /// Voicemail: a wait for a key ended.
+    VmIdle {
+        leg: String,
+        wait: u32,
+    },
     /// An inbound call rang its box's rings.
     RingTimeout {
         leg: String,
@@ -1026,6 +1031,9 @@ impl Engine {
             Command::VmBegun { leg, reason, result } => self.voicemail_begun(leg, &reason, result),
             Command::VmPin { leg, result } => self.voicemail_pin(&leg, result),
             Command::VmPlay { leg, tag, prompt } => self.voicemail_play(&leg, tag, prompt),
+            Command::VmIdle { leg, wait } => {
+                self.voicemail_event(&leg, voicemail::Event::Idle(wait));
+            }
             Command::RingTimeout { leg } => {
                 if self.legs.get(&leg).is_some_and(|entry| !entry.answered) {
                     self.start_voicemail(&leg, "noAnswer");

@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.clearErrors()
             ec.web.sendJsonResponse({errors, box: out.box || null, myNumberList: out.myNumberList || [], accessNumberList: out.accessNumberList || [],
                 ringSeconds: out.ringSeconds || 45, ringSecondsEach: out.ringSecondsEach || 6, maxRings: out.maxRings || 10,
-                maxSeconds: out.maxSeconds || 120, transcribeOn: !!out.transcribeOn, phoneActive: !!caps.active, phoneSupported: !!caps.supported})
+                maxSeconds: out.maxSeconds || 120, transcribeOn: !!out.transcribeOn, pinMinDigits: out.pinMinDigits || 6, phoneActive: !!caps.active, phoneSupported: !!caps.supported})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

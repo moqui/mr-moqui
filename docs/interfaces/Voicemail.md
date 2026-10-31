@@ -21,7 +21,7 @@ An inbound call to a user's number (`PhoneNumber` routed `PnrUser`, from `receiv
 
 - **No answer.** The engine starts a timer when the call rings: the box's `rings` (6 seconds each, 1 to 10), else
   `call_ring_seconds`. Unanswered by then, it goes. The call's ring expiry is set 30 seconds later, so `expire#Calls`
-  does not end it first.
+  neither ends it nor stops the user's ringing first when the box rings longer than `call_ring_seconds`.
 - **Busy.** The user is in another call (`UserStatus.inCall`): the call is not rung at all and goes at once.
 - **Declined.** The user declines it and nobody else is rung for it (`decline#Call` sends the engine the control
   `voicemail`).
@@ -82,17 +82,21 @@ message or after it:
 | `#` | Next, leaving it new |
 
 After the last one, a tone and goodbye. With no key, the menu plays three times and the call ends. `*` while entering
-a number or a PIN starts it again.
+a number or a PIN starts it again. With no key for 10 seconds after the number or PIN prompt, the prompt plays again;
+the third time the call ends, so a silent caller does not hold a call.
 
-**The PIN** is 4 to 12 digits (not one digit repeated or a run like 1234), kept as an argon2 hash (`pinHash`). Over the
-phone, `check#VoicemailPin` answers accepted or not, never an error, so its counts commit:
+**The PIN** is `voicemail_pin_min_digits` (6 by default) to 12 digits, not one digit repeated or a run like 123456,
+kept as an argon2id hash (`pinHash`, the parameters of `hashPassword`). A PIN of 4 or more digits set before the
+minimum was raised still works. Over the phone, `check#VoicemailPin` answers accepted or not, never an error, so its
+counts commit:
 
 - **Per box:** 5 failures in 15 minutes block the box's PINs for 15 minutes, from any caller.
 - **Per source:** the caller's number, which a caller can fake, so the box's limit is the real one: 10 failures in an
   hour block it for an hour, for every box.
 - A box number with no box, a box with no PIN, and a blocked box are refused the same way, after the same work (a hash
   check against a stand-in), and counted the same way: nothing tells a caller which boxes exist.
-- Three refusals end the call. Setting a new PIN clears the box's count.
+- Three refusals end the call. Setting a new PIN clears the box's count. The daily trash job deletes failure counts a
+  day old.
 
 ## Prompts
 
@@ -147,6 +151,7 @@ transcripts and its row.
 | `voicemail_trash_days` | `30` | Days in the trash before a message goes; 0 keeps them |
 | `voicemail_transcribe` | `false` | Send each message to the speech provider for a transcript |
 | `voicemail_transcribe_language` | empty | An ISO 639-1 code; empty lets the model tell |
+| `voicemail_pin_min_digits` | `6` | The fewest digits a new PIN has, 4 to 12 |
 | `call_ring_seconds` | `45` | How long a call rings before voicemail when the box has no `rings` |
 
 ## Not yet
@@ -160,11 +165,13 @@ transcripts and its row.
 
 ## Tests
 
-- `cargo test -p moqui-host --lib sip::voicemail`: an unanswered call's greeting, beep and recording to Ogg Opus until
-  `#`; a recording's limit; the PIN wrong then right and the menu keys; a block or three refusals ending the call; the
-  access number; the prompts' audio; a WAV greeting converted to Ogg Opus.
-- `cargo test -p moqui-host --test it -- sip::a_busy`: a fake trunk calls a busy user on a real server and leaves a
-  message, stored as Ogg Opus in their inbox.
+- `cargo test -p moqui-host --features sip --lib sip::voicemail`: an unanswered call's greeting, beep and recording to
+  Ogg Opus until `#`; a recording's limit; the PIN wrong then right and the menu keys; a block or three refusals ending
+  the call; the access number; a silent caller asked again, then ended; the prompts' audio; a WAV greeting converted to
+  Ogg Opus.
+- `cargo test -p moqui-host --features sip --test it -- sip::`: a fake trunk calls a busy user on a real server and
+  leaves a message, stored as Ogg Opus in their inbox (`a_busy…`); a caller on the access number keys the box number and
+  PIN, hears a message and deletes it with `7` (`the_access_number…`).
 - `./moq test framework --spec Voicemail`: busy and unanswered routing, begin and decline, private audio refused for
   another user with the same id, the PIN with its refusal and its limits per box and per source, the notices
   (attachments off by default), a failed transcription and its retry, the trash's retention, greeting uploads.

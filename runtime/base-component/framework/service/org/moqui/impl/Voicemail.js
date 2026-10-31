@@ -28,7 +28,10 @@ const RING_SECONDS = 6
 const MAX_RINGS = 10
 /** How long past its voicemail an inbound call may ring before expire#Calls ends it (the engine's timer comes first). */
 const RING_GRACE_SECONDS = 30
+/** A PIN that may be checked: 4 to 12 digits (a PIN set before voicemail_pin_min_digits was raised still works). */
 const PIN_PATTERN = /^[0-9]{4,12}$/
+/** The fewest digits a new PIN has (voicemail_pin_min_digits, 4 to 12): six by default, as four fall to the box's limit in weeks. */
+const pinMinDigits = () => clamp(Math.round(Number(property('voicemail_pin_min_digits', '6'))) || 6, 4, 12)
 /** Failed PINs over the phone: a box takes BOX_FAILURES in BOX_WINDOW_MS, then refuses every PIN for BOX_BLOCK_MS. */
 const BOX_FAILURES = 5
 const BOX_WINDOW_MS = 15 * 60000
@@ -423,11 +426,14 @@ function boxOfNumber(digits) {
   return boxOf(matches[0].routeId, false)
 }
 
-/** The burn of a PIN check that has no box or no PIN, so it takes as long as one that does. */
-let burnHash = null
+/**
+ * The burn of a PIN check that has no box or no PIN, so it takes as long as one that does: one argon2 verify against a
+ * stand-in with the parameters hashPassword uses (argon2id m=19456, t=2, p=1). A constant, as module state does not last
+ * between calls: making it each time would double the work and tell the cases apart.
+ */
+const BURN_HASH = '$argon2id$v=19$m=19456,t=2,p=1$KBg++4RAP5/1otppCxt6MA$tgUTiDXK/eH6KeQTwgaX45bqP84tS4nqhe4ecUa2nYE'
 function burnCheck(pin) {
-  if (!burnHash) burnHash = ec.user.hashPassword('voicemail-burn-' + ec.user.randomString(16))
-  ec.user.passwordsMatch(pin || '0000', burnHash, 'argon2')
+  ec.user.passwordsMatch(pin || '0000', BURN_HASH, 'argon2')
 }
 
 /**
@@ -605,8 +611,24 @@ function retryTranscript(p) {
   return { voicemail: view(mine.voicemail, true) }
 }
 
-/** The trash job: messages in the trash longer than voicemail_trash_days (0 keeps them), each on its own. */
+/** Failed-PIN counts kept this long after their last failure (past every window and block). */
+const PIN_FAILURE_KEEP_MS = 24 * 3600000
+
+/**
+ * The trash job: messages in the trash longer than voicemail_trash_days (0 keeps them), each on its own; and the
+ * per-source and no-box PIN failure counts a day old, which a caller faking numbers would otherwise pile up.
+ */
 function expireTrash() {
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.VoicemailServices.expire#VoicemailPinFailures').requireNewTransaction(true).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`Voicemail PIN failures not cleaned up: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`Voicemail PIN failures not cleaned up: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
   const days = trashDays()
   if (!days) return { deletedCount: 0 }
   const before = new Date(nowMs() - days * 86400000)
@@ -628,6 +650,11 @@ function expireTrash() {
     }
   }
   return { deletedCount }
+}
+
+function expirePinFailures() {
+  const before = new Date(nowMs() - PIN_FAILURE_KEEP_MS)
+  return { deletedCount: find(PIN_FAILURE).condition('lastFailureDate', '<', before).deleteAll() }
 }
 
 function expireItem(p) {
@@ -663,7 +690,7 @@ function settings() {
   const numbers = rows(NUMBER, { routeTypeEnumId: 'PnrUser', routeId: me }).map((n) => n.phoneNumber)
   const access = rows(NUMBER, { routeTypeEnumId: 'PnrVoicemail' }).map((n) => n.phoneNumber)
   return { box: settingsView(box), myNumberList: numbers, accessNumberList: access, ringSeconds: callRingSeconds(),
-    ringSecondsEach: RING_SECONDS, maxRings: MAX_RINGS, maxSeconds: maxSeconds(), transcribeOn: transcribeOn() }
+    ringSecondsEach: RING_SECONDS, maxRings: MAX_RINGS, maxSeconds: maxSeconds(), transcribeOn: transcribeOn(), pinMinDigits: pinMinDigits() }
 }
 
 function updateSettings(p) {
@@ -685,7 +712,7 @@ function updateSettings(p) {
     warning: turnedOn ? ec.l10n.localize('Email cannot be recalled: the audio or the transcript of each new voicemail goes to that address and stays there.') : null }
 }
 
-/** A PIN no one should use: one digit repeated, or a run up or down (1234, 9876). */
+/** A PIN no one should use: one digit repeated, or a run up or down (123456, 987654). */
 function weakPin(pin) {
   if (/^(\d)\1+$/.test(pin)) return true
   const digits = pin.split('').map(Number)
@@ -703,8 +730,11 @@ function setPin(p) {
     return { box: settingsView(box) }
   }
   const pin = String(p.pin || '').trim()
-  if (!PIN_PATTERN.test(pin)) return refuse('badPin', 'A PIN is 4 to 12 digits')
-  if (weakPin(pin)) return refuse('weakPin', 'Choose a PIN that is not one digit repeated or a run like 1234')
+  const least = pinMinDigits()
+  if (!/^[0-9]+$/.test(pin) || pin.length < least || pin.length > 12) {
+    return refuse('badPin', ec.resource.expand('A PIN is ${least} to 12 digits', '', { least }))
+  }
+  if (weakPin(pin)) return refuse('weakPin', 'Choose a PIN that is not one digit repeated or a run like 123456')
   box.setFields({ pinHash: ec.user.hashPassword(pin), pinChangedDate: ec.user.nowTimestamp, pinFailureCount: 0, pinBlockedUntil: null },
     true, null, null)
   box.update()
@@ -786,7 +816,7 @@ function greeting() {
 
 const operations = {
   routing, begin, store, transcribe, notice, checkPin, phoneAct, findVoicemails, countUnheard, getVoicemail, audio, mark, remove,
-  restore, emptyTrash, retryTranscript, expireTrash, expireItem, settings, updateSettings, setPin, storeGreeting, deleteGreeting,
+  restore, emptyTrash, retryTranscript, expireTrash, expireItem, expirePinFailures, settings, updateSettings, setPin, storeGreeting, deleteGreeting,
   greeting,
 }
 

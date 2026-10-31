@@ -140,7 +140,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The current user's voicemail settings: box {hasPin, hasGreeting, greetingContentType,
             greetingDurationMs, notifyEmail, attachAudio, attachTranscript, rings} (the defaults before they have a box),
             their numbers (myNumberList) and the access numbers (accessNumberList), ringSeconds (call_ring_seconds, used with no
-            rings), ringSecondsEach, maxRings, maxSeconds (the longest message) and transcribeOn.</description>
+            rings), ringSecondsEach, maxRings, maxSeconds (the longest message), transcribeOn and pinMinDigits (the fewest digits a
+            new PIN has).</description>
         <out-parameters>
             <parameter name="box" type="Map"/>
             <parameter name="myNumberList" type="List"/>
@@ -150,6 +151,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maxRings" type="Integer"/>
             <parameter name="maxSeconds" type="Integer"/>
             <parameter name="transcribeOn" type="Boolean"/>
+            <parameter name="pinMinDigits" type="Integer"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('settings', context))</script></actions>
@@ -174,8 +176,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="set" noun="VoicemailPin">
-        <description>Set or change the current user's voicemail PIN (4 to 12 digits, not one digit repeated or a run like
-            1234), kept as an argon2 hash; clear true removes it (no phone access). Setting one clears the box's failed tries.</description>
+        <description>Set or change the current user's voicemail PIN (voicemail_pin_min_digits, 6 by default, to 12 digits, not
+            one digit repeated or a run like 123456), kept as an argon2 hash; clear true removes it (no phone access). Setting one clears the box's failed tries.</description>
         <in-parameters>
             <parameter name="pin"/>
             <parameter name="clear" type="Boolean"/>
@@ -376,9 +378,17 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="expire" noun="VoicemailTrash" authenticate="anonymous-all" transaction="ignore">
         <description>The voicemail job (daily): messages in a trash longer than voicemail_trash_days (0 keeps them) are
-            deleted with their audio and transcripts, each on its own.</description>
+            deleted with their audio and transcripts, each on its own; failed-PIN counts a day old are deleted
+            (expire#VoicemailPinFailures).</description>
         <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('expireTrash', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="VoicemailPinFailures" authenticate="false" allow-remote="false">
+        <description>Internal: the VoicemailPinFailure rows (per source, and per box number with no box) whose last failure
+            is a day old, past every window and block.</description>
+        <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('expirePinFailures', context))</script></actions>
     </service>
 
     <service verb="expire" noun="VoicemailItem" authenticate="false" allow-remote="false">

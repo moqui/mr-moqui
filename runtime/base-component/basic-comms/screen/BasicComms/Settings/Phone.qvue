@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
             <div class="row q-gutter-sm items-center">
                 <q-input v-model="pin" dense outlined type="password" inputmode="numeric" autocomplete="new-password" maxlength="12"
-                    :label="box.hasPin ? t('New PIN') : t('PIN (4 to 12 digits)')" style="width:200px"></q-input>
+                    :label="box.hasPin ? t('New PIN') : t('PIN') + ' (' + pinMinDigits + '–12)'" style="width:200px"></q-input>
                 <q-btn unelevated no-caps color="primary" :label="box.hasPin ? t('Change PIN') : t('Set PIN')" :disable="!pin" @click="savePin"></q-btn>
                 <q-btn v-if="box.hasPin" flat no-caps icon="sym_o_lock_open" :label="t('Remove the PIN')" @click="clearPin"></q-btn>
             </div>
@@ -100,7 +100,7 @@ module.exports = {
     name: 'PhoneSettings',
     data() {
         return { loaded: false, box: {}, myNumbers: [], accessNumbers: [], ringSeconds: 45, ringSecondsEach: 6, maxRings: 10,
-            transcribeOn: false, phoneSupported: true, form: { notifyEmail: '', attachAudio: false, attachTranscript: false, rings: '' },
+            pinMinDigits: 6, transcribeOn: false, phoneSupported: true, form: { notifyEmail: '', attachAudio: false, attachTranscript: false, rings: '' },
             pin: '', recording: false, recordSeconds: 0, busy: false, stamp: Date.now() };
     },
     computed: {
@@ -137,6 +137,7 @@ module.exports = {
                 this.accessNumbers = json.accessNumberList || [];
                 this.ringSeconds = json.ringSeconds; this.ringSecondsEach = json.ringSecondsEach; this.maxRings = json.maxRings;
                 this.transcribeOn = !!json.transcribeOn;
+                this.pinMinDigits = json.pinMinDigits || 6;
                 this.phoneSupported = !!json.phoneSupported;
                 this.loaded = true;
             }, () => { this.loaded = true; });
