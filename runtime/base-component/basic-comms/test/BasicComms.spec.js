@@ -176,3 +176,24 @@ feature("an app that mounts BasicComms shows its screens with its extensions und
         skip || inbox.failedParts.length == 0
     }
 })
+
+feature("the component calls no Mantle or IronStone service, reads no Mantle entity and names no app component", {
+    when() {
+        const problems = []
+        for (const dir of ["screen", "service", "template", "data"]) {
+            const files = []
+            const ref = ec.resource.getLocationReference("component://basic-comms/" + dir)
+            if (!ref.getExists()) continue
+            ref.walkChildTree(files, null)
+            for (const file of files) {
+                const text = ec.resource.getLocationText(file.location, false) || ""
+                const found = text.match(/(mantle|ironstone)\.[a-z.]+\.[A-Z][A-Za-z]+|component:\/\/mr-[a-z]+/g)
+                if (found) problems.push(file.location + ": " + Array.from(new Set(found)).join(", "))
+            }
+        }
+        return {problems}
+    },
+    then({problems}) {
+        problems.join("\n") == ""
+    }
+})

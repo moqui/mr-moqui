@@ -56,10 +56,11 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [MCP.md](ai/MCP.md) | The MCP tool server for AI agents and coding assistants, and the MCP client |
 | [Gateway.md](ai/Gateway.md) | The OpenAI-compatible LLM gateway at `/llm/v1`, and the LLM embedder |
 
-## tools: The Tools and System Apps
+## tools: The Framework Apps
 
 | Guide | What it covers |
 |---|---|
+| [Comms.md](tools/Comms.md) | BasicComms: the Inbox, Compose, chat and the mail settings, and how an app adds to them |
 | [Monitoring.md](tools/Monitoring.md) | Telemetry, OTLP in and out, the Monitor and Dashboards apps, and reports |
 
 ## security

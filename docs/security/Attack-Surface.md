@@ -201,6 +201,9 @@ Because the root screen does not require a user, static files served as that scr
 | `/menuData` | the script does not check `userId`; `getMenuData` does | `getMenuData` is 401 `Authentication required` with no username, 404 for an unknown screen, and 403 when view is not permitted (`screen/menu.rs`, in-process). The transition script reads `sri.getScreenUrlInfo().extraPathNameList` first. An anonymous `GET /menuData/apps/tools` in the client suite was HTTP 500 (`cannot read property 'extraPathNameList' of undefined`) before that check. The HTTP proof only requires that the body is not the Tools menu. |
 | `/shellData` | same split | 401 `Authentication required` when there is no user id (`screen/shell.rs`). |
 | `/shellSearch` | same split | 401 `Authentication required` when there is no username. Parameters `text`, `groups`, `limit`. |
+| `/extItems` | same split | The declared actions and panels of the screen at the path (`screen/ext.rs`): 401 with no username, 404 for an unknown screen, 403 when view is not permitted. A target the user may not view, and an item whose provider hook the user has none for, is left out; the target checks access again when called. |
+| `/WebPush/status`, `/WebPush/store`, `/WebPush/delete` | none in the screen; `store` and `delete` need a user | The browser's Web Push subscription of the session's user only (`service/web_push.rs`): `store` is 401 without a user and checks the endpoint is https and the keys a P-256 point and 16 bytes; an endpoint stored for another user moves to this one. `delete` touches only this user's row, with no error for another's. Posts need the session's CSRF token. The endpoint is a capability and is not logged. |
+| `/sw.js`, `/manifest.webmanifest` | none | Static files of the PWA: the service worker (served `no-cache`, `Service-Worker-Allowed: /`), which caches only versioned shell assets and never an authenticated answer, and the manifest. |
 | `/listViewColumns` | no `userId` check in the transition | `get#ListViewColumns` with authorization disabled. `values` is sliced to 500. The comment calls it status configuration read without authorization. |
 | `/statusBar` | no `userId` check in the transition | `get#StatusBar` with authorization disabled. |
 | `/shellCounts` | 401 when there is no `userId` | then `get#ShellCounts` with authorization disabled. |
@@ -432,7 +435,7 @@ The `pdf` feature, which every server package includes, starts headless Chromium
 
 An OpenSearch child starts only when `search_backend` is opensearch, `elasticsearch_url` is loopback (the property default is `http://127.0.0.1:9200`), nothing is already answering, `runtime/opensearch/bin` exists, `opensearch_run` is not `false` (default `true`), and there is no pid file. The default `search_backend` is `postgres`, so the child stays off. User and password properties default to empty.
 
-IPP printing and the SFTP client are outbound. Git, DAV, `/termws`, and `/notws` are routes on the public HTTP server.
+IPP printing and the SFTP client are outbound. Git, DAV, `/termws`, and `/notws` are routes on the public HTTP server. Web Push (the `web-push` feature) posts to the push service named by each subscription a browser stored, with a VAPID token; internal addresses are refused, no redirect is followed, and the payload is encrypted to the browser and holds no message body.
 
 ## Heavy lock-down
 

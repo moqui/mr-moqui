@@ -1,6 +1,7 @@
 # Comms Framework
 
-Status 2026-10-31: P0 (PWA and Web Push) built; A0–A4 under way. The decisions are in [§8](#8-decisions). The libraries, reference applications and
+Status 2026-10-31: P0 (PWA and Web Push) and A0–A4 (the extension model and BasicComms) built; see [§7.4](#74-built).
+The W, V and C streams are next. The decisions are in [§8](#8-decisions). The libraries, reference applications and
 review findings are in [§10](#10-libraries-and-sources).
 
 Comms moves from mr-boss into a framework component, `runtime/base-component/basic-comms`, beside `tools`. It gains
@@ -1142,6 +1143,27 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
   - Draining a media node stops new admissions, and the active calls finish.
   - Actor and homeserver migrations need backups and a rehearsed rollback (§4.3, §4.4).
 
+### 7.4 Built
+
+| Step | What was built | Commits (mr-moqui, mr-boss) | Tests |
+| --- | --- | --- | --- |
+| P0 | The `/qapps` manifest, icons and service worker (`sw.js`: versioned shell assets only); `WebPushSubscription` and `get#WebPushStatus`, `store#`, `delete#`, `send#WebPush` (`service/web_push.rs`); RFC 8291 and 8292 on `p256`, `hkdf`, `aes-gcm` (`notify/push_crypto.rs`, the `web-push` feature in every package); persisted notifications pushed per `pushNotifications`; the account menu's Notifications on this device (`js/WebrootPush.js`) as the only permission prompt; logout and account switch end a subscription | 79f11727 | RFC 8291 vector, VAPID, `sw.js` headers; `WebPush.spec.js` |
+| A0 | `shell-providers` merged by element and key in a screen-extend; the provider hooks and `call#Providers`, `get#Providers` (each as its app, authorization required even under a caller that disabled it); `ext-action` and `ext-panel` (`screen/ext.rs`, `/extItems`, the menu data, `js/WebrootExt.js`, the terminal drawer) | e67efdca | `definition_tests`, `ext_tests`, `tests/shell.rs`, `moqui-tui` `shell` |
+| A1 | `basic-comms` with the mail settings and `MailSettingsServices`; BOSS mounts them and hides BasicComms | c5fd370b, 4b32c17 | `BasicComms.spec.js`; BOSS MailAccounts, MailSettings |
+| A2 | Chat, the tray panel and chat settings; records through `record-lookup`, `record-link`, `create-from`; ext items with fixed values and `hook` | 3048ffea, 32ff28b | `BasicCommsChat.spec.js`; BOSS Chat, ChatPanel, ChatSettings |
+| A3 | Inbox, MessageDetail, Compose, Home; `run#Operation` (D-A8) with email-only framework services | c89628ba, 1ba7cd2 | `BasicCommsInbox.spec.js`; BOSS Inbox, Compose, CommsHome, InboxMailboxes |
+| A4 | The dependency check, [docs/tools/Comms.md](../docs/tools/Comms.md), the attack surface | this commit | the whole of `basic-comms` and the BOSS specs above, AppStructure, TuiRender |
+
+Left for later:
+- BOSS's own links to its Comms (Chatter, the contact record, the palette and demo services) stay `/qapps/Comms`, its root.
+- Calls, Call, LiveCall and Settings/Calls stay BOSS placeholders until W1 builds calls in BasicComms.
+- The drive picker (Attach from Files, Save to Files) is IronStone's, through screen-extend; BasicComms alone has none.
+- The framework-only Home has no Needs reply: `find#Messages` has no such filter.
+- mr-boss `design-drawers-commons.md` §12–14 and §17 still describe the screens in full.
+- The hooks `recipient-source`, `invitation`, `contact-card`, `meetings-source`, `call-context`, `home-source` and
+  `external-conversation` are declared but called by nothing yet: IronStone's `inbox-source` answers those parts of the
+  Inbox whole (D-A8).
+
 ---
 
 ## 8. Decisions
@@ -1174,6 +1196,7 @@ D-V5, D-W1 and D-W4, and added D-E1 and D-A7.
 | D-W2 | The SFU for every call, no mesh | Yes |
 | D-W3 | Encrypted calls | Later (W8), by call or room policy, with SFrame and dedicated call keys. Required E2EE refuses unsupported clients, recording, captions and SIP legs |
 | D-W4 | Embedded TURN or coturn | Embedded, on `turn-server-proto`, with coturn documented |
+| D-A8 | An app's Inbox in the BasicComms screens (2026-10-31) | The app's `inbox-source` answers each Inbox, Compose, MessageDetail and Home operation (`run#Operation`), and its page is the list: IronStone's keeps mail and internal messages in one list by date. Without one, the framework answers over the user's mail alone. Nothing is joined |
 
 ## 9. Risks
 
