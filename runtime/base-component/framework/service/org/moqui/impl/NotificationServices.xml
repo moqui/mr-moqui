@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="UserNotifications">
         <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
             and the counts the screens show beside them. Filters: inboxEnumId (NinNotifications by default; 'all' for both),
-            reasonEnumId, appName, topic, viewed (N unread, Y read, empty both), fromDate and thruDate (on sentDate), text
+            reasonEnumId, appName, topic, topicList (any of these topics, for an app's own list), viewed (N unread, Y read, empty both), fromDate and thruDate (on sentDate), text
             (in the title, ignoring case) and approvals (only the approvals waiting: unviewed, of a topic with an approve
             service).</description>
         <in-parameters>
@@ -43,6 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonEnumId"/>
             <parameter name="appName"/>
             <parameter name="topic"/>
+            <parameter name="topicList" type="List"/>
             <parameter name="viewed"><description>N for the unread, Y for the read, empty for both</description></parameter>
             <parameter name="fromDate" type="Timestamp"/>
             <parameter name="thruDate" type="Timestamp"/>
@@ -127,6 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (reasonEnumId) find = find.condition('reasonEnumId', reasonEnumId)
             if (appName) find = find.condition('appName', appName)
             if (topic) find = find.condition('topic', topic)
+            if (topicList?.length) find = find.condition('topic', 'in', Array.from(topicList))
             if (viewed === 'N') find = find.condition('viewedDate', null)
             else if (viewed === 'Y') find = find.condition('viewedDate', 'not-equals', null)
             if (fromDate) find = find.condition('sentDate', '>=', fromDate)

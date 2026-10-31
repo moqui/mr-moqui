@@ -903,3 +903,50 @@ fn the_services_register_at_the_locations_the_service_files_name() {
     named.dedup();
     assert_eq!(registered, named);
 }
+
+fn cached(provider: &super::GitProvider, id: &str) -> bool {
+    moqui_lib::sync::read(&provider.inner.repos).contains_key(id)
+}
+
+#[test]
+fn a_repository_whose_row_changes_in_a_transaction_is_not_kept_open_until_it_ends() {
+    use moqui_core::transaction::TransactionAttribute;
+    let fixture = fixture("refresh");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "flow", "db", None, None);
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    provider.repo("flow").unwrap();
+    assert!(cached(&provider, "flow"), "kept open outside a transaction");
+
+    for commit in [true, false] {
+        let tx = fixture.entity.transactions_for(super::GIT_REPOSITORY).unwrap();
+        let result: Result<(), moqui_lib::error::Error> = tx.run(TransactionAttribute::UseOrBegin, None, || {
+            provider.refresh("flow");
+            provider.repo("flow").unwrap();
+            assert!(!cached(&provider, "flow"), "not kept by the changing thread");
+            // another thread (a gitECA post event) reads the committed row: it is not kept either
+            let other = provider.clone();
+            std::thread::spawn(move || {
+                other.repo("flow").unwrap();
+                assert!(!cached(&other, "flow"), "not kept by another thread");
+            })
+            .join()
+            .unwrap();
+            if commit {
+                Ok(())
+            } else {
+                Err(moqui_lib::error::Error::new("roll back"))
+            }
+        });
+        assert_eq!(result.is_ok(), commit);
+        assert!(
+            !cached(&provider, "flow"),
+            "forgotten when the transaction ended (commit {commit})"
+        );
+        provider.repo("flow").unwrap();
+        assert!(
+            cached(&provider, "flow"),
+            "kept open again once it ended (commit {commit})"
+        );
+    }
+}
