@@ -194,6 +194,7 @@ fn screen_extend_names_its_base_and_anchors() {
     let text = r#"<screen-extend>
     <form-single name="ExampleFacts"><field name="dueDate" after="exampleEndDate"/></form-single>
     <widgets-extend name="Gone" where="after"><label text="x"/></widgets-extend>
+    <transition name="save"><default-response url="."/></transition>
 </screen-extend>"#;
     let location = "component://my-site/screen-extend/example/screen/Detail.xml";
     let index = read(ArtifactKind::ScreenExtend, location, text);
@@ -217,6 +218,7 @@ fn screen_extend_names_its_base_and_anchors() {
             ("screen", base, "", "extend"),
             ("anchor", "ExampleFacts", base, "anchor"),
             ("anchor", "Gone", base, "anchor"),
+            ("transition-anchor", "save", base, "anchor"),
         ]
     );
 }

@@ -397,7 +397,8 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
 }
 
 /// The extensions of every component (plans/design-dev-aide.md 5.6), from the artifact index read into memory: each
-/// `screen-extend` file has a base screen at its path and each form, section, container or transition it names there,
+/// `screen-extend` file has a base screen at its path and each form, section or container it names there (a transition
+/// replaces the base screen's of its name or adds one),
 /// each `extend-entity` an entity, and each ECA rule the service or entity it runs on.
 #[must_use]
 pub fn check_extensions(factory: &ExecutionContextFactory) -> Vec<Problem> {
