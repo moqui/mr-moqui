@@ -119,7 +119,7 @@ An `OPTIONS` preflight is 204 with an empty body, before the servlet chain (`cra
 
 ### Field encryption
 
-`entity_ds_crypt_pass` ships as `MoquiDefaultPassword:CHANGEME` with `is-secret="true"`. It is the `entity-facade` `crypt-pass`. The algorithm is `PBEWithHmacSHA256AndAES_128`, salt `20201202`, 10 iterations. The same secret encrypts an OAuth refresh token and a client secret stored on `EmailOAuthProvider`. Alternate decrypt still tries `PBEWithMD5AndDES` with the current pass and with `entity_ds_crypt_pass_old`, and the AES algorithm with the old pass. The old pass ships as the same `CHANGEME` sentinel and is not replaced by the generator.
+`entity_ds_crypt_pass` ships as `MoquiDefaultPassword:CHANGEME` with `is-secret="true"`. It is the `entity-facade` `crypt-pass`. The algorithm is `PBEWithHmacSHA256AndAES_128`, salt `20201202`, 10 iterations. The same secret encrypts an OAuth refresh token and a client secret stored on `EmailOAuthProvider`, the SSO client secrets (`OauthFlow.secret`, `OidcFlow.secret`), the SAML keystore and private key passwords, and a calendar publish link's token (`CalendarShare.publishToken`, still found by value since the encryption is deterministic). Alternate decrypt still tries `PBEWithMD5AndDES` with the current pass and with `entity_ds_crypt_pass_old`, and the AES algorithm with the old pass. The old pass ships as the same `CHANGEME` sentinel and is not replaced by the generator.
 
 `entity_ds_user` and `entity_ds_password` default to `sa` and `sa`. Those are the old datasource properties. The embedded Postgres client does not connect with them.
 

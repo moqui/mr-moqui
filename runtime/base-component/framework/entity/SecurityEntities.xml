@@ -715,7 +715,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
         <field name="clientId" type="text-medium"/>
-        <field name="secret" type="text-medium"/>
+        <field name="secret" type="text-medium" encrypt="true"/>
         <field name="authorizeUrl" type="text-medium"><description>The authorization endpoint. Empty takes the endpoint of
             the named client type (GitHub, Google, ...); OctOauth20 needs it set.</description></field>
         <field name="tokenUrl" type="text-medium"/>
@@ -750,7 +750,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
         <field name="clientId" type="text-medium"/>
-        <field name="secret" type="text-medium"/>
+        <field name="secret" type="text-medium" encrypt="true"/>
         <field name="realm" type="text-medium">
             <description>Specific to Keycloak.</description>
         </field>
@@ -806,8 +806,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="SamlFlow" package="moqui.security.sso">
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="keystoreLocation" type="text-medium"/>
-        <field name="keystorePassword" type="text-medium"/>
-        <field name="privateKeyPassword" type="text-medium"/>
+        <field name="keystorePassword" type="text-medium" encrypt="true"/>
+        <field name="privateKeyPassword" type="text-medium" encrypt="true"/>
         <field name="serviceProviderEntityId" type="text-medium"/>
         <field name="identityProviderMetadataLocation" type="text-medium"/>
         <field name="forceAuth" type="text-indicator"/>

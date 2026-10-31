@@ -297,6 +297,8 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
     let _entered = context.enter();
     let _authz = context.disable_authz();
     let facade = factory.entity().unwrap();
+    // OidcFlow.secret is encrypted: the login above checked the client secret, read back decrypted.
+    assert!(facade.crypt().is_some(), "field encryption is on");
     let account = facade
         .find("moqui.security.UserAccount")
         .unwrap()
