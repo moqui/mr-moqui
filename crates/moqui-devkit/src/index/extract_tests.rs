@@ -168,7 +168,7 @@ fn screens_transitions_forms_anchors_and_links() {
         ids(&index),
         [
             "screen:component://example/screen/Detail.xml",
-            "transition:component://example/screen/Detail.xml#updateExample",
+            "transition:component://example/screen/Detail.xml#updateExample:any",
             "anchor:component://example/screen/Detail.xml#ExampleBox",
             "form:component://example/screen/Detail.xml#ExampleFacts",
         ]
@@ -183,8 +183,8 @@ fn screens_transitions_forms_anchors_and_links() {
         [
             ("screen", "component://example/screen/Sub.xml", "subscreens-item"),
             ("service", "update#moqui.example.Example", "service-call"),
-            ("transition", "updateExample", "form"),
-            ("transition", "updateExample", "link"),
+            ("transition", "updateExample:any", "form"),
+            ("transition", "updateExample:any", "link"),
         ]
     );
 }

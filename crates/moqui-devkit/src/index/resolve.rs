@@ -188,7 +188,23 @@ impl Resolver {
                     .iter()
                     .map(|kind| format!("{kind}:{base}#{}", reference.to_name))
                     .find(|id| self.has(id))
+                    .or_else(|| {
+                        // Extension anchors identify a named XML element, independent of request dispatch.
+                        // Keep them navigable after transitions acquire method-qualified IDs.
+                        let prefix = format!("transition:{base}#{}:", reference.to_name);
+                        let any = format!("{prefix}any");
+                        if self.has(&any) {
+                            Some(any)
+                        } else {
+                            self.ids.keys().filter(|id| id.starts_with(&prefix)).min().cloned()
+                        }
+                    })
             }),
+            ToKind::Parameter => {
+                let id =
+                    super::extract::parameter_id(&format!("service:{}", reference.to_scope), "in", &reference.to_name);
+                self.has(&id).then_some(id)
+            }
         };
         reference.resolved = target.is_some();
         reference.to_id = target;
@@ -206,9 +222,19 @@ impl Resolver {
                     names.push(artifact.short_name.clone());
                 }
                 "field" => names.push(artifact.short_name.clone()),
+                "parameter" => {
+                    names.push(artifact.name.clone());
+                    names.push(artifact.short_name.clone());
+                }
                 "service" => names.push(artifact.name.clone()),
                 "screen" => names.push(artifact.name.clone()),
-                "form" | "anchor" | "transition" => names.push(artifact.name.clone()),
+                "transition" => {
+                    names.push(artifact.name.clone());
+                    if let Some((_, target)) = artifact.id.rsplit_once('#') {
+                        names.push(target.to_string());
+                    }
+                }
+                "form" | "anchor" => names.push(artifact.name.clone()),
                 "script" | "data" | "skill" => names.push(artifact.name.clone()),
                 _ => {}
             }

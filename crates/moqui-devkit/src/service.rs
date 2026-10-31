@@ -182,7 +182,8 @@ fn find_artifacts(
     Ok(out)
 }
 
-/// `get#Artifact`: one artifact by its id, or the best match of a name. Out: `artifact`.
+/// `get#Artifact`: one artifact (including `parameter:<owner>@<direction>.<name>`) by its id,
+/// or the best match of a name. Out: `artifact`, with its declared children in `parts`.
 fn get_artifact(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -226,7 +227,7 @@ fn get_artifact(
     };
     if let Some(found) = found {
         out.insert("artifact".to_string(), json_value(&found));
-        // an entity's fields, a screen's transitions and forms
+        // an entity's fields, a screen's transitions and forms, or an owner's declared parameters
         out.insert("parts".to_string(), json_value(&parts));
         if let Some(params) = parameters_of {
             out.insert("parameters".to_string(), json_value(&params));
@@ -236,6 +237,7 @@ fn get_artifact(
 }
 
 /// `get#ArtifactRefs`: what uses an artifact (`direction` in) or what it uses (out). Out: `refs`.
+/// Parameter IDs include incoming field-map references to a service's declared input parameter.
 fn get_artifact_refs(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
