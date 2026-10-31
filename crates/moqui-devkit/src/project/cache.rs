@@ -62,6 +62,8 @@ pub struct ProjectIndex {
     seen: Mutex<Seen>,
     /// An entity or service file changed since the boot: the model is behind the index.
     model_old: AtomicBool,
+    /// When a boot again last failed: this index answers until [`RECHECK`] after it, then the boot is tried again.
+    failed: Mutex<Option<Instant>>,
     /// How long the boot and the first read took.
     pub build_millis: u64,
 }
@@ -115,6 +117,12 @@ impl ProjectIndex {
         let context = factory.new_context();
         let _entered = context.enter();
         let files = index::component_files(&factory);
+        // stamped before they are read: a file saved while the index is read is read again at the next look
+        let stamps: BTreeMap<PathBuf, Stamp> = files
+            .iter()
+            .filter_map(|file| stamp(&file.path).map(|found| (file.path.clone(), found)))
+            .collect();
+        let structure = structure(&project, &factory);
         let memory = MemoryIndex::of_files(&factory, &files);
         let build_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         tracing::info!(
@@ -126,11 +134,8 @@ impl ProjectIndex {
             memory.artifacts.len()
         );
         let seen = Seen {
-            files: files
-                .iter()
-                .filter_map(|file| stamp(&file.path).map(|found| (file.path.clone(), found)))
-                .collect(),
-            structure: structure(&project, &factory),
+            files: stamps,
+            structure,
             looked: Instant::now(),
         };
         Ok(Self {
@@ -140,6 +145,7 @@ impl ProjectIndex {
             index: RwLock::new(memory),
             seen: Mutex::new(seen),
             model_old: AtomicBool::new(false),
+            failed: Mutex::new(None),
             build_millis,
         })
     }
@@ -331,6 +337,8 @@ impl ProjectIndex {
             .entity()
             .map(|facade| facade.with_model(|model| model.problems().to_vec()))
             .unwrap_or_default();
+        // `seen` before the index, as `refresh` takes them: the other order waits on a refresh that waits on it
+        let files = lock(&self.seen).files.len();
         self.with_index(|index| Summary {
             model_problems,
             project: self.project.root.display().to_string(),
@@ -342,7 +350,7 @@ impl ProjectIndex {
                 .iter()
                 .map(|component| component.name.clone())
                 .collect(),
-            files: lock(&self.seen).files.len(),
+            files,
             artifacts: index.artifacts.len(),
             refs: index.refs.len(),
             problems: index.problems.clone(),
@@ -442,20 +450,31 @@ fn slot(root: &Path) -> Arc<Slot> {
 /// The index of `project` read with `dirs`: kept from an earlier request and brought up to date with its files, or
 /// built now. With `model`, a model behind its files (an entity or service file changed) is booted again first.
 ///
+/// When a boot again fails (a conf or entity file saved half-edited), the error is logged and the index read before
+/// answers, as a reload keeps the model it had; the boot is tried again [`RECHECK`] later.
+///
 /// # Errors
 ///
-/// Returns why the project does not boot. A panic in the build is caught and answered as an error.
+/// Returns why the project does not boot when there is no index of it read before. A panic in the build is caught and
+/// answered as an error.
 pub fn open(project: Project, dirs: ModelDirs, model: bool) -> Result<Arc<ProjectIndex>, Error> {
     let slot = slot(&project.root);
     let mut built = lock(&slot.built);
-    if let Some(current) = built.as_ref() {
-        let fresh = current.refresh().is_some() && !(model && current.model_old.load(Ordering::Acquire));
-        if fresh && current.dirs == dirs {
+    let before = built.as_ref().filter(|current| current.dirs == dirs).cloned();
+    if let Some(current) = &before {
+        if lock(&current.failed).as_ref().is_some_and(|at| at.elapsed() < RECHECK) {
+            return Ok(Arc::clone(current));
+        }
+        let refreshed =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| current.refresh())).unwrap_or_else(|_| {
+                tracing::error!("Project {}: the look at its files panicked", project.root.display());
+                None
+            });
+        if refreshed.is_some() && !(model && current.model_old.load(Ordering::Acquire)) {
             return Ok(Arc::clone(current));
         }
         tracing::info!("Project {}: booting again", project.root.display());
     }
-    *built = None;
     let root = project.root.clone();
     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ProjectIndex::build(project, dirs)))
         .unwrap_or_else(|_| Err(Error::new(format!("the build of {} panicked", root.display()))));
@@ -465,10 +484,21 @@ pub fn open(project: Project, dirs: ModelDirs, model: bool) -> Result<Arc<Projec
             *built = Some(Arc::clone(&index));
             Ok(index)
         }
-        Err(err) => {
-            tracing::error!("Project {}: not read: {err}", root.display());
-            Err(err)
-        }
+        Err(err) => match before {
+            Some(current) => {
+                tracing::error!(
+                    "Project {}: did not boot again, so the index read before answers: {err}",
+                    root.display()
+                );
+                *lock(&current.failed) = Some(Instant::now());
+                Ok(current)
+            }
+            None => {
+                tracing::error!("Project {}: not read: {err}", root.display());
+                *built = None;
+                Err(err)
+            }
+        },
     }
 }
 
@@ -483,26 +513,67 @@ pub fn kept() -> Vec<PathBuf> {
     lock(&PROJECTS).iter().map(|(path, _)| path.clone()).collect()
 }
 
+/// The one error a production instance answers for any other project: it does not say whether the path is there.
+pub const NOT_AVAILABLE: &str = "project: not available on this instance";
+
 /// The project a request names in `project` (an absolute directory on this machine, [`super::requested_dir`]), read
 /// against the server `own`: `None` when the text is empty or names the server's own runtime, which its database
-/// index answers. A Java Moqui checkout is read with the server's own framework conf. With `model`, see [`open`].
+/// index answers. With `java` it is read as a Java Moqui checkout whatever its sources ([`super::detect_java`]). A Java
+/// Moqui checkout is read with the server's own framework conf. With `model`, see [`open`].
+///
+/// A production instance (`instance_purpose` production) reads no other project: any but its own runtime (or the
+/// clone it is in) is [`NOT_AVAILABLE`], before anything of the path is looked at but its canonical form.
 ///
 /// # Errors
 ///
 /// Returns why the directory is not taken (relative, `..`, not a Moqui project) or the project does not boot.
 pub fn requested(
     project: &str,
+    java: bool,
     own: &ExecutionContextFactory,
     model: bool,
 ) -> Result<Option<Arc<ProjectIndex>>, Error> {
     if project.trim().is_empty() {
         return Ok(None);
     }
-    let found = super::detect(&super::requested_dir(project)?)?;
     let own_runtime = std::fs::canonicalize(own.runtime_dir()).unwrap_or_else(|_| own.runtime_dir().to_path_buf());
+    if moqui_core::web::is_production() {
+        return match super::requested_dir(project) {
+            Ok(dir) if dir == own_runtime || dir.join("runtime") == own_runtime => Ok(None),
+            _ => Err(Error::new(NOT_AVAILABLE)),
+        };
+    }
+    let dir = super::requested_dir(project)?;
+    let found = if java {
+        super::detect_java(&dir)?
+    } else {
+        super::detect(&dir)?
+    };
     if found.runtime == own_runtime {
         return Ok(None);
     }
     let dirs = found.model_dirs(|| Some(own.framework_dir().to_path_buf()))?;
     open(found, dirs, model).map(Some)
 }
+
+/// Drop the kept index of the project a request names, as [`requested`] takes it (nothing in production), so its next
+/// request boots it again.
+pub fn forget_requested(project: &str, java: bool) {
+    if moqui_core::web::is_production() {
+        return;
+    }
+    let found = super::requested_dir(project).and_then(|dir| {
+        if java {
+            super::detect_java(&dir)
+        } else {
+            super::detect(&dir)
+        }
+    });
+    if let Ok(found) = found {
+        forget(&found.root);
+    }
+}
+
+#[cfg(test)]
+#[path = "cache_tests.rs"]
+mod tests;

@@ -46,6 +46,7 @@ impl Default for CheckTool {
                 Property::optional("file", "string", "component://<component>/<path>, or root:path"),
                 Property::optional("text", "string", "The proposed text of the file; the saved text when left out"),
                 Property::optional("project", "string", super::artifact::PROJECT_ARG),
+                Property::optional("projectLayout", "string", super::artifact::PROJECT_LAYOUT_ARG),
             ]),
             Classification::Read,
         )

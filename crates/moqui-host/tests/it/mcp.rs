@@ -1035,6 +1035,27 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     assert!(problems.contains("moqui.basic.Enumeration"), "{checked}");
     assert!(!problems.contains("fp.picklist.PicklistBatch"), "{checked}");
 
+    // a checkout with a Gradle build and no sources yet is no Moqui project by its markers, and is one as Java
+    let bare = dir.with_file_name(format!("mcp-java-bare-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&bare);
+    java_checkout_at(&bare);
+    std::fs::remove_dir_all(bare.join("framework/src")).unwrap();
+    let bare = std::fs::canonicalize(&bare).unwrap();
+    let bare_project = bare.display().to_string();
+    let refused = ann.call(
+        "artifact",
+        json!({"action": "find", "text": "PicklistBatch", "project": bare_project}),
+        json!({}),
+    );
+    assert_eq!(refused["isError"], true, "{refused}");
+    let forced = answer(json!({"action": "find", "text": "PicklistBatch", "kinds": "entity",
+        "project": bare_project, "projectLayout": "java"}));
+    assert_eq!(forced["project"]["layout"], "java", "{forced}");
+    assert_eq!(
+        forced["artifacts"][0]["id"], "entity:fp.picklist.PicklistBatch",
+        "{forced}"
+    );
+
     // a path that is not plain and absolute is refused
     for bad in ["runtime", "/tmp/../etc"] {
         let result = ann.call(
@@ -1064,8 +1085,21 @@ fn another_project(ann: &Caller, address: SocketAddr) {
             dir.join("runtime/component/fp-core/entity/PicklistEntities.xml"),
             "{found:?}"
         );
+        // --java goes to the server too
+        std::env::set_var("MOQUI_LOGIN_KEY", &ann.key);
+        let remote = moqui_host::devtools_remote::Remote::connect(&format!("http://{address}"))
+            .unwrap()
+            .with_project(&bare, true);
+        std::env::remove_var("MOQUI_LOGIN_KEY");
+        let found = remote.find("PicklistBatch", &["entity".to_string()], 5);
+        assert_eq!(
+            found.first().map(|row| row.id.as_str()),
+            Some("entity:fp.picklist.PicklistBatch"),
+            "{found:?}"
+        );
     }
     #[cfg(not(feature = "tui"))]
     let _ = address;
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&bare);
 }

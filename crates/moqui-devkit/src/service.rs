@@ -136,7 +136,8 @@ fn project_in(
         return Ok(None);
     }
     let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory())).ok_or(())?;
-    crate::project::cache::requested(&named, &factory, model).map_err(|err| {
+    let java = text_in(parameters, "projectLayout") == "java";
+    crate::project::cache::requested(&named, java, &factory, model).map_err(|err| {
         ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
     })
 }
@@ -361,9 +362,7 @@ fn rebuild_artifact_index(
     if !named.trim().is_empty() {
         // another project: a full rebuild boots it again; else its files are looked at now
         if full {
-            if let Ok(found) = crate::project::requested_dir(&named).and_then(|dir| crate::project::detect(&dir)) {
-                crate::project::cache::forget(&found.root);
-            }
+            crate::project::cache::forget_requested(&named, text_in(parameters, "projectLayout") == "java");
         }
         let Ok(project) = project_in(parameters, true) else {
             return Ok(out);

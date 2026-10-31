@@ -44,6 +44,11 @@ pub(crate) const PROJECT_ARG: &str =
      Moqui checkout (framework/src/main/java or groovy beside runtime/), an MR Moqui clone or an MR Moqui runtime. \
      Left out: this server's own runtime";
 
+/// The `projectLayout` argument of the artifact and check tools.
+pub(crate) const PROJECT_LAYOUT_ARG: &str =
+    "java: read the project as a Java Moqui checkout whatever its sources; left out, its layout is found from its \
+     marker paths";
+
 impl Default for ArtifactTool {
     fn default() -> Self {
         let mut spec = ToolSpec::new(
@@ -76,6 +81,7 @@ impl Default for ArtifactTool {
                 Property::optional("line", "integer", "at: the line"),
                 Property::optional("word", "string", "at: the name on the line"),
                 Property::optional("project", "string", PROJECT_ARG),
+                Property::optional("projectLayout", "string", PROJECT_LAYOUT_ARG),
             ]),
             Classification::Read,
         )
@@ -119,7 +125,8 @@ pub(crate) fn project_of(context: &Context, args: &Json, model: bool) -> Result<
     let Some(named) = arg(args, "project") else {
         return Ok(None);
     };
-    projects::requested(named, &context.factory, model).map_err(|err| ToolError::new("project", err.to_string()))
+    let java = arg(args, "projectLayout") == Some("java");
+    projects::requested(named, java, &context.factory, model).map_err(|err| ToolError::new("project", err.to_string()))
 }
 
 /// `{root, layout}` of a project, as the answers about it name it.

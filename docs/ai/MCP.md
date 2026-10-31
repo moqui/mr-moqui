@@ -107,11 +107,14 @@ artifact services, and `moqui check`, `refs` and `lsp` send it with `--server UR
 from marker paths: Java Moqui when it has `framework/src/main/java` or `framework/src/main/groovy` (or
 `framework/build.gradle` with `.java` or `.groovy` files under `framework/src`) beside `runtime/`, else MR Moqui when
 it has `runtime/base-component/framework` (a clone) or `base-component/framework` (a runtime); a relative path, a `.`
-or `..` part, or a directory that is neither is refused with why. The project is booted inside the server for its
+or `..` part, or a directory that is neither is refused with why. `projectLayout: "java"` reads it as a Java checkout
+whatever its sources (`--java DIR` sends it). A production instance (`instance_purpose` production) reads no other
+project: any `project` but its own runtime gets one error that does not say whether the path is there. The project is booted inside the server for its
 artifacts only (no database, threads, properties or hooks of its own; a Java checkout with the server's framework conf)
 and read into memory on the first call, which holds only that project; later calls look at its files at most every
 500 ms and read a changed one again (a changed `component.xml`, `MoquiConf.xml`, runtime conf or set of components
-boots it again), so an answer follows the files with no restart. `moqui_devtools_projects` (3) projects are kept, the
+boots it again), so an answer follows the files with no restart; when it does not boot again (a conf saved half-edited),
+the error is logged and the index read before answers until it does. `moqui_devtools_projects` (3) projects are kept, the
 least recently used dropped first. A file that does not parse is logged and left out. `describe` answers a service's
 in and out parameters too, for the server's own services and a project's.
 

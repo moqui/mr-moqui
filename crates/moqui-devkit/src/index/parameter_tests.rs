@@ -352,3 +352,26 @@ fn a_field_comes_before_parameters_of_its_name_and_field_maps_stay_out_of_servic
     // the parameter's own refs are its field-maps
     assert_eq!(index.refs(parameter, Direction::In).len(), 2);
 }
+
+/// An id defined in two files (two components) describes as its first row, as a find of the rows in order does.
+#[test]
+fn an_id_defined_twice_describes_as_its_first_row() {
+    let row = |path: &str| ArtifactRow {
+        id: "entity:a.Twice".to_string(),
+        kind: "entity".to_string(),
+        name: "a.Twice".to_string(),
+        short_name: "Twice".to_string(),
+        component: "c".to_string(),
+        path: path.to_string(),
+        line: 1,
+        column: 1,
+        summary: String::new(),
+        parent: None,
+    };
+    let mut index = MemoryIndex {
+        artifacts: vec![row("/first.xml"), row("/second.xml")],
+        ..MemoryIndex::default()
+    };
+    index.position();
+    assert_eq!(index.describe("entity:a.Twice").unwrap().path, "/first.xml");
+}

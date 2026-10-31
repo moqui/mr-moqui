@@ -354,13 +354,13 @@ impl MemoryIndex {
         index
     }
 
+    /// Each id's first row, as a find of the rows in order answers (an id defined in two components is the first's).
     fn position(&mut self) {
-        self.positions = self
-            .artifacts
-            .iter()
-            .enumerate()
-            .map(|(at, artifact)| (artifact.id.clone(), at))
-            .collect();
+        let mut positions = HashMap::with_capacity(self.artifacts.len());
+        for (at, artifact) in self.artifacts.iter().enumerate() {
+            positions.entry(artifact.id.clone()).or_insert(at);
+        }
+        self.positions = positions;
     }
 
     /// The rows of the files `paths` read again from disk (`files` are the ones there now; a path with none was

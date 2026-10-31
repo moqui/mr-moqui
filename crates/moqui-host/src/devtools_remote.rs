@@ -53,6 +53,8 @@ pub struct Remote {
     components: Mutex<Option<HashMap<String, PathBuf>>>,
     /// The project every call names: its directory on the server's machine.
     project: Option<String>,
+    /// The project is read as a Java Moqui checkout whatever its sources (`--java`).
+    java: bool,
 }
 
 impl Remote {
@@ -96,6 +98,7 @@ impl Remote {
             client,
             components: Mutex::new(None),
             project: None,
+            java: false,
         })
     }
 
@@ -122,6 +125,7 @@ impl Remote {
             Err(_) => std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()),
         };
         self.project = Some(named.display().to_string());
+        self.java = java;
         self
     }
 
@@ -129,6 +133,9 @@ impl Remote {
     fn with_project_arg(&self, mut arguments: Json) -> Json {
         if let (Some(project), Some(map)) = (&self.project, arguments.as_object_mut()) {
             map.insert("project".to_string(), json!(project));
+            if self.java {
+                map.insert("projectLayout".to_string(), json!("java"));
+            }
         }
         arguments
     }
