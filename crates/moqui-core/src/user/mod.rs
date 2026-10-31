@@ -27,7 +27,7 @@ mod visit;
 
 pub(crate) use authz::current_user_groups;
 pub use authz::{authorize, authorize_own, context_entered, group_permits};
-pub(crate) use authz::{denied, is_permitted, note_entity_write, AuthInfo, Permit, StackAuthz};
+pub(crate) use authz::{denied, entity_permitted, is_permitted, note_entity_write, AuthInfo, Permit, StackAuthz};
 pub use factor::{
     login_with_code, random_code, random_string, second_factor_required, send_login_code, single_use_hash,
     totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,

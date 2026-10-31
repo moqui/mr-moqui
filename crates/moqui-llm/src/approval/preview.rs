@@ -40,7 +40,7 @@ use moqui_core::entity::{fence, EntityFacade};
 use moqui_core::screen::{RenderOrigin, TransitionGate};
 
 /// The most changed rows a preview lists.
-const MAX_ROWS: usize = 50;
+pub(super) const MAX_ROWS: usize = 50;
 
 /// Whether this process can preview: it has the sim overlay, or can start it.
 pub fn available(facade: &EntityFacade) -> bool {
@@ -110,6 +110,20 @@ pub fn run_in_sim<T: Send>(
     })
 }
 
+/// Leaves the sim, its schema dropped, when dropped: at the end of a sim run, and also when the run panics.
+pub(super) struct LeaveSim<'a> {
+    pub(super) facade: &'a EntityFacade,
+    pub(super) label: &'a str,
+}
+
+impl Drop for LeaveSim<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = cache::exit_sim(self.facade) {
+            tracing::error!("the sim of {} was not dropped: {error}", self.label);
+        }
+    }
+}
+
 fn sim_body<T>(
     factory: &Arc<ExecutionContextFactory>,
     username: &str,
@@ -124,6 +138,7 @@ fn sim_body<T>(
     }
     let facade = run::facade_of(factory)?;
     cache::enter_sim(&facade)?;
+    let left = LeaveSim { facade: &facade, label };
     // entity writes go into the overlay; a resource write, a notification, mail, a remote call or a print would be
     // real, so they are refused, and so is a lift of them by the approved transition's render
     let (ran, effects) = {
@@ -148,9 +163,7 @@ fn sim_body<T>(
         Err(_) => Vec::new(),
     };
     let poisoned = cache::sim_poisoned();
-    if let Err(error) = cache::exit_sim(&facade) {
-        tracing::error!("the sim of {label} was not dropped: {error}");
-    }
+    drop(left);
     if !effects.is_empty() {
         return Err(Error::new(format!(
             "it would do what a preview cannot simulate: {}",
@@ -245,18 +258,32 @@ fn run_write(factory: &Arc<ExecutionContextFactory>, target: &PreviewTarget<'_>)
 
 /// One changed row against production: created, updated (the fields that differ) or deleted.
 fn compared(facade: &EntityFacade, change: &SimChange) -> Json {
-    let key: serde_json::Map<String, Json> = change
+    match production_row(facade, change) {
+        Ok(production) => compared_to(facade, change, production.as_ref()),
+        Err(error) => {
+            tracing::warn!(entity = %change.entity, error = %error, "preview production values could not be authorized");
+            json!({"entity": change.entity, "action": "unavailable", "error": "production values could not be read"})
+        }
+    }
+}
+
+/// The key of a changed row as a JSON object of its fields.
+pub(super) fn key_json(change: &SimChange) -> serde_json::Map<String, Json> {
+    change
         .key
         .iter()
         .map(|(name, value)| (name.clone(), Json::String(value.clone())))
-        .collect();
-    let production = match production_row(facade, change) {
-        Ok(row) => row,
-        Err(error) => {
-            tracing::warn!(entity = %change.entity, error = %error, "preview production values could not be authorized");
-            return json!({"entity": change.entity, "action": "unavailable", "error": "production values could not be read"});
-        }
-    };
+        .collect()
+}
+
+/// One changed row against its values `before` (none when it was not there): created, updated (the fields that differ)
+/// or deleted, in the preview row shape `{entity, key, action, fields: [{field, before, after}]}`.
+pub(super) fn compared_to(
+    facade: &EntityFacade,
+    change: &SimChange,
+    production: Option<&BTreeMap<String, Value>>,
+) -> Json {
+    let key = key_json(change);
     if change.values.is_none() && production.is_none() {
         return json!({"entity": change.entity, "action": "unavailable", "error": "deleted row is not visible to the user"});
     }
@@ -302,7 +329,10 @@ fn compared(facade: &EntityFacade, change: &SimChange) -> Json {
     }
 }
 
-fn production_row(facade: &EntityFacade, change: &SimChange) -> Result<Option<BTreeMap<String, Value>>, Error> {
+pub(super) fn production_row(
+    facade: &EntityFacade,
+    change: &SimChange,
+) -> Result<Option<BTreeMap<String, Value>>, Error> {
     let mut find = facade.find(&change.entity)?;
     for (name, value) in &change.key {
         find = find.eq(name, Value::string(value));

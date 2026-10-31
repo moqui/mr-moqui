@@ -211,10 +211,26 @@ fn postgres_driver(conf: &DatasourceConf) -> Result<super::postgres::PostgresDri
     )?;
     // Java puts the datasource's `schema-name` in front of each table name. Here the session's search path names
     // it first, with `public` after it for the extensions there.
-    Ok(match search_path(&conf.schema)? {
-        Some(path) => driver.options(format!("-c search_path={path}")),
+    Ok(match session_options(conf)? {
+        Some(options) => driver.options(options),
         None => driver,
     })
+}
+
+/// The startup `options` of a connection to a Postgres server the conf names: the `search_path` of the `schema-name`,
+/// and the datasource's isolation level as the session's default, as Java's pool sets it on each connection. A space
+/// in a value is escaped, as the server splits the options at spaces.
+#[cfg(feature = "postgres")]
+fn session_options(conf: &DatasourceConf) -> Result<Option<String>, Error> {
+    let mut options = Vec::new();
+    if let Some(path) = search_path(&conf.schema)? {
+        options.push(format!("-c search_path={path}"));
+    }
+    if let Some(level) = conf.isolation_level {
+        let level = level.sql().to_ascii_lowercase().replace(' ', "\\ ");
+        options.push(format!("-c default_transaction_isolation={level}"));
+    }
+    Ok((!options.is_empty()).then(|| options.join(" ")))
 }
 
 /// The `search_path` for a `schema-name`: none when it is empty. Only a plain identifier is taken.
@@ -279,17 +295,27 @@ pub fn postgres_server_driver(
 
 #[cfg(feature = "mysql")]
 fn mysql_driver(conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
-    Ok(Arc::new(super::mysql::MysqlDriver::new(
-        &conf.host,
-        conf.port.unwrap_or(MYSQL_PORT),
-        &conf.user,
-        &conf.password,
-        &conf.database,
-        conf.tls,
-    )))
+    Ok(Arc::new(
+        super::mysql::MysqlDriver::new(
+            &conf.host,
+            conf.port.unwrap_or(MYSQL_PORT),
+            &conf.user,
+            &conf.password,
+            &conf.database,
+            conf.tls,
+        )
+        .isolation(
+            conf.isolation_level
+                .map(moqui_core::entity::datasource::IsolationLevel::sql),
+        ),
+    ))
 }
 
 #[cfg(not(feature = "mysql"))]
 fn mysql_driver(_conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
     Err(Error::new("the mysql driver is not in this build"))
 }
+
+#[cfg(test)]
+#[path = "entity_db_tests.rs"]
+mod tests;

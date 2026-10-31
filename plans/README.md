@@ -25,6 +25,11 @@ Design, status and review documents for MR Moqui. User guides for built features
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md).
 
+**Databases**
+- [MySQL-Issues.md](MySQL-Issues.md): what loading every data type into MySQL 8.4 found (two tables over MySQL's row and
+  key limits, 3-byte `utf8`, `text-medium` at 255 characters, lock wait timeouts, and three issues found on the way that
+  happen on any database), how to run it, and the MySQL fixes made at the time. Deferred.
+
 **Comms**
 - [Comms-Framework.md](Comms-Framework.md): moving Comms from mr-boss to a framework component, `basic-comms`, with app extensions, chat federation and bridges, SIP/PSTN voice, voicemail and SFU conferencing, each embedded in the moqui binary with external servers as options. Decisions are in §8, milestones and acceptance in §7, and the libraries, reference applications and review findings in §10.
 

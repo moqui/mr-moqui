@@ -34,7 +34,9 @@ pub struct NameReplace {
 ///
 /// String fields are `None` when the attribute is absent. XSD defaults are not filled in.
 /// `never_nulls` and `use_binary_type_for_blob` are false when absent. Java's `never-try-insert` is not read: an upsert
-/// here is one statement ([`crate::sql::insert_or_update`]), not an insert that may fail and abort the transaction.
+/// here is one statement ([`crate::sql::insert_or_update`]), or where one does not fit an insert that does nothing on
+/// the key ([`crate::sql::insert_if_missing`]), not an insert that may fail and abort the transaction.
+/// `default-isolation-level` is the datasource's (`moqui_entity`'s `DatasourceConf`), not read here.
 /// `use_foreign_key_indexes`, `use_pk_constraint_names`, `use_foreign_keys`, `use_indexes`, `use_indexes_unique` and
 /// `fts_ddl` are true unless the attribute is `false`.
 /// `sql_types` holds only that database's `<database-type>` entries.

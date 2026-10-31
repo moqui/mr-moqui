@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- The sim overlay (docs/ai/Assist.md, Sim steps): service calls run against a throwaway copy of the data, which
+        production never sees. -->
+    <service verb="run" noun="Steps" type="rust" location="moqui_llm::approval::steps::run_steps" transaction="ignore">
+        <description>Run service calls one after another in one sim run, as the current user (each service's own
+            authorization applies) and under the sim fence an approval's preview uses: entity writes go into the overlay,
+            and an outside effect (a resource write, mail, a notification, a remote call) is refused. Each step runs under
+            its own savepoint: a step that fails (an error, a refused outside effect, a transaction it rolled back) is
+            rolled back to it, with the sim's state, and the next step runs. Sequenced ids in the sim are negative. With
+            no sim overlay in this process, available is false and nothing runs.</description>
+        <in-parameters>
+            <parameter name="steps" type="List"><description>Each a Map of serviceName and parameters (a Map).</description></parameter>
+            <parameter name="read" type="Map"><description>A service run after all steps (and after each step with
+                readAfterEachStep), as serviceName and parameters; what it writes is rolled back.</description></parameter>
+            <parameter name="readAfterEachStep" type="Boolean" default-value="false"/>
+            <parameter name="label"><description>Names the run in the fence's refusals and the log.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/>
+            <parameter name="steps" type="List"><description>One Map per input step: ok, error (when not ok), rows (the
+                rows this step changed, each {entity, key, action, fields: [{field, before, after}]} against the values
+                before the step), moreRows (when it changed more than 50), createdKeys ([{entity, key}] of the rows it
+                created), and with readAfterEachStep readResult (the read's out-parameters after this step) and readError
+                (when the read failed).</description></parameter>
+            <parameter name="readResult" type="Map"><description>The read's out-parameters after all steps.</description></parameter>
+            <parameter name="readError"><description>Why the read after all steps failed.</description></parameter>
+        </out-parameters>
+    </service>
+</services>

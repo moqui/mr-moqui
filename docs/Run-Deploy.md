@@ -316,10 +316,14 @@ the form is gone and the service refuses the call.
 To load more on a server that already has data, stop it and run `moqui load types=...` (or `./moq load-production
 ...`). On embedded Postgres a second process cannot open the data directory while the server holds it.
 
-By default an entity's create-or-update is UPDATE first, then INSERT. `-D create-or-update=true` switches to Moqui
-Java's read-first form (SELECT, then INSERT or UPDATE). In both, the INSERT does nothing when another transaction has
-created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated, so
-concurrent calls for one new key do not fail on it ([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
+By default an entity's create-or-update is one statement that inserts or updates (`INSERT ... ON CONFLICT (pk) DO
+UPDATE`, on MySQL `ON DUPLICATE KEY UPDATE`) where nothing depends on which it does: no create or update ECA rule, no
+audit-logged, create-only or defaulted field, no optimistic lock, and the user may both create and update the entity.
+Otherwise it is UPDATE first, then INSERT. `-D create-or-update=true` switches to Moqui Java's read-first form
+(SELECT, then INSERT or UPDATE). Where the row is looked for first, the INSERT does nothing when another transaction
+has created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated.
+Either way, concurrent calls for one new key do not fail on it
+([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
 
 ## Database and search
 
@@ -337,7 +341,8 @@ embeds it.
 ### External Postgres or MySQL
 
 Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`.
+are examples in `runtime/conf/MoquiDevConf.xml`. MySQL has open issues: two tables are not created and emoji cannot be
+stored ([MySQL-Issues](../plans/MySQL-Issues.md)).
 
 | Property | Example | What it does |
 |---|---|---|
@@ -350,6 +355,14 @@ are examples in `runtime/conf/MoquiDevConf.xml`.
 | `entity_ds_sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
 | `entity_ds_sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 | `entity_ds_crypt_pass` | generated | The key of encrypted fields; it must move with the database |
+
+Each connection to an external database sets the datasource's transaction isolation level for its session: the
+`inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, `ReadCommitted` for Postgres and MySQL
+in `MoquiDefaultConf.xml`, as Moqui Java does. `None` leaves the server's default (InnoDB's is `REPEATABLE READ`). The
+code assumes READ COMMITTED: at REPEATABLE READ or SERIALIZABLE, Postgres fails an `ON CONFLICT` insert whose
+conflicting row the transaction's snapshot does not see, and MySQL takes gap locks that two creates of one missing row
+can deadlock on. On Postgres a level other than `ReadCommitted` is logged as a warning at startup; the embedded database
+does not set it and runs at READ COMMITTED.
 
 ### Search
 

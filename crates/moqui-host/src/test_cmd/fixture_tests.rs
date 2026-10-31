@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The snapshot key: the components a load reads, not every component directory there is.
+//! The scratch runtime: its snapshot key, the components a load reads and not every component directory there is,
+//! and the downloaded Chromium it links.
 
 use std::path::{Path, PathBuf};
 
@@ -72,6 +73,27 @@ fn the_snapshot_key_follows_the_components_that_load() {
         assert_ne!(dev, data_hash(&first, &framework()).unwrap());
     }
     for dir in [first, second, runtime] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// The scratch runtime links the runtime's `chromium/`, so PDF in a spec finds the Chromium of `./moq chromium-download`.
+#[test]
+fn the_scratch_runtime_links_the_downloaded_chromium() {
+    let root = std::env::temp_dir().join(format!("moqui-fixture-chromium-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("conf")).unwrap();
+    std::fs::create_dir_all(root.join("base-component")).unwrap();
+    std::fs::create_dir_all(root.join("chromium")).unwrap();
+    std::fs::write(root.join("chromium/chrome"), "").unwrap();
+    let runtime = std::fs::canonicalize(&root).unwrap();
+    let scratch = scratch_runtime(&runtime).unwrap();
+    assert!(scratch.join("chromium/chrome").is_file());
+    assert_eq!(
+        crate::chromium::downloaded_chromium(&scratch),
+        Some(scratch.join("chromium/chrome"))
+    );
+    for dir in [scratch, runtime] {
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -462,6 +462,21 @@ fn mysql_metadata_insert_and_select() {
     assert_eq!(found.get("testMedium").and_then(Value::as_str), Some("mysql"));
     found.delete(&facade).unwrap();
 
+    // An update that leaves the row as it was is no error, though MySQL counts only the rows it changes: an amount
+    // past the column's scale rounds to the one stored, and in the transaction that wrote the row the stamp is the
+    // same.
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+        let mut row = facade.make_value("moqui.test.TestEntity")?;
+        row.set("testId", Value::string("MYSQL2"));
+        row.set("testCurrencyAmount", Value::string("10.1234"));
+        row.create(&facade)?;
+        row.set("testCurrencyAmount", Value::string("10.12341"));
+        row.update(&facade)?;
+        row.delete(&facade)
+    })
+    .unwrap();
+
     // A foreign key is found by its columns (P3-21): a second facade's check adds none, and a LIKE on a text-fts field
     // is a boolean-mode full-text search (P3-20).
     let keyed = [

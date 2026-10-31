@@ -34,6 +34,34 @@ fn types_are_send() {
     assert_sync::<MysqlDriver>();
 }
 
+/// Each connection sets the datasource's isolation level for its session, as Java's pool does; with none it keeps the
+/// server's default.
+#[test]
+fn a_connection_sets_the_isolation_level_it_is_given() {
+    let driver = MysqlDriver::new("my.example", 3306, "u", "p", "moqui", false);
+    assert_eq!(driver.endpoint.init(), ["SET NAMES utf8mb4"]);
+    let driver = driver.isolation(Some("READ COMMITTED"));
+    assert_eq!(
+        driver.endpoint.init(),
+        [
+            "SET NAMES utf8mb4",
+            "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
+        ]
+    );
+}
+
+/// On a server, whose default is InnoDB's REPEATABLE READ, the session runs at the level the driver was given.
+#[test]
+fn a_session_on_the_server_runs_at_the_level_given() {
+    let Some(driver) = test_driver() else {
+        tracing::debug!("MySQL was not reachable");
+        return;
+    };
+    let mut conn = must(driver.isolation(Some("READ COMMITTED")).connect_mysql());
+    let rows = must(conn.query("SELECT @@SESSION.transaction_isolation AS level", &[]));
+    assert_eq!(rows[0].get("level"), Some(&Value::string("READ-COMMITTED")));
+}
+
 #[test]
 fn maps_mysql_values() {
     assert_eq!(

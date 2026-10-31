@@ -99,6 +99,10 @@ fn a_sim_preview_writes_entities_and_refuses_every_effect_through_a_lift() {
         check_write("moqui.agent.AgentApproval", "update").is_err(),
         "the agent's records stay real"
     );
+    assert!(
+        check_write("moqui.entity.SequenceValueItem", "update").is_err(),
+        "a sequence bank stays real"
+    );
     assert!(check_effect(Effect::AsyncCall, "a#B").is_ok(), "sim skips it");
     {
         // an approved transition inside the preview's render: the read fence lifts, the sim fence stays
@@ -118,7 +122,7 @@ fn a_sim_preview_writes_entities_and_refuses_every_effect_through_a_lift() {
         }
         assert!(check_sql("delete from enumeration").is_err());
     }
-    assert_eq!(guard.violations().len(), 7, "{:?}", guard.violations());
+    assert_eq!(guard.violations().len(), 8, "{:?}", guard.violations());
     drop(guard);
     assert!(!active());
     // the read fence refuses the new effects as well

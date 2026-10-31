@@ -365,8 +365,8 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
     match setup {
         Ok(()) => {}
         Err(failure) if failure.kind == "skipped" => skip_rest = Some(failure.message),
-        Err(failure) => match missing_tool_of(&failure) {
-            Some(feature) => skip_rest = Some(requires_skip_reason(feature)),
+        Err(failure) => match absent_tool_reason(&failure) {
+            Some(reason) => skip_rest = Some(reason),
             None => {
                 result.setup_failure = Some(*failure);
                 skip_rest = Some("setupSpec failed".to_string());
@@ -430,12 +430,12 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
         };
         // A case that ran and failed only because a tool is absent is skipped, the same as `requires`. Checked
         // before the stepwise rule, so the later features of a stepwise spec still run.
-        let tool = match &outcome {
-            Outcome::Failed(failure) => missing_tool_of(failure),
+        let absent = match &outcome {
+            Outcome::Failed(failure) => absent_tool_reason(failure),
             _ => None,
         };
-        if let Some(feature) = tool {
-            outcome = Outcome::Skipped(requires_skip_reason(feature));
+        if let Some(reason) = absent {
+            outcome = Outcome::Skipped(reason);
         }
         if plan.spec.stepwise && matches!(outcome, Outcome::Failed(_)) {
             skip_rest = Some("an earlier feature of this stepwise spec failed".to_string());
@@ -487,7 +487,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
         let skipped = if failure.kind == "skipped" {
             Some(failure.message.clone())
         } else {
-            missing_tool_of(&failure).map(requires_skip_reason)
+            absent_tool_reason(&failure)
         };
         if let Some(reason) = skipped {
             let case_result = CaseResult {
@@ -745,10 +745,30 @@ fn missing_tool(text: &str) -> Option<&'static str> {
     named_not_built(text).or_else(|| http_not_built(text).then_some("http"))
 }
 
-fn missing_tool_of(failure: &Failure) -> Option<&'static str> {
-    missing_tool(&failure.message)
-        .or_else(|| missing_tool(&failure.stack))
-        .or_else(|| failure.details.iter().find_map(|detail| missing_tool(detail)))
+/// The start of the message of a PDF render on a host with no Chromium: `moqui_core::screen::PDF_UNAVAILABLE`, or the
+/// reason the host's Chromium search gave (`moqui-host` chromium.rs).
+const PDF_UNAVAILABLE_PREFIX: &str = "PDF is not available:";
+
+/// The line of `text` that says PDF is not available, from its start: no Chromium on this machine, a missing binary
+/// rather than a missing build feature, so it is its own skip reason. `None` when the text does not say so.
+fn pdf_unavailable(text: &str) -> Option<String> {
+    let start = text.find(PDF_UNAVAILABLE_PREFIX)?;
+    let line = text[start..].lines().next().unwrap_or_default();
+    Some(line.trim_end().trim_end_matches('"').to_string())
+}
+
+/// Why a failure is a skip, when it failed only because a tool is absent: a build feature ([`missing_tool`]) or
+/// Chromium for PDF ([`pdf_unavailable`]).
+fn absent_tool_reason(failure: &Failure) -> Option<String> {
+    let texts = || {
+        [failure.message.as_str(), failure.stack.as_str()]
+            .into_iter()
+            .chain(failure.details.iter().map(String::as_str))
+    };
+    texts()
+        .find_map(missing_tool)
+        .map(requires_skip_reason)
+        .or_else(|| texts().find_map(pdf_unavailable))
 }
 
 /// `{name} is not built into this host`, or `({name}) is not built into this host`. An HTTP line is left for
@@ -1141,7 +1161,7 @@ fn run_thread(
 
 #[cfg(test)]
 mod tests {
-    use super::missing_tool;
+    use super::{missing_tool, pdf_unavailable};
 
     #[test]
     fn a_missing_tool_message_names_its_feature() {
@@ -1191,5 +1211,24 @@ mod tests {
         assert_eq!(missing_tool(dump), Some("imap"));
         let both = "HTTP GET https://example.com/git is not built into this host\ngit is not built into this host";
         assert_eq!(missing_tool(both), Some("git"));
+    }
+
+    #[test]
+    fn pdf_with_no_chromium_is_its_own_reason() {
+        assert_eq!(
+            pdf_unavailable(&format!(
+                "Error rendering screen\n{}\n    at render",
+                moqui_core::screen::PDF_UNAVAILABLE
+            )),
+            Some(moqui_core::screen::PDF_UNAVAILABLE.to_string())
+        );
+        let quoted =
+            "out.errors == \"\"\n|\n| \"PDF is not available: pdf_chromium_path names /nowhere, which is not a file\"";
+        assert_eq!(
+            pdf_unavailable(quoted).as_deref(),
+            Some("PDF is not available: pdf_chromium_path names /nowhere, which is not a file")
+        );
+        assert_eq!(missing_tool(moqui_core::screen::PDF_UNAVAILABLE), None);
+        assert_eq!(pdf_unavailable("pdf.magic == \"%PDF\"\n|\nfalse"), None);
     }
 }

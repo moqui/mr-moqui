@@ -50,13 +50,17 @@ struct World {
 }
 
 fn world() -> World {
+    world_with(crate::testing::open())
+}
+
+/// [`world`] over `facade`, such as one that records its SQL.
+fn world_with(facade: EntityFacade) -> World {
     let runtime = temp_dir("authz-runtime");
     let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
         ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
     };
-    let facade = crate::testing::open();
     factory.set_entity(facade.clone());
     let context = factory.new_context();
     World {
@@ -107,6 +111,36 @@ fn grant_member(
             ("authzActionEnumId", "AUTHZA_ALL"),
         ],
     );
+}
+
+/// Allow records for `artifact_name` (`AT_ENTITY`) for each of `actions` only (`AUTHZA_CREATE`), not inherited.
+fn grant_actions(world: &World, id: &str, artifact_name: &str, actions: &[&str]) {
+    let _guard = world.context.disable_authz();
+    create(
+        &world.facade,
+        "moqui.security.ArtifactGroupMember",
+        &[
+            ("artifactGroupId", id),
+            ("artifactName", artifact_name),
+            ("artifactTypeEnumId", "AT_ENTITY"),
+            ("nameIsPattern", "N"),
+            ("inheritAuthz", "N"),
+        ],
+    );
+    for action in actions {
+        let authz_id = format!("{id}_{action}");
+        create(
+            &world.facade,
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", authz_id.as_str()),
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", id),
+                ("authzTypeEnumId", "AUTHZT_ALLOW"),
+                ("authzActionEnumId", action),
+            ],
+        );
+    }
 }
 
 fn create(facade: &EntityFacade, name: &str, fields: &[(&str, &str)]) {
@@ -579,6 +613,85 @@ fn a_new_allow_is_seen_after_refreshing_the_user() {
         .unwrap()
         .list()
         .expect("the cached checks were reloaded");
+}
+
+/// The check an upsert makes asks whether the user may create and update the entity without pushing a frame: a refusal
+/// is an answer, not an `ArtifactAuthzFailure`.
+#[test]
+fn an_entity_permitted_check_records_no_failure() {
+    let world = world();
+    let _entered = world.context.enter();
+    session::set_user("nobody", "nobody");
+    assert!(!super::entity_permitted(ENTITY, "create", true).unwrap());
+    assert!(
+        super::entity_permitted(ENTITY, "create", false).unwrap(),
+        "authorize-skip covers it"
+    );
+    {
+        let _guard = world.context.disable_authz();
+        let failures = world
+            .facade
+            .find("moqui.security.ArtifactAuthzFailure")
+            .unwrap()
+            .eq("artifactName", Value::string(ENTITY))
+            .count()
+            .unwrap();
+        assert_eq!(failures, 0);
+    }
+    grant_actions(&world, "PERMIT_TEST", ENTITY, &["AUTHZA_CREATE"]);
+    session::set_user("nobody", "nobody");
+    assert!(super::entity_permitted(ENTITY, "create", true).unwrap());
+    assert!(!super::entity_permitted(ENTITY, "update", true).unwrap());
+}
+
+/// With authorization on, a create-or-update is one upsert where the user may both create and update the entity
+/// (Parity-Diffs, atomic create-or-update). Where only one is allowed it looks for the row first, and the create or
+/// the update it then makes is checked as before.
+#[test]
+fn create_or_update_is_one_upsert_where_create_and_update_are_both_allowed() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let world = world_with(crate::testing::open_with_tape(std::sync::Arc::clone(&tape)));
+    let _entered = world.context.enter();
+    let entity_sql = |tape: &std::sync::Mutex<Vec<String>>| -> Vec<String> {
+        let mut tape = tape.lock().unwrap_or_else(|err| err.into_inner());
+        std::mem::take(&mut *tape)
+            .into_iter()
+            .filter(|sql| sql.contains("\"test_entity\""))
+            .collect()
+    };
+    let value = |id: &str| {
+        let mut row = world.facade.make_value(ENTITY).unwrap();
+        row.set("testId", Value::string(id));
+        row.set("testMedium", Value::string("stored"));
+        row
+    };
+
+    grant_actions(&world, "ONE_SIDE", ENTITY, &["AUTHZA_CREATE", "AUTHZA_VIEW"]);
+    session::set_user("nobody", "nobody");
+    entity_sql(&tape);
+    value("T-ONE-SIDE")
+        .create_or_update(&world.facade)
+        .expect("a create is allowed");
+    let sql = entity_sql(&tape);
+    assert!(sql.first().is_some_and(|sql| sql.starts_with("SELECT")), "{sql:?}");
+    assert!(sql.iter().any(|sql| sql.ends_with("DO NOTHING")), "{sql:?}");
+    assert!(!sql.iter().any(|sql| sql.contains("DO UPDATE")), "{sql:?}");
+
+    grant_actions(&world, "BOTH_SIDES", ENTITY, &["AUTHZA_UPDATE"]);
+    session::set_user("nobody", "nobody");
+    entity_sql(&tape);
+    for _ in 0..2 {
+        value("T-BOTH")
+            .create_or_update(&world.facade)
+            .expect("create and update are allowed");
+    }
+    let sql = entity_sql(&tape);
+    assert_eq!(sql.len(), 2, "{sql:?}");
+    assert!(
+        sql.iter()
+            .all(|sql| sql.starts_with("INSERT") && sql.contains("DO UPDATE SET")),
+        "{sql:?}"
+    );
 }
 
 #[test]

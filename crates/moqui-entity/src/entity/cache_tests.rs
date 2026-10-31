@@ -293,15 +293,21 @@ fn held_updates_merge_onto_the_stored_row_and_a_view_read_flushes_them() {
     .unwrap();
 }
 
-/// Java's `TransactionCacheDb.nextSeq`: a sim takes ids from its own bank, not the production sequence.
+/// Java's `TransactionCacheDb.nextSeq`: a sim takes ids from its own bank, not the production sequence. They count
+/// down from 0 for each sequence name, so none can be an id a production sequence has given out.
 #[test]
 fn a_sim_takes_its_ids_from_its_own_bank() {
     assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), None);
     super::SIM.with(|slot| {
         slot.borrow_mut().push(super::SimSession::new("sim_test".to_string()));
     });
-    assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(900_000_001));
-    assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(900_000_002));
+    assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(-1));
+    assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(-2));
+    assert_eq!(super::sim_next_seq("moqui.test.OtherEntity"), Some(-1));
+    assert_eq!(super::sim_next_seq("moqui.test.TestEntity"), Some(-3));
+    // the entities a sim leaves on production take production ids
+    assert_eq!(super::sim_next_seq("moqui.llm.LlmCall"), None);
+    assert_eq!(super::sim_next_seq("moqui.agent.AgentRun"), None);
     super::SIM.with(|slot| slot.borrow_mut().clear());
 }
 

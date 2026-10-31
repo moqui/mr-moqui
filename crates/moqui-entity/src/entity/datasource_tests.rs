@@ -75,6 +75,55 @@ fn postgres_reads_the_database_xa_properties() {
     assert_eq!((ds.tls_verify, ds.tls_root_cert.as_str()), (TlsVerify::Full, ""));
 }
 
+/// As Java's pool: the `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`; `None`, none set
+/// and a name that is no level leave the server's default.
+#[test]
+fn the_isolation_level_is_the_inline_jdbc_one_else_the_database_default() {
+    let level = |database: &str, inline: &str| {
+        let text = format!(
+            r#"<moqui-conf>
+                <entity-facade><datasource group-name="transactional" database-conf-name="mysql8"/></entity-facade>
+                <database-list>
+                    <database name="mysql8" {database}>
+                        <inline-jdbc {inline}><xa-properties serverName="my.example" databaseName="moqui"/></inline-jdbc>
+                    </database>
+                </database-list>
+            </moqui-conf>"#
+        );
+        datasource_conf(&MNode::parse_text("test", &text).unwrap(), "transactional")
+            .unwrap()
+            .isolation_level
+    };
+    let read_committed = r#"default-isolation-level="ReadCommitted""#;
+    assert_eq!(level(read_committed, ""), Some(IsolationLevel::ReadCommitted));
+    assert_eq!(
+        level(read_committed, r#"isolation-level="Serializable""#),
+        Some(IsolationLevel::Serializable)
+    );
+    assert_eq!(level("", ""), None);
+    assert_eq!(level(r#"default-isolation-level="None""#, ""), None);
+    assert_eq!(level(r#"default-isolation-level="Snapshot""#, ""), None);
+    assert_eq!(IsolationLevel::RepeatableRead.sql(), "REPEATABLE READ");
+}
+
+#[test]
+fn a_postgres_isolation_level_other_than_read_committed_is_logged() {
+    let warning = |kind, level| postgres_isolation_warning("transactional", kind, level);
+    assert_eq!(
+        warning(DatasourceKind::Postgres, Some(IsolationLevel::ReadCommitted)),
+        None
+    );
+    assert_eq!(warning(DatasourceKind::Postgres, None), None);
+    assert_eq!(warning(DatasourceKind::Mysql, Some(IsolationLevel::Serializable)), None);
+    let serializable = warning(DatasourceKind::Postgres, Some(IsolationLevel::Serializable)).unwrap();
+    assert!(serializable.contains("expects READ COMMITTED"), "{serializable}");
+    assert!(serializable.contains("serialization error"), "{serializable}");
+    let uncommitted = warning(DatasourceKind::Postgres, Some(IsolationLevel::ReadUncommitted)).unwrap();
+    assert!(uncommitted.contains("runs as READ COMMITTED"), "{uncommitted}");
+    let embedded = warning(DatasourceKind::Embedded, Some(IsolationLevel::RepeatableRead)).unwrap();
+    assert!(embedded.contains("not set on the embedded database"), "{embedded}");
+}
+
 #[test]
 fn sslmode_names_what_tls_checks() {
     assert_eq!(tls_verify(""), TlsVerify::Full);

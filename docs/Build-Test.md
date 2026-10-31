@@ -420,7 +420,8 @@ A statement at the top level of the file; features run in the order they are wri
 - A case that does not say `requires`, and fails only because the binary reports that a tool is not built in
   (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is
   skipped the same way. A stepwise file that is entirely about that tool says so on `spec()`, so its later features
-  are not started without their setup.
+  are not started without their setup. So is a case that fails only because PDF is not available, on a machine with
+  no Chromium (`./moq chromium-download`, or `pdf_chromium_path`); the skip reason is that message.
 - A feature with `then` and no `when`, or a block name that is not one of these, is an error when the file loads.
 
 ### Conditions

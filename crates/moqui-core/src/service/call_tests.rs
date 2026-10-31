@@ -45,12 +45,20 @@ fn entity_auto_store_inserts_then_updates() {
         .unwrap()
         .expect("stored row");
     assert_eq!(row.get("testMedium").and_then(Value::as_str), Some("second"));
-    let sql = tape.lock().unwrap_or_else(|err| err.into_inner()).join("\n");
-    assert!(sql.contains("INSERT") && sql.contains("test_entity"), "{sql}");
-    assert!(sql.contains("UPDATE") && sql.contains("test_entity"), "{sql}");
-    // A create and an update, not one upsert; the create does nothing when another transaction made the row first.
-    assert!(!sql.contains("DO UPDATE"), "{sql}");
-    assert!(sql.contains("ON CONFLICT") && sql.contains("DO NOTHING"), "{sql}");
+    // Nothing depends on whether each store creates or updates (no ECA rule, audit log or status, authorization
+    // off), so each is one upsert (Parity-Diffs, atomic create-or-update).
+    let tape = tape.lock().unwrap_or_else(|err| err.into_inner());
+    let stores: Vec<&String> = tape
+        .iter()
+        .filter(|sql| sql.contains("test_entity") && !sql.starts_with("SELECT"))
+        .collect();
+    assert_eq!(stores.len(), 2, "{stores:?}");
+    assert!(
+        stores
+            .iter()
+            .all(|sql| sql.starts_with("INSERT") && sql.contains("ON CONFLICT (\"test_id\") DO UPDATE SET")),
+        "{stores:?}"
+    );
 }
 
 /// `delete#moqui.test.TestEntity` removes the row. A following find is empty.

@@ -285,6 +285,24 @@ enum Probe {
     NotTried,
 }
 
+/// A write [`EntityFacade::writes_unread`] considers, for its authorization.
+#[derive(Clone, Copy)]
+enum UnreadWrite {
+    /// The UPDATE create-or-update tries first: when it matches no row the row is created, so it goes unread only where
+    /// no authorization check applies.
+    Update,
+    /// One statement that creates or updates: also where both a create and an update are permitted.
+    Upsert,
+}
+
+/// The one statement of [`EntityFacade::create_or_update_value`] where an upsert fits.
+enum UnreadUpsert {
+    /// `INSERT ... ON CONFLICT (pk) DO UPDATE` ([`moqui_db::sql::insert_or_update`]).
+    Upsert,
+    /// The value sets only the key: insert it, or do nothing ([`moqui_db::sql::insert_if_missing`]).
+    IfMissing,
+}
+
 impl EntityValue {
     pub fn make(facade: &EntityFacade, entity_name: &str) -> Result<Self, Error> {
         let (entity_name, names) = facade.with_entity(entity_name, |entity, dialect, _| {
@@ -643,9 +661,12 @@ impl EntityFacade {
     /// Java's `createOrUpdate`: update the row when it is there, as [`Self::update_value`] (a value read from the
     /// database writes only the fields that changed), else create it with every field the value holds.
     ///
-    /// The create does not fail when another transaction creates the same key between the look and the insert
-    /// ([`Self::create_if_missing`]): the row it created is then updated, so concurrent calls for one new key all
-    /// succeed and leave one row (Parity-Diffs, atomic create-or-update; Java's insert fails on the key).
+    /// Concurrent calls for one new key all succeed and leave one row (Parity-Diffs, atomic create-or-update; Java's
+    /// insert fails on the key). Where nothing depends on whether the write creates or updates
+    /// ([`Self::unread_upsert`]), a value not read from the database is written in one statement that does either:
+    /// `INSERT ... ON CONFLICT (pk) DO UPDATE`, or on MySQL `ON DUPLICATE KEY UPDATE`. Otherwise the row is looked for
+    /// first, and the create does not fail when another transaction creates the same key between the look and the
+    /// insert ([`Self::create_if_missing`]): the row it created is then updated.
     pub fn create_or_update_value(&self, value: &EntityValue) -> Result<(), Error> {
         let before = value.read_before();
         // As Java, fill primary-key defaults first.
@@ -653,11 +674,31 @@ impl EntityFacade {
         let defaults = self.apply_field_defaults(&copy.entity_name, &copy.fields)?;
         let keys = self.pk_map(&copy.entity_name, &defaults)?;
         Arc::make_mut(&mut copy.fields).extend(keys.clone());
+        // Opt in to Java's read-first create-or-update; keep the upsert or UPDATE-first by default.
+        let read_first = moqui_lib::env::get_prop_or_env("create-or-update") == "true";
+        let upsert = if read_first || before.is_some() {
+            None
+        } else {
+            self.unread_upsert(&copy.entity_name, &copy.fields)?
+        };
+        match upsert {
+            Some(UnreadUpsert::Upsert) => {
+                self.upsert_record(&copy.entity_name, Arc::unwrap_or_clone(copy.fields))?;
+                value.read.synced();
+                return Ok(());
+            }
+            // A row that is there already holds the key, and an update would write nothing else.
+            Some(UnreadUpsert::IfMissing) => {
+                self.create_if_missing(&copy)?;
+                value.read.synced();
+                return Ok(());
+            }
+            None => {}
+        }
         // Rust then tries one UPDATE by primary key, for a row that is probably there: an `update` hit when it
         // updates the row, the Rust-only `update-probe` when it matches none. Otherwise as Java: refresh a clone
         // before choosing the write.
-        // Opt in to Java's read-first create-or-update; keep UPDATE-first by default.
-        let probe = if moqui_lib::env::get_prop_or_env("create-or-update") == "true" {
+        let probe = if read_first {
             Probe::NotTried
         } else {
             self.update_if_exists(&copy.entity_name, &copy.fields, before.as_ref())?
@@ -669,9 +710,7 @@ impl EntityFacade {
             }
             // The update just saw no row in this transaction, which is what a refresh would read now.
             Probe::Missing => {
-                if !self.create_if_missing(&copy)? {
-                    self.write_update(&copy.entity_name, &copy.fields, None, before.as_ref())?;
-                }
+                self.create_else_update(&copy, &keys, before.as_ref())?;
                 value.read.synced();
                 return Ok(());
             }
@@ -690,14 +729,54 @@ impl EntityFacade {
                 Some(row.into_fields()),
                 before.as_ref(),
             )?,
-            None => {
-                if !self.create_if_missing(&copy)? {
-                    self.write_update(&copy.entity_name, &copy.fields, None, before.as_ref())?;
-                }
-            }
+            None => self.create_else_update(&copy, &keys, before.as_ref())?,
         }
         value.read.synced();
         Ok(())
+    }
+
+    /// The create of [`Self::create_or_update_value`] for a row it found missing ([`Self::create_if_missing`]), and
+    /// when another transaction created the row since, the update of it as a create-or-update that found it. On MySQL
+    /// the insert's `ON DUPLICATE KEY UPDATE` also takes a conflict on another unique index, where no row has this key:
+    /// the row is read first (in a transaction a locking read, which sees the other transaction's row at any isolation
+    /// level) so that case fails as the conflict it is, not as an update of a missing row.
+    fn create_else_update(
+        &self,
+        copy: &EntityValue,
+        keys: &FieldMap,
+        before: Option<&BTreeMap<Arc<str>, Option<Value>>>,
+    ) -> Result<(), Error> {
+        if self.create_if_missing(copy)? {
+            return Ok(());
+        }
+        let mysql = self.with_entity(&copy.entity_name, |_, dialect, _| Ok(moqui_db::sql::is_mysql(dialect)))?;
+        let known = if mysql {
+            // Outside a transaction each statement commits on its own, so a plain read sees the other row.
+            let in_transaction = self.transactions_for(&copy.entity_name)?.in_transaction();
+            let _raw = super::field_rw::RawReadGuard::enter();
+            let mut find = self
+                .find(&copy.entity_name)?
+                .use_cache(false)
+                .for_update(in_transaction);
+            for (field, value) in keys {
+                find = find.eq(field, value.clone());
+            }
+            let Some(row) = find.one_internal("refresh")? else {
+                let keys = keys
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}", moqui_lib::object::to_plain_string(value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(Error::new(format!(
+                    "Could not create [{}: {keys}]: another row has the same value of a unique index",
+                    copy.entity_name
+                )));
+            };
+            Some(row.into_fields())
+        } else {
+            None
+        };
+        self.write_update(&copy.entity_name, &copy.fields, known, before)
     }
 
     /// The create of [`Self::create_or_update_value`] for a row it found missing: insert it, or, when another
@@ -1007,7 +1086,7 @@ impl EntityFacade {
         values: &FieldMap,
         before: Option<&BTreeMap<Arc<str>, Option<Value>>>,
     ) -> Result<Probe, Error> {
-        if !self.writes_unread(entity_name, |dialect| dialect.name == "postgres")? {
+        if !self.writes_unread(entity_name, |dialect| dialect.name == "postgres", UnreadWrite::Update)? {
             return Ok(Probe::NotTried);
         }
         let plain = self.normalize_values(entity_name, values.clone(), true)?;
@@ -1046,60 +1125,108 @@ impl EntityFacade {
         self.finish_write(entity_name, "delete", plain, None, None, None)
     }
 
-    /// Insert, or update on a primary-key conflict. Values are sealed the same way as a create.
     /// Whether a write of `entity_name` may go without reading the row first and give what the find-then-write path
     /// would: `dialect` takes it, the update would not read the stored row ([`update_reads_row`], or a data feed that
-    /// wants the old values), no transaction cache or simulation holds the write, and authorization is off, so an
-    /// update and a create need no separate check. See [`Self::update_if_exists`] and [`Self::upsert_fits`].
+    /// wants the old values), no transaction cache or simulation holds the write, and authorization needs no read to
+    /// decide it ([`Self::authorized_unread`]). See [`Self::update_if_exists`] and [`Self::upsert_fits`].
     fn writes_unread(
         &self,
         entity_name: &str,
         dialect: impl FnOnce(&moqui_db::dialect::Dialect) -> bool,
+        write: UnreadWrite,
     ) -> Result<bool, Error> {
-        let eligible = self.with_entity(entity_name, |entity, entity_dialect, _| {
-            Ok(dialect(entity_dialect)
-                && !entity.is_view
-                && !update_reads_row(entity)
-                && (!crate::hooks::entered()
-                    || entity.authorize_skip.trim() == "true"
-                    || (crate::hooks::get().authz_disabled)()))
+        let (eligible, skip) = self.with_entity(entity_name, |entity, entity_dialect, _| {
+            Ok((
+                dialect(entity_dialect) && !entity.is_view && !update_reads_row(entity),
+                entity.authorize_skip.trim().to_string(),
+            ))
         })?;
         Ok(eligible
+            && self.authorized_unread(entity_name, &skip, write)
             && !self.sim_active()
             && !self.transactions_for(entity_name)?.transaction_cache_active()
             && !load_feed::feed_wants_old(self, entity_name))
     }
 
-    /// Whether a data load may store `fields`, a record with its whole primary key, as one upsert
-    /// ([`Self::upsert_record`]): a statement the load sends without waiting, where create-or-update waits for an UPDATE
-    /// to say whether the row is there. It may when [`Self::writes_unread`] and no ECA rule matches a create or an
-    /// update, so no rule depends on which one it was, and when the record sets no `statusId` outside the primary key
-    /// (the entity-auto store checks a status change against the stored row). The row's other fields are left as they are, as a store leaves
-    /// them; the hit is a create's.
+    /// The authorization part of [`Self::writes_unread`]: no context is entered, authorization is disabled, or the
+    /// entity's `authorize-skip` is `true`; and for an [`UnreadWrite::Upsert`] also when the user may both create and
+    /// update the entity, so whichever the statement does was allowed (Parity-Diffs, atomic create-or-update). A check
+    /// that refuses or fails leaves the write to the find-then-write path, whose own check reports it.
+    fn authorized_unread(&self, entity_name: &str, skip: &str, write: UnreadWrite) -> bool {
+        let hooks = crate::hooks::get();
+        if !crate::hooks::entered() || skip == "true" || (hooks.authz_disabled)() {
+            return true;
+        }
+        if matches!(write, UnreadWrite::Update) {
+            return false;
+        }
+        ["create", "update"].into_iter().all(|action| {
+            match (hooks.entity_permitted)(entity_name, action, !skips_authz(skip, action)) {
+                Some(Ok(permitted)) => permitted,
+                Some(Err(err)) => {
+                    tracing::debug!(error = %err, entity_name, action, "authorization check for an upsert failed");
+                    false
+                }
+                None => false,
+            }
+        })
+    }
+
+    /// Whether `fields`, a record with its whole primary key, may be stored as one upsert ([`Self::upsert_record`]),
+    /// as a data load stores it and as [`Self::create_or_update_value`] does: a statement that does not wait for an
+    /// UPDATE or a read to say whether the row is there. It may when [`Self::writes_unread`] and no ECA rule matches a
+    /// create or an update, so no rule depends on which one it was, and when the record sets no `statusId` outside the
+    /// primary key (the entity-auto store checks a status change against the stored row). The row's other fields are
+    /// left as they are, as a store leaves them. Not on MySQL for an entity with a unique index: `ON DUPLICATE KEY
+    /// UPDATE` takes a conflict on any unique index, so a new key with another row's unique value would update that
+    /// row.
     pub(crate) fn upsert_fits<K: std::borrow::Borrow<str> + Ord>(
         &self,
         entity_name: &str,
         fields: &BTreeMap<K, Value>,
     ) -> Result<bool, Error> {
-        if !self.writes_unread(entity_name, moqui_db::sql::supports_upsert)? {
+        if !self.writes_unread(entity_name, moqui_db::sql::supports_upsert, UnreadWrite::Upsert)? {
             return Ok(false);
         }
-        let (pk_complete, status) = self.with_entity(entity_name, |entity, _, _| {
+        let (pk_complete, status, other_unique) = self.with_entity(entity_name, |entity, dialect, _| {
             let pk_complete = entity
                 .pk_field_names()
                 .iter()
                 .all(|name| fields.get(*name).is_some_and(|value| !value.is_null()));
             // A `statusId` in the primary key names the row, so it cannot change.
             let status = entity.field("statusId").is_some_and(|field| !field.is_pk);
-            Ok((pk_complete, status))
+            let other_unique = moqui_db::sql::is_mysql(dialect) && entity.indexes.iter().any(|index| index.unique);
+            Ok((pk_complete, status, other_unique))
         })?;
-        if !pk_complete || (status && fields.contains_key("statusId")) {
+        if !pk_complete || other_unique || (status && fields.contains_key("statusId")) {
             return Ok(false);
         }
         Ok(load_feed::match_rules_with(self, entity_name, "create").is_empty()
             && load_feed::match_rules_with(self, entity_name, "update").is_empty())
     }
 
+    /// The write [`Self::create_or_update_value`] makes in one statement where [`Self::upsert_fits`], for a value not
+    /// read from the database: [`UnreadUpsert::Upsert`] when it sets a field other than the key and the stamp,
+    /// [`UnreadUpsert::IfMissing`] when it sets only the key (an update of a row that is there would write nothing) and
+    /// the insert's count comes back, or `None` for the find-then-write path. Also `None` when the value sets
+    /// `lastUpdatedStamp`: on a conflict the upsert would write that stamp, where an update writes the transaction's.
+    fn unread_upsert(&self, entity_name: &str, fields: &FieldMap) -> Result<Option<UnreadUpsert>, Error> {
+        if fields.get(STAMP).is_some_and(|stamp| !stamp.is_null()) || !self.upsert_fits(entity_name, fields)? {
+            return Ok(None);
+        }
+        let sets_field = self.with_entity(entity_name, |entity, _, _| {
+            Ok(present_columns(entity, fields, true, true)
+                .into_iter()
+                .any(|column| column != STAMP))
+        })?;
+        if sets_field {
+            return Ok(Some(UnreadUpsert::Upsert));
+        }
+        // A data load that sends its writes without waiting gets no count back from the insert.
+        Ok((!pipelining(&self.transactions_for(entity_name)?)).then_some(UnreadUpsert::IfMissing))
+    }
+
+    /// Insert, or update on a primary-key conflict, in one statement. Values are sealed the same way as a create.
     pub(crate) fn upsert_record(&self, entity_name: &str, fields: FieldMap) -> Result<(), Error> {
         let plain = self.normalize_values(entity_name, fields, false)?;
         self.require_pk(entity_name, &plain)?;
@@ -1144,7 +1271,7 @@ impl EntityFacade {
         let sub_type = if probe {
             RustOnlyEntityHits::UPDATE_PROBE
         } else if operation == "upsert" {
-            "create"
+            RustOnlyEntityHits::UPSERT
         } else {
             operation
         };
@@ -1218,7 +1345,11 @@ impl EntityFacade {
             None => Cow::Borrowed(&*cache_values),
         };
         let mut affected = 1;
-        if cache::gate_write(self, entity_name, operation, &plain)? == WriteGate::Handled {
+        let gate = cache::gate_write(self, entity_name, operation, &plain, probe || if_missing)?;
+        if gate == WriteGate::Missed {
+            return Ok(0);
+        }
+        if gate == WriteGate::Handled {
             load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), None);
         } else {
             let mut after_values = eca_after.then(|| (*cache_values).clone());
@@ -1277,7 +1408,7 @@ impl EntityFacade {
             } else {
                 self.seal_values(entity_name, seal_operation, plain, stored.as_ref())?
             };
-            let (sql, params, row_key) = self.with_group(entity_name, |entity, dialect, _, _| {
+            let (sql, params, row_key, mysql) = self.with_group(entity_name, |entity, dialect, _, _| {
                 // A null an update or upsert names is written, so the field is cleared.
                 let columns = present_columns(
                     entity,
@@ -1326,11 +1457,13 @@ impl EntityFacade {
                 } else {
                     0
                 };
-                Ok((sql, params, row_key))
+                Ok((sql, params, row_key, moqui_db::sql::is_mysql(dialect)))
             })?;
             // A data load sends its writes without waiting; an update that then finds no row fails the file later. Its
-            // creates and upserts may go out several rows to a statement.
-            affected = if !probe && !if_missing && operation != "delete" && pipelining(&tx) {
+            // creates and upserts may go out several rows to a statement. A MySQL update runs now, as it can count no
+            // row for one that is there ([`Self::unchanged_on_mysql`]).
+            let deferred = !probe && !if_missing && operation != "delete" && !(mysql && operation == "update");
+            affected = if deferred && pipelining(&tx) {
                 if operation == "update" {
                     let zero_rows = Some(self.missing_update(entity_name, &cache_values));
                     execute_deferred_tx(&tx, &sql, params, zero_rows)?;
@@ -1347,7 +1480,10 @@ impl EntityFacade {
                 }
                 (crate::hooks::get().set_hit_detail)("update");
             } else if operation == "update" && affected == 0 {
-                return Err(Error::new(self.missing_update(entity_name, &cache_values)));
+                if !(mysql && self.unchanged_on_mysql(entity_name, &cache_values)?) {
+                    return Err(Error::new(self.missing_update(entity_name, &cache_values)));
+                }
+                affected = 1;
             } else if if_missing {
                 if affected == 0 {
                     (crate::hooks::get().set_hit_detail)(RustOnlyEntityHits::CREATE_CONFLICT);
@@ -1378,8 +1514,23 @@ impl EntityFacade {
         Ok(affected)
     }
 
+    /// An update on MySQL that counted no row, when the row is there: MySQL counts the rows an update changes, not the
+    /// ones it matches (the driver does not set `CLIENT_FOUND_ROWS`, as the insert of `insert_if_missing` counts a row
+    /// only when it inserts), so an update that leaves the row as it was counts none: an amount past the column's scale
+    /// that rounds to the one stored, or the same stamp in the transaction that wrote the row. Java's driver counts
+    /// the rows matched. The row is read by its key without authorization, as the update was authorized already.
+    fn unchanged_on_mysql(&self, entity_name: &str, values: &FieldMap) -> Result<bool, Error> {
+        let _hits = RustOnlyEntityHits::enter(RustOnlyEntityHits::UPDATE_UNCHANGED);
+        let _raw = super::field_rw::RawReadGuard::enter();
+        let mut find = self.find(entity_name)?.use_cache(false).disable_authz();
+        for (field, value) in self.pk_map(entity_name, values)? {
+            find = find.eq(&field, value);
+        }
+        Ok(find.one_internal("refresh")?.is_some())
+    }
+
     /// As Java's `updateExtended`: an update of a row that is not there is an error, not a silent no-op.
-    fn missing_update(&self, entity_name: &str, values: &FieldMap) -> String {
+    pub(crate) fn missing_update(&self, entity_name: &str, values: &FieldMap) -> String {
         let keys = self
             .with_entity(entity_name, |entity, _, _| pk_values(entity, values))
             .unwrap_or_default()
@@ -1644,6 +1795,12 @@ impl RustOnlyEntityHits {
     pub const UPDATE_PROBE: &'static str = "update-probe";
     /// The insert create-or-update makes for a row it found missing, when another transaction had created it since.
     pub const CREATE_CONFLICT: &'static str = "create-conflict";
+    /// The one statement that creates or updates a row, of a data load or a create-or-update where it fits (Java finds
+    /// the row, then creates or updates it).
+    pub const UPSERT: &'static str = "upsert";
+    /// The read by key after a MySQL update counted no row, which finds the row there when the update left it as it
+    /// was (Java's driver counts the rows matched).
+    pub const UPDATE_UNCHANGED: &'static str = "update-unchanged";
 
     pub fn enter(sub_type: &'static str) -> Self {
         Self(RUST_ONLY_SUB_TYPE.with(|current| current.replace(Some(sub_type))))
