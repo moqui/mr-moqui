@@ -167,6 +167,14 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Co-editing across servers has no test: `cluster::publish` giving a message its `message_id` (without one a peer refuses `collab-update` posts) is checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
 | `example/test/GitHosting.spec.js` "a merge request waits for its review and check, then merges" fails about 1 run in 10: `merge#MergeRequest` right after `create#GitCommitStatus` for the head commit still says "checks not passed: ci/build". Look at how `latest_statuses` (`service/git_hosting.rs`) sees the new row, and whether the merge request's head and the branch head can differ there | `./moq test-all`, 2026-10-25 |
 
+## Databases
+
+- **MySQL:** two tables cannot be created (`EMAIL_MESSAGE` over the row size limit, `PRODUCT_VARIANT_IDENTITY` over
+  the key length limit), 3-byte `utf8` tables cannot store emoji, `text-medium` values over 255 characters fail, and
+  git update events time out on locks during the demo load. Three issues found on the way happen on any database: the
+  log line leaves out a field named `error`, the data feed's commit hook can panic, and a `seed` file depends on
+  `seed-initial` data. Detail in [MySQL-Issues](MySQL-Issues.md).
+
 ## Framework internals
 
 - **Process-wide global state:** the notify bus and its origin id, the transaction deadline slots and lock tracking, the QZ signer, and `LAST_BOOTED`. One factory runs per process outside tests; `LAST_BOOTED` and the single deadline timer are process-level by design, and the notify bus and lock tracking have no factory handle at their call sites. From the [Code-Quality-Review](archive/Code-Quality-Review.md#not-done-or-left-as-noted).

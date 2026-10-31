@@ -341,7 +341,8 @@ embeds it.
 ### External Postgres or MySQL
 
 Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`.
+are examples in `runtime/conf/MoquiDevConf.xml`. MySQL has open issues: two tables are not created and emoji cannot be
+stored ([MySQL-Issues](../plans/MySQL-Issues.md)).
 
 | Property | Example | What it does |
 |---|---|---|
