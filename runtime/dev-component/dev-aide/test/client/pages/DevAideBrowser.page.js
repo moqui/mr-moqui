@@ -59,6 +59,14 @@ test("a card's sections by kind, one row per artifact, filtered", () => {
     assert.deepEqual(pure.browserSections(refs, { kinds: ["entity"] }).map((section) => section.kind), ["entity"]);
 });
 
+test("rows of one name in a section are told apart by their owner", () => {
+    const field = (entity) => ({ refType: "entity-field", other: { id: "field:mantle.order." + entity + ".orderId", kind: "field", shortName: "orderId",
+        name: "mantle.order." + entity + ".orderId", component: "mantle" } });
+    const rows = pure.browserSections([field("OrderHeader"), field("OrderItem"), field("OrderItem"),
+        { refType: "entity-field", other: { id: "field:mantle.order.OrderHeader.statusId", kind: "field", shortName: "statusId", name: "mantle.order.OrderHeader.statusId" } }], {})[0].rows;
+    assert.deepEqual(rows.map((row) => row.shortName), ["OrderHeader.orderId", "OrderItem.orderId", "statusId"]);
+});
+
 test("an artifact already on the path from the center is a cycle", () => {
     const path = [{ id: "c", artifactId: "a" }, { id: "x", artifactId: "b", parentId: "c" }, { id: "y", artifactId: "c", parentId: "x" }];
     assert.equal(pure.onPath(path, path[2], "a"), true);
