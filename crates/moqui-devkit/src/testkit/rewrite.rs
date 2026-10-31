@@ -28,6 +28,7 @@ use oxc_ast::ast::{
     Argument, BinaryOperator, ChainElement, Expression, LogicalOperator, ObjectExpression, ObjectPropertyKind,
     SourceType, Statement, UnaryOperator,
 };
+use oxc_ast::StaticPropertyName;
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::GetSpan;
 
@@ -65,7 +66,7 @@ pub fn rewrite_spec(source: &str) -> Result<Rewritten, Error> {
     let parsed = Parser::new(&allocator, source, SourceType::script())
         .with_options(ParseOptions::default())
         .parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         let detail = parsed
             .diagnostics
             .errors()
@@ -147,7 +148,7 @@ fn spec_strings(source: &str, key: &str) -> Vec<String> {
     let allocator = std::default::Default::default();
     let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
     let mut names = Vec::new();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         return names;
     }
     for statement in &parsed.program.body {
@@ -168,13 +169,13 @@ fn spec_strings(source: &str, key: &str) -> Vec<String> {
             let ObjectPropertyKind::ObjectProperty(property) = property else {
                 continue;
             };
-            if property.key.static_name().as_deref() != Some(key) {
+            if property.key.static_name().as_ref().and_then(StaticPropertyName::as_str) != Some(key) {
                 continue;
             }
             if let Expression::ArrayExpression(array) = &property.value {
                 for element in &array.elements {
                     if let Some(Expression::StringLiteral(text)) = element.as_expression() {
-                        names.push(text.value.to_string());
+                        names.push(text.value.display().to_string());
                     }
                 }
             }
@@ -190,7 +191,7 @@ fn spec_flag(source: &str, key: &str) -> Option<bool> {
     let source: &str = &ended;
     let allocator = std::default::Default::default();
     let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         return None;
     }
     for statement in &parsed.program.body {
@@ -211,7 +212,7 @@ fn spec_flag(source: &str, key: &str) -> Option<bool> {
             let ObjectPropertyKind::ObjectProperty(property) = property else {
                 continue;
             };
-            if property.key.static_name().as_deref() != Some(key) {
+            if property.key.static_name().as_ref().and_then(StaticPropertyName::as_str) != Some(key) {
                 continue;
             }
             if let Expression::BooleanLiteral(literal) = &property.value {
@@ -227,7 +228,7 @@ fn spec_flag(source: &str, key: &str) -> Option<bool> {
 pub fn suite_order(source: &str) -> Result<Vec<String>, Error> {
     let allocator = std::default::Default::default();
     let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         return Err(Error::new("suite.js is not JavaScript"));
     }
     for statement in &parsed.program.body {
@@ -246,7 +247,7 @@ pub fn suite_order(source: &str) -> Result<Vec<String>, Error> {
         let mut names = Vec::new();
         for element in &array.elements {
             match element.as_expression() {
-                Some(Expression::StringLiteral(text)) => names.push(text.value.to_string()),
+                Some(Expression::StringLiteral(text)) => names.push(text.value.display().to_string()),
                 _ => return Err(Error::new("suite() takes an array of spec names as strings")),
             }
         }
@@ -273,7 +274,7 @@ pub struct SuiteServer {
 pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
     let allocator = std::default::Default::default();
     let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         return Err(Error::new("suite.js is not JavaScript"));
     }
     for statement in &parsed.program.body {
@@ -305,11 +306,11 @@ pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
                     "suite() server is an object of literals: { components, specs, conf }",
                 ));
             };
-            match property.key.static_name().as_deref() {
+            match property.key.static_name().as_ref().and_then(StaticPropertyName::as_str) {
                 Some("components") => declared.components = string_array(&property.value, "components")?,
                 Some("specs") => declared.specs = string_array(&property.value, "specs")?,
                 Some("conf") => match &property.value {
-                    Expression::StringLiteral(text) => declared.conf = Some(text.value.to_string()),
+                    Expression::StringLiteral(text) => declared.conf = Some(text.value.display().to_string()),
                     _ => {
                         return Err(Error::new(
                             "suite() server conf is a string, such as \"conf/MoquiProductionConf.xml\"",
@@ -332,7 +333,9 @@ pub fn suite_server(source: &str) -> Result<Option<SuiteServer>, Error> {
 /// The value of the property `key` of an object literal.
 fn object_property<'a, 'b>(object: &'b ObjectExpression<'a>, key: &str) -> Option<&'b Expression<'a>> {
     object.properties.iter().find_map(|property| match property {
-        ObjectPropertyKind::ObjectProperty(property) if property.key.static_name().as_deref() == Some(key) => {
+        ObjectPropertyKind::ObjectProperty(property)
+            if property.key.static_name().as_ref().and_then(StaticPropertyName::as_str) == Some(key) =>
+        {
             Some(&property.value)
         }
         _ => None,
@@ -349,7 +352,7 @@ fn string_array(value: &Expression<'_>, name: &str) -> Result<Vec<String>, Error
         .elements
         .iter()
         .map(|element| match element.as_expression() {
-            Some(Expression::StringLiteral(text)) => Ok(text.value.to_string()),
+            Some(Expression::StringLiteral(text)) => Ok(text.value.display().to_string()),
             _ => Err(not_strings()),
         })
         .collect()
@@ -408,27 +411,33 @@ impl Rewriter<'_> {
             if name != "then" && name != "expect" {
                 continue;
             }
-            let body = match &property.value {
-                Expression::FunctionExpression(function) => function.body.as_deref(),
-                Expression::ArrowFunctionExpression(arrow) => Some(&*arrow.body),
-                _ => None,
+            // A concise arrow body is one expression, a condition of its own.
+            let (body, expression) = match &property.value {
+                Expression::FunctionExpression(function) => (function.body.as_deref(), None),
+                Expression::ArrowFunctionExpression(arrow) => {
+                    (arrow.body.as_function_body(), arrow.body.as_expression())
+                }
+                _ => continue,
             };
-            let Some(body) = body else {
+            if body.is_none() && expression.is_none() {
                 continue;
-            };
+            }
             let key = property.key.span();
             // The key as written may be quoted; it becomes a plain name.
             self.push(
                 key.start,
                 false,
                 u32::MAX,
-                format!("{name}{REWRITTEN_SUFFIX}"),
+                format!("{}{REWRITTEN_SUFFIX}", name.display()),
                 key.size(),
             );
-            for statement in &body.statements {
+            for statement in body.iter().flat_map(|body| body.statements.iter()) {
                 if let Statement::ExpressionStatement(statement) = statement {
                     self.condition(&statement.expression);
                 }
+            }
+            if let Some(expression) = expression {
+                self.condition(expression);
             }
         }
     }

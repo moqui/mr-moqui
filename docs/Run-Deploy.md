@@ -23,7 +23,7 @@ and the build packages are in [Build-Test](Build-Test.md).
 
 ### Develop on your machine
 
-You need Rust 1.95 or newer (`rustc --version`), git and bash, on Linux or macOS.
+You need Rust 1.98 or newer (`rustc --version`), git and bash, on Linux or macOS.
 
 ```sh
 git clone https://github.com/moqui/mr-moqui.git

@@ -79,7 +79,7 @@ pub fn check_expression(expression: &str) -> Vec<AstViolation> {
     let parsed = Parser::new(&allocator, &source, source_type)
         .with_options(options)
         .parse();
-    if parsed.panicked || parsed.diagnostics.has_errors() {
+    if parsed.fatal_error || parsed.diagnostics.has_errors() {
         return Vec::new();
     }
     let json = parsed.program.to_estree_json(false, false);

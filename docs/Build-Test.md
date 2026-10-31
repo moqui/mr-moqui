@@ -15,7 +15,7 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 
 ## Build
 
-Prerequisites: Rust 1.95 or newer (`rustc --version`). A build with embedded Postgres embeds the 18.6.0 archive that
+Prerequisites: Rust 1.98 or newer (`rustc --version`). A build with embedded Postgres embeds the 18.6.0 archive that
 `scripts/pg-payload.sh strip` downloads once and strips of psql (it links GPL readline); `./moq build` runs that when
 the archive is missing. Node is not needed to build or test.
 

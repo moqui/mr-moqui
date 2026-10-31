@@ -6,8 +6,7 @@
 # postgresql_embedded 0.21 / sqlx 0.9 require Rust 1.94. mysql_common 0.37
 # pulls uuid 1.28, which requires Rust 1.89. This file does not set
 # rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
-# `cargo check -p moqui` needs Rust 1.95 (if-let guards in match arms). A full workspace check also builds
-# `moqui-tui`, and Revue 3.x requires Rust 1.95.
+# The workspace needs Rust 1.98: mail-parser 1.0 declares rust-version 1.98, and oxc 0.153 and later 1.97.
 
 [workspace]
 resolver = "2"
@@ -199,16 +198,14 @@ getrandom = { version = "0.3", features = ["std"] }
 # Exact: `keep_assigned` in moqui-core script/runtime/entities.rs depends on how this version owns the value an
 # exotic set is given. Re-check it, and its test, before moving this.
 rquickjs = "=0.14.0"
-# Phase 6 is the first user. Not linked until then, so this line does not
-# raise the MSRV of lib or core. 0.139.0 declares rust-version 1.94.0.
-# 0.140 and later declare 1.95 or higher.
-oxc_parser = "0.139"
+# 0.156.0 declares rust-version 1.97.0.
+oxc_parser = "0.156"
 # The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
-oxc_allocator = "0.139"
+oxc_allocator = "0.156"
 # The ESTree JSON of a parsed expression, for the server-static compatibility walk. Already in the tree under oxc_parser.
-oxc_ast = { version = "0.139", features = ["serialize"] }
+oxc_ast = { version = "0.156", features = ["serialize"] }
 # Spans of parsed nodes, for the test harness power-assert rewrite. Already in the tree under oxc_parser.
-oxc_span = "0.139"
+oxc_span = "0.156"
 # HTML cleaning for allow-html="safe" service parameters. MIT OR Apache-2.0. Builder::default() is the
 # conservative maintained allow-list; there is no custom list in this repo.
 ammonia = "4"

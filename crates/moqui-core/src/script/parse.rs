@@ -70,7 +70,7 @@ fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
 pub(crate) fn check_program(source: &str) -> Result<(), Error> {
     with_arena(|allocator| {
         let parsed = Parser::new(allocator, source, SourceType::default()).parse();
-        if parsed.panicked || parsed.diagnostics.has_errors() {
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
             let detail = parsed
                 .diagnostics
                 .errors()
@@ -88,7 +88,7 @@ fn parse_expression(source: &str) -> Result<(), Error> {
     let wrapped = format!("({source}\n)");
     with_arena(|allocator| {
         let parsed = Parser::new(allocator, &wrapped, SourceType::default()).parse();
-        if parsed.panicked || parsed.diagnostics.has_errors() {
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
             return Err(Error::new("not a JavaScript expression"));
         }
         Ok(())
@@ -106,7 +106,7 @@ fn parse_program(source: &str) -> Result<(), Error> {
         let parsed = Parser::new(allocator, source, SourceType::default())
             .with_options(options)
             .parse();
-        if parsed.panicked || parsed.diagnostics.has_errors() {
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
             return Err(Error::new("not JavaScript"));
         }
         Ok(())
@@ -131,7 +131,7 @@ pub(crate) fn file_function(source: &str) -> String {
             .with_options(options)
             .parse();
         // A file that does not parse is wrapped as it is, and QuickJS reports the error at its line.
-        if parsed.panicked || parsed.diagnostics.has_errors() {
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
             None
         } else {
             match parsed.program.body.last() {

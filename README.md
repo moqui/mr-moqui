@@ -8,7 +8,7 @@
 ./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
 ```
 
-It needs Rust 1.95 or newer and bash, on Linux or macOS ([Build](docs/Build-Test.md#build)). This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
+It needs Rust 1.98 or newer and bash, on Linux or macOS ([Build](docs/Build-Test.md#build)). This builds the Dev binary (target/develop/moqui: the web server on embedded Postgres, PDF, SMTP, git hosting, SSH and the dev tools) and uses it to load data and run. Add `--release` to each of the 3 commands to build and use the release binary with the full toolset included: SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX, and image processing. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
 
 ## Status
 
