@@ -292,7 +292,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio", "
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 # SSH client and server. ring, des, and dsa stay off. aws-lc-rs matches the other TLS crates.
-russh = { version = "0.64", default-features = false, features = ["aws-lc-rs", "flate2", "rsa"] }
+russh = { version = "0.65", default-features = false, features = ["aws-lc-rs", "flate2", "rsa"] }
 # SFTP v3 subsystem. No dependency on russh; the host feeds it the channel bytes.
 russh-sftp = "3"
 # huskarl's HTTP request and body types, and the form encoding of the SSO callback. Already in the graph under it.

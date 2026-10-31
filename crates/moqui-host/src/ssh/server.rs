@@ -44,8 +44,8 @@ use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
-use russh::keys::{HashAlg, PrivateKey, PublicKey};
-use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
+use russh::keys::{HashAlg, PrivateKey};
+use russh::server::{Auth, ChannelOpenHandle, Msg, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, ChannelOpenFailure};
 use russh::{MethodKind, MethodSet};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -743,7 +743,8 @@ impl russh::server::Handler for Connection {
         }
     }
 
-    async fn auth_publickey(&mut self, user: &str, public_key: &PublicKey) -> Result<Auth, Self::Error> {
+    async fn auth_publickey(&mut self, user: &str, offer: VerifiedPublicKey<'_>) -> Result<Auth, Self::Error> {
+        let public_key = offer.public_key;
         if user == super::cluster::CLUSTER_USER {
             if super::cluster::is_cluster_key(public_key) {
                 if !self.slot.log_in() {
