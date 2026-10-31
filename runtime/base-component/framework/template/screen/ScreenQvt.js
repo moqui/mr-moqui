@@ -952,7 +952,8 @@
             const tag = isForm ? "m-form" : "m-form-link";
             const params = parts.url.getParameterMap();
             let out = "<" + tag + A(Object.assign({
-                action: parts.url.path, name: formId || null, id: formId || null,
+                // m-link-form: a link's own hidden form, never the step a wizard submits
+                action: parts.url.path, name: formId || null, id: formId || null, class: isForm ? "m-link-form" : null,
                 method: isForm && parts.url.getTransitionMethod() === "get" ? "GET" : null,
                 "read-only": isForm && parts.url.isReadOnly() ? true : null, target: xn(at(n, "target-window")) || null
             }, linkBackground(n, isForm))) + ">";

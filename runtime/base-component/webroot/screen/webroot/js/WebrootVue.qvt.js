@@ -4392,7 +4392,7 @@
             stepForm() {
                 const body = this.$refs.body;
                 if (!body) return null;
-                const forms = this.forms.filter((form) => form.$el && body.contains(form.$el) && !form.$el.closest("table, .q-table, .m-form-list, .q-dialog"));
+                const forms = this.forms.filter((form) => form.$el && body.contains(form.$el) && !form.$el.closest("table, .q-table, .m-form-list, .q-dialog, .m-link-form"));
                 forms.sort((a, b) => (a.$el.compareDocumentPosition(b.$el) & 4 ? -1 : 1));
                 return forms[0] || null;
             },
