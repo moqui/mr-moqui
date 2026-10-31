@@ -1641,21 +1641,27 @@ fn a_filter_only_view_sub_select_preserves_its_grouping_and_correlation() {
 }
 
 #[test]
-fn bad_views_fail_to_load() {
+fn bad_views_are_logged_and_left_out() {
     let root = workspace_root();
     let conf =
         MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
-    let load = |entities: &str| {
+    // the problem the view left out was logged with, and the model loads without it
+    let load = |name: &str, entities: &str| {
         let doc = MNode::parse_text("entities", &format!("<entities>{ORDERS}{entities}</entities>")).unwrap();
-        EntityModel::load(&conf, &[doc]).map(|_| ()).unwrap_err().to_string()
+        let model = EntityModel::load(&conf, &[doc]).expect("the model loads");
+        assert!(model.entity(name).is_err(), "{name} is left out");
+        assert!(model.entity("sample.Order").is_ok());
+        model.problems().join("\n")
     };
     let err = load(
+        "sample.OnlyRel",
         r#"<view-entity entity-name="OnlyRel" package="sample">
             <member-relationship entity-alias="R" join-from-alias="L" relationship="missing"/>
         </view-entity>"#,
     );
     assert!(err.contains("could not find member-entity L"), "{err}");
     let err = load(
+        "sample.BadField",
         r#"<view-entity entity-name="BadField" package="sample">
             <member-entity entity-alias="O" entity-name="sample.Order"/>
             <alias name="nope" entity-alias="O"/>
@@ -1663,12 +1669,61 @@ fn bad_views_fail_to_load() {
     );
     assert!(err.contains("does not exist"), "{err}");
     let err = load(
+        "sample.Loop",
         r#"<view-entity entity-name="Loop" package="sample">
             <member-entity entity-alias="L" entity-name="sample.Loop"/>
             <alias name="x" entity-alias="L"/>
         </view-entity>"#,
     );
     assert!(err.contains("member of itself"), "{err}");
+}
+
+/// A view whose member is no entity is left out with the views that join it and the relationships to them; a
+/// relationship to no entity is left out of its entity; the others load.
+#[test]
+fn unresolved_members_and_relationships_are_left_out() {
+    let root = workspace_root();
+    let conf =
+        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+    let doc = MNode::parse_text(
+        "entities",
+        &format!(
+            r#"<entities>{ORDERS}
+            <entity entity-name="Note" package="sample">
+                <field name="noteId" type="id" is-pk="true"/><field name="orderId" type="id"/>
+                <relationship type="one" related="sample.Order"/>
+                <relationship type="one" related="moqui.olap.NoSuchFact"><key-map field-name="orderId"/></relationship>
+                <relationship type="one" related="sample.FactView"><key-map field-name="orderId"/></relationship>
+            </entity>
+            <view-entity entity-name="FactView" package="sample">
+                <member-entity entity-alias="F" entity-name="moqui.olap.NoSuchFact"/>
+                <alias-all entity-alias="F"/>
+            </view-entity>
+            <view-entity entity-name="OnFactView" package="sample">
+                <member-entity entity-alias="V" entity-name="sample.FactView"/>
+                <alias-all entity-alias="V"/>
+            </view-entity>
+        </entities>"#
+        ),
+    )
+    .unwrap();
+    let model = EntityModel::load(&conf, &[doc]).expect("the model loads");
+    assert!(model.entity("sample.FactView").is_err());
+    assert!(model.entity("sample.OnFactView").is_err());
+    let note = model.entity("sample.Note").expect("Note loads");
+    let related: Vec<&str> = note
+        .relationships
+        .iter()
+        .map(|relationship| relationship.related.as_str())
+        .collect();
+    assert_eq!(related, ["sample.Order"]);
+    let problems = model.problems().join("\n");
+    assert!(problems.contains("relationship to moqui.olap.NoSuchFact"), "{problems}");
+    assert!(
+        problems.contains("Left out view-entity sample.FactView: member-entity moqui.olap.NoSuchFact"),
+        "{problems}"
+    );
+    assert!(problems.contains("Left out view-entity sample.OnFactView"), "{problems}");
 }
 
 /// Framework, mantle, and the other component entities in the Java tree, when it is next to this one. The tool

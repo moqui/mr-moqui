@@ -293,14 +293,22 @@ pub struct EntityModel {
     by_full: HashMap<String, usize>,
     by_name: HashMap<String, Vec<usize>>,
     by_short_alias: HashMap<String, usize>,
+    problems: Vec<String>,
 }
 
 impl EntityModel {
     /// `conf` is a tree that contains `<database-list>`. Documents whose root is not `entities` are skipped.
     ///
     /// As Java's `EntityFacadeImpl`, a full name defined again is a warning and the later definition is used, and an
-    /// `extend-entity` that matches no entity is skipped with a warning.
+    /// `extend-entity` that matches no entity is skipped with a warning. An entity that does not parse, a view-entity
+    /// whose members do not resolve and a relationship to no entity are each logged as an error naming it and left
+    /// out, and the rest load ([`Self::problems`]); Java finds them only when one is used.
     pub fn load(conf: &MNode, documents: &[MNode]) -> Result<Self, Error> {
+        Self::load_noting(conf, documents, Vec::new())
+    }
+
+    /// [`Self::load`] with the problems found reading the documents already.
+    fn load_noting(conf: &MNode, documents: &[MNode], mut problems: Vec<String>) -> Result<Self, Error> {
         let dictionary = parse_dictionary(conf)?;
         let legacy_names = crate::dialect::legacy_names(conf)?;
         // Each node as the document holds it; only one an `extend-entity` changes is copied first ([`apply_extend`]),
@@ -317,7 +325,13 @@ impl EntityModel {
                 match &*child.name_rc() {
                     "entity" | "view-entity" => {
                         let node = child.clone();
-                        let (entity_name, package_name) = entity_identity(&node)?;
+                        let (entity_name, package_name) = match entity_identity(&node) {
+                            Ok(identity) => identity,
+                            Err(err) => {
+                                left_out(&mut problems, format!("Left out the entity at {}: {err}", where_of(&node)));
+                                continue;
+                            }
+                        };
                         let full_name = format!("{package_name}.{entity_name}");
                         if let Some(index) = by_full.get(&full_name).copied() {
                             tracing::warn!(
@@ -340,31 +354,45 @@ impl EntityModel {
         }
         let mut copied = vec![false; nodes.len()];
         for extend_node in &extends {
-            apply_extend(&mut nodes, &mut copied, &by_full, extend_node)?;
+            if let Err(err) = apply_extend(&mut nodes, &mut copied, &by_full, extend_node) {
+                left_out(
+                    &mut problems,
+                    format!("Left out the extend-entity at {}: {err}", where_of(extend_node)),
+                );
+            }
         }
 
         let mut entities = Vec::with_capacity(nodes.len());
-        let mut index_by_full = HashMap::with_capacity(nodes.len());
-        let mut index_by_name: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut wheres = Vec::with_capacity(nodes.len());
         for (node, is_view) in nodes.iter().zip(view_flags) {
-            let definition = parse_entity(node, is_view, &dictionary, legacy_names)?;
-            let index = entities.len();
-            index_by_name
-                .entry(definition.entity_name.clone())
-                .or_default()
-                .push(index);
-            index_by_full.insert(definition.full_name.clone(), index);
-            entities.push(definition);
+            match parse_entity(node, is_view, &dictionary, legacy_names) {
+                Ok(definition) => {
+                    entities.push(definition);
+                    wheres.push(where_of(node));
+                }
+                Err(err) => {
+                    let name = entity_identity(node).map(|(name, package)| format!("{package}.{name}"));
+                    left_out(
+                        &mut problems,
+                        format!(
+                            "Left out entity {} at {}: {err}",
+                            name.unwrap_or_default(),
+                            where_of(node)
+                        ),
+                    );
+                }
+            }
         }
-        resolve_relationships(&mut entities, &index_by_name)?;
-        create_auto_reverses(&mut entities, &index_by_full)?;
+        let (index_by_full, index_by_name, _) = indexes_of(&entities);
+        resolve_relationships(&mut entities, &index_by_name, &mut problems);
+        create_auto_reverses(&mut entities, &index_by_full, &mut problems);
         expand_key_pairs(&mut entities, &index_by_full);
         for (name, indexes) in &index_by_name {
             if indexes.len() > 1 {
                 let chosen = preferred(&entities, indexes);
                 let all: Vec<String> = indexes
                     .iter()
-                    .map(|index| format!("{} at {}", entities[*index].full_name, where_of(&nodes[*index])))
+                    .map(|index| format!("{} at {}", entities[*index].full_name, wheres[*index]))
                     .collect();
                 tracing::warn!(
                     "Entity name {name} is defined more than once ({}); the name alone means {}",
@@ -373,29 +401,33 @@ impl EntityModel {
                 );
             }
         }
-        let mut by_short_alias = HashMap::new();
-        for (index, entity) in entities.iter().enumerate() {
-            if let Some(alias) = entity.short_alias.as_ref().filter(|alias| !alias.is_empty()) {
-                by_short_alias.entry(alias.clone()).or_insert(index);
-            }
-        }
+        let (by_full, by_name, by_short_alias) = indexes_of(&entities);
         let mut model = Self {
             dictionary,
             entities,
-            by_full: index_by_full,
-            by_name: index_by_name,
+            by_full,
+            by_name,
             by_short_alias,
+            problems,
         };
-        model.complete_views()?;
+        model.complete_views();
         // A relationship to a view expands against the view's primary key aliases, which exist now.
         expand_key_pairs(&mut model.entities, &model.by_full);
         Ok(model)
     }
 
+    /// What was left out while loading, each logged as an error when it was found: an entity file that did not parse,
+    /// an entity that did not, a view-entity whose members did not resolve, a relationship to no entity.
+    #[must_use]
+    pub fn problems(&self) -> &[String] {
+        &self.problems
+    }
+
     /// Every `*.xml` in `directory` whose root is `entities`. `*.eecas.xml` has another root and is skipped.
     pub fn load_directory(conf: &MNode, directory: &Path) -> Result<Self, Error> {
-        let documents = entity_documents(directory)?;
-        Self::load(conf, &documents)
+        let mut problems = Vec::new();
+        let documents = entity_documents(directory, &mut problems)?;
+        Self::load_noting(conf, &documents, problems)
     }
 
     /// [`Self::load_directory`] over several directories in order, the framework's first and then each
@@ -405,20 +437,18 @@ impl EntityModel {
     }
 
     /// [`Self::load_directories`] where a path may also be one entity file, such as a `<load-entity location>` of the
-    /// conf. A file whose root is not `entities` is skipped.
+    /// conf. A file whose root is not `entities` is skipped, and one that does not parse is logged and left out.
     pub fn load_paths(conf: &MNode, paths: &[&Path]) -> Result<Self, Error> {
         let mut documents = Vec::new();
+        let mut problems = Vec::new();
         for path in paths {
             if path.is_file() {
-                let node = MNode::parse_file(path)?;
-                if node.has_name("entities") {
-                    documents.push(node);
-                }
+                documents.extend(entity_document(path, &mut problems));
             } else {
-                documents.extend(entity_documents(path)?);
+                documents.extend(entity_documents(path, &mut problems)?);
             }
         }
-        Self::load(conf, &documents)
+        Self::load_noting(conf, &documents, problems)
     }
 
     pub fn dictionary_types(&self) -> &[DictionaryType] {
@@ -470,24 +500,44 @@ impl EntityModel {
         Ok(view)
     }
 
-    /// Complete every view, members first, so a view that joins another view sees it finished.
-    fn complete_views(&mut self) -> Result<(), Error> {
+    /// Complete every view, members first, so a view that joins another view sees it finished. A view that does not
+    /// complete (a member that is no entity, an alias of no field) is logged and left out, with the views that join it
+    /// and the relationships to them.
+    fn complete_views(&mut self) {
         let mut state = vec![Completion::Pending; self.entities.len()];
         for index in 0..self.entities.len() {
-            self.complete_at(index, &mut state)?;
+            self.complete_at(index, &mut state);
         }
-        Ok(())
+        let failed: HashSet<String> = state
+            .iter()
+            .zip(&self.entities)
+            .filter(|(state, _)| **state == Completion::Failed)
+            .map(|(_, entity)| entity.full_name.clone())
+            .collect();
+        if failed.is_empty() {
+            return;
+        }
+        self.entities.retain(|entity| !failed.contains(&entity.full_name));
+        for entity in &mut self.entities {
+            entity
+                .relationships
+                .retain(|relationship| !failed.contains(&relationship.related));
+        }
+        (self.by_full, self.by_name, self.by_short_alias) = indexes_of(&self.entities);
     }
 
-    fn complete_at(&mut self, index: usize, state: &mut [Completion]) -> Result<(), Error> {
-        if !self.entities[index].is_view || state[index] == Completion::Done {
-            return Ok(());
-        }
-        if state[index] == Completion::Running {
-            return Err(Error::new(format!(
-                "view-entity {} is a member of itself",
-                self.entities[index].full_name
-            )));
+    /// Complete the view at `index` (its member views first); whether it completed.
+    fn complete_at(&mut self, index: usize, state: &mut [Completion]) -> bool {
+        match state[index] {
+            _ if !self.entities[index].is_view => return true,
+            Completion::Done => return true,
+            Completion::Failed => return false,
+            Completion::Running => {
+                let message = format!("view-entity {} is a member of itself", self.entities[index].full_name);
+                self.fail_view(index, state, &message);
+                return false;
+            }
+            Completion::Pending => {}
         }
         state[index] = Completion::Running;
         // Complete member views first, so their aliases are there when this view's are derived.
@@ -498,16 +548,61 @@ impl EntityModel {
             .map(|member| member.entity_name.clone())
             .collect();
         for member in members {
-            let member_index = self.entity_index(&member)?;
-            self.complete_at(member_index, state)?;
+            let member_index = match self.entity_index(&member) {
+                Ok(member_index) => member_index,
+                Err(err) => {
+                    self.fail_view(index, state, &format!("member-entity {member}: {err}"));
+                    return false;
+                }
+            };
+            if !self.complete_at(member_index, state) {
+                self.fail_view(index, state, &format!("its member-entity {member} was left out"));
+                return false;
+            }
         }
         let mut view = std::mem::take(&mut self.entities[index]);
         let completed = self.complete_view(&mut view);
         self.entities[index] = view;
-        completed?;
+        if let Err(err) = completed {
+            self.fail_view(index, state, &err.to_string());
+            return false;
+        }
         state[index] = Completion::Done;
-        Ok(())
+        true
     }
+
+    /// Mark the view at `index` left out, logged once.
+    fn fail_view(&mut self, index: usize, state: &mut [Completion], why: &str) {
+        if state[index] == Completion::Failed {
+            return;
+        }
+        state[index] = Completion::Failed;
+        let message = format!("Left out view-entity {}: {why}", self.entities[index].full_name);
+        left_out(&mut self.problems, message);
+    }
+}
+
+/// The indexes of `entities`: by full name, by entity name, and by `short-alias` (the first that has it).
+type Indexes = (HashMap<String, usize>, HashMap<String, Vec<usize>>, HashMap<String, usize>);
+
+fn indexes_of(entities: &[EntityDefinition]) -> Indexes {
+    let mut by_full = HashMap::with_capacity(entities.len());
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut by_short_alias = HashMap::new();
+    for (index, entity) in entities.iter().enumerate() {
+        by_full.insert(entity.full_name.clone(), index);
+        by_name.entry(entity.entity_name.clone()).or_default().push(index);
+        if let Some(alias) = entity.short_alias.as_ref().filter(|alias| !alias.is_empty()) {
+            by_short_alias.entry(alias.clone()).or_insert(index);
+        }
+    }
+    (by_full, by_name, by_short_alias)
+}
+
+/// Log a definition left out as an error and keep it among the model's problems.
+fn left_out(problems: &mut Vec<String>, message: String) {
+    tracing::error!("{message}");
+    problems.push(message);
 }
 
 /// The definition an entity name defined in more than one package means, as Java's definition cache has it after
@@ -541,9 +636,11 @@ enum Completion {
     Pending,
     Running,
     Done,
+    Failed,
 }
 
-fn entity_documents(directory: &Path) -> Result<Vec<MNode>, Error> {
+/// The `entities` documents of the `*.xml` files in `directory`; one that does not parse is logged and left out.
+fn entity_documents(directory: &Path, problems: &mut Vec<String>) -> Result<Vec<MNode>, Error> {
     let entries = std::fs::read_dir(directory)
         .map_err(|err| Error::new(format!("could not read {}", directory.display())).with_source(err))?;
     let mut paths = Vec::new();
@@ -558,12 +655,20 @@ fn entity_documents(directory: &Path) -> Result<Vec<MNode>, Error> {
     paths.sort();
     let mut documents = Vec::new();
     for path in paths {
-        let node = MNode::parse_file(&path)?;
-        if node.has_name("entities") {
-            documents.push(node);
-        }
+        documents.extend(entity_document(&path, problems));
     }
     Ok(documents)
+}
+
+/// The file at `path` when it is an `entities` document; one that does not parse is logged and left out.
+fn entity_document(path: &Path, problems: &mut Vec<String>) -> Option<MNode> {
+    match MNode::parse_file(path) {
+        Ok(node) => node.has_name("entities").then_some(node),
+        Err(err) => {
+            left_out(problems, format!("Left out entity file {}: {err}", path.display()));
+            None
+        }
+    }
 }
 
 fn parse_dictionary(conf: &MNode) -> Result<Vec<DictionaryType>, Error> {
@@ -952,7 +1057,8 @@ fn parse_detail(node: &MNode) -> Result<MasterDetail, Error> {
 fn resolve_relationships(
     entities: &mut [EntityDefinition],
     by_name: &HashMap<String, Vec<usize>>,
-) -> Result<(), Error> {
+    problems: &mut Vec<String>,
+) {
     let mut names: HashMap<String, String> = HashMap::new();
     for entity in entities.iter() {
         names.insert(entity.full_name.clone(), entity.full_name.clone());
@@ -973,24 +1079,24 @@ fn resolve_relationships(
         .collect();
     for entity in entities.iter_mut() {
         let source = entity.full_name.clone();
-        for relationship in &mut entity.relationships {
+        entity.relationships.retain_mut(|relationship| {
             let raw = relationship.related.clone();
-            let Some(full_name) = names.get(&raw).cloned() else {
-                return Err(Error::new(format!(
-                    "entity {source} relationship related {raw} was not found"
-                )));
-            };
-            let Some(related_entity_name) = short_of.get(&full_name).cloned() else {
-                return Err(Error::new(format!(
-                    "entity {source} relationship related {raw} was not found"
-                )));
+            let found = names
+                .get(&raw)
+                .and_then(|full_name| Some((full_name.clone(), short_of.get(full_name)?.clone())));
+            let Some((full_name, related_entity_name)) = found else {
+                left_out(
+                    problems,
+                    format!("Left out entity {source} relationship to {raw}: no entity is named {raw}"),
+                );
+                return false;
             };
             relationship.name = relationship_name(relationship.title.as_deref(), &full_name);
             relationship.related = full_name;
             relationship.related_entity_name = related_entity_name;
-        }
+            true
+        });
     }
-    Ok(())
 }
 
 fn relationship_name(title: Option<&str>, related_full_name: &str) -> String {
@@ -1011,7 +1117,11 @@ struct PendingReverse {
     source_pks: Vec<String>,
 }
 
-fn create_auto_reverses(entities: &mut [EntityDefinition], by_full: &HashMap<String, usize>) -> Result<(), Error> {
+fn create_auto_reverses(
+    entities: &mut [EntityDefinition],
+    by_full: &HashMap<String, usize>,
+    problems: &mut Vec<String>,
+) {
     let mut order: Vec<String> = by_full.keys().cloned().collect();
     order.sort();
     for source_full in order {
@@ -1036,10 +1146,14 @@ fn create_auto_reverses(entities: &mut [EntityDefinition], by_full: &HashMap<Str
         };
         for reverse in pending {
             let Some(&target_index) = by_full.get(&reverse.related) else {
-                return Err(Error::new(format!(
-                    "entity {} relationship to {} was not loaded",
-                    reverse.source_full, reverse.related
-                )));
+                left_out(
+                    problems,
+                    format!(
+                        "Left out the reverse of entity {} relationship to {}: it was not loaded",
+                        reverse.source_full, reverse.related
+                    ),
+                );
+                continue;
             };
             let target_pks = pk_strings(&entities[target_index]);
             let expanded = expand_key_map(&reverse.relationship_type, &reverse.key_map, &entities[target_index]);
@@ -1081,7 +1195,6 @@ fn create_auto_reverses(entities: &mut [EntityDefinition], by_full: &HashMap<Str
             });
         }
     }
-    Ok(())
 }
 
 /// Fill `key_pairs` on every relationship, auto-reverse ones included.

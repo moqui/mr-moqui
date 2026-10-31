@@ -112,7 +112,7 @@ fn artifact_authz_check_view_keeps_members() {
 fn extend_entity_adds_a_field() {
     let root = workspace_root();
     let conf = MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
-    let mut documents = entity_documents(&root.join("runtime/base-component/framework/entity")).unwrap();
+    let mut documents = entity_documents(&root.join("runtime/base-component/framework/entity"), &mut Vec::new()).unwrap();
     documents.push(
         MNode::parse_text(
             "inline-extend.xml",
