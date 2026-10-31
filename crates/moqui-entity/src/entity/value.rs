@@ -1404,7 +1404,7 @@ impl EntityFacade {
             } else {
                 self.seal_values(entity_name, seal_operation, plain, stored.as_ref())?
             };
-            let (sql, params, row_key) = self.with_group(entity_name, |entity, dialect, _, _| {
+            let (sql, params, row_key, mysql) = self.with_group(entity_name, |entity, dialect, _, _| {
                 // A null an update or upsert names is written, so the field is cleared.
                 let columns = present_columns(
                     entity,
@@ -1453,11 +1453,13 @@ impl EntityFacade {
                 } else {
                     0
                 };
-                Ok((sql, params, row_key))
+                Ok((sql, params, row_key, moqui_db::sql::is_mysql(dialect)))
             })?;
             // A data load sends its writes without waiting; an update that then finds no row fails the file later. Its
-            // creates and upserts may go out several rows to a statement.
-            affected = if !probe && !if_missing && operation != "delete" && pipelining(&tx) {
+            // creates and upserts may go out several rows to a statement. A MySQL update runs now, as it can count no
+            // row for one that is there ([`Self::unchanged_on_mysql`]).
+            let deferred = !probe && !if_missing && operation != "delete" && !(mysql && operation == "update");
+            affected = if deferred && pipelining(&tx) {
                 if operation == "update" {
                     let zero_rows = Some(self.missing_update(entity_name, &cache_values));
                     execute_deferred_tx(&tx, &sql, params, zero_rows)?;
@@ -1474,7 +1476,10 @@ impl EntityFacade {
                 }
                 (crate::hooks::get().set_hit_detail)("update");
             } else if operation == "update" && affected == 0 {
-                return Err(Error::new(self.missing_update(entity_name, &cache_values)));
+                if !(mysql && self.unchanged_on_mysql(entity_name, &cache_values)?) {
+                    return Err(Error::new(self.missing_update(entity_name, &cache_values)));
+                }
+                affected = 1;
             } else if if_missing {
                 if affected == 0 {
                     (crate::hooks::get().set_hit_detail)(RustOnlyEntityHits::CREATE_CONFLICT);
@@ -1503,6 +1508,21 @@ impl EntityFacade {
         }
         after_statement(self, &tx, true);
         Ok(affected)
+    }
+
+    /// An update on MySQL that counted no row, when the row is there: MySQL counts the rows an update changes, not the
+    /// ones it matches (the driver does not set `CLIENT_FOUND_ROWS`, as the insert of `insert_if_missing` counts a row
+    /// only when it inserts), so an update that leaves the row as it was counts none: an amount past the column's scale
+    /// that rounds to the one stored, or the same stamp in the transaction that wrote the row. Java's driver counts
+    /// the rows matched. The row is read by its key without authorization, as the update was authorized already.
+    fn unchanged_on_mysql(&self, entity_name: &str, values: &FieldMap) -> Result<bool, Error> {
+        let _hits = RustOnlyEntityHits::enter(RustOnlyEntityHits::UPDATE_UNCHANGED);
+        let _raw = super::field_rw::RawReadGuard::enter();
+        let mut find = self.find(entity_name)?.use_cache(false).disable_authz();
+        for (field, value) in self.pk_map(entity_name, values)? {
+            find = find.eq(&field, value);
+        }
+        Ok(find.one_internal("refresh")?.is_some())
     }
 
     /// As Java's `updateExtended`: an update of a row that is not there is an error, not a silent no-op.
@@ -1774,6 +1794,9 @@ impl RustOnlyEntityHits {
     /// The one statement that creates or updates a row, of a data load or a create-or-update where it fits (Java finds
     /// the row, then creates or updates it).
     pub const UPSERT: &'static str = "upsert";
+    /// The read by key after a MySQL update counted no row, which finds the row there when the update left it as it
+    /// was (Java's driver counts the rows matched).
+    pub const UPDATE_UNCHANGED: &'static str = "update-unchanged";
 
     pub fn enter(sub_type: &'static str) -> Self {
         Self(RUST_ONLY_SUB_TYPE.with(|current| current.replace(Some(sub_type))))

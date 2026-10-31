@@ -819,6 +819,8 @@ struct StoreTape {
     /// The next insert that does nothing on a conflict meets another row's unique index value, so it counts no row
     /// and this row stays missing (MySQL's `ON DUPLICATE KEY UPDATE` takes any unique index).
     unique_conflict: bool,
+    /// The next update leaves the row as it was, which MySQL counts as no row.
+    unchanged: bool,
 }
 
 struct StoreDriver {
@@ -845,6 +847,9 @@ impl DbConnection for StoreConn {
         tape.sql.push(sql.to_string());
         tape.params.push(params.to_vec());
         if sql.starts_with("UPDATE") {
+            if std::mem::take(&mut tape.unchanged) {
+                return Ok(0);
+            }
             return Ok(u64::from(tape.exists));
         }
         if sql.starts_with("INSERT") {
@@ -1028,6 +1033,31 @@ fn create_or_update_of_only_the_key_inserts_it_if_missing() {
             assert!(tape.sql[0].ends_with(ending), "{}", tape.sql[0]);
         }
     }
+}
+
+/// MySQL counts the rows an update changes, not the ones it matches, so an update that leaves the row as it was (an
+/// amount that rounds to the stored one) counts none: the row is read by its key, and the update is no error. When the
+/// row is not there, and on Postgres, a count of none is an update of a missing row.
+#[test]
+fn an_update_mysql_counts_as_no_row_is_no_error_when_the_row_is_there() {
+    let update = |dialect: &str, exists: bool| {
+        let (facade, tape) = open_store(exists, dialect);
+        tape.lock().unwrap().unchanged = true;
+        let mut value = test_value(&facade);
+        value.set("testMedium", Value::string("rounds to the stored one"));
+        let result = value.update(&facade).map_err(|err| err.to_string());
+        let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
+        (result, kinds)
+    };
+    let (result, kinds) = update("mysql", true);
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(kinds, ["UPDATE", "SELECT"], "{kinds:?}");
+    let missing = "Tried to update a value that does not exist";
+    let (result, _) = update("mysql", false);
+    assert!(result.is_err_and(|err| err.contains(missing)));
+    let (result, kinds) = update("postgres", true);
+    assert!(result.is_err_and(|err| err.contains(missing)));
+    assert_eq!(kinds, ["UPDATE"], "{kinds:?}");
 }
 
 /// A value read from the database writes only what it changed, and one that sets `lastUpdatedStamp` keeps an update's
