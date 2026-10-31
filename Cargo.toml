@@ -3,10 +3,8 @@
 # `cargo tree -p moqui` is the default binary. Cargo.lock is the exact resolve.
 #
 # license is CC0-1.0. The patent grant in LICENSE.md has no SPDX identifier.
-# postgresql_embedded 0.21 / sqlx 0.9 require Rust 1.94. mysql_common 0.37
-# pulls uuid 1.28, which requires Rust 1.89. This file does not set
-# rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
-# The workspace needs Rust 1.98: mail-parser 1.0 declares rust-version 1.98, and oxc 0.153 and later 1.97.
+# The workspace needs Rust 1.98: mail-parser 1.0 declares rust-version 1.98, and oxc 0.153 and later 1.97. This file
+# does not set rust-version, so `cargo metadata` and `cargo tree` still run on older cargo.
 
 [workspace]
 resolver = "2"
@@ -254,7 +252,7 @@ flate2 = { version = "1.1", default-features = false, features = ["rust_backend"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util"] }
 # Defaults are tls-native-tls and theseus. No feature downloads or bundles the archive: crates/moqui-host/build.rs
 # stages it and db/embedded.rs unpacks it, so the crate's build script links no TLS stack.
-postgresql_embedded = { version = "0.21", default-features = false, features = ["blocking"] }
+postgresql_embedded = { version = "0.22", default-features = false, features = ["blocking"] }
 # Unpacking the staged Postgres archive (crates/moqui-host/build.rs, db/embedded.rs). Already in the graph under
 # postgresql_embedded. xattr stays off.
 tar = { version = "0.4", default-features = false }
