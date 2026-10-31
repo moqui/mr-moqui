@@ -447,7 +447,7 @@ along with this software (see the LICENSE.md file). If not, see
                                             <q-chip dense square clickable :icon="fileIcon(file)" class="m-tonal q-ml-none"
                                                     @click="openAttachment(item.message, file)">{{file.name}}<span v-if="file.size" class="m-muted q-ml-xs">{{sizeText(file.size)}}</span>
                                                 <q-tooltip>{{t('Download')}} {{file.name}}</q-tooltip></q-chip>
-                                            <q-btn flat round dense size="sm" icon="sym_o_drive_folder_upload" :aria-label="t('Save to Files')"
+                                            <q-btn v-if="hasDrive" flat round dense size="sm" icon="sym_o_drive_folder_upload" :aria-label="t('Save to Files')"
                                                     @click="openSaveFiles(item.message, file)"><q-tooltip>{{t('Save to Files')}}</q-tooltip></q-btn>
                                         </span>
                                     </div>
@@ -884,7 +884,7 @@ module.exports = {
             snooze: { open: false, targets: [], custom: '' }, move: { open: false, targets: [], filter: '', newFolder: '' },
             labels: { open: false, targets: [], choice: {}, original: {}, newName: {} }, link: { open: false, message: null, value: null, busy: false },
             saveSearch: { open: false, name: '' }, goto: { open: false, filter: '' }, browse: { open: false, search: '', list: [], loading: false },
-            saveTo: { open: false, file: null, message: null, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, saving: false },
+            saveTo: { open: false, file: null, message: null, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, saving: false }, hasDrive: false,
             swipe: null, swipeSuppress: null,
             newMailbox: { open: false, key: 0 }, mailboxDialog: { open: false, tab: 'members', key: 0, addPartyId: null }, pendingCreateFrom: false, markReadTimer: null
         };
@@ -2284,6 +2284,8 @@ module.exports = {
         document.addEventListener('keyup', this.onShift, true);
         this.registerKeys();
         this.loadData().then(() => this.$nextTick(() => this.measure()));
+        // Save to Files only when the user has a drive at all
+        moqui.request(this.url('pickerData'), { params: { checkOnly: 'true' } }).then((result) => { this.hasDrive = !!(result.json || {}).hasDrive; }, () => {});
         this.applyParams();
         setTimeout(() => this.measure(), 300);
     },

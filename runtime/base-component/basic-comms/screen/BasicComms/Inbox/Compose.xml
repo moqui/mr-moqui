@@ -74,6 +74,10 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the drive picker of Attach from Files -->
+    <transition-include name="pickerData" location="component://basic-comms/template/FilePickerTransitions.xml"/>
+    <transition-include name="pickerFolder" location="component://basic-comms/template/FilePickerTransitions.xml"/>
+    <transition-include name="pickerSearch" location="component://basic-comms/template/FilePickerTransitions.xml"/>
     <!-- Attach from Files: copies of the picked drive files on the draft (or for an internal message), links for what is too large -->
     <transition name="attachFromFiles">
         <actions><script><![CDATA[

@@ -56,11 +56,15 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the drive picker of Save to Files -->
+    <transition-include name="pickerData" location="component://basic-comms/template/FilePickerTransitions.xml"/>
+    <transition-include name="pickerFolder" location="component://basic-comms/template/FilePickerTransitions.xml"/>
     <!-- Save to Files: a copy of an attachment in a drive folder; the message keeps its own -->
     <transition name="saveFiles">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'save#MessageFiles', parameters: {store: store || '', id: id || null,
-                emailMessageId: emailMessageId || null, communicationEventId: communicationEventId || null, driveId: driveId || '', path: path || ''}}).call()?.result || {}
+                emailMessageId: emailMessageId || null, communicationEventId: communicationEventId || null, driveId: driveId || '', path: path || ''}})
+                    .requireNewTransaction(true).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {savedList: out.savedList, failedList: out.failedList})
         ]]></script></actions>
         <default-response type="none"/>

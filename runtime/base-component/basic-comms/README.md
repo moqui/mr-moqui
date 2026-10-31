@@ -7,7 +7,8 @@ usable with only the framework ([plans/Comms-Framework.md](../../../plans/Comms-
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
-| `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`) and the provider interfaces (`ProviderInterfaces`) |
+| `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`, `FilePickerServices` for Attach from Files and Save to Files) and the provider interfaces (`ProviderInterfaces`) |
+| `template/` | Transitions shared by screens (`FilePickerTransitions.xml`: the drive picker) |
 | `data/` | The `BASIC_COMMS` artifact group and the do-not-disturb job |
 | `test/` | Server specs; `test/client/` the browser specs (a call in two browsers), `test/MoquiConf.xml` turns call media on for their server |
 

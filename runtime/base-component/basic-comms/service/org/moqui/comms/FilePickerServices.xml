@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The drive picker of BasicComms (plans/Comms-Framework.md §7.4 DP): Compose's Attach from Files and the Inbox's Save to
+    Files list the user's drives, a folder, the recent files and a search through these services (the pickerData,
+    pickerFolder and pickerSearch transitions of Inbox/Compose.xml and Inbox/Mail.xml). Every read goes through
+    org.moqui.impl.FileServices, which checks the drive's members and shares, and on a records drive the records; what the
+    user may not reach is "not found". A path is relative to its drive's root, '/'-separated. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="PickerData">
+        <description>What the picker opens with: the drives the user may open (FileServices.get#UserDrives, without storage
+            sizes; the personal drive first, named My files), personalDriveId when that drive is among them, and the user's
+            recent files (FileServices.find#Recent, at most recentLimit; none with includeRecent false). hasDrive is false
+            when the user may open no drive at all (the screens then leave out Attach from Files and Save to Files).</description>
+        <in-parameters>
+            <parameter name="includeRecent" type="Boolean" default="true"/>
+            <parameter name="recentLimit" type="Integer" default="12"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="hasDrive" type="Boolean"/>
+            <parameter name="personalDriveId"/>
+            <parameter name="driveList" type="List"><description>{driveId, driveName, isPersonal, isRecords, canWrite}</description></parameter>
+            <parameter name="recentList" type="List"><description>The picker's rows (find#PickerFiles), newest first</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            hasDrive = false
+            personalDriveId = null
+            driveList = []
+            recentList = []
+            const drives = ec.service.sync().name('org.moqui.impl.FileServices.get#UserDrives').parameter('includeUsage', false).call()
+            if (ec.message.hasError()) return
+            driveList = Array.from(drives.driveList || []).map((drive) => ({driveId: drive.driveId,
+                driveName: drive.isPersonal ? ec.l10n.localize('My files') : drive.driveName, isPersonal: drive.isPersonal === true,
+                isRecords: drive.driveKindEnumId === 'RdkRecords', canWrite: drive.canWrite === true}))
+            hasDrive = driveList.length > 0
+            // an archived personal drive is not one to open
+            if (drives.personalDriveId && driveList.some((drive) => drive.driveId === drives.personalDriveId)) personalDriveId = drives.personalDriveId
+            if (!hasDrive || !includeRecent) return
+            const recent = ec.service.sync().name('org.moqui.impl.FileServices.find#Recent').parameter('limit', recentLimit || 12).call()
+            if (ec.message.hasError()) return
+            recentList = Array.from(recent.resultList || []).map((row) => {
+                const kind = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#FileType').parameters({name: row.name, isDirectory: false}).call()
+                const slash = String(row.path || '').lastIndexOf('/')
+                return {driveId: row.driveId, driveName: row.driveName ?? null, path: row.path, folderPath: slash > 0 ? String(row.path).slice(0, slash) : '',
+                    name: row.name, isDirectory: false, size: row.size ?? null, modified: row.modified ?? null, fileType: kind.fileType, icon: kind.icon}
+            })
+        ]]></script></actions>
+    </service>
+
+    <service verb="list" noun="PickerFolder">
+        <description>A folder of a drive for the picker (FileServices.list#Folder): its files and folders, folders first, each
+            with its fileType and icon (get#FileType), and the breadcrumbs from the drive's top. A folder the user may not
+            open, or a path with "..", is "Folder not found".</description>
+        <in-parameters>
+            <parameter name="driveId" required="true"/>
+            <parameter name="path"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fileList" type="List"><description>{driveId, path, name, isDirectory, size, modified, fileType, icon}</description></parameter>
+            <parameter name="breadcrumbList" type="List"><description>{name, path}, the drive's top first</description></parameter>
+            <parameter name="canWrite" type="Boolean"><description>Whether the user may save into this folder</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            fileList = []
+            breadcrumbList = []
+            canWrite = false
+            const out = ec.service.sync().name('org.moqui.impl.FileServices.list#Folder').parameters({driveId: driveId, path: path || ''}).call()
+            if (ec.message.hasError()) return
+            canWrite = !!(out.folder && (out.folder.canWrite || out.folder.canUpload))
+            breadcrumbList = Array.from(out.breadcrumbList || []).map((crumb, index) => ({name: index === 0 && out.drive && out.drive.driveKindEnumId === 'RdkPersonal'
+                ? ec.l10n.localize('My files') : crumb.name, path: crumb.path}))
+            fileList = Array.from(out.fileList || []).map((row) => {
+                const kind = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#FileType').parameters({name: row.name,
+                    isDirectory: row.isDirectory === true}).call()
+                return {driveId: driveId, path: row.path, name: row.name, isDirectory: row.isDirectory === true, size: row.size ?? null,
+                    modified: row.modified ?? null, fileType: row.isDirectory ? 'folder' : (row.fileType || kind.fileType), icon: kind.icon}
+            })
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="PickerFiles">
+        <description>Files and folders by name across the drives the user may open (FileServices.find#Resources), newest
+            first, at most limit: the picker's search. A blank text finds nothing.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="limit" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fileList" type="List"><description>{driveId, driveName, path, folderPath, name, isDirectory, size, modified,
+                fileType, icon}</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            fileList = []
+            const term = String(text || '').trim()
+            if (!term) return
+            const found = ec.service.sync().name('org.moqui.impl.FileServices.find#Resources').parameters({text: term, limit: limit || 50}).call()
+            if (ec.message.hasError()) return
+            fileList = Array.from(found.resultList || []).map((row) => {
+                const isDirectory = row.isDirectory === true
+                const kind = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#FileType').parameters({name: row.name, isDirectory: isDirectory}).call()
+                const slash = String(row.path || '').lastIndexOf('/')
+                return {driveId: row.driveId, driveName: row.driveName ?? null, path: row.path,
+                    folderPath: slash > 0 ? String(row.path).slice(0, slash) : '', name: row.name, isDirectory: isDirectory, size: row.size ?? null,
+                    modified: row.modified ?? null, fileType: isDirectory ? 'folder' : (row.fileType || kind.fileType), icon: kind.icon}
+            })
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="FileType" allow-remote="false">
+        <description>The kind of a file by its name, as FileServices names it (image, video, audio, pdf, spreadsheet,
+            presentation, document, archive, text, other; folder for a folder), with the icon the picker shows for it.</description>
+        <in-parameters>
+            <parameter name="name"/>
+            <parameter name="isDirectory" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fileType"/>
+            <parameter name="icon"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const text = String(name || '')
+            const ext = text.includes('.') ? text.slice(text.lastIndexOf('.') + 1).toLowerCase() : ''
+            const contentType = isDirectory ? '' : (ec.resource.contentTypeOf(text) || '')
+            if (isDirectory) fileType = 'folder'
+            else if (contentType.startsWith('image/')) fileType = 'image'
+            else if (contentType.startsWith('video/')) fileType = 'video'
+            else if (contentType.startsWith('audio/')) fileType = 'audio'
+            else if (ext === 'pdf') fileType = 'pdf'
+            else if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) fileType = 'spreadsheet'
+            else if (['ppt', 'pptx', 'odp'].includes(ext)) fileType = 'presentation'
+            else if (['doc', 'docx', 'odt', 'rtf'].includes(ext)) fileType = 'document'
+            else if (['zip', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'tar'].includes(ext)) fileType = 'archive'
+            else if (contentType.startsWith('text/') || ['md', 'txt', 'json', 'xml', 'yaml', 'yml'].includes(ext)) fileType = 'text'
+            else fileType = 'other'
+            const icons = {folder: 'sym_o_folder', image: 'sym_o_image', video: 'sym_o_movie', audio: 'sym_o_music_note', pdf: 'sym_o_picture_as_pdf',
+                spreadsheet: 'sym_o_table_chart', presentation: 'sym_o_slideshow', document: 'sym_o_article', archive: 'sym_o_folder_zip',
+                text: 'sym_o_description', other: 'sym_o_draft'}
+            icon = icons[fileType]
+        ]]></script></actions>
+    </service>
+</services>
