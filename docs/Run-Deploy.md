@@ -623,7 +623,7 @@ Sessions are rows in the shared database, so any member can serve any request.
 
 ## PASS servers with a BOSS server or cluster
 
-IronStoa PASS (`mr-pass`) serves public sites: Forum, Account, Members and Sites. A PASS server can run without Mantle
+IronStone PASS (`mr-pass`) serves public sites: Forum, Account, Members and Sites. A PASS server can run without Mantle
 or BOSS. It then calls an **authority** for every read and write: a BOSS server, or cluster, holding Mantle and the
 business database. The public machines keep only sessions and their own conf.
 
