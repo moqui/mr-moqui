@@ -191,6 +191,45 @@ pub fn hash_of(text: &str) -> String {
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// What identifies the state of an index, answered with every read so a caller can say what it checked against.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexStamp {
+    /// A hash of each file's location and content hash: the same files give the same hash, on any server.
+    pub hash: String,
+    /// When the index last changed, in epoch milliseconds.
+    pub built_at: i64,
+    pub files: usize,
+}
+
+impl IndexStamp {
+    /// The stamp of `files` (each a location, or a path out of any component, and its [`hash_of`]).
+    fn of(mut files: Vec<(String, String)>, built_at: i64) -> Self {
+        use sha2::{Digest, Sha256};
+        files.sort();
+        let mut digest = Sha256::new();
+        for (location, hash) in &files {
+            digest.update(format!("{location}\t{hash}\n").as_bytes());
+        }
+        Self {
+            hash: digest
+                .finalize()
+                .iter()
+                .take(12)
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            built_at,
+            files: files.len(),
+        }
+    }
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+}
+
 /// Write `factor` copies of `files` under `dir`, each copy's entities in a package and its services under a path of
 /// its own (`synth3.mantle.order`), for measuring the index on a corpus that many times the size. Answers the copies.
 ///
@@ -318,6 +357,10 @@ pub struct MemoryIndex {
     pub problems: Vec<(String, String)>,
     /// Each artifact's position in `artifacts` by id, for [`Self::describe`]; made again by each read.
     positions: HashMap<String, usize>,
+    /// Each file read by its path: its location and hash, for [`Self::stamp`].
+    hashes: BTreeMap<String, (String, String)>,
+    /// When the files were last read, in epoch milliseconds.
+    changed_millis: i64,
 }
 
 impl MemoryIndex {
@@ -333,8 +376,9 @@ impl MemoryIndex {
         let mut index = Self::default();
         for file in files {
             match file.extract() {
-                Ok((_, read)) => {
+                Ok((hash, read)) => {
                     let path = file.path.display().to_string();
+                    index.hashes.insert(path.clone(), (file.location.clone(), hash));
                     for artifact in &read.artifacts {
                         index.resolver.add(artifact);
                     }
@@ -352,7 +396,14 @@ impl MemoryIndex {
             index.resolver.resolve(row, &exists);
         }
         index.position();
+        index.changed_millis = now_millis();
         index
+    }
+
+    /// The stamp of the files read.
+    #[must_use]
+    pub fn stamp(&self) -> IndexStamp {
+        IndexStamp::of(self.hashes.values().cloned().collect(), self.changed_millis)
     }
 
     /// Each id's first row, as a find of the rows in order answers (an id defined in two components is the first's).
@@ -372,10 +423,12 @@ impl MemoryIndex {
         self.artifacts.retain(|artifact| !gone.contains(artifact.path.as_str()));
         self.refs.retain(|(file, _)| !gone.contains(file.as_str()));
         self.problems.retain(|(file, _)| !gone.contains(file.as_str()));
+        self.hashes.retain(|file, _| !gone.contains(file.as_str()));
         for file in files {
             let path = file.path.display().to_string();
             match file.extract() {
-                Ok((_, read)) => {
+                Ok((hash, read)) => {
+                    self.hashes.insert(path.clone(), (file.location.clone(), hash));
                     self.artifacts.extend(read.artifacts);
                     self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
                 }
@@ -395,6 +448,7 @@ impl MemoryIndex {
         }
         self.resolver = resolver;
         self.position();
+        self.changed_millis = now_millis();
         files.len()
     }
 
@@ -675,6 +729,8 @@ struct IndexState {
     /// One build or update at a time.
     running: Mutex<()>,
     listening: AtomicBool,
+    /// The stamp of the rows, made at the first read after they changed.
+    stamp: Mutex<Option<IndexStamp>>,
 }
 
 fn state(factory: &ExecutionContextFactory) -> Arc<IndexState> {
@@ -771,6 +827,7 @@ pub fn clear(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
             Ok(())
         })?;
     *lock(&state.resolver) = Resolver::default();
+    *lock(&state.stamp) = None;
     Ok(())
 }
 
@@ -1048,6 +1105,7 @@ fn apply(
     if changes.is_empty() {
         return Ok(());
     }
+    *lock(&state.stamp) = None;
     let mut gone: BTreeSet<String> = BTreeSet::new();
     let mut added: Vec<ArtifactRow> = Vec::new();
     let mut changed_paths: HashSet<String> = HashSet::new();
@@ -1180,6 +1238,8 @@ fn apply(
     unresolve(facade, &tx, &gone, &changed_paths)?;
     resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
     report.write_millis = writing.elapsed().as_millis();
+    // again: a read while the rows were written may have made it of the old ones
+    *lock(&state.stamp) = None;
     Ok(())
 }
 
@@ -1946,6 +2006,47 @@ pub fn extensions(factory: &Arc<ExecutionContextFactory>, components: &[String])
             .then(a.line.cmp(&b.line))
     });
     Ok(found)
+}
+
+/// The stamp of the rows: each file's location and hash, and the last time a file's rows were written.
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn stamp(factory: &Arc<ExecutionContextFactory>) -> Result<IndexStamp, Error> {
+    ensure(factory)?;
+    let state = state(factory);
+    if let Some(stamp) = lock(&state.stamp).clone() {
+        return Ok(stamp);
+    }
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _lifted = fence::lift();
+    let mut files = Vec::new();
+    let mut built_at = 0;
+    for row in facade
+        .find(FILE)?
+        .disable_authz()
+        .select_field("filePath")
+        .select_field("location")
+        .select_field("fileHash")
+        .select_field("indexedDate")
+        .list()?
+        .values()
+    {
+        let location = text(row, "location");
+        let location = if location.is_empty() {
+            text(row, "filePath")
+        } else {
+            location
+        };
+        files.push((location, text(row, "fileHash")));
+        if let Some(indexed) = row.get("indexedDate").and_then(moqui_core::user::value_millis) {
+            built_at = built_at.max(indexed);
+        }
+    }
+    let stamp = IndexStamp::of(files, built_at);
+    *lock(&state.stamp) = Some(stamp.clone());
+    Ok(stamp)
 }
 
 /// Counts of the index's rows by artifact kind, for Home and the Artifacts screen.

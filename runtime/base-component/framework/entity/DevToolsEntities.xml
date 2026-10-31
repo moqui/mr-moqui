@@ -79,4 +79,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastCallDate" type="date-time"/>
         <index name="DEV_ACALL_TO"><index-field name="toArtifactId"/></index>
     </entity>
+    <entity entity-name="DevArtifactProject" package="moqui.devtools">
+        <description>A Moqui project on this machine whose artifact index may be read by its id, on any instance, by a
+            user with the AIDE_READ permission (plans/design-dev-aide.md 7.4). The read services take only the id off a
+            dev instance, so no path of a request is read; a row whose allowed is not Y is refused like one that is not
+            there.</description>
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="directory" type="text-medium"><description>The absolute directory of the project: a Java Moqui
+            checkout, an MR Moqui clone or runtime</description></field>
+        <field name="projectLayout" type="text-short"><description>java: read it as a Java Moqui checkout whatever its
+            sources; empty: its layout is found from its marker paths</description></field>
+        <field name="allowed" type="text-indicator"><description>Y: its index may be read; anything else refuses it</description></field>
+        <field name="description" type="text-medium"/>
+    </entity>
 </entities>

@@ -1046,6 +1046,7 @@
         <load-data location="component://framework/data/GeoCountryData.xml"/>
         <load-data location="component://framework/data/SecurityTypeData.xml"/>
         <load-data location="component://framework/data/AgentTypeData.xml"/>
+        <load-data location="component://framework/data/DevToolsSecurityData.xml"/>
         <load-data location="component://framework/data/UnitData.xml"/>
         <load-data location="component://framework/data/MoquiSetupData.xml"/>
         <load-data location="component://framework/data/TelemetryData.xml"/>

@@ -278,5 +278,30 @@ along with this software (see the LICENSE.md file). If not, see
         </id>
     </resource>
 
+    <!-- The artifact index of a project an admin allowed (DevArtifactProject), read only, on any instance
+        (plans/design-dev-aide.md 7.4): for the AIDE_READ permission (AIDE_READ_API in the framework's
+        DevToolsSecurityData.xml). Each answer has the index's indexStamp. Rebuilding stays on dev instances. -->
+    <resource name="aide" description="The artifact index of allowed projects, read only">
+        <resource name="projects">
+            <id name="projectId">
+                <resource name="artifacts">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.find#Artifacts"/></method>
+                </resource>
+                <resource name="artifact">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#Artifact"/></method>
+                </resource>
+                <resource name="refs">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactRefs"/></method>
+                </resource>
+                <resource name="at">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactAt"/></method>
+                </resource>
+                <resource name="extensions">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactExtensions"/></method>
+                </resource>
+            </id>
+        </resource>
+    </resource>
+
     <!-- TODO: caches, TODO will need services implemented as uses API directly for most ops -->
 </resource>

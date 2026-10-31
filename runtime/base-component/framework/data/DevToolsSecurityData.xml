@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Who reads the artifact index on any instance (plans/design-dev-aide.md 7.4): the AIDE_READ permission and the
+    AIDE_READERS group, for remote tools that read the index of a project an admin allowed (DevArtifactProject) over
+    REST with an API key. Only the reads: rebuilding the index and every development tool that writes or runs code stay
+    on dev instances, in the dev-aide's own seed (DEV_AIDE_APP). Framework seed, so it is on every instance. -->
+<entity-facade-xml type="seed">
+    <moqui.security.UserGroup userGroupId="AIDE_READERS" description="Artifact index readers (allowed projects, any instance)"/>
+    <moqui.security.UserPermission userPermissionId="AIDE_READ" description="Read the artifact index of an allowed project"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AIDE_READ" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="AIDE_READERS" userPermissionId="AIDE_READ" fromDate="0"/>
+
+    <!-- the index's reads (find#Artifacts and every get#Artifact*) and their REST resource; each service checks the
+        permission and the project itself -->
+    <artifactGroups artifactGroupId="AIDE_READ_API" description="Artifact index reads (services and /moqui/aide)">
+        <artifacts artifactName="org\.moqui\.impl\.DevToolsServices\.(find#Artifacts|get#Artifact[A-Za-z]*)" nameIsPattern="Y"
+                artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <artifacts artifactName="/moqui/aide" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"/>
+        <authz artifactAuthzId="AIDE_READ_API_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="AIDE_READ_API_READERS" userGroupId="AIDE_READERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
+    </artifactGroups>
+    <!-- which projects may be read is the admins' to say -->
+    <artifactGroups artifactGroupId="AIDE_PROJECTS" description="Projects whose artifact index may be read">
+        <artifacts artifactName="moqui.devtools.DevArtifactProject" artifactTypeEnumId="AT_ENTITY" inheritAuthz="N"/>
+        <authz artifactAuthzId="AIDE_PROJECTS_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+</entity-facade-xml>
