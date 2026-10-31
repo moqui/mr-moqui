@@ -107,6 +107,24 @@ fn the_isolation_level_is_the_inline_jdbc_one_else_the_database_default() {
 }
 
 #[test]
+fn a_postgres_isolation_level_other_than_read_committed_is_logged() {
+    let warning = |kind, level| postgres_isolation_warning("transactional", kind, level);
+    assert_eq!(
+        warning(DatasourceKind::Postgres, Some(IsolationLevel::ReadCommitted)),
+        None
+    );
+    assert_eq!(warning(DatasourceKind::Postgres, None), None);
+    assert_eq!(warning(DatasourceKind::Mysql, Some(IsolationLevel::Serializable)), None);
+    let serializable = warning(DatasourceKind::Postgres, Some(IsolationLevel::Serializable)).unwrap();
+    assert!(serializable.contains("expects READ COMMITTED"), "{serializable}");
+    assert!(serializable.contains("serialization error"), "{serializable}");
+    let uncommitted = warning(DatasourceKind::Postgres, Some(IsolationLevel::ReadUncommitted)).unwrap();
+    assert!(uncommitted.contains("runs as READ COMMITTED"), "{uncommitted}");
+    let embedded = warning(DatasourceKind::Embedded, Some(IsolationLevel::RepeatableRead)).unwrap();
+    assert!(embedded.contains("not set on the embedded database"), "{embedded}");
+}
+
+#[test]
 fn sslmode_names_what_tls_checks() {
     assert_eq!(tls_verify(""), TlsVerify::Full);
     assert_eq!(tls_verify("prefer"), TlsVerify::Full);

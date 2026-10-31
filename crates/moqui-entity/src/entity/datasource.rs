@@ -215,6 +215,9 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .or_else(|| database_node.first_named("inline-jdbc"));
     let pool = pool_config(inline.as_ref(), &database_node)?;
     let isolation_level = isolation_level(group, inline.as_ref(), &database_node);
+    if let Some(warning) = postgres_isolation_warning(group, kind, isolation_level) {
+        tracing::warn!("{warning}");
+    }
     // As Java's `EntityInfo`: `use-schemas="false"` puts no schema in front of the tables, so they are wherever the
     // connection puts them.
     let schema = if expanded(&database_node, "use-schemas") == "false" {
@@ -286,6 +289,29 @@ fn isolation_level(group: &str, inline: Option<&MNode>, database: &MNode) -> Opt
         tracing::warn!("Datasource {group} isolation level {name} is not a level, leaving the server's default");
     }
     level
+}
+
+/// What to log of a Postgres datasource's isolation level other than READ COMMITTED, which the framework expects: the
+/// embedded database does not set it, and on a server at REPEATABLE READ or SERIALIZABLE an insert that does nothing on
+/// a key conflict (create-or-update, the data load) fails with a serialization error when the row it meets was
+/// committed after its transaction began.
+fn postgres_isolation_warning(group: &str, kind: DatasourceKind, level: Option<IsolationLevel>) -> Option<String> {
+    let level = level.filter(|level| *level != IsolationLevel::ReadCommitted)?;
+    let sql = level.sql();
+    match kind {
+        DatasourceKind::Mysql => None,
+        DatasourceKind::Embedded => Some(format!(
+            "Datasource {group} isolation level {sql} is not set on the embedded database, which runs at READ COMMITTED"
+        )),
+        DatasourceKind::Postgres if level == IsolationLevel::ReadUncommitted => Some(format!(
+            "Datasource {group} isolation level {sql} runs as READ COMMITTED on Postgres"
+        )),
+        DatasourceKind::Postgres => Some(format!(
+            "Datasource {group} isolation level {sql} on Postgres: the framework expects READ COMMITTED, and at {sql} \
+             a create-or-update or data load insert that meets a row committed after its transaction began fails \
+             with a serialization error"
+        )),
+    }
 }
 
 /// `inline-jdbc` pool attributes, with Java's fallbacks: min 5, max 50, wait 30 seconds, idle 60

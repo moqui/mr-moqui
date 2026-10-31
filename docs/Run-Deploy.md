@@ -360,7 +360,8 @@ Each connection to an external database sets the datasource's transaction isolat
 in `MoquiDefaultConf.xml`, as Moqui Java does. `None` leaves the server's default (InnoDB's is `REPEATABLE READ`). The
 code assumes READ COMMITTED: at REPEATABLE READ or SERIALIZABLE, Postgres fails an `ON CONFLICT` insert whose
 conflicting row the transaction's snapshot does not see, and MySQL takes gap locks that two creates of one missing row
-can deadlock on.
+can deadlock on. On Postgres a level other than `ReadCommitted` is logged as a warning at startup; the embedded database
+does not set it and runs at READ COMMITTED.
 
 ### Search
 
