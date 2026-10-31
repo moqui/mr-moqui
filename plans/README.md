@@ -25,6 +25,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md).
 
+**Themes and appearance**
+- [Themes.md](Themes.md): the look of the `/qapps` Quasar shell without code: the theme's branding (its resources and default color scheme) and the user's appearance (color schemes, light and dark accents, per-color overrides, fonts, sizes, motion), the tokens and their cascade, and the System app's Theme screen. Built Oct 27–29; its leftovers are in Remaining-Work.
+
 **Comms**
 - [Comms-Framework.md](Comms-Framework.md): moving Comms from mr-boss to a framework component, `basic-comms`, with app extensions, chat federation and bridges, SIP/PSTN voice, voicemail and SFU conferencing, each embedded in the moqui binary with external servers as options. Decisions are in §8, milestones and acceptance in §7, and the libraries, reference applications and review findings in §10.
 

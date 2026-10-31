@@ -114,6 +114,9 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | `container-split` keeps its pane widths per id; it has no collapse of the side, no keyboard resize (Quasar's separator takes none) and no list-detail focus handling (Escape back to the list). The wizard's step form is found in the DOM (the first `m-form` of the step outside a list or a dialog), so a step with two forms that should both post has to use one; the wizard does not save a draft itself (each step's transition does) | M4 framework |
 | `sri.getShellProviders` is kept per session for up to ten minutes: a grant changed by an admin, or a quick-create or key target screen that changes, shows in another session at once and in the same one after that time (the app root screens are checked every time) | `screen/cache.rs` |
 | The 390 px header check (`gate3_browser` tray test) runs without theme plugins: mr-marble's `ActiveOrgNav.qvue` adds a button and its organization's pseudoId as a label, which a long id can still push past a phone's width | framework gaps 2026-10-19 |
+| The guide's Appearance section is behind the code: it lists five schemes (Ocean, Indigo, Crimson, Teal and Graphite are missing) and the single `THEME_PRIMARY_COLOR` (no dark accent, no `THEME_COLOR_OVERRIDES`) | [Themes](Themes.md) |
+| `STRT_SCREENSHOT` is defined but unused (a theme's preview image); there is no screen that assigns a theme to a user or a group (`UserScreenTheme` and `UserGroupScreenTheme` are read, never written) | [Themes](Themes.md) |
+| The public (`STT_PUBLIC`) and error (`STT_ERROR`) themes have no appearance (the public shell takes the theme's Quasar config only); the terminal client's colors come from the `STRT_TUI_COLORS` resources, not the schemes | [Themes](Themes.md) |
 
 ## Terminal client
 
