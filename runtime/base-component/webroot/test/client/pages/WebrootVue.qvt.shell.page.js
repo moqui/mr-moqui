@@ -429,7 +429,8 @@ test("a form in the quick-create dialog closes it when it submits without errors
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
     ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
-    assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {4}<\/q-page-container>/);
+    // the tray and then the call dock close the page container
+    assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {8}<m-call-dock v-if="callsOn"><\/m-call-dock>\n {4}<\/q-page-container>/);
     assert.match(shell, /<m-shell-palette><\/m-shell-palette>/);
     // the notify-history menu only without a Notifications tab
     assert.match(shell, /<q-btn v-if="!shellValues.trayNotifications" flat round dense icon="notifications" :aria-label="labels.notifyHistory">/);
