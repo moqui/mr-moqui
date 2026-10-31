@@ -130,6 +130,16 @@
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
 
+    <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
+        of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
+        rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
+        IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when rtc_media_host binds every
+        address). call_ring_seconds: how long a call rings before it is missed. -->
+    <default-property name="rtc_media_port" value=""/>
+    <default-property name="rtc_media_host" value="127.0.0.1"/>
+    <default-property name="rtc_public_address" value=""/>
+    <default-property name="call_ring_seconds" value="45"/>
+
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>
     <default-property name="entity_ds_host" value="127.0.0.1"/>
@@ -1006,6 +1016,7 @@
         <load-entity location="component://framework/entity/LlmEntities.xml"/>
         <load-entity location="component://framework/entity/AgentEntities.xml"/>
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
+        <load-entity location="component://framework/entity/CallEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1021,6 +1032,7 @@
         <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
+        <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

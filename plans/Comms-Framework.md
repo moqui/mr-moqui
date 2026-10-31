@@ -1,7 +1,7 @@
 # Comms Framework
 
-Status 2026-10-31: P0 (PWA and Web Push) and A0–A4 (the extension model and BasicComms) built; see [§7.4](#74-built).
-The W, V and C streams are next. The decisions are in [§8](#8-decisions). The libraries, reference applications and
+Status 2026-10-31: P0 (PWA and Web Push), A0–A4 (the extension model and BasicComms), W1 and W2 (calls on the embedded
+SFU) built; see [§7.4](#74-built). W3 and W4, then the V and C streams, are next. The decisions are in [§8](#8-decisions). The libraries, reference applications and
 review findings are in [§10](#10-libraries-and-sources).
 
 Comms moves from mr-boss into a framework component, `runtime/base-component/basic-comms`, beside `tools`. It gains
@@ -894,6 +894,22 @@ The W1 spike shows:
 It records versions, release dates, licenses and results. If neither str0m nor `rtc` passes, the dependent features
 wait, and their requirements stay.
 
+**The W1 gate (2026-10-31): str0m passed.**
+
+- **Version and licenses:** str0m 0.24.1 with `aws-lc-rs`, on crates.io as of the gate, MIT OR Apache-2.0. Its new
+  transitive crates are all MIT OR Apache-2.0 (License-Review). `cargo deny check licenses` passes.
+- **Build cost:** the `rtc` feature adds 5.2 MiB to a Dev binary and 56 s to the first build after it is turned on.
+- **Cases passed** (`cargo test -p moqui-rtc`, 14 tests on an in-memory network with simulated time, 0.2 s together):
+  - two and five parties;
+  - simulcast: the high layer unconstrained, the low layer at 350 kbps, up again when freed, audio only below the floor,
+    and a subscription capping the layer;
+  - renegotiation both ways, and glare (the SFU gives way);
+  - ICE restart, and a TCP-only client;
+  - generation fencing;
+  - a tap seeing published frames, and an injected source heard by every peer.
+- **Not yet shown:** five parties on real sockets; TWCC under real network loss. W4 and the live checks of §7.3 cover
+  those.
+
 ### 6.3 Signaling
 
 - **Frames.** A new client frame kind on `/notws`, `rtc`, in `crates/moqui-host/src/notws/rtc.rs` beside
@@ -1152,11 +1168,17 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 | A1 | `basic-comms` with the mail settings and `MailSettingsServices`; BOSS mounts them and hides BasicComms | c5fd370b, 4b32c17 | `BasicComms.spec.js`; BOSS MailAccounts, MailSettings |
 | A2 | Chat, the tray panel and chat settings; records through `record-lookup`, `record-link`, `create-from`; ext items with fixed values and `hook` | 3048ffea, 32ff28b | `BasicCommsChat.spec.js`; BOSS Chat, ChatPanel, ChatSettings |
 | A3 | Inbox, MessageDetail, Compose, Home; `run#Operation` (D-A8) with email-only framework services | c89628ba, 1ba7cd2 | `BasicCommsInbox.spec.js`; BOSS Inbox, Compose, CommsHome, InboxMailboxes |
-| A4 | The dependency check, [docs/tools/Comms.md](../docs/tools/Comms.md), the attack surface | this commit | the whole of `basic-comms` and the BOSS specs above, AppStructure, TuiRender |
+| A4 | The dependency check, [docs/tools/Comms.md](../docs/tools/Comms.md), the attack surface | 6bd856fd | the whole of `basic-comms` and the BOSS specs above, AppStructure, TuiRender |
+| W1 | `crates/moqui-rtc`: the SFU on str0m, with simulcast layers by TWCC, audio only below a floor, glare, generations, taps and injected sources. `moqui.call` (CallEntities) and `CallServices`/`Calls.js`: the state machine, ringing (chatUser pushes, Web Push with `ttlSeconds`), presence, and cleanup (`expire#Calls`). The host's media node (`src/rtc/`, `rtc_media_port`) and `/notws` rtc frames (`notws/rtc.rs`). `cluster::send_to` and the `rtc-signal` topic. BasicComms Calls, History, Call (`m-call`), CallTui, Settings/Calls and the Call button in Chat. `WebrootCall.js`: the store, the ring bar, LiveCall and m-call. BOSS mounts Calls | this commit, ebc570d; with W2 | `moqui-rtc` (14); `cluster::tests::a_direct_send…`; `it rtc::` (a direct call on a real server, 3.4 s); `Calls.spec.js` (11); `BasicCommsCalls.spec.js`; `BasicComms.spec.js`; BOSS AppStructure, TuiRender, Chat, ChatPanel, CommsHome; client `CallFlow` (two Chromium pages with fake media) |
+| W2 | The SFU's active speaker (the audio level extension, held for two looks) and a published track that stops (a screen share ending). In the browser: screen share by the page's own offer, the speaker view and the grid, layers asked by tile size (only the speaker off the call's screen), raised hands, reactions, the participants list, the audio-only notice. `find#Calls`, `count#MissedCalls`, `mark#MissedSeen`; History's All, Missed, Placed and Answered with Call back; Missed calls on Home (BasicComms and IronStone) and in Mantle's shell counts (`calls`) | this commit, ebc570d, mr-mantle 59a57970; with W1 | `moqui-rtc` speaker and share cases; `Calls.spec.js` history; `BasicComms`, `BasicCommsCalls`; BOSS CommsHome, AppStructure, TuiRender; client `CallFlow` (hand and speaker view too); `tui_screens` goldens (the new enumerations) |
 
 Left for later:
 - BOSS's own links to its Comms (Chatter, the contact record, the palette and demo services) stay `/qapps/Comms`, its root.
-- Calls, Call, LiveCall and Settings/Calls stay BOSS placeholders until W1 builds calls in BasicComms.
+- The W1 media path is on one node per call. Cascading SFUs are W7. TURN and real ICE-TCP framing are W4: until then,
+  a browser that cannot reach the UDP media port cannot make a call.
+- The browser shows the missed-call count on Home and the History tab. The `calls` shell count has no header badge yet.
+- Screen share and the active speaker are proven in `moqui-rtc` and in code. The client spec does not exercise them,
+  because headless Chromium has no fake screen picker and its fake microphone is a steady tone.
 - The drive picker (Attach from Files, Save to Files) is IronStone's, through screen-extend; BasicComms alone has none.
 - The framework-only Home has no Needs reply: `find#Messages` has no such filter.
 - mr-boss `design-drawers-commons.md` §12–14 and §17 still describe the screens in full.

@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls (plans/Comms-Framework.md §5.4, §6.3): a call is one CallSession whatever its transport; its people are
+    CallParticipants, and each way a participant is in it (a browser now; a guest, a desk phone or a phone number later) is
+    a CallLeg. A leg's live signaling socket is its CallConnection, replaced on a reconnect with the next generation, so a
+    reconnect makes no second participant or answer. Each user's history is CallUserLog. The media of a call is on one
+    node (mediaNodeId), a CallMediaNode the host registers while its media socket is up. No Java counterpart.
+
+    These are moqui.* entities, which entity filters never apply to: screens reach them only through
+    org.moqui.impl.CallServices, which checks the participant or the room. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="CallSession" package="moqui.call" use="transactional" cache="never">
+        <description>A call. A direct call (CskDirect) rings its callee until answered, declined, timed out or canceled; a
+            group call (CskGroup, a room's call or several users') is active from its start and the invited join it. statusId
+            goes CssRinging to CssActive to CssEnded, or CssRinging to CssEnded; revision counts its changes, so a client
+            and a repeated request see which state they act on. mediaNodeId is the instance holding its media;
+            mediaGeneration counts the times its media moved (a new node after a loss starts a new call, so it stays 1 for
+            now). encryptionMode is what protects its media: dtls-srtp (hop by hop through the SFU) until W8.</description>
+        <field name="callSessionId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="revision" type="number-integer" default="1"/>
+        <field name="directionEnumId" type="id"/>
+        <field name="video" type="text-indicator"/>
+        <field name="startedByUserId" type="id"/>
+        <field name="idempotencyKey" type="text-medium"><description>The starter's key for start#Call, so a repeated
+            request answers the same call</description></field>
+        <field name="startedDate" type="date-time"/>
+        <field name="ringExpireDate" type="date-time"/>
+        <field name="answeredDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="endReasonEnumId" type="id"/>
+        <field name="mediaNodeId" type="text-medium"/>
+        <field name="mediaGeneration" type="number-integer" default="1"/>
+        <field name="encryptionMode" type="text-short"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" title="CallSessionKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one" title="CallSession" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <relationship type="one" title="CallDirection" related="moqui.basic.Enumeration" short-alias="direction">
+            <key-map field-name="directionEnumId"/></relationship>
+        <relationship type="one" title="CallEndReason" related="moqui.basic.Enumeration" short-alias="endReason">
+            <key-map field-name="endReasonEnumId"/></relationship>
+        <relationship type="one-nofk" title="StartedBy" related="moqui.security.UserAccount" short-alias="startedBy">
+            <key-map field-name="startedByUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.call.CallParticipant" short-alias="participants">
+            <key-map field-name="callSessionId"/></relationship>
+        <relationship type="many" related="moqui.call.CallLeg" short-alias="legs">
+            <key-map field-name="callSessionId"/></relationship>
+        <index name="CALL_SESSION_ROOM"><index-field name="chatRoomId"/><index-field name="statusId"/></index>
+        <index name="CALL_SESSION_STATUS"><index-field name="statusId"/><index-field name="ringExpireDate"/></index>
+        <index name="CALL_SESSION_IDEM"><index-field name="startedByUserId"/><index-field name="idempotencyKey"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Session Kind" enumTypeId="CallSessionKind"/>
+            <moqui.basic.Enumeration description="Direct" enumId="CskDirect" enumCode="direct" enumTypeId="CallSessionKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Group" enumId="CskGroup" enumCode="group" enumTypeId="CallSessionKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Meeting" enumId="CskMeeting" enumCode="meeting" enumTypeId="CallSessionKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Phone" enumId="CskPhone" enumCode="phone" enumTypeId="CallSessionKind" sequenceNum="4"/>
+
+            <moqui.basic.StatusType description="Call Session" statusTypeId="CallSession"/>
+            <moqui.basic.StatusItem statusId="CssRinging" statusTypeId="CallSession" sequenceNum="1" description="Ringing"/>
+            <moqui.basic.StatusItem statusId="CssActive" statusTypeId="CallSession" sequenceNum="2" description="Active"/>
+            <moqui.basic.StatusItem statusId="CssEnded" statusTypeId="CallSession" sequenceNum="3" description="Ended"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CssRinging" toStatusId="CssActive" transitionName="Answer"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CssRinging" toStatusId="CssEnded" transitionName="End"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CssActive" toStatusId="CssEnded" transitionName="End"/>
+
+            <moqui.basic.EnumerationType description="Call Direction" enumTypeId="CallDirection"/>
+            <moqui.basic.Enumeration description="Internal" enumId="CdrInternal" enumCode="internal" enumTypeId="CallDirection" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Inbound" enumId="CdrInbound" enumCode="inbound" enumTypeId="CallDirection" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Outbound" enumId="CdrOutbound" enumCode="outbound" enumTypeId="CallDirection" sequenceNum="3"/>
+
+            <moqui.basic.EnumerationType description="Call End Reason" enumTypeId="CallEndReason"/>
+            <moqui.basic.Enumeration description="Hung up" enumId="CerHangup" enumCode="hangup" enumTypeId="CallEndReason" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Declined" enumId="CerDeclined" enumCode="declined" enumTypeId="CallEndReason" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="No answer" enumId="CerNoAnswer" enumCode="noAnswer" enumTypeId="CallEndReason" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Canceled" enumId="CerCanceled" enumCode="canceled" enumTypeId="CallEndReason" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Connection lost" enumId="CerConnectionLost" enumCode="connectionLost" enumTypeId="CallEndReason" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Media server lost" enumId="CerMediaNodeLost" enumCode="mediaNodeLost" enumTypeId="CallEndReason" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Everyone left" enumId="CerEmpty" enumCode="empty" enumTypeId="CallEndReason" sequenceNum="7"/>
+            <moqui.basic.Enumeration description="Failed" enumId="CerFailed" enumCode="failed" enumTypeId="CallEndReason" sequenceNum="8"/>
+            <moqui.basic.Enumeration description="Removed" enumId="CerRemoved" enumCode="removed" enumTypeId="CallEndReason" sequenceNum="9"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallParticipant" package="moqui.call" use="transactional" cache="never">
+        <description>A person in a call: a local user (CikLocal), and later a guest (CikGuest) or a phone party (CikPhone).
+            Being a participant grants only what the call allows (its media and its controls), not room membership.
+            admissionStatusId: CasInvited (rung, not yet in), CasAdmitted, CasWaiting (a guest in the lobby), CasDenied,
+            CasRevoked (removed: their legs end and cannot come back).</description>
+        <field name="callParticipantId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="identityKindEnumId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="callGuestId" type="id"/>
+        <field name="chatActorId" type="id"><description>The chat actor, once chat has actors (C1)</description></field>
+        <field name="displayName" type="text-medium"/>
+        <field name="roleEnumId" type="id"/>
+        <field name="admissionStatusId" type="id"/>
+        <field name="admittedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="CallIdentityKind" related="moqui.basic.Enumeration" short-alias="identityKind">
+            <key-map field-name="identityKindEnumId"/></relationship>
+        <relationship type="one" title="CallParticipantRole" related="moqui.basic.Enumeration" short-alias="role">
+            <key-map field-name="roleEnumId"/></relationship>
+        <relationship type="one" title="CallAdmission" related="moqui.basic.StatusItem" short-alias="admission">
+            <key-map field-name="admissionStatusId"/></relationship>
+        <index name="CALL_PART_USER" unique="true"><index-field name="callSessionId"/><index-field name="userId"/></index>
+        <index name="CALL_PART_BY_USER"><index-field name="userId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Identity Kind" enumTypeId="CallIdentityKind"/>
+            <moqui.basic.Enumeration description="User" enumId="CikLocal" enumCode="local" enumTypeId="CallIdentityKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Guest" enumId="CikGuest" enumCode="guest" enumTypeId="CallIdentityKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Phone" enumId="CikPhone" enumCode="phone" enumTypeId="CallIdentityKind" sequenceNum="3"/>
+
+            <moqui.basic.EnumerationType description="Call Participant Role" enumTypeId="CallParticipantRole"/>
+            <moqui.basic.Enumeration description="Host" enumId="CprHost" enumCode="host" enumTypeId="CallParticipantRole" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Member" enumId="CprMember" enumCode="member" enumTypeId="CallParticipantRole" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Guest" enumId="CprGuest" enumCode="guest" enumTypeId="CallParticipantRole" sequenceNum="3"/>
+
+            <moqui.basic.StatusType description="Call Admission" statusTypeId="CallAdmission"/>
+            <moqui.basic.StatusItem statusId="CasInvited" statusTypeId="CallAdmission" sequenceNum="1" description="Invited"/>
+            <moqui.basic.StatusItem statusId="CasWaiting" statusTypeId="CallAdmission" sequenceNum="2" description="Waiting"/>
+            <moqui.basic.StatusItem statusId="CasAdmitted" statusTypeId="CallAdmission" sequenceNum="3" description="Admitted"/>
+            <moqui.basic.StatusItem statusId="CasDenied" statusTypeId="CallAdmission" sequenceNum="4" description="Denied"/>
+            <moqui.basic.StatusItem statusId="CasRevoked" statusTypeId="CallAdmission" sequenceNum="5" description="Removed"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallLeg" package="moqui.call" use="transactional" cache="never">
+        <description>One way a participant is in a call. A web leg (CltWeb) is a browser; guest, desk-phone and phone legs
+            come later. statusId keeps the outcome: ClsOffered (ringing), ClsAnswered (in the call: answered, or joined),
+            ClsDeclined, ClsCanceled (the caller stopped first, or another device answered), ClsTimedOut, ClsFailed,
+            ClsLeft. joinedDate is when its media first connected. qualityJson the last quality the media node reported.</description>
+        <field name="callLegId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="legTypeEnumId" type="id"/>
+        <field name="phoneNumber" type="text-short"/>
+        <field name="sipDeviceId" type="id"/>
+        <field name="offeredDate" type="date-time"/>
+        <field name="answeredDate" type="date-time"/>
+        <field name="joinedDate" type="date-time"/>
+        <field name="leftDate" type="date-time"/>
+        <field name="statusId" type="id"/>
+        <field name="endReasonEnumId" type="id"/>
+        <field name="qualityJson" type="text-long"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one" related="moqui.call.CallParticipant" short-alias="participant"/>
+        <relationship type="one" title="CallLegType" related="moqui.basic.Enumeration" short-alias="legType">
+            <key-map field-name="legTypeEnumId"/></relationship>
+        <relationship type="one" title="CallLeg" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <relationship type="one" title="CallEndReason" related="moqui.basic.Enumeration" short-alias="endReason">
+            <key-map field-name="endReasonEnumId"/></relationship>
+        <relationship type="many" related="moqui.call.CallConnection" short-alias="connections">
+            <key-map field-name="callLegId"/></relationship>
+        <index name="CALL_LEG_SESSION"><index-field name="callSessionId"/><index-field name="statusId"/></index>
+        <index name="CALL_LEG_PART"><index-field name="callParticipantId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Leg Type" enumTypeId="CallLegType"/>
+            <moqui.basic.Enumeration description="Browser" enumId="CltWeb" enumCode="web" enumTypeId="CallLegType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Guest browser" enumId="CltGuest" enumCode="guest" enumTypeId="CallLegType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Desk or soft phone" enumId="CltSipDevice" enumCode="sipDevice" enumTypeId="CallLegType" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Phone number" enumId="CltPstn" enumCode="pstn" enumTypeId="CallLegType" sequenceNum="4"/>
+
+            <moqui.basic.StatusType description="Call Leg" statusTypeId="CallLeg"/>
+            <moqui.basic.StatusItem statusId="ClsOffered" statusTypeId="CallLeg" sequenceNum="1" description="Ringing"/>
+            <moqui.basic.StatusItem statusId="ClsAnswered" statusTypeId="CallLeg" sequenceNum="2" description="In the call"/>
+            <moqui.basic.StatusItem statusId="ClsDeclined" statusTypeId="CallLeg" sequenceNum="3" description="Declined"/>
+            <moqui.basic.StatusItem statusId="ClsCanceled" statusTypeId="CallLeg" sequenceNum="4" description="Canceled"/>
+            <moqui.basic.StatusItem statusId="ClsTimedOut" statusTypeId="CallLeg" sequenceNum="5" description="No answer"/>
+            <moqui.basic.StatusItem statusId="ClsFailed" statusTypeId="CallLeg" sequenceNum="6" description="Failed"/>
+            <moqui.basic.StatusItem statusId="ClsLeft" statusTypeId="CallLeg" sequenceNum="7" description="Left"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallConnection" package="moqui.call" use="transactional" cache="never">
+        <description>A leg's signaling socket. Binding a socket to a leg (bind#Connection) claims the leg's next generation
+            and fences the older connection (CcsReplaced): the media node refuses frames of an older generation. The host
+            refreshes lastHeartbeatDate while the socket is open; a closed (CcsClosed) or silent connection with no newer
+            one ends its leg after the grace period (expire#Calls).</description>
+        <field name="callConnectionId" type="id" is-pk="true"/>
+        <field name="callLegId" type="id"/>
+        <field name="generation" type="number-integer"/>
+        <field name="signalingNodeId" type="text-medium"/>
+        <field name="connectedDate" type="date-time"/>
+        <field name="credentialExpiry" type="date-time"/>
+        <field name="lastHeartbeatDate" type="date-time"/>
+        <field name="closedDate" type="date-time"/>
+        <field name="statusId" type="id"/>
+        <relationship type="one" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one" title="CallConnection" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <index name="CALL_CONN_GEN" unique="true"><index-field name="callLegId"/><index-field name="generation"/></index>
+        <index name="CALL_CONN_STATUS"><index-field name="statusId"/><index-field name="lastHeartbeatDate"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Call Connection" statusTypeId="CallConnection"/>
+            <moqui.basic.StatusItem statusId="CcsActive" statusTypeId="CallConnection" sequenceNum="1" description="Active"/>
+            <moqui.basic.StatusItem statusId="CcsReplaced" statusTypeId="CallConnection" sequenceNum="2" description="Replaced"/>
+            <moqui.basic.StatusItem statusId="CcsClosed" statusTypeId="CallConnection" sequenceNum="3" description="Closed"/>
+            <moqui.basic.StatusItem statusId="CcsExpired" statusTypeId="CallConnection" sequenceNum="4" description="Expired"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallUserLog" package="moqui.call" use="transactional" cache="never">
+        <description>A user's history of a call: their part in it (caller, callee) and its outcome for them (placed,
+            answered, missed, declined). A user's call history and missed calls come from these rows; seenDate is when they
+            saw a missed call. Every user a call rang has a row.</description>
+        <field name="callSessionId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="roleEnumId" type="id"/>
+        <field name="outcomeEnumId" type="id"/>
+        <field name="logDate" type="date-time"><description>When the call started, for listing</description></field>
+        <field name="durationSeconds" type="number-integer"><description>How long the user was in the call</description></field>
+        <field name="seenDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="CallUserRole" related="moqui.basic.Enumeration" short-alias="role">
+            <key-map field-name="roleEnumId"/></relationship>
+        <relationship type="one" title="CallOutcome" related="moqui.basic.Enumeration" short-alias="outcome">
+            <key-map field-name="outcomeEnumId"/></relationship>
+        <index name="CALL_LOG_USER"><index-field name="userId"/><index-field name="logDate"/></index>
+        <index name="CALL_LOG_MISSED"><index-field name="userId"/><index-field name="outcomeEnumId"/><index-field name="seenDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call User Role" enumTypeId="CallUserRole"/>
+            <moqui.basic.Enumeration description="Caller" enumId="CurCaller" enumCode="caller" enumTypeId="CallUserRole" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Callee" enumId="CurCallee" enumCode="callee" enumTypeId="CallUserRole" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Ring group member" enumId="CurRingGroupMember" enumCode="ringGroupMember" enumTypeId="CallUserRole" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Queue agent" enumId="CurQueueAgent" enumCode="queueAgent" enumTypeId="CallUserRole" sequenceNum="4"/>
+
+            <moqui.basic.EnumerationType description="Call Outcome" enumTypeId="CallOutcome"/>
+            <moqui.basic.Enumeration description="Placed" enumId="CuoPlaced" enumCode="placed" enumTypeId="CallOutcome" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Answered" enumId="CuoAnswered" enumCode="answered" enumTypeId="CallOutcome" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Missed" enumId="CuoMissed" enumCode="missed" enumTypeId="CallOutcome" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Declined" enumId="CuoDeclined" enumCode="declined" enumTypeId="CallOutcome" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallMediaNode" package="moqui.call" use="nontransactional" cache="never">
+        <description>A server holding call media: its instance id (the cluster's), the address browsers send media to, and
+            the last time it said it was up (the host refreshes it while its media socket is open). A call's media node
+            whose heartbeat is older than the grace period is lost: its calls end with CerMediaNodeLost.</description>
+        <field name="instanceId" type="text-medium" is-pk="true"/>
+        <field name="mediaAddress" type="text-medium"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="heartbeatDate" type="date-time"/>
+        <field name="draining" type="text-indicator"><description>Y: takes no new calls, its calls finish</description></field>
+    </entity>
+</entities>

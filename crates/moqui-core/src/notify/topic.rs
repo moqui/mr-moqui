@@ -31,6 +31,10 @@ pub const COLLAB_UPDATE: &str = "collab-update";
 /// Web sessions ended on one server (`end#UserVisit`), `{"sessionIds": [..]}`, so every server stops serving its live copy.
 pub const SESSION_END: &str = "session-end";
 
+/// A call's signaling and control for the node holding its media, or a reply for the node holding a leg's socket
+/// (plans/Comms-Framework.md §6.3), sent to that one member ([`crate::cluster::send_to`]) with its `target` in the body.
+pub const RTC_SIGNAL: &str = "rtc-signal";
+
 const RECENT_IDS: usize = 1024;
 
 /// A published message. `body` is the topic payload. `origin_id` is this process.
@@ -90,6 +94,7 @@ impl Bus {
         self.topics.entry(NOTIFICATION_MESSAGE.to_string()).or_default();
         self.topics.entry(COLLAB_UPDATE.to_string()).or_default();
         self.topics.entry(SESSION_END.to_string()).or_default();
+        self.topics.entry(RTC_SIGNAL.to_string()).or_default();
     }
 
     /// True the first time `id` is seen. A later publish of the same id is dropped until it ages out.
@@ -125,8 +130,8 @@ pub fn install() {
     lock().ensure();
 }
 
-/// Subscribe to `name`. Only [`ENTITY_CACHE_INVALIDATE`], [`NOTIFICATION_MESSAGE`], [`COLLAB_UPDATE`] and
-/// [`SESSION_END`] exist.
+/// Subscribe to `name`. Only [`ENTITY_CACHE_INVALIDATE`], [`NOTIFICATION_MESSAGE`], [`COLLAB_UPDATE`],
+/// [`SESSION_END`] and [`RTC_SIGNAL`] exist.
 ///
 /// # Errors
 ///

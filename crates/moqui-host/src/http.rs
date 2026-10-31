@@ -245,6 +245,7 @@ pub(crate) async fn listen(
     let app = if notws {
         moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "/notws");
         notws::collab::install(&factory, shutdown_rx.clone());
+        notws::rtc::install(&factory, shutdown_rx.clone());
         app.route("/notws", get(notws::upgrade))
     } else {
         moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "");

@@ -711,6 +711,7 @@ const roomTemplate = `
                 <span class="text-caption m-muted q-ml-xs">{{members.length}}</span><q-tooltip>{{t('Members')}}</q-tooltip>
             </div>
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
+            <q-btn v-if="canCall" flat round dense icon="sym_o_call" :aria-label="t('Call')" @click="startCall"><q-tooltip>{{t('Call: everyone in the room rings')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_search" :aria-label="t('Search in the room')" @click="openSide('search')"><q-tooltip>{{t('Search in the room')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_forum" :aria-label="t('Threads')" @click="openSide('threads')"><q-tooltip>{{t('Threads')}}</q-tooltip></q-btn>
@@ -1066,6 +1067,8 @@ const chatRoom = {
     computed: {
         self() { return this; },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
+        // a call from the room, where the server holds calls (config.calls) and the user may post in it
+        canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
         canModerate() { return !!this.access.canModerate; },
@@ -1167,6 +1170,10 @@ const chatRoom = {
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
             }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
+        startCall() {
+            if (moqui.call) moqui.call.startCall({ chatRoomId: this.roomId, video: true });
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },

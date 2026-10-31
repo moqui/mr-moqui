@@ -1,15 +1,16 @@
 # Comms
 
 BasicComms is the framework's Comms app at `/qapps/BasicComms`: the Inbox and Compose over the user's mail accounts,
-MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab) and the mail and chat settings. It
-works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
+MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab), calls, and the mail, chat and call
+settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
-order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); calls, voice and chat bridges come
-later there.
+order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); voice and chat bridges come later
+there.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
-`framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`); the mail client is
-`org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`.
+`framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
+`org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
+`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)).
 
 ## For users
 
@@ -21,6 +22,16 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   scheduled sending.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
   and status in the account menu. The tray's Chat tab is the same view, smaller.
+- <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
+  members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
+  audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
+  share the screen, raise a hand, reactions, the participants, the grid or the speaker view (the one speaking, or a
+  screen share, large), and Leave; the host of a group call can end it for everyone. A person whose bandwidth is too low
+  gets audio only, and their tile says so. Going to another screen keeps the call in the small window at the bottom
+  right. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back; Home counts the
+  missed calls until the Missed tab is opened. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
+  or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
+  there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).

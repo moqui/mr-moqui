@@ -5749,7 +5749,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "d0ce06c5", make: function (Vue) {
+        "m-qapps-root": { hash: "adfcf6a5", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
@@ -5784,6 +5784,7 @@
               const _component_q_page = _resolveComponent("q-page")
               const _component_m_assist_canvas = _resolveComponent("m-assist-canvas")
               const _component_m_shell_tray = _resolveComponent("m-shell-tray")
+              const _component_m_call_dock = _resolveComponent("m-call-dock")
               const _component_q_page_container = _resolveComponent("q-page-container")
               const _component_q_footer = _resolveComponent("q-footer")
               const _component_q_layout = _resolveComponent("q-layout")
@@ -6638,6 +6639,9 @@
                           : _createCommentVNode("", true),
                         (_ctx.trayTabs.length)
                           ? (_openBlock(), _createBlock(_component_m_shell_tray, { key: 1 }))
+                          : _createCommentVNode("", true),
+                        (_ctx.callsOn)
+                          ? (_openBlock(), _createBlock(_component_m_call_dock, { key: 2 }))
                           : _createCommentVNode("", true)
                       ]),
                       _: 1

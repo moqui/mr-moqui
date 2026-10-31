@@ -698,6 +698,21 @@ fn fresh_file(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     path
 }
 
+/// The spec browser's switches beyond the shared ones: Chromium's fake camera and microphone, granted without a prompt,
+/// and media that plays without a gesture, so a call spec has media (plans/Comms-Framework.md §7.3); with `--insecure`,
+/// certificate errors ignored.
+fn browser_args(insecure: bool) -> Vec<String> {
+    let mut args = vec![
+        "--use-fake-device-for-media-stream".to_string(),
+        "--use-fake-ui-for-media-stream".to_string(),
+        "--autoplay-policy=no-user-gesture-required".to_string(),
+    ];
+    if insecure {
+        args.push("--ignore-certificate-errors".to_string());
+    }
+    args
+}
+
 impl SpecBrowser {
     /// Start the spec's browser.
     pub(crate) fn launch(config: &BrowserConfig) -> Result<SpecBrowser, String> {
@@ -708,11 +723,7 @@ impl SpecBrowser {
             headed: config.headed,
             window: VIEWPORT,
             profile_prefix: "moqui-test-chromium".to_string(),
-            extra_args: if config.insecure {
-                vec!["--ignore-certificate-errors".to_string()]
-            } else {
-                Vec::new()
-            },
+            extra_args: browser_args(config.insecure),
         };
         let driver = cdp::Browser::start(&launch)?;
         Ok(SpecBrowser {

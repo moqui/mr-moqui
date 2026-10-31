@@ -21,6 +21,7 @@ members = [
     "crates/moqui-mail",
     "crates/moqui-report",
     "crates/moqui-collab",
+    "crates/moqui-rtc",
     "crates/moqui-dav",
     "crates/moqui-devkit",
     "crates/moqui-drivers",
@@ -76,6 +77,9 @@ moqui-mail = { path = "crates/moqui-mail", default-features = false }
 moqui-report = { path = "crates/moqui-report", default-features = false }
 # Co-edited documents and the collab services, on moqui-core (plans/Crate-Split.md); the host links it in every build.
 moqui-collab = { path = "crates/moqui-collab" }
+# Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
+# links it under its rtc feature and owns the sockets.
+moqui-rtc = { path = "crates/moqui-rtc" }
 # The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
 # host links it in every build.
 moqui-dav = { path = "crates/moqui-dav" }
@@ -309,6 +313,10 @@ sha2_11 = { package = "sha2", version = "0.11", default-features = false }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
 ipp = { version = "7", default-features = false }
+
+# WebRTC for calls (moqui-rtc, plans/Comms-Framework.md §6.2, D-W1): sans-IO ICE-lite, DTLS-SRTP, simulcast, TWCC.
+# default-features off leaves out its examples (rouille); aws-lc-rs is the crypto rustls already links.
+str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"] }
 
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the

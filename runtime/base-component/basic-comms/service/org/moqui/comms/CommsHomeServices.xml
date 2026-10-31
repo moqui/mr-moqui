@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="CommsHome">
         <description>Comms Home for the current user, over the user's mail and chat. cardList: the counters, each {key, title,
             value, icon, link}: one per mail account with its unread Inbox mail, Flagged, Snoozed (back by the end of today),
-            Mentions (chat) and Not sent (sends that failed). roomList: the chat rooms with unread, ten at most. needsReplyList,
+            Mentions (chat), Not sent (sends that failed) and Missed calls (not seen yet). roomList: the chat rooms with unread, ten at most. needsReplyList,
             followUpList, meetingList and mailboxList are an app's (its inbox-source answers this operation) and empty here.
             hasMailAccount is false until the user has a mail account; problemAccountList names the accounts whose sign-in or
             sync failed, with canManage (only a manager fixes one). failedParts names what could not be read.</description>
@@ -109,6 +109,12 @@ along with this software (see the LICENSE.md file). If not, see
             part('mentions', () => {
                 const total = rooms?.mentionTotal || 0
                 cardList.push({key: 'mentions', title: L('Mentions'), value: count(total), icon: 'sym_o_alternate_email', link: APP + '/Chat'})
+            })
+            // missed calls not seen yet, into the Calls history's Missed tab
+            part('missedCalls', () => {
+                const missed = callService('org.moqui.impl.CallServices.count#MissedCalls').missedCount || 0
+                cardList.push({key: 'missedCalls', title: L('Missed calls'), value: count(missed), icon: missed ? 'sym_o_phone_missed' : 'sym_o_call',
+                    link: APP + '/Calls/History?outcome=missed'})
             })
             if (rooms) roomList = Array.from(rooms.roomList || []).filter((room) => (room.unreadCount || 0) > 0 || (room.mentionCount || 0) > 0).slice(0, 10)
                 .map((room) => ({chatRoomId: room.chatRoomId, name: room.displayName || room.roomName || room.chatRoomId, unreadCount: room.unreadCount || 0,

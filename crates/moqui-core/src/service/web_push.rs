@@ -46,8 +46,7 @@ const KEY_PROPERTY: &str = "web_push_vapid_key";
 const SUBJECT_PROPERTY: &str = "web_push_subject";
 /// A subscription is disabled after this many failed pushes in a row.
 pub(crate) const MAX_FAILURES: i64 = 5;
-/// How long a push service keeps an undelivered message.
-#[cfg(feature = "web-push")]
+/// How long a push service keeps an undelivered message, at most (a call's ring asks for less).
 const TTL_SECONDS: u32 = 86_400;
 #[cfg(feature = "web-push")]
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -398,6 +397,18 @@ fn send_web_push(
         "tag": text(parameters, "tag").unwrap_or_default(),
     })
     .to_string();
+    // A call's ring is worth nothing once the call stops ringing: it expires at the push service (§7.2).
+    let ttl = parameters
+        .get("ttlSeconds")
+        .and_then(|v| to_plain_string(v).parse::<u32>().ok())
+        .filter(|t| *t > 0)
+        .map_or(TTL_SECONDS, |t| t.min(TTL_SECONDS));
+    let urgency = if text(parameters, "urgency").as_deref() == Some("high") {
+        "high"
+    } else {
+        "normal"
+    };
+    let delivery = Delivery { ttl, urgency };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let rows = facade
         .find(SUBSCRIPTION)?
@@ -413,7 +424,7 @@ fn send_web_push(
         let endpoint = field(row, "endpoint");
         let status = push_crypto::encrypt(payload.as_bytes(), &field(row, "p256dhKey"), &field(row, "authSecret"))
             .and_then(|body| Ok((body, key.authorization(&endpoint, &subject, now_secs)?)))
-            .and_then(|(body, authorization)| post(&endpoint, body, &authorization));
+            .and_then(|(body, authorization)| post(&endpoint, body, &authorization, &delivery));
         let result = match status {
             Ok(status) => outcome(Some(status)),
             Err(reason) => {
@@ -463,10 +474,17 @@ fn record(facade: &EntityFacade, row: &EntityValue, result: &Outcome) -> Result<
     Ok(())
 }
 
+/// How long the push service keeps a push for an offline device, and its urgency (RFC 8030 §5.2, §5.3).
+#[cfg_attr(not(feature = "web-push"), allow(dead_code))]
+struct Delivery {
+    ttl: u32,
+    urgency: &'static str,
+}
+
 /// POST the encrypted body; the push service's status. A push service is a public host: internal addresses are
 /// refused, as for any URL a browser hands the server.
 #[cfg(feature = "web-push")]
-fn post(endpoint: &str, body: Vec<u8>, authorization: &str) -> Result<u16, String> {
+fn post(endpoint: &str, body: Vec<u8>, authorization: &str, delivery: &Delivery) -> Result<u16, String> {
     use std::sync::OnceLock;
     crate::entity::fence::check_effect(crate::entity::fence::Effect::RemoteCall, "a Web Push")
         .map_err(|err| err.message().to_string())?;
@@ -484,8 +502,8 @@ fn post(endpoint: &str, body: Vec<u8>, authorization: &str) -> Result<u16, Strin
             headers: vec![
                 ("content-type".to_string(), "application/octet-stream".to_string()),
                 ("content-encoding".to_string(), "aes128gcm".to_string()),
-                ("ttl".to_string(), TTL_SECONDS.to_string()),
-                ("urgency".to_string(), "normal".to_string()),
+                ("ttl".to_string(), delivery.ttl.to_string()),
+                ("urgency".to_string(), delivery.urgency.to_string()),
                 ("authorization".to_string(), authorization.to_string()),
             ],
             body: Some(bytes::Bytes::from(body)),
@@ -503,7 +521,7 @@ fn post(endpoint: &str, body: Vec<u8>, authorization: &str) -> Result<u16, Strin
 }
 
 #[cfg(not(feature = "web-push"))]
-fn post(_endpoint: &str, _body: Vec<u8>, _authorization: &str) -> Result<u16, String> {
+fn post(_endpoint: &str, _body: Vec<u8>, _authorization: &str, _delivery: &Delivery) -> Result<u16, String> {
     Err("Web Push is not built into this host".to_string())
 }
 

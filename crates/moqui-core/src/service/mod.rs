@@ -18,6 +18,7 @@
 pub(crate) mod rust_services;
 mod backup;
 pub mod call;
+mod call_media;
 mod chat;
 mod chat_link;
 #[cfg(test)]

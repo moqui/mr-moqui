@@ -16,6 +16,8 @@ maximal = ["moqui-host/maximal"]
 # The SMTP listener for hosted and shared mail accounts (docs/interfaces/Mail-Inbound.md), in Enterprise and Maximal; for a
 # Default build `./moq build -- --features inbound-smtp`.
 inbound-smtp = ["moqui-host/inbound-smtp"]
+# Calls (crates/moqui-rtc), in Enterprise, Maximal and Debug; for a Default build `./moq build -- --features rtc`.
+rtc = ["moqui-host/rtc"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the

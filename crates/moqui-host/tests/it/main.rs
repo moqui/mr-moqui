@@ -80,6 +80,8 @@ mod report_alerts;
 mod report_documents;
 mod report_monitoring;
 mod report_schedule_lock;
+#[cfg(feature = "rtc")]
+mod rtc;
 mod search;
 mod search_logs_postgres;
 mod search_opensearch;

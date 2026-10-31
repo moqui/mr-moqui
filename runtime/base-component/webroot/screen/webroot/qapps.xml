@@ -51,6 +51,8 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/WebrootExt.js')
         // the PWA's service worker and Web Push (moqui.push, the account menu's Notifications on this device)
         if (ec.user.userId) footer_scripts.add('/js/WebrootPush.js')
+        // calls: the ring bar, the LiveCall window and m-call (moqui.call), for a signed-in user
+        if (ec.user.userId) footer_scripts.add('/js/WebrootCall.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')
@@ -140,6 +142,8 @@ along with this software (see the LICENSE.md file). If not, see
             leftMini: ec.user.getPreference('QUASAR_LEFT_MINI') == 'true',
             density: density, startApp: startApp,
             notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
+            // calls (js/WebrootCall.js): the Comms app the call links and transitions are under, for a signed-in user with the socket
+            calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
             // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
             terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
             navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),

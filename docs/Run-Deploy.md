@@ -234,6 +234,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
 | `pdf_chromium_path` | empty | The Chromium that prints PDF; empty looks in `runtime/chromium`, then on the PATH |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
+| `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
+| `call_ring_seconds` | `45` | How long a call rings before it is missed |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -411,6 +413,7 @@ external database.
 | 8444 | Cluster HTTPS, client certificate required | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
+| `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)) | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` |
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
 

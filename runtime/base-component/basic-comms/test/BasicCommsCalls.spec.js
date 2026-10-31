@@ -1,0 +1,118 @@
+// BasicComms Calls (screen/BasicComms/Calls.xml, Calls/History, Calls/Call and its terminal twin; plans/Comms-Framework.md
+// W1): a user with no party calls john.doe through the Calls transitions the page's call store posts to, john.doe answers
+// and both see the call in History; a user who is not in the call is refused the same post that works for john.doe, through
+// either mount (IronStone's /qapps/Comms when it is installed); the terminal twin shows the call and leaves it.
+// Run: ./moq test basic-comms --spec BasicCommsCalls
+const root = "component://basic-comms/screen/BasicComms.xml"
+const bossRoot = "component://mr-boss/screen/Comms.xml"
+const CALLER = "BASIC_COMMS_CALLER"
+const STRANGER = "BASIC_COMMS_CALL_STRANGER"
+const NODE = "basic-comms-calls-spec"
+const bossInstalled = ec.resource.getLocationReference(bossRoot).getExists()
+let callId = null
+
+function sys(run) {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try {
+        return run()
+    } finally {
+        if (!wasDisabled) ec.artifactExecution.enableAuthz()
+    }
+}
+function request(rootLocation, path, parameters, method) {
+    const str = ec.screen.makeTest().rootScreen(rootLocation).render(path, parameters || {}, method || null)
+    const output = String(str.output || "")
+    ec.message.clearErrors()
+    let json = null
+    try {
+        json = JSON.parse(output)
+    } catch (err) {
+        json = null
+    }
+    return {status: str.status, json: json || {}, output}
+}
+const post = (rootLocation, name, parameters) => request(rootLocation, "Calls/" + name, parameters, "post")
+function makeUser(userId, username) {
+    sys(() => {
+        if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() > 0) return
+        const account = ec.entity.makeValue("moqui.security.UserAccount")
+        account.setFields({userId, username, userFullName: "Calls " + username, disabled: "N"}, true, null, null)
+        account.create()
+    })
+}
+const john = () => sys(() => ec.entity.find("moqui.security.UserAccount").condition("username", "john.doe").one().userId)
+
+spec({
+    stepwise: true,
+    setupSpec() {
+        makeUser(CALLER, "basic.comms.caller")
+        makeUser(STRANGER, "basic.comms.call.stranger")
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
+    },
+    cleanupSpec() {
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).deleteAll())
+    }
+})
+
+feature("a user with no party calls john.doe and he answers, through the Calls transitions", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.caller")
+        const caps = request(root, "Calls/capabilities", {}, null)
+        const started = post(root, "startCall", {calleeUserIdList: john(), video: "true"})
+        callId = started.json.callSessionId
+        login("john.doe")
+        const ringing = request(root, "Calls/activeCalls", {}, null)
+        const answered = post(root, "answerCall", {callSessionId: callId})
+        const history = request(root, "Calls/History", {}, null)
+        return {caps, started, ringing, answered, history}
+    },
+    then({caps, started, ringing, answered, history}) {
+        caps.json.active == true
+        started.json.errors == null
+        started.json.call.kind == "direct"
+        started.json.callLegId != null
+        ringing.json.callList.some(c => c.callSessionId == callId && c.myLegStatus == "offered")
+        answered.json.call.status == "active"
+        answered.json.callLegId != null
+        history.status == 200
+        history.output.includes("In the call")
+    }
+})
+
+feature("a user who is not in the call is refused what works for john.doe, through either mount", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.call.stranger")
+        const roots = bossInstalled ? [root, bossRoot] : [root]
+        const refused = roots.map(r => ({
+            state: request(r, "Calls/callState", {callSessionId: callId}, null).json,
+            join: post(r, "joinCall", {callSessionId: callId}).json,
+            end: post(r, "endCall", {callSessionId: callId}).json
+        }))
+        login("john.doe")
+        const allowed = roots.map(r => request(r, "Calls/callState", {callSessionId: callId}, null).json)
+        return {refused, allowed}
+    },
+    then({refused, allowed}) {
+        refused.every(r => r.state.reasonCode == "notFound" && r.state.call == null)
+        refused.every(r => r.join.reasonCode == "notFound")
+        refused.every(r => r.end.reasonCode == "notFound")
+        allowed.every(a => a.call && a.call.status == "active")
+    }
+})
+
+feature("the terminal twin shows the call and leaves it", {
+    when() {
+        login("john.doe")
+        const shown = sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: callId}, null))
+        const text = String(shown.output || "")
+        ec.message.clearErrors()
+        request(root, "Calls/CallTui/leave", {callSessionId: callId}, "post")
+        const after = request(root, "Calls/callState", {callSessionId: callId}, null).json
+        return {text, after}
+    },
+    then({text, after}) {
+        text.includes("not live in the terminal")
+        text.includes("Calls basic.comms.caller")
+        after.call.status == "ended"
+    }
+})

@@ -22,8 +22,11 @@
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
 
+mod direct;
 #[cfg(all(test, feature = "cluster-tls"))]
 mod tests;
+
+pub use direct::{for_this_member, send_to, DIRECT_LIMIT};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -46,7 +49,9 @@ use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::driver::DbRow;
 use crate::entity::exec::with_reserve_tx;
 use crate::entity::EntityFacade;
-use crate::notify::{self, TopicMessage, COLLAB_UPDATE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE, SESSION_END};
+use crate::notify::{
+    self, TopicMessage, COLLAB_UPDATE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE, RTC_SIGNAL, SESSION_END,
+};
 use crate::user::{now_millis, now_value, value_millis};
 
 const MEMBER: &str = "moqui.server.ClusterMember";
@@ -93,6 +98,9 @@ pub(crate) struct ClusterState {
     /// Batches the sender thread has taken and not finished, so a test can wait for the posts.
     in_flight: AtomicUsize,
     loopback_warned: AtomicBool,
+    /// The messages for one member each ([`send_to`]), and their thread.
+    direct: Mutex<direct::DirectQueue>,
+    direct_ready: Condvar,
 }
 
 /// The messages waiting for the sender thread, and whether that thread is running.
@@ -128,6 +136,8 @@ impl ClusterState {
             dropped: AtomicU64::new(0),
             in_flight: AtomicUsize::new(0),
             loopback_warned: AtomicBool::new(false),
+            direct: Mutex::new(direct::DirectQueue::default()),
+            direct_ready: Condvar::new(),
         }
     }
 
@@ -259,7 +269,7 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
                     .collect()
             });
         crate::entity::cache::clear_one_cache(facade, name, primary_key.as_ref()).map_err(Error::from)?;
-    } else if ![NOTIFICATION_MESSAGE, COLLAB_UPDATE, SESSION_END].contains(&topic) {
+    } else if ![NOTIFICATION_MESSAGE, COLLAB_UPDATE, SESSION_END, RTC_SIGNAL].contains(&topic) {
         return Err(Error::new(format!("unknown topic {topic}")));
     }
     notify::publish(topic, message)
