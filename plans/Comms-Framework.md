@@ -1029,7 +1029,8 @@ codecs, the mix-minus mixer and the taps that SIP legs, recording (W5) and capti
 - **Speakers.** The audio-level header extension, for the active speaker and the speaker view.
 - **Screen share.** `getDisplayMedia`, as a separate track at high resolution and a low frame rate.
 - **Data channel** for reactions and hands, if the socket's latency is not enough.
-- **Captions (W6).** Audio chunks transcribed by local Whisper (`speech-local`) or the `moqui-llm` endpoint.
+- **Captions (W6).** Audio chunks transcribed by the `moqui-llm` endpoint (the `transcribe` binding); local Whisper
+  (`speech-local`) later ([WebRTC](../docs/interfaces/WebRTC.md#captions)).
 - **Recording (W5):**
   - per-track Opus and VP8 without transcoding, Opus in Ogg and video in WebM (§10.1), with track and segment rows;
   - a mixed audio recording, from the same mix-minus mixer SIP legs use;
@@ -1234,8 +1235,17 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 | W4 | `moqui-rtc` `turn/`: the embedded TURN server on `turn-server-proto` (TURN REST credentials, revocation, relay peers only the media nodes, quotas, stream framing). The host: ICE-TCP (`rtc_media_tcp_port`, RFC 4571, `rtc/tcp.rs`), the TURN listeners (UDP, TCP, TLS, 443) and relay sockets (`rtc/turn.rs`), revocation when a leg leaves. `CallMediaNode.turnUrls`; `get#IceServers`, `get#GuestIceServers`, `make#IceServers` (Rust: the credential); the browser fetches its ICE servers before its peer connection. `docs/interfaces/TURN.md` with the coturn profile | this commit | `moqui-rtc` turn (6); `it rtc::ice_tcp_and_a_turn_relay…` (a relay-only peer and a TCP-only peer on a real server); `Calls.spec.js` (ICE servers only for an admitted leg); client `CallFlow`, `CallGuestFlow` |
 | DP | The drive picker in BasicComms: `FilePickerServices` (`get#PickerData` with `hasDrive`, `list#PickerFolder`, `find#PickerFiles`, `get#FileType`) over `FileServices`, its transitions in `template/FilePickerTransitions.xml`; `InboxServices.save#MessageFiles` (mail) and `save#FilesToDrive`; the buttons left out with no drive. IronStone keeps `pickerFolder` (the records drive's titles) and its internal messages' Save to Files, which hands mail to the framework | fbd4ce43, f1b0a3eb, 0ae962a | `BasicCommsFiles.spec.js`; BOSS Files, Inbox, RecordFiles, Compose, AppStructure, TuiRender |
 | M0 | The audio core of V1, in `moqui-rtc` `audio/`: Opus on `opus-rs` (the §6.2 gate) with concealment and FEC, G.711 μ-law and A-law, G.722, a polyphase resampler, `Codec` by SDP name, `LegDecoder` (a jitter buffer by RTP time), the mix-minus `Mixer` and `AudioRoom`. Taps: several per room (`add_tap`, `remove_tap`), injected frames tapped too, a leg leaving told to them (`TapEvent::Left`), `QueueTap` (bounded, drops and counts). `AudioRoom` decodes a leg's microphone and screen-share audio as separate streams of one input. The host's hook points (`src/rtc/media.rs`, off stub in `rtc_off.rs`): `attach` a consumer to a room, `add_pcm_source` for an injected leg, paced on the media thread | this commit | `moqui-rtc` audio (13, with malformed Opus and a leg's two audio streams) and `sfu::audio_tests` (2: a stalled consumer; tap, mix and inject heard by a peer, then its leave); `rtc::media::tests` (3) |
+| W6 | Captions. The transcription seam: `moqui-llm` `speech.rs` (`transcribe`: the `transcribe` binding, the user's `api` quota, an `LlmCall`; `transcribe_with`, which dictation now shares; `provider`), `moqui_core::llm_hooks::{transcribe, speech_provider}` (`notBuiltIn` without `llm`), `org.moqui.impl.SpeechServices.transcribe#Audio` and `get#SpeechProvider` (internal). The host's `rtc/captions.rs`: a consumer and an `AudioRoom` per call on its own thread, chunks gated by level and cut at a pause or `call_captions_chunk_seconds`, 16 kHz WAV, a bounded queue and workers on the service pool with a timeout each, results in speaker and chunk order, the oldest waiting chunk dropped as a gap, `captions unavailable` on failure; the `Transcriber` trait; the driver's `ToRoom` and `RoomNotice` (the notice to each leg that joins later). `speech-local`: a host feature off in every package, a stub answering "not built in". `CallCaptionServices` (`start#`, `stop#Captions`, `get#CaptionState`; `CallCaptions.js`: the switch `call_captions_enabled`, in the call, not ended, not end-to-end encrypted, a provider) through `send#MediaControl`; `CallCaptions` and `CallTranscript` (appended to CallEntities; `call_captions_store`). `m-call`: CC, the notice, the speaker's lines, unavailable. The spec harness's `withProperty` | this commit | `rtc::captions::tests` (9: order with answers out of order on real Opus and simulated time, timeout, backpressure gap, silence, a hung provider with no frame dropped); `moqui-llm` `speech::tests` (4, a fake endpoint on loopback); `CallCaptions.spec.js` (5) |
 
 Left for later:
+- `speech-local` (Whisper on candle, §10.1) is a stub that answers "not built in"; captions use the `moqui-llm`
+  endpoint. A local Whisper server marked local keeps the audio in house meanwhile.
+- Captions in a live call are proven with a fake transcriber in `rtc::captions` and by the policy spec; no client spec
+  runs them (headless Chromium's fake microphone is a steady tone, and a real provider is a live check).
+- A phone leg (V1) gets the captions notice as a frame, which a phone cannot show: the V1 merge adds a voice prompt.
+  The notice is shown to every leg but not logged per leg; W5's `CallRecordingConsent` can take it when merged.
+- `CallTranscript.callRecordingId` and `voicemailId` have no relationships until W5 and V2 add their entities.
+- The terminal twin of a call shows no captions.
 - BOSS's own links to its Comms (Chatter, the contact record, the palette and demo services) stay `/qapps/Comms`, its root.
 - The media path is on one node per call. Cascading SFUs are W7.
 - Not yet checked: TURN over TLS and on 443, hairpin NAT, and a browser behind a real UDP-blocking firewall. The tests
@@ -1331,7 +1341,7 @@ Observed on 2026-10-30 on crates.io, docs.rs and the upstream repositories. Each
 | Matrix | [ruma][ruma] | 0.17.2, MIT | Tuwunel, Continuwuity (Apache-2.0); Synapse (AGPL) | `client-api`, `federation-api`, `appservice-api`, `state-res`, `signatures`, `unstable-msc4186` |
 | Chat E2EE | [matrix-sdk-crypto][matrix-crypto], as `@matrix-org/matrix-sdk-crypto-wasm` | 0.19.1, 18.9.0, Apache-2.0 | — | On vodozemac; about 9 MB, loaded for encrypted rooms |
 | Call E2EE | `sframe` | 2.1.0, MIT/Apache-2.0 | — | WASM in an `RTCRtpScriptTransform` worker |
-| Speech to text | Whisper on candle | candle 0.11, MIT/Apache-2.0; weights MIT | an OpenAI-compatible endpoint | `speech-local`, opt-in; model downloaded on first use |
+| Speech to text | Whisper on candle (later) | candle 0.11, MIT/Apache-2.0; weights MIT | an OpenAI-compatible endpoint | W6 uses the endpoint, through `moqui-llm` (the `transcribe` binding); `speech-local`, opt-in, is a stub until built, with the model downloaded on first use |
 | Text to speech | recorded prompts | — | `moqui-llm` | Later: Kokoro on candle with a GPL-free G2P. Piper is GPL-3.0 |
 
 ### 10.2 Local application comparisons

@@ -474,6 +474,20 @@ fn deliver_signal(message: &TopicMessage) {
                 Some("closeRoom") => Command::CloseRoom {
                     room: text("callSessionId"),
                 },
+                // captions run beside the driver, not in it (rtc/captions.rs)
+                Some("startCaptions") => {
+                    let options = crate::rtc::captions::StartOptions {
+                        user_id: Some(text("userId")).filter(|id| !id.is_empty()),
+                        provider_label: text("provider"),
+                        local: body.get("local").and_then(Json::as_bool).unwrap_or(false),
+                    };
+                    crate::rtc::captions::start(&factory, &text("callSessionId"), options);
+                    return;
+                }
+                Some("stopCaptions") => {
+                    crate::rtc::captions::stop(&text("callSessionId"));
+                    return;
+                }
                 _ => return,
             };
             if let Err(code) = crate::rtc::command(command) {

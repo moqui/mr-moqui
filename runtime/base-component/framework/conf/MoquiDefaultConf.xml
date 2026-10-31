@@ -139,6 +139,20 @@
     <default-property name="rtc_media_host" value="127.0.0.1"/>
     <default-property name="rtc_public_address" value=""/>
     <default-property name="call_ring_seconds" value="45"/>
+    <!-- Live captions (W6; docs/interfaces/WebRTC.md, Captions): off unless call_captions_enabled is true. Someone in a call
+        turns them on; its media node sends each speaker's audio, in chunks of at most call_captions_chunk_seconds, to the
+        speech provider (the model bound to the transcribe feature; call_captions_provider local is speech-local, not built
+        yet), at most call_captions_workers at once, each within call_captions_timeout_seconds; past call_captions_queue
+        waiting chunks the oldest is dropped. call_captions_language: an ISO 639-1 code, empty to let the model tell.
+        call_captions_store true keeps each caption as a CallTranscript (by default nothing is kept). -->
+    <default-property name="call_captions_enabled" value="false"/>
+    <default-property name="call_captions_provider" value="llm"/>
+    <default-property name="call_captions_chunk_seconds" value="5"/>
+    <default-property name="call_captions_queue" value="6"/>
+    <default-property name="call_captions_workers" value="2"/>
+    <default-property name="call_captions_timeout_seconds" value="20"/>
+    <default-property name="call_captions_language" value=""/>
+    <default-property name="call_captions_store" value="false"/>
     <!-- ICE-TCP (W4): a TCP port on rtc_media_host for browsers that cannot reach the UDP one; off while empty. -->
     <default-property name="rtc_media_tcp_port" value=""/>
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that

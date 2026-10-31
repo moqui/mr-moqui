@@ -262,6 +262,16 @@ lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 
 - A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
 - Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
 
+Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
+unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
+`stopCaptions`) need a signed-in user with an answered leg in the call; anyone else gets `notFound`. An end-to-end
+encrypted call is refused. Every leg, a late joiner's and a guest's too, gets the notice naming the provider before its
+audio is captioned. The provider is the `transcribe` model binding, reached through `moqui-llm`'s address guard (a
+private address needs `allow-private-network`), counted against the quota of the user who turned captions on, and kept
+as an `LlmCall`. `org.moqui.impl.SpeechServices.transcribe#Audio` and `get#SpeechProvider` are `allow-remote="false"`:
+`transcribe#Audio` reads any `audioLocation` it is given, so its caller decides what may be sent out. Captions are not
+stored unless `call_captions_store` is `true`.
+
 ## REST
 
 `rest.xml` is `require-authentication="false"` so each transition decides. It does not grant inheritable admin authorization. Rust bodies for this screen are in `screen/dispatch.rs`. A same-named transition on another screen is not wired there.

@@ -105,6 +105,8 @@ mod rtc;
 #[cfg(not(feature = "rtc"))]
 #[path = "rtc_off.rs"]
 mod rtc;
+#[cfg(feature = "rtc")]
+mod speech_local;
 #[cfg(feature = "axum")]
 mod source_body;
 #[cfg(feature = "axum")]
@@ -1704,6 +1706,7 @@ pub fn build_features() -> Vec<&'static str> {
         ("test-client", cfg!(feature = "test-client")),
         ("devtools", cfg!(feature = "devtools")),
         ("rtc", cfg!(feature = "rtc")),
+        ("speech-local", cfg!(feature = "speech-local")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

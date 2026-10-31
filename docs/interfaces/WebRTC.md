@@ -64,6 +64,47 @@ account (`basic-comms` `CallGuest.xml`, the `call` token route). The token is sh
 The link's owner opens its meeting from Calls (Open) as its host. A meeting nobody is in or waiting for ends after two
 minutes.
 
+## Captions
+
+Live captions are off unless `call_captions_enabled` is `true`, and they need a speech to text provider: a model bound
+to the `transcribe` feature on an OpenAI-compatible endpoint (`POST /v1/audio/transcriptions`, such as a local Whisper
+server or a hosted one), set up as for the Assist drawer's dictation ([Assist](../ai/Assist.md)). Local transcription in
+the binary (`speech-local`, Whisper on candle) is not built yet.
+
+| Property | Default | |
+| --- | --- | --- |
+| `call_captions_enabled` | `false` | The switch: the CC button shows only when it is `true` |
+| `call_captions_provider` | `llm` | `llm` (the `transcribe` binding) or `local` (speech-local, which answers "not built in") |
+| `call_captions_chunk_seconds` | `5` | The longest chunk of one speaker's audio sent at once; a pause of 0.6 s ends one sooner |
+| `call_captions_queue` | `6` | Chunks waiting for the provider; past this the oldest is dropped and shown as a gap |
+| `call_captions_workers` | `2` | Chunks transcribed at once, on the service pool |
+| `call_captions_timeout_seconds` | `20` | How long one chunk may take |
+| `call_captions_language` | empty | An ISO 639-1 code; empty lets the model tell |
+| `call_captions_store` | `false` | `true` keeps each caption as a `CallTranscript` row; by default nothing is kept |
+
+How they work:
+
+1. Someone in the call presses CC: `start#Captions` (`org.moqui.impl.CallCaptionServices`, `CallCaptions.js`). It
+   refuses with a reason code when the switch is off (`captionsOff`), the user is not in the call (`notFound`, as for a
+   call that does not exist), the call ended (`callEnded`), its media is end-to-end encrypted (`encrypted`: the server
+   cannot hear it, and captions never downgrade it), or no provider is set up (`noProvider`). It keeps the state in
+   `CallCaptions` and tells the media node (`send#MediaControl`, `startCaptions`).
+2. The media node (`crates/moqui-host/src/rtc/captions.rs`) takes the call's audio through a tap and decodes it on a
+   thread of its own, never the media thread. Each speaker's audio is gated by its level, cut at a pause or the longest
+   chunk, resampled to 16 kHz and sent as WAV to the provider (`moqui_core::llm_hooks::transcribe`, through
+   `moqui-llm`). The call counts against the quota of the user who turned captions on, and each is an `LlmCall`.
+3. Every leg gets the notice, `{rtc: 'captions', state: 'on', provider, local}`, which names who hears the audio; a leg
+   that joins later gets it when it joins, a guest's too. Captions go to every leg in the order they were spoken:
+   `{rtc: 'caption', leg, participant, name, seq, text}`.
+4. A slow provider never holds the call up. When the queue is full the oldest waiting chunk is dropped and its place
+   goes out as `{rtc: 'caption', leg, seq, gap: true}`. A provider error or timeout goes out once as
+   `{rtc: 'captions', state: 'unavailable', reason, message}`; the call and its media go on, and the next caption that
+   works brings them back.
+5. Anyone in the call turns them off (`stop#Captions`, `{rtc: 'captions', state: 'off'}`). They also end with the call.
+
+Transcription for other server code is `org.moqui.impl.SpeechServices.transcribe#Audio` (internal): voicemail (V2) and
+recordings (W5) use the same seam, and `CallTranscript` holds their text too.
+
 ## Cluster
 
 A call's media lives on one node, `CallSession.mediaNodeId`, chosen at start among the live `CallMediaNode` rows. A frame
@@ -80,6 +121,11 @@ the reason "media server lost"; the users start a new call. There is no seamless
   through `/notws`, and a guest on `/callws`: a bad credential refused, media both ways, another leg's frames refused,
   and revoking the link ending it.
 - `./moq test framework --spec Calls`: the call state machine.
+- `cargo test -p moqui-host --lib rtc::captions`: captions with a fake transcriber on simulated time: speaker and chunk
+  order with answers out of order, a timeout, backpressure with its gap, silence making nothing, and a provider that
+  hangs while the frames keep flowing. `cargo test -p moqui-llm --lib speech`: the transcription call against a fake
+  endpoint. `./moq test framework --spec CallCaptions`: the policy switch, someone not in the call, an encrypted call,
+  and turning captions on and off.
 - `./moq test basic-comms --spec BasicCommsCalls`: the screens' transitions through both mounts.
 - `./moq test-client basic-comms --serve`: a call in two Chromium pages with fake media (`CallFlow`), and a guest by
   link let in from the lobby (`CallGuestFlow`). It needs `rtc` in the binary.

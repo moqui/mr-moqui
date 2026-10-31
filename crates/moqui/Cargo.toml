@@ -18,6 +18,8 @@ maximal = ["moqui-host/maximal"]
 inbound-smtp = ["moqui-host/inbound-smtp"]
 # Calls (crates/moqui-rtc), in Enterprise, Maximal and Debug; for a Default build `./moq build -- --features rtc`.
 rtc = ["moqui-host/rtc"]
+# Local speech to text (not built yet; off in every package).
+speech-local = ["moqui-host/speech-local"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the

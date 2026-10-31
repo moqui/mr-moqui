@@ -59,6 +59,9 @@ llm = ["dep:moqui-llm"]
 # on /notws (src/notws/rtc.rs). The media socket starts only when rtc_media_port is set. In Maximal, Enterprise and
 # Debug; not Lite or Dev.
 rtc = ["axum", "dep:moqui-rtc"]
+# Local speech to text for call captions (Whisper on candle, plans/Comms-Framework.md §6.4): not built yet, off in every
+# package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
+speech-local = []
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
 grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]

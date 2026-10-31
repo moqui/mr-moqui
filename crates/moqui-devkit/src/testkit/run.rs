@@ -880,6 +880,7 @@ fn install_host(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let host = Object::new(ctx.clone())?;
     host.set("parallel", Function::new(ctx.clone(), parallel_host)?)?;
     host.set("uploadedFile", Function::new(ctx.clone(), uploaded_file_host)?)?;
+    host.set("setProperty", Function::new(ctx.clone(), set_property_host)?)?;
     host.set("call", Function::new(ctx.clone(), host_call)?)?;
     // assert.rejects runs the promise's jobs here. QuickJS has no event loop of its own.
     host.set("settle", Function::new(ctx.clone(), settle_promise)?)?;
@@ -1053,6 +1054,17 @@ fn uploaded_file_host<'js>(
 ) -> rquickjs::Result<rquickjs::Value<'js>> {
     let content_type = content_type.unwrap_or_else(|| "text/plain".to_string());
     moqui_core::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
+}
+
+/// `__moquiTestHost.setProperty(name, value)`: a process property for the rest of the run (`null` clears it); the
+/// property as it was, or `null`. `withProperty` (server.js) puts it back after its function.
+fn set_property_host(name: String, value: Option<String>) -> Option<String> {
+    let before = moqui_lib::env::get_property(&name);
+    match value {
+        Some(value) => moqui_lib::env::set_property(&name, value),
+        None => moqui_lib::env::clear_property(&name),
+    }
+    before
 }
 
 fn parallel_host(

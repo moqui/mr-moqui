@@ -54,6 +54,17 @@
     define("uploadedFile", (fileName, text, contentType) => __moquiTestHost.uploadedFile(String(fileName), String(text == null ? "" : text),
         contentType == null ? "text/plain" : String(contentType)));
 
+    // Run fn with a process property set (null clears it), then put it back: a setting the code under test reads from
+    // its properties, such as a feature's switch, in one feature of a spec. Specs run one at a time in a run.
+    define("withProperty", (name, value, fn) => {
+        const before = __moquiTestHost.setProperty(String(name), value == null ? null : String(value));
+        try {
+            return fn();
+        } finally {
+            __moquiTestHost.setProperty(String(name), before == null ? null : before);
+        }
+    });
+
     Object.defineProperty(g, "log", { get: () => ec.logger, configurable: true });
 
     // A spec with database: false sees no entity facade, service calls, or screen tests, even when this run opened a

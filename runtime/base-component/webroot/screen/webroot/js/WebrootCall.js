@@ -71,7 +71,10 @@
         // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
         lobbyNotice: null,
         settings: readSettings(),
-        capabilities: null
+        capabilities: null,
+        // live captions of the current call (W6): whether the CC button shows (allowed), whether they are on, who
+        // transcribes (the notice), why they are unavailable, and the last lines {key, leg, name, text, gap, at}
+        captions: { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] }
     });
 
     const call = {
@@ -145,6 +148,7 @@
             if (!data || data.kind !== "call") return;
             if (data.call) call.remember(data.call);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
+            if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
             if (data.action === "guestWaiting") state.lobbyNotice = { callSessionId: data.callSessionId, guestName: data.guestName || "" };
             if (data.action === "admitted" || data.action === "denied" || data.action === "ended") {
                 const view = state.calls[data.callSessionId];
@@ -414,6 +418,10 @@
                 case "quality":
                     state.quality = frame.kbps;
                     break;
+                case "caption":
+                case "captions":
+                    call.onCaption(frame);
+                    break;
                 case "ended":
                     call.hangUp(frame.reason || "ended");
                     break;
@@ -597,6 +605,7 @@
             if (call.screenStream) call.screenStream.getTracks().forEach((track) => track.stop());
             Object.assign(state, { current: null, legId: null, phase: "idle", localStream: null, remotes: {}, muted: false, cameraOff: false,
                 quality: null, startedAt: 0, speaker: null, sharing: false, hand: false, myReaction: null });
+            state.captions = { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] };
             call.trackSources = {};
             call.tracks = {};
             call.sentLayers = {};
@@ -663,6 +672,45 @@
             };
             connect();
             return guest;
+        },
+
+        // ---- live captions (W6): the media node transcribes; anyone in the call turns them on or off ----
+        loadCaptions(callSessionId) {
+            if (call.guest || !callSessionId) return Promise.resolve(null);
+            return call.request("captionState", { callSessionId }, "GET").then((json) => {
+                if (state.current !== callSessionId) return json;
+                const c = json.captions || {};
+                Object.assign(state.captions, { allowed: !!c.allowed, on: !!c.on, provider: c.providerLabel || state.captions.provider, local: !!c.local });
+                if (!c.on) Object.assign(state.captions, { unavailable: null, lines: [] });
+                return json;
+            }, () => null);
+        },
+        toggleCaptions() {
+            const id = state.current;
+            if (!id) return Promise.resolve({});
+            return call.request(state.captions.on ? "stopCaptions" : "startCaptions", { callSessionId: id }).then((json) => {
+                if (json.captions && state.current === id) {
+                    state.captions.on = !!json.captions.on;
+                    if (json.captions.providerLabel) state.captions.provider = json.captions.providerLabel;
+                    if (!json.captions.on) Object.assign(state.captions, { unavailable: null, lines: [] });
+                }
+                return json;
+            });
+        },
+        // A caption, a gap where one was dropped, or the captions' state: on (the notice), off, unavailable
+        onCaption(frame) {
+            const c = state.captions;
+            if (frame.rtc === "captions") {
+                if (frame.state === "on") Object.assign(c, { on: true, unavailable: null, provider: frame.provider || c.provider, local: frame.local != null ? !!frame.local : c.local });
+                else if (frame.state === "off") Object.assign(c, { on: false, unavailable: null, lines: [] });
+                else if (frame.state === "unavailable") c.unavailable = frame.message || frame.reason || t("Captions are unavailable");
+                return;
+            }
+            c.on = true;
+            if (!frame.gap) c.unavailable = null;
+            const name = frame.leg === state.legId ? t("You") : frame.name || call.nameOf(frame.leg);
+            c.lines.push({ key: frame.leg + ":" + frame.seq, leg: frame.leg, name, text: frame.gap ? "…" : String(frame.text || ""), gap: !!frame.gap, at: Date.now() });
+            if (c.lines.length > 4) c.lines.splice(0, c.lines.length - 4);
         },
 
         saveSettings(changes) {
@@ -867,6 +915,14 @@
             // guests in the lobby of a call link's meeting, for those in the call to let in
             waiting() { const v = this.known; return v ? (v.participants || []).filter((p) => p.admission === "waiting") : []; },
             reactions() { return ["👍", "👏", "😂", "❤️", "🎉", "🙋"]; },
+            // live captions (W6): the last lines of the last ten seconds, and the notice of who hears the audio
+            captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
+            captionNotice() {
+                const c = this.call.captions;
+                const who = c.provider || t("the configured provider");
+                return c.local ? t("Captions are on: speech is transcribed on this organization's own server") + " (" + who + ")"
+                    : t("Captions are on: what people say is sent to") + " " + who + " " + t("to be transcribed");
+            },
             elapsed() { return this.now && elapsedText(this.call.startedAt); }
         },
         watch: {
@@ -889,6 +945,7 @@
                     this.view = json.call || null;
                     this.loading = false;
                     if (this.view && !this.inThis && this.view.status !== "ended") this.startPreview();
+                    if (this.view && this.inThis) moqui.call.loadCaptions(this.callSessionId);
                 }, () => (this.loading = false));
             },
             listDevices() {
@@ -999,12 +1056,18 @@
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{tile.name}}<q-icon v-if="tile.muted" name="sym_o_mic_off" class="q-ml-xs"></q-icon>' +
             '<q-icon v-if="tile.hand" name="sym_o_back_hand" color="warning" class="q-ml-xs"></q-icon></div></div>' + '</div></div>' +
             '<div v-if="inThis && !remotes.length" class="m-muted">{{call.phase === \'connected\' ? t(\'Waiting for the others\') : t(\'Connecting\')}}</div>' +
+            // the captions: the notice while they are on, why they are unavailable, and each speaker's last lines
+            '<div v-if="inThis && (call.captions.on || call.captions.unavailable)" class="m-call-captions q-pa-sm rounded-borders" style="background:rgba(0,0,0,.78);color:#fff" aria-live="polite">' +
+            '<div class="text-caption" style="opacity:.85"><q-icon name="sym_o_closed_caption" class="q-mr-xs"></q-icon>{{captionNotice}}</div>' +
+            '<div v-if="call.captions.unavailable" class="text-caption text-warning"><q-icon name="sym_o_warning" class="q-mr-xs"></q-icon>{{t(\'Captions are unavailable\')}}: {{call.captions.unavailable}}</div>' +
+            '<div v-for="line in captionLines" :key="line.key" class="text-body2"><span class="text-weight-bold">{{line.name}}:</span> <span :style="line.gap ? \'opacity:.6\' : \'\'">{{line.text}}</span></div></div>' +
             // the bottom bar
             '<div v-if="inThis" class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" :disable="!call.localStream || !call.localStream.getVideoTracks().length" @click="moquiCall().toggleCamera()"><q-tooltip>{{t(\'Camera\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="canShare" round unelevated :color="call.sharing ? \'primary\' : \'grey-8\'" :icon="call.sharing ? \'sym_o_stop_screen_share\' : \'sym_o_present_to_all\'" :aria-label="call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')" @click="call.sharing ? moquiCall().stopShare() : moquiCall().shareScreen()"><q-tooltip>{{call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.hand ? \'warning\' : \'grey-8\'" icon="sym_o_back_hand" :aria-label="t(\'Raise your hand\')" @click="moquiCall().toggleHand()"><q-tooltip>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="call.captions.allowed || call.captions.on" round unelevated :color="call.captions.on ? \'primary\' : \'grey-8\'" icon="sym_o_closed_caption" :aria-label="call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')" @click="moquiCall().toggleCaptions()"><q-tooltip>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_add_reaction" :aria-label="t(\'React\')"><q-menu><div class="row q-pa-xs">' +
             '<q-btn v-for="emoji in reactions" :key="emoji" flat dense size="lg" v-close-popup @click="moquiCall().sendReaction(emoji)">{{emoji}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="grey-8" :icon="call.layout === \'speaker\' ? \'sym_o_grid_view\' : \'sym_o_person\'" :aria-label="call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')" @click="moquiCall().setLayout(call.layout === \'speaker\' ? \'grid\' : \'speaker\')"><q-tooltip>{{call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')}}</q-tooltip></q-btn>' +

@@ -68,6 +68,8 @@ struct Driver<'a> {
     revoke: Option<Revoke>,
     /// The consumers' taps and the injected legs.
     media: Media,
+    /// A frame each leg gets when it joins, by room: the captions notice (`captions.rs`).
+    notices: HashMap<String, Json>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -94,6 +96,7 @@ pub(super) fn run(
         tcp,
         revoke,
         media: Media::default(),
+        notices: HashMap::new(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -201,6 +204,7 @@ impl Driver<'_> {
             Command::CloseRoom { room } => {
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
+                self.notices.remove(&room);
                 let legs: Vec<LegKey> = self
                     .routes
                     .keys()
@@ -221,6 +225,16 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
+            Command::ToRoom { room, frame } => self.to_room(&room, None, frame),
+            Command::RoomNotice { room, frame } => match frame {
+                Some(frame) => {
+                    self.to_room(&room, None, frame.clone());
+                    self.notices.insert(room, frame);
+                }
+                None => {
+                    self.notices.remove(&room);
+                }
+            },
             Command::Stop => {}
         }
     }
@@ -307,6 +321,7 @@ impl Driver<'_> {
                 r.route = route.clone();
             }
         }
+        let joined = op == "join" && result.is_ok();
         match result {
             Ok(Some(reply)) => self.reply(&route, room, with_id(reply, &id)),
             Ok(None) if !id.is_null() => self.reply(&route, room, json!({"rtc": "ack", "id": id, "callLegId": leg})),
@@ -316,6 +331,10 @@ impl Driver<'_> {
                 room,
                 json!({"rtc": "error", "id": id, "callLegId": leg, "code": e.code(), "message": e.to_string()}),
             ),
+        }
+        // a leg that joins a room with captions on gets their notice (late joiners and guests too)
+        if let Some(notice) = self.notices.get(room).filter(|_| joined).cloned() {
+            self.to_leg(&key, generation, notice);
         }
     }
 

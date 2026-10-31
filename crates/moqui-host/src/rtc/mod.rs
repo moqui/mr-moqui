@@ -24,6 +24,7 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 
+pub(crate) mod captions;
 mod driver;
 pub(crate) mod media;
 mod tcp;
@@ -74,6 +75,16 @@ pub(crate) enum Command {
     },
     /// A consumer attaching or an injected leg (`media.rs`).
     Media(media::MediaCommand),
+    /// A frame for every leg of a room, from the room's own work on this node (captions).
+    ToRoom {
+        room: String,
+        frame: Json,
+    },
+    /// A frame for every leg of a room now and each leg that joins it later (the captions notice); `None` clears it.
+    RoomNotice {
+        room: String,
+        frame: Option<Json>,
+    },
     Stop,
 }
 

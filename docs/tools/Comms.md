@@ -43,6 +43,11 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
   or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
   there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+- **Captions.** Where the administrator turned them on (`call_captions_enabled`) and a speech to text model is set up,
+  anyone in a call can press CC. Everyone in the call, including people who join later, sees that captions are on and
+  which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
+  they are unavailable and the call goes on. Captions are not kept unless the administrator asks for that
+  (`call_captions_store`). An end-to-end encrypted call has no captions. See [WebRTC, Captions](../interfaces/WebRTC.md#captions).
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
   the installed app ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)).
