@@ -57,6 +57,13 @@
                 component: other.component || "", how: entry.refType || "", calls: entry.calls || 0, observedOnly: !!entry.observedOnly,
                 resolved: !!other.id, url: entry.url || other.url || "" });
         }
+        // rows of one name (orderId of three entities) are told apart by their owner: the full name's last two parts
+        for (const section of Object.values(sections)) {
+            const counts = {};
+            for (const row of section.rows) counts[row.shortName] = (counts[row.shortName] || 0) + 1;
+            for (const row of section.rows) if (counts[row.shortName] > 1 && row.name !== row.shortName)
+                row.shortName = row.name.split(/[.:/]/).slice(-2).join(".");
+        }
         return Object.keys(sections).sort().map((kind) => sections[kind]);
     };
 

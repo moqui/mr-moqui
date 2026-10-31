@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Incidents (plans/Monitoring.md, Later: Regressions and incidents): opened by the regression detector, by an alert rule
+    labelled incident="true", or by hand; open ones by default. MONITOR_INCIDENT is checked by the services. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Incidents" default-menu-index="16">
+    <parameter name="statusId"/><parameter name="serviceName"/>
+    <transition name="incidentDetail"><default-response url="../IncidentDetail"/></transition>
+    <transition name="createIncident">
+        <service-call name="org.moqui.monitor.MonitorServices.create#Incident" out-map="created"/>
+        <default-response url="../IncidentDetail" parameter-map="{incidentId:created?.incidentId}"/>
+        <error-response url="."/>
+    </transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        incidentList = []
+        if (incidentAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Incidents').parameters({statusId: statusId || 'open', serviceName}).call()
+            incidentList = result.incidents || []
+        }
+        statusOptions = [{value: 'open', label: ec.l10n.localize('Open (not resolved)')}, {value: 'all', label: ec.l10n.localize('All')}]
+            .concat(['Open', 'Mitigating', 'Monitoring', 'Reopened', 'Resolved'].map(value => ({value, label: ec.l10n.localize(value)})))
+    ]]></script></actions>
+    <widgets>
+        <label text="Incidents" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Incidents need the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <container-dialog id="NewIncidentDialog" button-text="New incident">
+                <form-single name="NewIncident" transition="createIncident">
+                    <field name="title"><default-field title="Title"><text-line size="60"/></default-field></field>
+                    <field name="severity"><default-field title="Severity"><drop-down no-current-selected-key="major">
+                        <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
+                    </drop-down></default-field></field>
+                    <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
+                    <field name="summary"><default-field title="Summary"><text-area rows="3"/></default-field></field>
+                    <field name="submit"><default-field><submit text="Open incident"/></default-field></field>
+                </form-single>
+            </container-dialog>
+            <form-single name="IncidentFilter" transition=".">
+                <field name="statusId"><default-field title="Status"><drop-down no-current-selected-key="open">
+                    <list-options list="statusOptions" key="${value}" text="${label}"/>
+                </drop-down></default-field></field>
+                <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
+                <field name="find"><default-field><submit text="Find"/></default-field></field>
+            </form-single>
+            <form-list name="IncidentList" list="incidentList" skip-form="true">
+                <field name="detectedDate"><default-field title="Detected"><display/></default-field></field>
+                <field name="title"><default-field title="Incident"><link url="incidentDetail" text="${title || incidentId}" parameter-map="{incidentId:incidentId}" link-type="anchor"/></default-field></field>
+                <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="serviceName"><default-field title="Service"><display/></default-field></field>
+                <field name="version"><default-field title="Version"><display/></default-field></field>
+                <field name="causeStatus"><default-field title="Cause"><display/></default-field></field>
+                <field name="source"><default-field title="From"><display/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

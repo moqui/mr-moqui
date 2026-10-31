@@ -65,16 +65,17 @@ along with this software (see the LICENSE.md file). If not, see
                 <label type="p" text="${artifact.name}"/>
                 <label type="p" text="${artifact.summary}" condition="artifact.summary"/>
                 <label type="p" text="${artifact.component}${artifact.upstream ? ' (upstream)' : ' (site)'} · ${(artifact.relativePath || artifact.path || '')}:${artifact.line}"/>
-                <link url="${artifact.url || ''}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="artifact.url"/>
-                <link url="../Browse" text="Open in the Browser" parameter-map="{artifactId: artifact.id}" link-type="anchor"/>
-                <label type="p" text="Extended by ${extensions.length}: ${extensions.map(e => (e.other ? e.other.component + ' ' + e.other.kind : e.from) + (e.resolved ? '' : ' (broken)')).join(', ')}" condition="extensions.length"/>
+                <container style="row items-center q-gutter-x-md">
+                    <link url="${artifact.url || ''}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="artifact.url"/>
+                    <link url="../Browse" text="Open in the Browser" parameter-map="{artifactId: artifact.id}" link-type="anchor"/></container>
+                <label type="p" text="Extended by ${extensions.length}: ${extensions.map(e => (e.other ? e.other.component + ' ' + e.other.kind + ' ' + (e.other.summary || e.other.shortName) : e.from) + ' (' + (e.relativePath || e.path || '').split('/').pop() + ':' + e.line + ')' + (e.resolved ? '' : ' (broken)')).join(', ')}" condition="extensions.length"/>
             </box-body></container-box>
             <container-box id="RefsUsedBy"><box-header title="Used by: ${usedBy.length}"/><box-body-nopad>
                 <form-list name="UsedByList" list="usedBy" skip-form="true">
                     <field name="kind"><default-field title="Kind"><display/></default-field></field>
-                    <field name="name"><default-field title="Name">
-                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor" condition="id"/>
-                        <display text="${name}" condition="!id"/></default-field></field>
+                    <field name="name"><conditional-field condition="id" title="Name">
+                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor"/></conditional-field>
+                        <default-field title="Name"><display text="${name}"/></default-field></field>
                     <field name="how"><default-field title="How"><display/></default-field></field>
                     <field name="calls"><default-field title="Calls"><display text="${calls || ''}"/></default-field></field>
                     <field name="file"><default-field title="Where">
@@ -84,9 +85,9 @@ along with this software (see the LICENSE.md file). If not, see
             <container-box id="RefsUses"><box-header title="Uses: ${uses.length}"/><box-body-nopad>
                 <form-list name="UsesList" list="uses" skip-form="true">
                     <field name="kind"><default-field title="Kind"><display/></default-field></field>
-                    <field name="name"><default-field title="Name">
-                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor" condition="id"/>
-                        <display text="${name}${resolved ? '' : ' (not found)'}" condition="!id"/></default-field></field>
+                    <field name="name"><conditional-field condition="id" title="Name">
+                        <link url="refs" text="${name}" parameter-map="{artifactId: id}" link-type="anchor"/></conditional-field>
+                        <default-field title="Name"><display text="${name}${resolved ? '' : ' (not found)'}"/></default-field></field>
                     <field name="how"><default-field title="How"><display/></default-field></field>
                     <field name="calls"><default-field title="Calls"><display text="${calls || ''}"/></default-field></field>
                     <field name="file"><default-field title="Where">

@@ -214,6 +214,11 @@ pub struct BootOptions {
     pub before_init: Option<BeforeInit>,
     /// A `moqui test` run: each component's `test/MoquiConf.xml` merges after its `MoquiConf.xml`.
     pub test_confs: bool,
+    /// The directory of the framework component's artifacts (entity, service, screen, data) when it is not the
+    /// framework directory: a Java Moqui checkout's `framework`, which has no conf of its own, read by the artifact tools
+    /// on a model-only boot (`moqui refs`, `moqui check`, `moqui lsp`). The conf, XSDs and templates stay the framework
+    /// directory's; the framework directory's own entities and services load first, so the component's override them.
+    pub framework_component: Option<PathBuf>,
 }
 
 /// The hook in [`BootOptions::before_init`].
@@ -225,6 +230,7 @@ impl std::fmt::Debug for BootOptions {
             .field("executor", &self.executor)
             .field("before_init", &self.before_init.as_ref().map(|_| ".."))
             .field("test_confs", &self.test_confs)
+            .field("framework_component", &self.framework_component)
             .finish()
     }
 }
@@ -282,7 +288,16 @@ impl ExecutionContextFactory {
         let conf_node = conf::load_merged_conf(&framework_dir, &runtime_dir)?;
         tracing::info!("Merged configuration in {}ms", phase.elapsed().as_millis());
         let phase = std::time::Instant::now();
-        let components = component::discover(&runtime_dir, &framework_dir, &conf_node)?;
+        let framework_component = options
+            .framework_component
+            .as_deref()
+            .map(canonicalize_dir)
+            .transpose()?;
+        let components = component::discover(
+            &runtime_dir,
+            framework_component.as_deref().unwrap_or(&framework_dir),
+            &conf_node,
+        )?;
         tracing::info!(
             "Discovered {} components in {}ms",
             components.len(),
@@ -446,6 +461,15 @@ impl ExecutionContextFactory {
 
     pub fn framework_dir(&self) -> &Path {
         &self.framework_dir
+    }
+
+    /// The framework component's directory, where its entities, services and screens are: the framework directory, or
+    /// the one [`BootOptions::framework_component`] named (a Java Moqui checkout's `framework`).
+    pub fn framework_component_dir(&self) -> &Path {
+        self.components
+            .iter()
+            .find(|component| component.name == "framework")
+            .map_or(self.framework_dir.as_path(), |component| component.location.as_path())
     }
 
     pub fn components(&self) -> &[ComponentInfo] {
@@ -1025,6 +1049,11 @@ impl ExecutionContext {
         if let Some(hit) = self.state.artifacts.borrow_mut().top_hit_mut() {
             hit.sub_type = sub_type.map(super::artifact::known);
         }
+    }
+
+    /// An attribute on the top frame's span, when it records one.
+    pub(crate) fn set_top_span_attribute(&self, key: &str, value: moqui_lib::object::Value) {
+        self.state.artifacts.borrow_mut().set_top_attribute(key, value);
     }
 
     /// Java's `setTrackArtifactHit(false)`: the top frame records no span or metric of its own, and what runs under it

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Released versions (plans/Monitoring.md, Later: Regressions and incidents): each service's versions from the release
+    markers, newest first, the instances on each now, and the regressions the detector found against the version before.
+    MONITOR_INCIDENT is checked by the services. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Releases" default-menu-index="15">
+    <parameter name="serviceName"/>
+    <transition name="releaseDetail"><default-response url="../ReleaseDetail"/></transition>
+    <transition name="compare"><default-response url="../Split"/></transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        releaseList = []
+        if (incidentAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Releases').parameters({serviceName}).call()
+            releaseList = (result.releases || []).map(item => Object.assign({}, item, {instances: (item.instancesNow || []).join(', ')}))
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="Releases" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Releases need the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="Each version a service started with, from its release markers. A new version is compared with the one before it for a day; regressions found are linked from the version." type="p"/>
+            <form-single name="ReleaseFilter" transition=".">
+                <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
+                <field name="find"><default-field><submit text="Find"/></default-field></field>
+            </form-single>
+            <form-list name="ReleaseList" list="releaseList" skip-form="true">
+                <field name="serviceName"><default-field title="Service"><display/></default-field></field>
+                <field name="version"><default-field title="Version"><link url="releaseDetail" text="${version}" parameter-map="{serviceName:serviceName, version:version}" link-type="anchor"/></default-field></field>
+                <field name="revision"><default-field title="Revision"><display/></default-field></field>
+                <field name="releasedDate"><default-field title="Released"><display/></default-field></field>
+                <field name="instances"><default-field title="Instances now"><display/></default-field></field>
+                <field name="openRegressions"><default-field title="Open regressions"><display/></default-field></field>
+                <field name="previousVersion"><default-field title="Compare with">
+                    <link url="compare" text="${previousVersion || ''}" condition="previousVersion" parameter-map="{leftVersion:previousVersion, rightVersion:version}" link-type="anchor"/>
+                </default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

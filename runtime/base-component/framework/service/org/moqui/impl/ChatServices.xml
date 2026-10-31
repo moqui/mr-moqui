@@ -928,9 +928,20 @@ along with this software (see the LICENSE.md file). If not, see
             const roomLevel = room.roomTypeEnumId === 'CrtPublic' ? 'CnlMentions' : 'CnlAll'
             const ownLevels = room.roomTypeEnumId === 'CrtDirect' ? {} : ec.service.sync().name('org.moqui.impl.ChatServices.get#DefaultNotifyLevels')
                     .parameter('userIdList', targets).call().levelMap || {}
+            let roomLocked = false
             for (const target of targets) {
                 const level = ownLevels[target] || roomLevel
                 let row = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', target).one()
+                // no row yet: a lock on a missing row locks nothing, so two joins at once (a double click, two tabs) would
+                // both create it. Lock the ChatRoom row, as append#Event does next, and look again: the second waits for
+                // the first to commit, then finds its member and adds nobody.
+                if (!row) {
+                    if (!roomLocked) {
+                        ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).selectField('chatRoomId').forUpdate(true).disableAuthz().one()
+                        roomLocked = true
+                    }
+                    row = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', target).forUpdate(true).one()
+                }
                 if (row && !row.leftDate) continue
                 if (row) {
                     row.setFields({leftDate: null, joinedDate: now, roleEnumId: role, agentRef: agentRef || null,
@@ -2669,7 +2680,11 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="get" noun="LinkPreview" allow-remote="false">
+    <!-- one at a time per link, in a transaction of its own: there is no row to lock before the first fetch of a link, so
+        two messages with the same link at once would both create its ChatLinkPreview row. The second waits for the
+        first to commit (the semaphore is cleared after the commit), then reads the row it kept. -->
+    <service verb="get" noun="LinkPreview" allow-remote="false" transaction="force-new"
+            semaphore="wait" semaphore-parameter="urlHash" semaphore-sleep="1">
         <description>Internal: the preview of one link {url, title, description, siteName}, null when it has none (no title), from
             the ChatLinkPreview cache when fetched in the last 24 hours (the last hour for a link that could not be read),
             else read again with fetch#LinkPage and kept. urlHash is extract#LinkUrls's.</description>
@@ -3031,6 +3046,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (statusId && !Object.values(STATUSES).includes(statusId)) { ec.message.addError(`Unknown status ${chosen}`); return }
             const now = ec.user.nowTimestamp
             let row = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).forUpdate(true).one()
+            // no row yet: a lock on a missing row locks nothing, so two first requests (a page's heartbeat and its status,
+            // or two tabs) would both create it. Lock the UserAccount row instead and look again: the second waits for
+            // the first to commit, then finds its row and updates it.
+            if (!row) {
+                ec.entity.find('moqui.security.UserAccount').condition('userId', userId).selectField('userId').forUpdate(true).disableAuthz().one()
+                row = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).forUpdate(true).one()
+            }
             const created = !row
             if (created) {
                 row = ec.entity.makeValue('moqui.security.UserStatus')
@@ -3077,6 +3099,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (!me) return
             const now = Number(ec.user.nowTimestamp)
             let row = ec.entity.find('moqui.security.UserStatus').condition('userId', me).forUpdate(true).one()
+            // no row yet: a lock on a missing row locks nothing, so two first requests (a page's heartbeat and its status,
+            // or two tabs) would both create it. Lock the UserAccount row instead and look again: the second waits for
+            // the first to commit, then finds its row and updates it.
+            if (!row) {
+                ec.entity.find('moqui.security.UserAccount').condition('userId', me).selectField('userId').forUpdate(true).disableAuthz().one()
+                row = ec.entity.find('moqui.security.UserStatus').condition('userId', me).forUpdate(true).one()
+            }
             const created = !row
             if (created) {
                 row = ec.entity.makeValue('moqui.security.UserStatus')

@@ -8,4 +8,8 @@
             serviceName="org.moqui.impl.TelemetryServices.scrape#Targets" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="run_SyntheticChecks_minute" description="Run synthetic checks whose interval has passed"
             serviceName="org.moqui.impl.TelemetryServices.run#Checks" cronExpression="30 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="detect_Regressions_5min" description="Compare service versions with their baselines and open incidents"
+            serviceName="org.moqui.monitor.MonitorServices.detect#Regressions" cronExpression="0 */5 * * * ?" paused="N" errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="run_Recovery_minute" description="Recovery decisions, actions and their verification for open incidents"
+            serviceName="org.moqui.monitor.MonitorServices.run#Recovery" cronExpression="15 * * * * ?" paused="N" errorHistoryOnly="Y"/>
 </entity-facade-xml>

@@ -141,6 +141,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
       <moqui.security.UserGroup userGroupId="MONITOR_ONLY" description="Monitor app only"/>
       <moqui.security.UserGroupMember userGroupId="MONITOR_ONLY" userId="MONITOR_ONLY" fromDate="0"/>
       <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_ONLY_APP" artifactGroupId="MONITOR_APP" userGroupId="MONITOR_ONLY" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+      <moqui.monitor.MonitorIncident incidentId="TUI_INCIDENT" title="TUI incident" severity="major" statusId="Open" source="user" serviceName="monitor-tui" version="2.0" causeStatus="hypothesis"/>
+      <moqui.monitor.MonitorIncidentCause incidentId="TUI_INCIDENT" causeSeqId="01" causeRank="1" kind="release" refId="monitor-tui:2.0" title="Release 2.0 (tui)" score="0.9" supportingJson='["every instance of 2.0 regressed"]' contradictingJson="[]" statusId="hypothesis"/>
+      <moqui.monitor.MonitorIncidentEvidence incidentId="TUI_INCIDENT" evidenceSeqId="01" evidenceDate="2026-10-30 12:00:00" kind="trace" refId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" summary="TUI monitored request failed"/>
+      <moqui.monitor.RecoveryDecision decisionId="TUI_DECISION" incidentId="TUI_INCIDENT" policyId="DEFAULT" action="isolate-instance" target="tui-canary" adapterId="IN_PROCESS" scopeKey="recovery:monitor-tui" statusId="AwaitingApproval" blastRadius="1 of 2 instances" decidedBy="system" decidedDate="2026-10-30 12:01:00"/>
+      <moqui.monitor.RecoveryAction actionId="TUI_ACTION" decisionId="TUI_DECISION" incidentId="TUI_INCIDENT" action="escalate" adapterId="IN_PROCESS" scopeKey="recovery:monitor-tui" statusId="Succeeded" createdDate="2026-10-30 12:00:30" resultingState="escalated"/>
+      <moqui.monitor.MonitorRegression regressionId="TUI_REGRESSION" serviceName="monitor-tui" metric="error_rate" baselineVersion="1.0" candidateVersion="2.0" baselineValue="0" candidateValue="0.4" magnitude="9" confidence="0.999" severity="critical" dataQuality="good" locality="unknown" statusId="Open" incidentId="TUI_INCIDENT"/>
     </entity-facade-xml>"#,
     );
     let factory = gate.server.factory();
@@ -154,6 +160,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         document(json!({"_id":"tui-agent-frame","trace_id":"cccccccccccccccccccccccccccccccc","span_id":"3333333333333333","name":"agent:tui-helper","kind":"INTERNAL","start":now-4000,"start_nano":(now-4000)*1_000_000,"duration_nano":30000000,"status_code":"UNSET","moqui.artifact.type":"AT_LLM","service.name":"monitor-tui"})),
         document(json!({"_id":"tui-agent-call","trace_id":"cccccccccccccccccccccccccccccccc","span_id":"4444444444444444","parent_span_id":"3333333333333333","name":"tui-endpoint:tui-model","kind":"CLIENT","start":now-3990,"start_nano":(now-3990)*1_000_000,"duration_nano":20000000,"status_code":"UNSET","moqui.artifact.type":"AT_LLM","gen_ai.operation.name":"chat","gen_ai.provider.name":"tui-endpoint","gen_ai.request.model":"tui-model","gen_ai.usage.input_tokens":120,"gen_ai.usage.output_tokens":30,"service.name":"monitor-tui"})),
     ]).unwrap();
+    facade.index_entries("monitor_annotations",["1.0","2.0"].into_iter().map(|version|document(json!({"_id":format!("release-tui-{version}"),"time":now-3_600_000,"source":"release","scope":"service","service.name":"monitor-tui","service.version":version,"service.instance.id":"tui-instance","vcs.ref.head.revision":"tui","text":format!("monitor-tui {version}"),"tags":["release"]}))).collect()).unwrap();
     facade.index_entries("otel_errors",vec![document(json!({"_id":"tui-error","fingerprint":"tui-error","message":"TUI failure group","count":3,"first_seen":now-5000,"last_seen":now-5000,"stacktrace":"monitor_tui.rs:42","service.name":"monitor-tui","sample_trace_ids":[TRACE]}))]).unwrap();
     facade.index_entries("otel_metrics",vec![document(json!({"_id":"tui-metric","name":"moqui.artifact.duration","bucket_start":now-60000,"bucket_end":now,"granularity":"minute","count":3,"sum":0.03,"min":0.01,"max":0.01,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.name":"monitor.tui","service.name":"monitor-tui","service.instance.id":"tui-instance"}))]).unwrap();
     // Request metrics for two versions, one with server errors, for the Services drill-down, the Metrics picker and Compare.
@@ -191,6 +198,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     let cases = [
         ("Monitor/dashboard", "/apps/monitor/dashboard?from=now-1h&thru=now"),
         ("Monitor/Services", "/apps/monitor/Services?from=now-1h&thru=now"),
+        ("Monitor/Operations", "/apps/monitor/Operations?from=now-1h&thru=now"),
+        ("Monitor/Releases", "/apps/monitor/Releases"),
+        ("Monitor/ReleaseDetail", "/apps/monitor/ReleaseDetail?serviceName=monitor-tui&version=1.0"),
+        ("Monitor/Incidents", "/apps/monitor/Incidents"),
+        ("Monitor/IncidentDetail", "/apps/monitor/IncidentDetail?incidentId=TUI_INCIDENT"),
+        ("Monitor/Recovery", "/apps/monitor/Recovery"),
         ("Monitor/Artifacts", "/apps/monitor/Artifacts?from=now-1h&thru=now"),
         (
             "Monitor/Traces",

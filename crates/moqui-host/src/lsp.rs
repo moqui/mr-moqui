@@ -719,11 +719,14 @@ pub(crate) fn serve(connection: &Connection, server: &mut Server) -> Result<(), 
 /// `moqui lsp [--server URL]`: the server over stdio.
 pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     let mut server_url = None;
+    let mut java = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--server" => server_url = rest.next().cloned(),
             other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
+            "--java" => java = rest.next().map(PathBuf::from),
+            other if let Some(dir) = other.strip_prefix("--java=") => java = Some(PathBuf::from(dir)),
             "--stdio" => {}
             _ => return Err(crate::usage::command_usage("lsp")),
         }
@@ -733,7 +736,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     let backend = match server_url {
         Some(url) => Backend::Remote(Remote::connect(&url)?),
         None => {
-            let factory = crate::devtools_cmd::model_only()?;
+            let factory = crate::devtools_cmd::model_only(java.as_deref())?;
             let index = MemoryIndex::build(&factory);
             Backend::Local { factory, index }
         }

@@ -196,6 +196,22 @@ along with this software (see the LICENSE.md file). If not, see
                     This should not be used for IDs of transactional records, better to lock directly on those records (find with for update).
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="operation" type="xs:string">
+                <xs:annotation><xs:documentation>
+                    MR Moqui only. The stable name of the business operation a call of this service is when it owns
+                    its transaction (the outermost or a force-new one): the moqui.operation.runs and
+                    moqui.operation.duration metrics count it by this name and its outcome (commit, rollback, retry,
+                    pending). Defaults to the service name; telemetry/operations in the conf may rename or limit
+                    operations. A service with transaction="ignore" owns no transaction and records no operation.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="operation-ref" type="xs:string">
+                <xs:annotation><xs:documentation>
+                    MR Moqui only. The in-parameter whose value is the operation's correlation reference, recorded on
+                    the service's span as moqui.operation.ref (parameter:value), never as a metric label. Name an id,
+                    such as orderId, never a parameter that carries document contents.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="in-parameters">

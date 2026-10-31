@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Loaded once (seed-initial), so the policies and adapters an administrator changes are kept. -->
+<entity-facade-xml type="seed-initial">
+    <!-- Recovery is advisory by default: this policy only escalates a major or critical incident to the ADMIN group. Add
+         steps (and approval or automatic mode) in Monitor › Recovery. -->
+    <moqui.monitor.RecoveryAdapter adapterId="IN_PROCESS" adapterType="in-process" description="Actions MR Moqui does itself"/>
+    <moqui.monitor.RecoveryAdapter adapterId="MANUAL" adapterType="manual" description="An operator carries the action out and marks it done"
+            instructions="Carry out the action with your deployment tools, then mark it done or failed here."/>
+    <moqui.monitor.RecoveryPolicy policyId="DEFAULT" description="Escalate major and critical incidents" enabled="Y" sequenceNum="1000"
+            minSeverity="major" mode="advisory" adapterId="IN_PROCESS" ladderJson='[{"action":"escalate"}]'
+            cooldownMinutes="60" maxActionsPerDay="3"/>
+</entity-facade-xml>

@@ -552,6 +552,7 @@ impl ServicePools {
             let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
                 return Ok(());
             };
+            super::call::note_pending(name);
             let user_name = crate::user::current_username().ok().flatten();
             lock(&inline.queue).push_back(Work::service(name.to_string(), parameters, factory, user_name));
             return Ok(());
@@ -561,6 +562,7 @@ impl ServicePools {
         let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
             return Ok(());
         };
+        super::call::note_pending(name);
         let user_name = crate::user::current_username().ok().flatten();
         {
             let mut state = lock(&shared.state);

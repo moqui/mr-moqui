@@ -17,6 +17,7 @@ pub(crate) fn routes(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Ro
         .route("/v1/logs", axum::routing::post(ingest))
         .route("/v1/metrics", axum::routing::post(ingest))
         .route("/v1/annotations", axum::routing::post(ingest))
+        .route("/v1/recovery", axum::routing::post(ingest))
 }
 
 /// An authenticated ingest request: it holds one of the receiver's concurrent-request permits until it is done.
@@ -169,6 +170,9 @@ async fn ingest(
         return refused(415, "unsupported OTLP content encoding");
     }
     let is_annotation = request.uri().path() == "/v1/annotations";
+    // A deployment controller's report on a recovery action (plans/Monitoring.md, Later: Recovery): the ingest key and
+    // the action's callback token both have to match.
+    let is_recovery = request.uri().path() == "/v1/recovery";
     let signal = match request.uri().path() {
         "/v1/traces" => Signal::Traces,
         "/v1/logs" => Signal::Logs,
@@ -208,6 +212,15 @@ async fn ingest(
         } else {
             body.to_vec()
         };
+        if is_recovery {
+            if !content_type.starts_with("application/json") {
+                return Err((415, "recovery reports require JSON".into()));
+            }
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).map_err(|_| (400, "invalid recovery report JSON".to_string()))?;
+            moqui_report::recovery::callback(ec, &json).map_err(|error| (400, error.to_string()))?;
+            return Ok((0, String::new()));
+        }
         if is_annotation {
             if !content_type.starts_with("application/json") {
                 return Err((415, "annotations require JSON".into()));

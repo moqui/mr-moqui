@@ -23,8 +23,9 @@ use crate::model::EntityModel;
 use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
-    insert, insert_or_update, render_condition, select, select_view, select_view_with, select_with, supports_upsert,
-    update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
+    insert, insert_if_missing, insert_or_update, render_condition, select, select_view, select_view_with, select_with,
+    supports_insert_if_missing, supports_upsert, update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy,
+    PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -302,6 +303,56 @@ fn insert_or_update_is_one_statement_for_each_database_that_has_one() {
     assert!(conflict.contains("ON CONFLICT"), "{conflict}");
     assert!(conflict.contains("DO UPDATE SET"), "{conflict}");
     assert!(conflict.contains("EXCLUDED.\"description\""), "{conflict}");
+}
+
+#[test]
+fn insert_if_missing_does_nothing_on_a_primary_key_conflict() {
+    let (model, dialects) = framework();
+    let preference = model.entity("moqui.security.UserPreference").unwrap();
+    let columns = ["userId", "preferenceKey", "preferenceValue"];
+    let postgres = dialects.get("postgres").unwrap();
+    let sqlite = dialects.get("sqlite").unwrap();
+    let mysql = dialects.get("mysql").unwrap();
+    let mysql8 = dialects.get("mysql8").unwrap();
+    for dialect in [postgres, sqlite, mysql, mysql8] {
+        assert!(supports_insert_if_missing(dialect), "{}", dialect.name);
+    }
+    for name in ["oracle", "mssql", "db2"] {
+        let dialect = dialects.get(name).unwrap();
+        assert!(!supports_insert_if_missing(dialect), "{name}");
+        assert!(insert_if_missing(preference, dialect, &columns).is_err(), "{name}");
+    }
+
+    let insert_sql = insert(preference, postgres, &columns).unwrap();
+    let pg = insert_if_missing(preference, postgres, &columns).unwrap();
+    assert_eq!(
+        pg,
+        format!("{insert_sql} ON CONFLICT (\"userId\", \"preferenceKey\") DO NOTHING"),
+        "{pg}"
+    );
+    let lite = insert_if_missing(preference, sqlite, &columns).unwrap();
+    assert!(
+        lite.starts_with(&insert(preference, sqlite, &columns).unwrap()),
+        "{lite}"
+    );
+    assert!(
+        lite.ends_with(" DO NOTHING") && lite.contains(" ON CONFLICT ("),
+        "{lite}"
+    );
+
+    // MySQL has no DO NOTHING: the key set to itself changes no row, so the statement counts none.
+    let my = insert_if_missing(preference, mysql, &columns).unwrap();
+    assert_eq!(
+        my,
+        format!(
+            "{} ON DUPLICATE KEY UPDATE `userId` = `userId`",
+            insert(preference, mysql, &columns).unwrap()
+        ),
+        "{my}"
+    );
+    // Only primary key columns: still one statement, with nothing to update.
+    let keys_only = insert_if_missing(preference, postgres, &["userId", "preferenceKey"]).unwrap();
+    assert!(keys_only.ends_with("DO NOTHING"), "{keys_only}");
 }
 
 #[test]
@@ -1641,21 +1692,27 @@ fn a_filter_only_view_sub_select_preserves_its_grouping_and_correlation() {
 }
 
 #[test]
-fn bad_views_fail_to_load() {
+fn bad_views_are_logged_and_left_out() {
     let root = workspace_root();
     let conf =
         MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
-    let load = |entities: &str| {
+    // the problem the view left out was logged with, and the model loads without it
+    let load = |name: &str, entities: &str| {
         let doc = MNode::parse_text("entities", &format!("<entities>{ORDERS}{entities}</entities>")).unwrap();
-        EntityModel::load(&conf, &[doc]).map(|_| ()).unwrap_err().to_string()
+        let model = EntityModel::load(&conf, &[doc]).expect("the model loads");
+        assert!(model.entity(name).is_err(), "{name} is left out");
+        assert!(model.entity("sample.Order").is_ok());
+        model.problems().join("\n")
     };
     let err = load(
+        "sample.OnlyRel",
         r#"<view-entity entity-name="OnlyRel" package="sample">
             <member-relationship entity-alias="R" join-from-alias="L" relationship="missing"/>
         </view-entity>"#,
     );
     assert!(err.contains("could not find member-entity L"), "{err}");
     let err = load(
+        "sample.BadField",
         r#"<view-entity entity-name="BadField" package="sample">
             <member-entity entity-alias="O" entity-name="sample.Order"/>
             <alias name="nope" entity-alias="O"/>
@@ -1663,12 +1720,61 @@ fn bad_views_fail_to_load() {
     );
     assert!(err.contains("does not exist"), "{err}");
     let err = load(
+        "sample.Loop",
         r#"<view-entity entity-name="Loop" package="sample">
             <member-entity entity-alias="L" entity-name="sample.Loop"/>
             <alias name="x" entity-alias="L"/>
         </view-entity>"#,
     );
     assert!(err.contains("member of itself"), "{err}");
+}
+
+/// A view whose member is no entity is left out with the views that join it and the relationships to them; a
+/// relationship to no entity is left out of its entity; the others load.
+#[test]
+fn unresolved_members_and_relationships_are_left_out() {
+    let root = workspace_root();
+    let conf =
+        MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).expect("conf");
+    let doc = MNode::parse_text(
+        "entities",
+        &format!(
+            r#"<entities>{ORDERS}
+            <entity entity-name="Note" package="sample">
+                <field name="noteId" type="id" is-pk="true"/><field name="orderId" type="id"/>
+                <relationship type="one" related="sample.Order"/>
+                <relationship type="one" related="moqui.olap.NoSuchFact"><key-map field-name="orderId"/></relationship>
+                <relationship type="one" related="sample.FactView"><key-map field-name="orderId"/></relationship>
+            </entity>
+            <view-entity entity-name="FactView" package="sample">
+                <member-entity entity-alias="F" entity-name="moqui.olap.NoSuchFact"/>
+                <alias-all entity-alias="F"/>
+            </view-entity>
+            <view-entity entity-name="OnFactView" package="sample">
+                <member-entity entity-alias="V" entity-name="sample.FactView"/>
+                <alias-all entity-alias="V"/>
+            </view-entity>
+        </entities>"#
+        ),
+    )
+    .unwrap();
+    let model = EntityModel::load(&conf, &[doc]).expect("the model loads");
+    assert!(model.entity("sample.FactView").is_err());
+    assert!(model.entity("sample.OnFactView").is_err());
+    let note = model.entity("sample.Note").expect("Note loads");
+    let related: Vec<&str> = note
+        .relationships
+        .iter()
+        .map(|relationship| relationship.related.as_str())
+        .collect();
+    assert_eq!(related, ["sample.Order"]);
+    let problems = model.problems().join("\n");
+    assert!(problems.contains("relationship to moqui.olap.NoSuchFact"), "{problems}");
+    assert!(
+        problems.contains("Left out view-entity sample.FactView: member-entity moqui.olap.NoSuchFact"),
+        "{problems}"
+    );
+    assert!(problems.contains("Left out view-entity sample.OnFactView"), "{problems}");
 }
 
 /// Framework, mantle, and the other component entities in the Java tree, when it is next to this one. The tool

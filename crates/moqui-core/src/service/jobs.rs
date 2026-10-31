@@ -85,6 +85,8 @@ pub(crate) struct JobRun {
     description: Option<String>,
     /// `ServiceJob.errorHistoryOnly`: a success deletes its `ServiceJobRun`.
     error_history_only: bool,
+    /// The job has a schedule, so a run that fails is retried by a later one: its operation's rollback is `retry`.
+    retries: bool,
     factory: Arc<ExecutionContextFactory>,
 }
 
@@ -331,6 +333,7 @@ fn dispatch(
             topic: Some(field_text(job, "topic")).filter(|topic| !topic.is_empty()),
             description: Some(field_text(job, "description")).filter(|text| !text.is_empty()),
             error_history_only: history_on_error,
+            retries: !queued && !field_text(job, "cronExpression").is_empty(),
             factory: Arc::clone(factory),
         };
         if shared.submit_job(run) {
@@ -466,6 +469,7 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
         topic: Some(field_text(&job, "topic")).filter(|topic| !topic.is_empty()),
         description: Some(field_text(&job, "description")).filter(|text| !text.is_empty()),
         error_history_only: history_on_error,
+        retries: !field_text(&job, "cronExpression").is_empty(),
         factory: Arc::clone(&factory),
     };
     // The inline executor runs it at the next drain point.
@@ -564,6 +568,7 @@ pub(crate) fn run_job(job: JobRun) {
     let options = CallOptions {
         disable_authz: true,
         timeout: Some(job.timeout),
+        operation_retry: job.retries,
         ..CallOptions::default()
     };
     let results = match super::call::sync_with(&job.service_name, &parameters, &options) {
@@ -1221,6 +1226,7 @@ mod tests {
             topic: None,
             description: None,
             error_history_only: false,
+            retries: false,
             factory: Arc::clone(ctx.factory()),
         }
     }

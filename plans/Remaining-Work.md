@@ -40,7 +40,7 @@ Guides [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Mail-OAuth](../docs/
 
 ## Monitoring
 
-Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stages (server-JS profiling, browser RUM and replay, business operations, regressions, incidents and recovery, day partitions and gRPC).
+Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md). Not started: the plan's Later stage server-JS profiling (the others were built Oct 30).
 
 | Area | Item | Source |
 |---|---|---|
@@ -54,9 +54,12 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 
 ## Chat and presence
 
+Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
+and acceptance gates in [§7](Comms-Framework.md#7-order). None of it is implemented yet.
+
 | Item | Source |
 |---|---|
-| Calls (`ChatRoomMember.inCall` is not set); a link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
+| Calls (`UserStatus.inCall` awaits call services); a link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
 
 ## Files and drives
 

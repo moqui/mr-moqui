@@ -13,6 +13,9 @@ moqui_core::extension::submit! {
             register(registry)?;
             monitor::register(registry)?;
             browser::register(registry)?;
+            regression::register(registry)?;
+            incident::register(registry)?;
+            recovery::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -31,8 +34,12 @@ pub mod definitions;
 pub mod frame;
 pub mod git_sync;
 pub mod graph;
+pub mod incident;
+pub mod lock;
 pub mod monitor;
 pub mod patterns;
+pub mod recovery;
+pub mod regression;
 pub mod repeat;
 pub mod schedule;
 use moqui_core::search::time;
@@ -2975,6 +2982,9 @@ mod tests {
         register(&mut registry).unwrap();
         crate::monitor::register(&mut registry).unwrap();
         crate::browser::register(&mut registry).unwrap();
+        crate::regression::register(&mut registry).unwrap();
+        crate::incident::register(&mut registry).unwrap();
+        crate::recovery::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");

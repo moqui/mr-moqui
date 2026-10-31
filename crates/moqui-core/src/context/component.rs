@@ -51,7 +51,7 @@ pub fn component_entity_dirs(factory: &super::ExecutionContextFactory) -> Vec<Pa
     factory
         .components()
         .iter()
-        .filter(|info| !same_directory(&info.location, factory.framework_dir()))
+        .filter(|info| !same_directory(&info.location, factory.framework_component_dir()))
         .map(|info| info.location.join("entity"))
         .filter(|dir| dir.is_dir())
         .collect()

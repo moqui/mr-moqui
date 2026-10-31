@@ -49,6 +49,9 @@ pub struct CallOptions {
     pub no_remember_parameters: bool,
     /// Opt-in public/protocol boundary: retain typed failures instead of converting them to result messages.
     pub throw_on_error: bool,
+    /// A rollback of this call will be retried (a scheduled job's run): its operation's outcome is `retry`, not
+    /// `rollback` (plans/Monitoring.md, Later: Business operations).
+    pub operation_retry: bool,
 }
 
 impl CallOptions {
@@ -352,6 +355,10 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
     }
     let username = crate::user::current_username().ok().flatten();
     cleaned.insert("authUsername".to_string(), username.map_or(Value::Null, Value::String));
+    // The retry flag is not a declared parameter: it goes with the call to the worker's call, which takes it out.
+    if let Some(retry) = parameters.get(crate::telemetry::operation::RETRY_PARAMETER) {
+        cleaned.insert(crate::telemetry::operation::RETRY_PARAMETER.to_string(), retry.clone());
+    }
     Ok(AsyncCall::Run(cleaned))
 }
 
@@ -398,6 +405,11 @@ pub fn sync_with(
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
     let mut input = std::borrow::Cow::Borrowed(parameters);
+    let mut operation_retry = options.operation_retry;
+    if let Some(retry) = input.get(crate::telemetry::operation::RETRY_PARAMETER) {
+        operation_retry |= moqui_lib::object::to_plain_string(retry) == "true";
+        input.to_mut().remove(crate::telemetry::operation::RETRY_PARAMETER);
+    }
     if super::seca::has_rules(&def.name, "pre-validate") {
         super::seca::run_seca_rules(&def.name, "pre-validate", input.to_mut(), None)?;
     }
@@ -474,6 +486,17 @@ pub fn sync_with(
     };
     let tx = facade.transactions_for(&entity_name)?;
     let attribute = options.attribute(def.transaction);
+    // A call that begins its own transaction is a business operation: the frame's hooks tell its outcome.
+    let mut operation = crate::telemetry::current().and_then(|telemetry| {
+        let operation = telemetry.operation(&def.name, def.operation.as_deref(), def.operation_ref.as_deref())?;
+        Some(OperationRun {
+            telemetry,
+            operation,
+            started: std::time::Instant::now(),
+            frame_before: tx.frame_token(),
+            ended: None,
+        })
+    });
     // Java's `result`: empty until the runner returns, then its results, which the post-service rules may change.
     let mut produced: BTreeMap<String, Value> = BTreeMap::new();
     // Errors the service leaves in the message facade roll the transaction back but are not a
@@ -483,6 +506,9 @@ pub fn sync_with(
     let mut finished = false;
     let outcome = tx.run(attribute, options.timeout.or(def.timeout), || {
         let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining());
+        if let Some(run) = &mut operation {
+            run.watch(&tx)?;
+        }
         if def.no_tx_cache {
             crate::entity::cache::flush_and_disable(&facade, &tx)?;
         }
@@ -518,6 +544,9 @@ pub fn sync_with(
     // is rolled back, and the call returns the results as they were: empty when the runner failed. Only an authorization
     // failure goes on as an error, as Java rethrows `ArtifactAuthorizationException`, and so does a failure with no
     // message facade to record it in.
+    if let Some(run) = operation {
+        run.finish(outcome.is_ok(), operation_retry, &cleaned);
+    }
     let mut failure = match outcome {
         Ok(()) => None,
         // The rollback the message errors asked for.
@@ -551,6 +580,81 @@ pub fn sync_with(
     }
     post?;
     Ok(project(&def, produced))
+}
+
+/// A business operation in progress (plans/Monitoring.md, Later: Business operations).
+struct OperationRun {
+    telemetry: Arc<crate::telemetry::Telemetry>,
+    operation: Arc<crate::telemetry::operation::Operation>,
+    started: std::time::Instant,
+    /// The active transaction frame before the call, so a new one is the call's own.
+    frame_before: Option<u64>,
+    /// Set by the frame's hooks: 1 when it committed, 2 when it rolled back. None when the call joined a frame.
+    ended: Option<Arc<std::sync::atomic::AtomicU8>>,
+}
+
+impl OperationRun {
+    /// Inside the call's transaction: when the call began the frame, its commit and rollback hooks record the outcome.
+    fn watch(&mut self, tx: &crate::transaction::TransactionManager) -> Result<(), Error> {
+        let token = tx.frame_token();
+        if token.is_none() || token == self.frame_before {
+            return Ok(());
+        }
+        let ended = Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let committed = Arc::clone(&ended);
+        tx.on_commit(move || committed.store(1, std::sync::atomic::Ordering::Relaxed))?;
+        let rolled_back = Arc::clone(&ended);
+        tx.on_rollback(move || rolled_back.store(2, std::sync::atomic::Ordering::Relaxed))?;
+        self.ended = Some(ended);
+        Ok(())
+    }
+
+    /// After the transaction ended: the run's metrics, and its name, outcome and reference on the service's span.
+    fn finish(self, ok: bool, retries: bool, parameters: &BTreeMap<String, Value>) {
+        let Some(ended) = self.ended else {
+            return;
+        };
+        let committed = match ended.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => true,
+            2 => false,
+            // No hook ran, which a frame always does: go by the call's result.
+            _ => ok,
+        };
+        let outcome = crate::telemetry::operation::Outcome::ended(committed, retries);
+        self.telemetry.record_operation(
+            &self.operation.name,
+            outcome,
+            Some(self.started.elapsed().as_secs_f64()),
+        );
+        let reference = self.operation.reference_of(parameters);
+        crate::context::ExecutionContext::with_current(|ctx| {
+            ctx.set_top_span_attribute("moqui.operation.name", Value::string(&self.operation.name));
+            ctx.set_top_span_attribute("moqui.operation.outcome", Value::string(outcome.as_str()));
+            if let Some(reference) = reference {
+                ctx.set_top_span_attribute("moqui.operation.ref", Value::String(reference));
+            }
+        });
+    }
+}
+
+/// A call queued for a worker counts once as a `pending` run of its operation, when it is one: the worker's call will
+/// own its transaction unless the service ignores transactions.
+pub(crate) fn note_pending(name: &str) {
+    let Some(telemetry) = crate::telemetry::current() else {
+        return;
+    };
+    let Ok(def) = resolve(name, current_facade().as_ref()) else {
+        return;
+    };
+    if matches!(
+        def.transaction,
+        TransactionAttribute::Ignore | TransactionAttribute::IgnoreSuspend
+    ) {
+        return;
+    }
+    if let Some(operation) = telemetry.operation(&def.name, def.operation.as_deref(), def.operation_ref.as_deref()) {
+        telemetry.record_operation(&operation.name, crate::telemetry::operation::Outcome::Pending, None);
+    }
 }
 
 /// Java's `catch (Throwable t)`: the failure's message and each cause's are added to the message facade, for the

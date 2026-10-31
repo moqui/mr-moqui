@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use moqui_db::model::EntityDefinition;
-use moqui_db::sql::{delete, insert, insert_or_update, update, Condition};
+use moqui_db::sql::{delete, insert, insert_if_missing, insert_or_update, update, Condition};
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
 use moqui_lib::sync::{lock, read, write};
@@ -642,6 +642,10 @@ impl EntityFacade {
 
     /// Java's `createOrUpdate`: update the row when it is there, as [`Self::update_value`] (a value read from the
     /// database writes only the fields that changed), else create it with every field the value holds.
+    ///
+    /// The create does not fail when another transaction creates the same key between the look and the insert
+    /// ([`Self::create_if_missing`]): the row it created is then updated, so concurrent calls for one new key all
+    /// succeed and leave one row (Parity-Diffs, atomic create-or-update; Java's insert fails on the key).
     pub fn create_or_update_value(&self, value: &EntityValue) -> Result<(), Error> {
         let before = value.read_before();
         // As Java, fill primary-key defaults first.
@@ -665,7 +669,9 @@ impl EntityFacade {
             }
             // The update just saw no row in this transaction, which is what a refresh would read now.
             Probe::Missing => {
-                self.create_value(&copy)?;
+                if !self.create_if_missing(&copy)? {
+                    self.write_update(&copy.entity_name, &copy.fields, None, before.as_ref())?;
+                }
                 value.read.synced();
                 return Ok(());
             }
@@ -684,22 +690,51 @@ impl EntityFacade {
                 Some(row.into_fields()),
                 before.as_ref(),
             )?,
-            None => self.create_value(&copy)?,
+            None => {
+                if !self.create_if_missing(&copy)? {
+                    self.write_update(&copy.entity_name, &copy.fields, None, before.as_ref())?;
+                }
+            }
         }
         value.read.synced();
         Ok(())
+    }
+
+    /// The create of [`Self::create_or_update_value`] for a row it found missing: insert it, or, when another
+    /// transaction inserted the same primary key since (or is inserting it, which Postgres waits for), write nothing
+    /// and return false, so the caller updates that row. One statement that does not fail on the key
+    /// ([`moqui_db::sql::insert_if_missing`]), as a failed insert aborts a Postgres transaction and the facade sets no
+    /// savepoints. A conflict leaves no create behind: no audit log, data feed touch, cache clear or run-after ECA rule;
+    /// a run-before `create` rule has already run. Where the database has no such statement, or a data load sends its
+    /// writes without waiting for the count, this is [`Self::create_value`], which fails on the key as Java's does.
+    fn create_if_missing(&self, value: &EntityValue) -> Result<bool, Error> {
+        let atomic = self.with_entity(&value.entity_name, |_, dialect, _| {
+            Ok(moqui_db::sql::supports_insert_if_missing(dialect))
+        })? && !pipelining(&self.transactions_for(&value.entity_name)?);
+        if !atomic {
+            self.create_value(value)?;
+            return Ok(true);
+        }
+        let mut stack = HashSet::new();
+        stack.insert(value.entity_name.to_string());
+        let inserted = self.insert_prepared(value, &mut stack, "create-if-missing")? > 0;
+        if inserted {
+            value.read.synced();
+        }
+        Ok(inserted)
     }
 
     pub(crate) fn insert_record(&self, value: &EntityValue, stack: &mut HashSet<String>) -> Result<(), Error> {
         if !stack.insert(value.entity_name.to_string()) {
             return Err(Error::new(format!("foreign key cycle at {}", value.entity_name)));
         }
-        let result = self.insert_prepared(value, stack);
+        let result = self.insert_prepared(value, stack, "create").map(|_| ());
         stack.remove(value.entity_name.as_ref());
         result
     }
 
-    fn insert_prepared(&self, value: &EntityValue, stack: &mut HashSet<String>) -> Result<(), Error> {
+    /// `operation` is `create`, or `create-if-missing` for [`Self::create_if_missing`]; the rows it inserted.
+    fn insert_prepared(&self, value: &EntityValue, stack: &mut HashSet<String>, operation: &str) -> Result<u64, Error> {
         let owned = if self.with_entity(&value.entity_name, |entity, _, _| Ok(has_field_defaults(entity)))? {
             self.apply_field_defaults(&value.entity_name, value.fields())?
         } else {
@@ -709,8 +744,7 @@ impl EntityFacade {
         self.require_pk(&value.entity_name, &plain)?;
         fk::enforce(self, &value.entity_name, &plain, stack)?;
         self.reject_view(&value.entity_name, "create")?;
-        self.finish_write(&value.entity_name, "create", plain, None, None, None)
-            .map(|_| ())
+        self.finish_write(&value.entity_name, operation, plain, None, None, None)
     }
 
     /// Fill the fields an entity definition gives a `default`, as Java's `checkSetFieldDefaults` on create.
@@ -1095,7 +1129,16 @@ impl EntityFacade {
         // authorized as an update. Its hit is an `update` when it updated a row, and the Rust-only `update-probe`
         // when it matched none.
         let probe = operation == "update-probe";
-        let operation = if probe { "update" } else { operation };
+        // `create-if-missing` is a create that writes nothing when the row is there; see `create_if_missing`. Its hit
+        // is a `create`, and the Rust-only `create-conflict` when the row was there.
+        let if_missing = operation == "create-if-missing";
+        let operation = if probe {
+            "update"
+        } else if if_missing {
+            "create"
+        } else {
+            operation
+        };
         // Declared first, so it drops last: the authorization cache is invalidated after the write.
         let _note = WriteNote(entity_name);
         let sub_type = if probe {
@@ -1225,7 +1268,15 @@ impl EntityFacade {
             }
             // Java's `checkTableRuntime` before each write, when the group adds missing tables at runtime.
             self.check_table_runtime(entity_name);
-            let prepared = self.seal_values(entity_name, seal_operation, plain, stored.as_ref())?;
+            // A create that may write nothing is audited once it has inserted.
+            let prepared = if if_missing {
+                let facade = self.clone();
+                self.with_entity(entity_name, |entity, _, _| {
+                    field_rw::seal_unaudited(&facade, entity, plain)
+                })?
+            } else {
+                self.seal_values(entity_name, seal_operation, plain, stored.as_ref())?
+            };
             let (sql, params, row_key) = self.with_group(entity_name, |entity, dialect, _, _| {
                 // A null an update or upsert names is written, so the field is cleared.
                 let columns = present_columns(
@@ -1239,7 +1290,7 @@ impl EntityFacade {
                 key.push('|');
                 key.push_str(&dialect.name);
                 key.push('|');
-                key.push_str(operation);
+                key.push_str(if if_missing { "create-if-missing" } else { operation });
                 key.push('|');
                 for column in &columns {
                     key.push_str(column);
@@ -1264,6 +1315,8 @@ impl EntityFacade {
                         Ok(update(entity, dialect, &columns, Some(&condition))?.sql)
                     } else if operation == "upsert" {
                         insert_or_update(entity, dialect, &columns)
+                    } else if if_missing {
+                        insert_if_missing(entity, dialect, &columns)
                     } else {
                         insert(entity, dialect, &columns)
                     }
@@ -1277,7 +1330,7 @@ impl EntityFacade {
             })?;
             // A data load sends its writes without waiting; an update that then finds no row fails the file later. Its
             // creates and upserts may go out several rows to a statement.
-            affected = if !probe && operation != "delete" && pipelining(&tx) {
+            affected = if !probe && !if_missing && operation != "delete" && pipelining(&tx) {
                 if operation == "update" {
                     let zero_rows = Some(self.missing_update(entity_name, &cache_values));
                     execute_deferred_tx(&tx, &sql, params, zero_rows)?;
@@ -1295,6 +1348,14 @@ impl EntityFacade {
                 (crate::hooks::get().set_hit_detail)("update");
             } else if operation == "update" && affected == 0 {
                 return Err(Error::new(self.missing_update(entity_name, &cache_values)));
+            } else if if_missing {
+                if affected == 0 {
+                    (crate::hooks::get().set_hit_detail)(RustOnlyEntityHits::CREATE_CONFLICT);
+                    return Ok(0);
+                }
+                self.with_entity(entity_name, |entity, _, _| {
+                    field_rw::audit_write(self, entity, "create", &cache_values)
+                })?;
             }
             load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), feed_old);
             if let Some(mut values) = after_values {
@@ -1581,6 +1642,8 @@ impl RustOnlyEntityHits {
     pub const LOAD_REPORT: &'static str = "load-report";
     /// The UPDATE create-or-update tries before it reads the row, when it matched no row (Java reads first).
     pub const UPDATE_PROBE: &'static str = "update-probe";
+    /// The insert create-or-update makes for a row it found missing, when another transaction had created it since.
+    pub const CREATE_CONFLICT: &'static str = "create-conflict";
 
     pub fn enter(sub_type: &'static str) -> Self {
         Self(RUST_ONLY_SUB_TYPE.with(|current| current.replace(Some(sub_type))))

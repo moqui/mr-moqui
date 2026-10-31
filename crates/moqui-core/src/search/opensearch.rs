@@ -103,6 +103,20 @@ pub fn mapping_json(mapping: &DocumentMapping) -> Json {
     result
 }
 
+/// The properties of `wanted` that `stored` lacks, or None when a stored property is gone or changed, or nothing was
+/// added, so the change is not additive.
+fn added_properties(stored: &Map<String, Json>, wanted: &Map<String, Json>) -> Option<Map<String, Json>> {
+    if stored.iter().any(|(name, property)| wanted.get(name) != Some(property)) {
+        return None;
+    }
+    let added: Map<String, Json> = wanted
+        .iter()
+        .filter(|(name, _)| !stored.contains_key(*name))
+        .map(|(name, property)| (name.clone(), property.clone()))
+        .collect();
+    (!added.is_empty()).then_some(added)
+}
+
 fn object_properties(object: &ObjectMapping) -> Map<String, Json> {
     let mut properties = Map::new();
     for (name, field) in &object.fields {
@@ -1111,7 +1125,24 @@ impl SearchBackend for OpenSearchBackend {
             if super::telemetry::is_telemetry_index(&mapping.document_id)
                 || super::telemetry::is_telemetry_index(&mapping.physical_name)
             {
-                return Err(Error::new(format!("telemetry index {} mapping changed; existing history is preserved. Apply an explicit non-destructive mapping migration before retrying",mapping.document_id)));
+                // Telemetry history is never dropped: a mapping that only gained fields gets them added.
+                let wanted = mapping_json(mapping);
+                let stored = json.get(&index).and_then(|entry| entry.pointer("/mappings/properties"));
+                if let (Some(Json::Object(stored)), Some(Json::Object(wanted_properties))) =
+                    (stored, wanted.get("properties"))
+                {
+                    if let Some(added) = added_properties(stored, wanted_properties) {
+                        let body = json!({"_meta": wanted["_meta"], "properties": added});
+                        self.checked("PUT", &format!("{index}/_mapping"), Some(Body::Json(body)))?;
+                        tracing::info!(index = %index, fields = added.len(), "telemetry index gained fields");
+                        lock(&self.known).insert(mapping.document_id.clone(), signature);
+                        return Ok(());
+                    }
+                }
+                return Err(Error::new(format!(
+                    "telemetry index {} mapping changed; existing history is preserved. Apply an explicit non-destructive mapping migration before retrying",
+                    mapping.document_id
+                )));
             }
             tracing::warn!(index = %index, "search index shape changed; the index is rebuilt and must be reindexed");
             self.checked("DELETE", &index, None)?;

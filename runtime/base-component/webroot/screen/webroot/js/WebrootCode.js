@@ -297,13 +297,15 @@
                 if (this.view && text !== this.view.state.doc.toString()) {
                     // only the part that differs, so the cursor and scroll outside it stay where they were
                     this.view.dispatch({ changes: editor.textChange(this.view.state.doc.toString(), text) });
+                    // a file's text arrives after its editor: the highlighted lines are in it now
+                    if (this.highlightLines && this.highlightLines.length) { this.reconfigure("highlight"); this.reveal(); }
                 }
             },
             resolvedLanguage() { this.reconfigure("language"); },
             schema() { this.reconfigure("language"); },
             readOnly() { this.reconfigure("readOnly"); },
             wrap() { this.reconfigure("wrap"); },
-            highlightLines() { this.reconfigure("highlight"); },
+            highlightLines() { this.reconfigure("highlight"); this.reveal(); },
             blame() { this.reconfigure("blame"); }
         },
         mounted() {
@@ -345,6 +347,7 @@
                     ["language", "theme", "readOnly", "wrap", "highlight", "blame"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
                     this.ready = true;
+                    this.reveal();
                     this.$emit("ready", this.view);
                     return;
                 }
@@ -386,7 +389,18 @@
                 });
                 if (this.autofocus) this.view.focus();
                 this.ready = true;
+                this.reveal();
                 this.$emit("ready", this.view);
+            },
+            // The cursor to the first highlighted line, scrolled to the middle, once the line is in the text; once for
+            // each line asked for, so editing after it does not scroll back.
+            reveal() {
+                const view = this.view, CM = this.cm;
+                const first = (this.highlightLines || []).map(Number).filter((line) => line >= 1).sort((a, b) => a - b)[0];
+                if (!view || !CM || !first || first > view.state.doc.lines || this.revealed === first) return;
+                this.revealed = first;
+                const line = view.state.doc.line(first);
+                view.dispatch({ selection: { anchor: line.from }, effects: CM.EditorView.scrollIntoView(line.from, { y: "center" }) });
             },
             reconfigure(key) {
                 if (!this.view || !this.compartments || !this.compartments[key]) return;

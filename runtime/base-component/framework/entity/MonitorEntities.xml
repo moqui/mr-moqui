@@ -40,4 +40,232 @@
         <field name="lastMessage" type="text-long"/>
         <field name="lastTraceId" type="text-short"/>
     </entity>
+    <!-- Regressions and incidents (plans/Monitoring.md, Later: Regressions and incidents). -->
+    <entity entity-name="MonitorScopeLock" package="moqui.monitor" use="nontransactional" cache="never">
+        <description>A lease on a scope (the regression detector, an incident's recovery), so one server works on it at a
+            time. A claim is a conditional update of claimToken and claimedUntil.</description>
+        <field name="scopeKey" type="text-medium" is-pk="true"/>
+        <field name="claimToken" type="text-medium"/>
+        <field name="claimedUntil" type="number-integer"><description>Epoch milliseconds</description></field>
+    </entity>
+    <entity entity-name="MonitorBaseline" package="moqui.monitor" use="transactional" cache="never">
+        <description>The stats of a service version over a window, kept so a comparison does not change as raw telemetry
+            ages out.</description>
+        <field name="baselineId" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="version" type="text-medium"/>
+        <field name="baselineKind" type="text-short"><description>version (the previous version before a release) or
+            historical (the same version a day earlier)</description></field>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="sampleCount" type="number-integer"/>
+        <field name="statsJson" type="text-very-long"><description>requests, errors, operation runs and rollbacks,
+            latency bounds and buckets, minutes covered, telemetry lost</description></field>
+        <field name="computedDate" type="date-time"/>
+        <index name="MON_BASELINE_SCOPE"><index-field name="serviceName"/><index-field name="version"/><index-field name="baselineKind"/></index>
+    </entity>
+    <entity entity-name="MonitorRegression" package="moqui.monitor" use="transactional" cache="never">
+        <field name="regressionId" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="metric" type="text-short"><description>error_rate, latency_p95 or rollback_rate</description></field>
+        <field name="baselineId" type="id"/>
+        <field name="baselineVersion" type="text-medium"/>
+        <field name="candidateVersion" type="text-medium"/>
+        <field name="baselineValue" type="number-float"/>
+        <field name="candidateValue" type="number-float"/>
+        <field name="magnitude" type="number-float"><description>The candidate value over the baseline value (a ratio)</description></field>
+        <field name="confidence" type="number-float"><description>1 less the one-sided p-value of the comparison</description></field>
+        <field name="baselineSamples" type="number-integer"/>
+        <field name="candidateSamples" type="number-integer"/>
+        <field name="severity" type="text-short"><description>major or critical</description></field>
+        <field name="dataQuality" type="text-short"><description>good or degraded</description></field>
+        <field name="qualityNote" type="text-long"/>
+        <field name="locality" type="text-short"><description>version (every instance of the version), instance (some
+            instances while others of the version are healthy) or unknown</description></field>
+        <field name="affectedInstances" type="text-long"><description>Comma-separated instance ids</description></field>
+        <field name="healthyInstances" type="text-long"/>
+        <field name="statusId" type="text-short"><description>Open, Resolved or Dismissed</description></field>
+        <field name="firstObserved" type="date-time"/>
+        <field name="lastObserved" type="date-time"/>
+        <field name="resolvedDate" type="date-time"/>
+        <field name="incidentId" type="id"/>
+        <relationship type="one" related="moqui.monitor.MonitorBaseline"/>
+        <relationship type="one" related="moqui.monitor.MonitorIncident"/>
+        <index name="MON_REGRESSION_OPEN"><index-field name="serviceName"/><index-field name="statusId"/></index>
+    </entity>
+    <entity entity-name="MonitorIncident" package="moqui.monitor" use="transactional" cache="never">
+        <field name="incidentId" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="severity" type="text-short"><description>minor, major or critical</description></field>
+        <field name="statusId" type="text-short"><description>Open, Mitigating, Monitoring, Resolved or Reopened</description></field>
+        <field name="source" type="text-short"><description>regression, alert or user</description></field>
+        <field name="serviceName" type="text-medium"/>
+        <field name="instanceId" type="text-medium"/>
+        <field name="version" type="text-medium"/>
+        <field name="revision" type="text-medium"/>
+        <field name="hostName" type="text-medium"/>
+        <field name="onsetDate" type="date-time"/>
+        <field name="detectedDate" type="date-time"/>
+        <field name="causeConfirmedDate" type="date-time"/>
+        <field name="recoveredDate" type="date-time"/>
+        <field name="resolvedDate" type="date-time"/>
+        <field name="causeStatus" type="text-short"><description>unknown, hypothesis or confirmed</description></field>
+        <field name="summary" type="text-long"/>
+        <field name="lastUpdated" type="date-time"/>
+        <index name="MON_INCIDENT_OPEN"><index-field name="serviceName"/><index-field name="statusId"/></index>
+    </entity>
+    <entity entity-name="MonitorIncidentEvidence" package="moqui.monitor" use="transactional" cache="never">
+        <description>One row of an incident's timeline.</description>
+        <field name="incidentId" type="id" is-pk="true"/>
+        <field name="evidenceSeqId" type="id" is-pk="true"/>
+        <field name="evidenceDate" type="date-time"/>
+        <field name="kind" type="text-short"><description>release, config, deploy, regression, alert, error, trace,
+            missing, note, decision, action or verification</description></field>
+        <field name="refId" type="text-medium"><description>The regression, annotation, error group, trace or action it
+            is about</description></field>
+        <field name="summary" type="text-long"/>
+        <field name="detailJson" type="text-long"/>
+        <field name="userId" type="id"/>
+        <relationship type="one" related="moqui.monitor.MonitorIncident"/>
+    </entity>
+    <entity entity-name="MonitorIncidentCause" package="moqui.monitor" use="transactional" cache="never">
+        <description>A ranked probable cause, with its supporting and contradicting evidence. A hypothesis until an
+            operator confirms or rejects it.</description>
+        <field name="incidentId" type="id" is-pk="true"/>
+        <field name="causeSeqId" type="id" is-pk="true"/>
+        <field name="causeRank" type="number-integer"/>
+        <field name="kind" type="text-short"><description>release, change, instance, dependency or error</description></field>
+        <field name="refId" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="score" type="number-float"/>
+        <field name="supportingJson" type="text-long"/>
+        <field name="contradictingJson" type="text-long"/>
+        <field name="statusId" type="text-short"><description>hypothesis, confirmed or rejected</description></field>
+        <relationship type="one" related="moqui.monitor.MonitorIncident"/>
+    </entity>
+    <!-- Recovery (plans/Monitoring.md, Later: Recovery). -->
+    <entity entity-name="RecoveryPolicy" package="moqui.monitor" use="configuration" cache="never">
+        <description>Which incidents a policy applies to, the actions it may take, least disruptive first, and how: advisory
+            (the default) records the recommendation, approval waits for a MONITOR_RECOVER approval, automatic runs it
+            when telemetry/recovery allow-automatic is true. The first enabled policy that matches an incident applies.</description>
+        <field name="policyId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="serviceName" type="text-medium"><description>A regular expression on the incident's service; empty for any</description></field>
+        <field name="minSeverity" type="text-short"><description>minor, major (default) or critical</description></field>
+        <field name="mode" type="text-short"><description>advisory, approval or automatic</description></field>
+        <field name="ladderJson" type="text-long"><description>The actions in order, each {action, target, adapterId}:
+            observe, escalate, pause-job (target: jobName), pause-alert-rule (target: alert definitionId),
+            disable-artifact (target: artifactGroupId), isolate-instance (the incident's instance), pause-rollout,
+            restart, rollback (to the version before) or promote</description></field>
+        <field name="adapterId" type="id"><description>The adapter of steps that name none</description></field>
+        <field name="contactJson" type="text-long"><description>Where escalations go: a contact point as alert rules have
+            them; a notification to the ADMIN group when empty</description></field>
+        <field name="minConfidence" type="number-float"><description>The least regression confidence for an action beyond
+            observe and escalate; 0.99 when empty</description></field>
+        <field name="cooldownMinutes" type="number-integer"/>
+        <field name="maxActionsPerDay" type="number-integer"/>
+        <field name="deadlineMinutes" type="number-integer"/>
+        <field name="verifyMinutes" type="number-integer"/>
+        <field name="maxRollbackRate" type="number-float"><description>The operation rollback rate over which business
+            health fails verification; 0.05 when empty</description></field>
+    </entity>
+    <entity entity-name="RecoveryAdapter" package="moqui.monitor" use="configuration" cache="never">
+        <description>How actions are carried out: in-process (pause-job, pause-alert-rule, disable-artifact,
+            isolate-instance, escalate), webhook (a signed POST to a deployment controller, which reports back on
+            /v1/recovery or through statusUrl) or manual (an operator does it and marks it done).</description>
+        <field name="adapterId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="adapterType" type="text-short"><description>in-process, webhook or manual</description></field>
+        <field name="url" type="text-medium"/>
+        <field name="urlProperty" type="text-medium"><description>A server property holding the URL, in place of url</description></field>
+        <field name="statusUrl" type="text-medium"><description>Polled with the action id for its status, when the
+            controller does not call back</description></field>
+        <field name="secretProperty" type="text-medium"><description>A server property holding the HMAC-SHA256 key the
+            request body is signed with (X-Moqui-Signature)</description></field>
+        <field name="headerPropertiesJson" type="text-long"><description>Header name to server property name</description></field>
+        <field name="allowInternal" type="text-indicator"><description>Y lets the webhook reach private and loopback
+            addresses, as a controller inside the cluster is; set only by MONITOR_RECOVER_ADMIN</description></field>
+        <field name="instructions" type="text-long"><description>What an operator does, for a manual adapter</description></field>
+    </entity>
+    <entity entity-name="RecoveryDecision" package="moqui.monitor" use="transactional" cache="never">
+        <field name="decisionId" type="id" is-pk="true"/>
+        <field name="incidentId" type="id"/>
+        <field name="policyId" type="id"/>
+        <field name="action" type="text-short"/>
+        <field name="target" type="text-medium"/>
+        <field name="adapterId" type="id"/>
+        <field name="scopeKey" type="text-medium"/>
+        <field name="statusId" type="text-short"><description>Proposed (advisory), AwaitingApproval, Approved, Refused,
+            Blocked or Superseded</description></field>
+        <field name="blockedReason" type="text-medium"><description>Why automation stopped, when nothing beyond
+            escalation was allowed</description></field>
+        <field name="confidence" type="number-float"/>
+        <field name="blastRadius" type="text-medium"/>
+        <field name="rationaleJson" type="text-long"><description>Each step considered and why it was taken or not</description></field>
+        <field name="decisionHash" type="text-medium"><description>What an approval is bound to; a changed incident makes
+            a new decision and supersedes this one</description></field>
+        <field name="decidedBy" type="text-medium"/>
+        <field name="decidedDate" type="date-time"/>
+        <field name="approvedByUserId" type="id"/>
+        <field name="approvedDate" type="date-time"/>
+        <relationship type="one" related="moqui.monitor.MonitorIncident"/>
+        <index name="MON_DECISION_INCIDENT"><index-field name="incidentId"/></index>
+    </entity>
+    <entity entity-name="RecoveryAction" package="moqui.monitor" use="transactional" cache="never">
+        <description>An action, persisted before it runs, with one active action per scope.</description>
+        <field name="actionId" type="id" is-pk="true"/>
+        <field name="decisionId" type="id"/>
+        <field name="incidentId" type="id"/>
+        <field name="action" type="text-short"/>
+        <field name="target" type="text-medium"/>
+        <field name="adapterId" type="id"/>
+        <field name="scopeKey" type="text-medium"/>
+        <field name="idempotencyKey" type="text-medium"/>
+        <field name="callbackTokenHash" type="text-medium"/>
+        <field name="leaseToken" type="text-medium"><description>The scope lease the action holds while it is active</description></field>
+        <field name="statusId" type="text-short"><description>Persisted, Running, AwaitingOperator, Succeeded, Failed,
+            TimedOut, Cancelled or Reverted</description></field>
+        <field name="attempts" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="deadlineDate" type="date-time"/>
+        <field name="effectiveDate" type="date-time"/>
+        <field name="verifyAfterDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <field name="externalId" type="text-medium"/>
+        <field name="requestJson" type="text-long"/>
+        <field name="responseText" type="text-long"/>
+        <field name="undoJson" type="text-long"><description>What reverting the action restores</description></field>
+        <field name="resultingState" type="text-long"/>
+        <field name="verificationStatus" type="text-short"><description>Verified, Failed or Inconclusive</description></field>
+        <relationship type="one" related="moqui.monitor.RecoveryDecision"/>
+        <index name="MON_ACTION_SCOPE"><index-field name="scopeKey"/><index-field name="statusId"/></index>
+    </entity>
+    <entity entity-name="RecoveryVerification" package="moqui.monitor" use="transactional" cache="never">
+        <field name="actionId" type="id" is-pk="true"/>
+        <field name="verificationSeqId" type="id" is-pk="true"/>
+        <field name="verifiedDate" type="date-time"/>
+        <field name="result" type="text-short"><description>Verified, Failed or Inconclusive</description></field>
+        <field name="checksJson" type="text-long"/>
+        <relationship type="one" related="moqui.monitor.RecoveryAction"/>
+    </entity>
+    <entity entity-name="RecoveryControl" package="moqui.monitor" use="configuration" cache="never">
+        <description>The emergency stop: while stopped, no recovery action runs or starts; decisions still record what
+            would be done.</description>
+        <field name="controlId" type="id" is-pk="true"/>
+        <field name="stopped" type="text-indicator"/>
+        <field name="reason" type="text-medium"/>
+        <field name="changedByUserId" type="id"/>
+        <field name="changedDate" type="date-time"/>
+    </entity>
+    <entity entity-name="InstanceDrain" package="moqui.monitor" use="configuration" cache="true">
+        <description>Whether an instance is drained (isolate-instance): it answers /health with 503 and draining, and
+            still serves the requests that reach it.</description>
+        <field name="instanceId" type="text-medium" is-pk="true"/>
+        <field name="drained" type="text-indicator"/>
+        <field name="reason" type="text-medium"/>
+        <field name="actionId" type="id"/>
+        <field name="changedDate" type="date-time"/>
+    </entity>
 </entities>

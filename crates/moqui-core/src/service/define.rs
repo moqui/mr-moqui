@@ -247,6 +247,11 @@ pub struct ServiceDef {
     pub semaphore_sleep: Duration,
     pub semaphore_ignore: Duration,
     pub semaphore_parameter: Option<String>,
+    /// `operation`: the stable name of the business operation a call that owns its transaction is (plans/Monitoring.md,
+    /// Later: Business operations). MR Moqui only.
+    pub operation: Option<String>,
+    /// `operation-ref`: the in-parameter whose value is the operation's correlation reference. MR Moqui only.
+    pub operation_ref: Option<String>,
     pub in_params: Vec<ParamDef>,
     pub out_params: Vec<ParamDef>,
     pub implements: Vec<ImplementRef>,
@@ -286,6 +291,8 @@ impl ServiceDef {
             semaphore_sleep: Duration::from_secs(5),
             semaphore_ignore: Duration::from_secs(3600),
             semaphore_parameter: None,
+            operation: None,
+            operation_ref: None,
             in_params: Vec::new(),
             out_params: Vec::new(),
             implements: Vec::new(),
@@ -676,7 +683,7 @@ fn service_roots() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut roots: Vec<PathBuf> = Vec::new();
-    let dirs = std::iter::once(factory.framework_dir().to_path_buf())
+    let dirs = std::iter::once(factory.framework_component_dir().to_path_buf())
         .chain(factory.components().iter().map(|info| info.location.clone()));
     for dir in dirs {
         let root = normalize(&dir.join("service"));
@@ -1260,6 +1267,8 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
         semaphore_sleep,
         semaphore_ignore,
         semaphore_parameter: node.attribute("semaphore-parameter"),
+        operation: node.attribute("operation").filter(|name| !name.is_empty()),
+        operation_ref: node.attribute("operation-ref").filter(|name| !name.is_empty()),
         in_params: node
             .first_named("in-parameters")
             .map(|node| parse_param_list(&node))

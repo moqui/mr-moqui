@@ -524,7 +524,7 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
     false
 }
 
-fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
+pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     match text(contact, "type", "notification") {
         "notification" => {
             let mut note = moqui_core::notify::NotificationMessage::new();
@@ -1293,6 +1293,12 @@ fn evaluate_claimed(
             let annotation = json!({"_id":format!("alert:{id}:{key}:{now}"),"time":jiff::Timestamp::from_millisecond(now).map_err(fail)?.to_string(),"source":"alert","text":format!("{}: {}",text(definition,"title",id),state.as_str().unwrap_or("Error")),"scope":"dashboard","dashboard":body["dashboardId"],"panel":body["panelId"],"rule_id":id,"series_id":key,"state":state,"labels":labels});
             if let Value::Map(document) = moqui_lib::json::from_json(&annotation) {
                 outcome.annotations.push(document);
+            }
+            // A rule labelled incident="true" opens an incident when a series starts firing (plans/Monitoring.md,
+            // Later: Regressions and incidents).
+            let wants_incident = labels["incident"] == "true" || body["labels"]["incident"] == "true";
+            if wants_incident && instance.state == State::Firing {
+                super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);
             }
         }
         if matches!(

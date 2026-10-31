@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One released version: its regressions against the version before it, with their confidence, data quality and
+    locality, and the error groups first seen since it started. MONITOR_INCIDENT is checked by the services. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Release" default-menu-include="false">
+    <parameter name="serviceName" required="true"/><parameter name="version" required="true"/>
+    <transition name="incident"><default-response url="../IncidentDetail"/></transition>
+    <transition name="error"><default-response url="../ErrorDetail"/></transition>
+    <transition name="compare"><default-response url="../Split"/></transition>
+    <transition name="dismissRegression">
+        <service-call name="org.moqui.monitor.MonitorServices.update#Regression" in-map="{regressionId:regressionId, statusId:'Dismissed'}"/>
+        <default-response url="."/>
+    </transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        regressionList = []
+        errorList = []
+        releaseInfo = {}
+        if (incidentAllowed) {
+            // Decimals from the entities are not JavaScript numbers.
+            const num = value => value == null ? null : typeof value == 'object' && value.toNumber ? value.toNumber() : Number(value)
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#Release').parameters({serviceName, version}).call()
+            releaseInfo = result.release || {}
+            const shown = (metric, value) => value == null ? '' : metric == 'latency_p95' ? num(value).toFixed(3) + ' s' : (num(value) * 100).toFixed(2) + '%'
+            regressionList = (result.regressions || []).map(row => Object.assign({}, row, {
+                change: shown(row.metric, row.baselineValue) + ' → ' + shown(row.metric, row.candidateValue),
+                ratio: row.magnitude == null ? '' : num(row.magnitude).toFixed(1) + 'x',
+                confident: row.confidence == null ? '' : (num(row.confidence) * 100).toFixed(1) + '%'}))
+            errorList = result.newErrors || []
+        }
+    ]]></script></actions>
+    <widgets>
+        <label text="${serviceName} ${version}" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Releases need the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="Revision ${releaseInfo.revision || ''}, released ${releaseInfo.releasedDate || ''}${releaseInfo.attributionUncertain ? ' (instance identity uncertain)' : ''}" type="p"/>
+            <link url="compare" text="Compare with ${releaseInfo.previousVersion || ''}" condition="releaseInfo.previousVersion" parameter-map="{leftVersion:releaseInfo.previousVersion, rightVersion:version}"/>
+            <form-list name="RegressionList" list="regressionList" skip-form="true">
+                <field name="metric"><default-field title="Metric"><display/></default-field></field>
+                <field name="change"><default-field title="Baseline → candidate"><display/></default-field></field>
+                <field name="ratio"><default-field title="Change"><display/></default-field></field>
+                <field name="confident"><default-field title="Confidence"><display/></default-field></field>
+                <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                <field name="dataQuality"><default-field title="Data"><display/></default-field></field>
+                <field name="locality"><default-field title="Where"><display/></default-field></field>
+                <field name="affectedInstances"><default-field title="Affected"><display/></default-field></field>
+                <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                <field name="incidentId"><default-field title="Incident">
+                    <link url="incident" text="${incidentId || ''}" condition="incidentId" parameter-map="{incidentId:incidentId}" link-type="anchor"/>
+                </default-field></field>
+                <field name="dismiss"><default-field title="">
+                    <link url="dismissRegression" text="Dismiss" condition="statusId == 'Open'" parameter-map="{regressionId:regressionId, serviceName:serviceName, version:version}"/>
+                </default-field></field>
+            </form-list>
+            <label text="Error groups first seen since this release" type="h5"/>
+            <form-list name="NewErrorList" list="errorList" skip-form="true">
+                <field name="type"><default-field title="Error"><link url="error" text="${type || fingerprint}" parameter-map="{fingerprint:fingerprint}" link-type="anchor"/></default-field></field>
+                <field name="message"><default-field title="Message"><display/></default-field></field>
+                <field name="firstSeen"><default-field title="First seen"><display/></default-field></field>
+                <field name="count"><default-field title="Count"><display/></default-field></field>
+            </form-list>
+        </fail-widgets></section>
+    </widgets>
+</screen>

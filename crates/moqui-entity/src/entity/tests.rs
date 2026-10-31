@@ -807,12 +807,15 @@ fn a_failed_record_load_inside_an_outer_transaction_leaves_it_to_the_owner() {
     assert!(test_entity_row(&facade, "GOOD").is_none());
 }
 
-/// A store of one row of `TestEntity`: `UPDATE` reports the row when present, `INSERT` adds it. Records the SQL.
+/// A store of one row of `TestEntity`: `UPDATE` reports the row when present, `INSERT` adds it, and an insert that
+/// does nothing on a conflict counts no row when it is there. Records the SQL.
 #[derive(Default)]
 struct StoreTape {
     sql: Vec<String>,
     params: Vec<Vec<Value>>,
     exists: bool,
+    /// Another transaction creates the row just before the next insert.
+    created_by_another: bool,
 }
 
 struct StoreDriver {
@@ -842,6 +845,13 @@ impl DbConnection for StoreConn {
             return Ok(u64::from(tape.exists));
         }
         if sql.starts_with("INSERT") {
+            if std::mem::take(&mut tape.created_by_another) {
+                tape.exists = true;
+            }
+            let if_missing = sql.ends_with(" DO NOTHING") || sql.contains(" ON DUPLICATE KEY UPDATE ");
+            if if_missing && tape.exists {
+                return Ok(0);
+            }
             tape.exists = true;
         }
         Ok(1)
@@ -964,6 +974,7 @@ fn create_or_update_on_a_new_row_updates_nothing_then_inserts_as_before() {
     let (facade, tape) = open_store(false, "postgres");
     facade.create_value(&test_value(&facade)).unwrap();
     let direct_insert = tape.lock().unwrap().sql.clone();
+    let direct_params = tape.lock().unwrap().params[0].clone();
     assert_eq!(direct_insert.len(), 1);
     {
         let mut tape = tape.lock().unwrap();
@@ -976,8 +987,39 @@ fn create_or_update_on_a_new_row_updates_nothing_then_inserts_as_before() {
     // The UPDATE that matched no row stands for the read: the transaction has no such row.
     assert_eq!(kinds, ["UPDATE", "INSERT"], "{kinds:?}");
     let tape = tape.lock().unwrap();
-    assert_eq!(tape.sql[1], direct_insert[0]);
+    // The create's insert, made one that does nothing on the key (Parity-Diffs, atomic create-or-update).
+    assert_eq!(
+        tape.sql[1],
+        format!("{} ON CONFLICT (\"test_id\") DO NOTHING", direct_insert[0])
+    );
+    // The key and the field; the stamp is the clock's.
+    assert_eq!(tape.params[1][..2], direct_params[..2]);
     assert!(tape.exists);
+}
+
+/// Another transaction creates the row between the UPDATE that found none and the insert: the insert does nothing and
+/// the row is updated, with the statement an update of a row that is there writes, so the call does not fail on the key.
+#[test]
+fn create_or_update_that_loses_the_race_for_a_new_row_updates_it() {
+    for (dialect, expected) in [
+        ("postgres", ["UPDATE", "INSERT", "UPDATE"]),
+        ("mysql", ["SELECT", "INSERT", "UPDATE"]),
+    ] {
+        let (facade, tape) = open_store(true, dialect);
+        facade.update_value(&test_value(&facade)).unwrap();
+        let direct_update = tape.lock().unwrap().sql[0].clone();
+        {
+            let mut tape = tape.lock().unwrap();
+            tape.exists = false;
+            tape.created_by_another = true;
+            tape.sql.clear();
+            tape.params.clear();
+        }
+        facade.create_or_update_value(&test_value(&facade)).unwrap();
+        let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
+        assert_eq!(kinds, expected, "{dialect}: {kinds:?}");
+        assert_eq!(tape.lock().unwrap().sql[2], direct_update, "{dialect}");
+    }
 }
 
 #[test]

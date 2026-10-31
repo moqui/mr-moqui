@@ -123,6 +123,10 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     {
         base_telemetry.merge_single_child(&over_telemetry, "receiver");
         base_telemetry.merge_single_child(&over_telemetry, "browser");
+        base_telemetry.merge_single_child(&over_telemetry, "regressions");
+        base_telemetry.merge_single_child(&over_telemetry, "recovery");
+        // A component adds or replaces operation rules by service pattern, keeping the framework's.
+        base_telemetry.merge_child_with_child_key(&over_telemetry, "operations", "operation", &["service"], None);
     }
     merge_server_stats(base, over);
     merge_webapps(base, over);

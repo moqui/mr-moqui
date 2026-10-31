@@ -137,7 +137,12 @@ along with this software (see the LICENSE.md file). If not, see
             SmsgSending while sending, then to SmsgSent if successful or back to original status if not. If the initial
             status is not SmsgProduced or SmsgError returns an error (generally means message already sent). If you
             want to resend a message that is in a later status, first change the status to SmsgProduced.</description>
-        <in-parameters><parameter name="systemMessageId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="willRetry" type="Boolean" default="true"><description>MR Moqui only. A failure will be
+                retried by a later send or consume (the failure count stays under the retry limit), so the send or
+                consume service's business operation records retry rather than rollback.</description></parameter>
+        </in-parameters>
         <actions>
             <entity-find-one entity-name="moqui.service.message.SystemMessage" value-field="systemMessage"/>
             <set field="initialStatusId" from="systemMessage.get('statusId')"/>
@@ -169,7 +174,7 @@ along with this software (see the LICENSE.md file). If not, see
             <script><![CDATA[
                 try {
                     sendOut = ec.service.sync().name(sendServiceName).requireNewTransaction(true).useTransactionCache(false)
-                            .parameters({systemMessageId}).call();
+                            .parameters({systemMessageId, _operationRetry: willRetry}).call();
                 } catch (t) { ec.message.addError(String(t)); }
             ]]></script>
 
@@ -276,6 +281,9 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="systemMessageId" required="true"/>
             <parameter name="allowError" type="Boolean" default="false"/>
+            <parameter name="willRetry" type="Boolean" default="true"><description>MR Moqui only. A failure will be
+                retried by a later send or consume (the failure count stays under the retry limit), so the send or
+                consume service's business operation records retry rather than rollback.</description></parameter>
         </in-parameters>
         <actions>
             <!-- NOTE: don't use for-update, status updates are done in separate transactions so they are always done regardless of errors -->
@@ -302,7 +310,7 @@ along with this software (see the LICENSE.md file). If not, see
             <script><![CDATA[
                 try {
                     consumeOut = ec.service.sync().name(consumeServiceName).requireNewTransaction(true).transactionTimeout(1800)
-                            .useTransactionCache(false).parameters({systemMessageId}).call();
+                            .useTransactionCache(false).parameters({systemMessageId, _operationRetry: willRetry}).call();
                 } catch (t) { ec.message.addError(String(t)); }
             ]]></script>
 
@@ -351,7 +359,8 @@ along with this software (see the LICENSE.md file). If not, see
             <iterate list="smList" entry="sm">
                 <if condition="(sm.get('failCount') || 0) &lt; retryLimit">
                     <service-call name="org.moqui.impl.SystemMessageServices.send#ProducedSystemMessage"
-                            in-map="{systemMessageId:sm.get('systemMessageId')}" async="true"/>
+                            in-map="{systemMessageId:sm.get('systemMessageId'),
+                                willRetry:(sm.get('failCount') || 0) + 1 &lt; retryLimit}" async="true"/>
                     <else>
                         <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
                                 in-map="{systemMessageId:sm.get('systemMessageId'), statusId:'SmsgError',
@@ -381,7 +390,8 @@ along with this software (see the LICENSE.md file). If not, see
             <iterate list="smList" entry="sm">
                 <if condition="(sm.get('failCount') || 0) &lt; retryLimit">
                     <service-call name="org.moqui.impl.SystemMessageServices.consume#ReceivedSystemMessage"
-                            in-map="{systemMessageId:sm.get('systemMessageId')}" async="true"/>
+                            in-map="{systemMessageId:sm.get('systemMessageId'),
+                                willRetry:(sm.get('failCount') || 0) + 1 &lt; retryLimit}" async="true"/>
                     <else>
                         <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
                                 in-map="{systemMessageId:sm.get('systemMessageId'), statusId:'SmsgError',
