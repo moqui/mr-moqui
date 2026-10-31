@@ -543,7 +543,11 @@ along with this software (see the LICENSE.md file). If not, see
             const L = (text) => ec.l10n.localize(text)
             savedList = []
             failedList = []
-            const safe = (name) => String(name || 'attachment').replace(/[\/\\?#%:*"<>|]/g, '_').substring(0, 120)
+            // a mail attachment's name is the sender's: no folder in it, and "." or ".." is no name
+            const safe = (name) => {
+                const text = String(name || '').replace(/[\/\\?#%:*"<>|]/g, '_').substring(0, 120).trim()
+                return /^\.*$/.test(text) ? 'attachment' : text
+            }
             const files = Array.from(fileList || [])
             if (!files.length) { ec.message.addError(L('This message has no files')); return }
             for (const file of files) {

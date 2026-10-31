@@ -1,12 +1,14 @@
 // The drive picker of BasicComms (org.moqui.comms.FilePickerServices, template/FilePickerTransitions.xml; plans/Comms-Framework.md
 // §7.4 DP): Compose's Attach from Files and the Inbox's Save to Files over the framework drives alone. A user with no party
 // and a mail account of their own sees their drives, recent files, a folder and a search; attaches a drive file to a draft;
-// saves a mail attachment into a folder (a second time renamed); another user with the same parameters is refused; and a
-// user with no drive is told so, which leaves the buttons out.
+// saves a mail attachment into a folder (a second time renamed); another user with the same parameters is refused, and so
+// is the user's save into another user's drive; a user with no drive is told so, which leaves the buttons out; and a user
+// whose personal drive is not made yet has one, without the check making it.
 // Run: ./moq test basic-comms --spec BasicCommsFiles
 const USER = "BASIC_COMMS_FILES"
 const OTHER = "BASIC_COMMS_FILES_OTHER"
 const NO_DRIVE = "BASIC_COMMS_FILES_NODRIVE"
+const FRESH = "BASIC_COMMS_FILES_FRESH"
 const ACCOUNT = "BASIC_COMMS_FILES_ACCT"
 const FOLDER = "BASIC_COMMS_FILES_INBOX"
 const MESSAGE = "BASIC_COMMS_FILES_M1"
@@ -16,6 +18,7 @@ const ROOT = "component://basic-comms/screen/BasicComms.xml"
 // a group IronStone keeps out of its Comms, so run#Operation answers from the framework when IronStone is installed too
 const FRAMEWORK_GROUP = "BOSS_PROJECT_CLIENT"
 let personalDriveId
+let otherDriveId
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -91,6 +94,7 @@ spec({
         makeUser(USER, "basic.comms.files")
         makeUser(OTHER, "basic.comms.files.other")
         makeUser(NO_DRIVE, "basic.comms.files.nodrive")
+        makeUser(FRESH, "basic.comms.files.fresh")
         // a mail account delivered here, one message with a file
         store("moqui.basic.email.EmailAccount", {
             emailAccountId: ACCOUNT,
@@ -164,6 +168,8 @@ spec({
                 conflictPolicy: "replace"
             })
         )
+        ec.user.internalLoginUser("basic.comms.files.other")
+        otherDriveId = sys(() => call("org.moqui.impl.FileServices.ensure#PersonalDrive", {})).driveId
         // a user whose only drive is archived (left out of their drives): no drive to pick from
         ec.user.internalLoginUser("basic.comms.files.nodrive")
         const archived = sys(() => call("org.moqui.impl.FileServices.ensure#PersonalDrive", {})).driveId
@@ -180,9 +186,11 @@ feature("the picker opens with the user's drives and recent files, through the C
         const data = picker("get#PickerData")
         const compose = render("Inbox/Compose/pickerData")
         const check = render("Inbox/Mail/pickerData", {checkOnly: "true"})
-        return {data, compose, check}
+        ec.user.internalLoginUser("basic.comms.files.other")
+        const other = picker("get#PickerData")
+        return {data, compose, check, other}
     },
-    then({data, compose, check}) {
+    then({data, compose, check, other}) {
         data.errors == ""
         data.hasDrive == true
         data.personalDriveId == personalDriveId
@@ -197,6 +205,9 @@ feature("the picker opens with the user's drives and recent files, through the C
         names(compose.json.recentList).includes("Quarterly summary.txt")
         check.json.hasDrive == true
         check.json.recentList.length == 0
+        other.personalDriveId == otherDriveId
+        !other.driveList.some(drive => drive.driveId === personalDriveId)
+        other.recentList.length == 0
     }
 })
 
@@ -208,9 +219,12 @@ feature("a folder lists its files with their kinds and the breadcrumbs; a search
         const found = picker("find#PickerFiles", {text: "quarterly"})
         const blank = picker("find#PickerFiles", {text: "  "})
         const searched = render("Inbox/Compose/pickerSearch", {text: "numbers"})
-        return {top, reports, found, blank, searched}
+        const folderScreen = render("Inbox/Mail/pickerFolder", {driveId: personalDriveId, path: "Reports"})
+        ec.user.internalLoginUser("basic.comms.files.other")
+        const otherFound = picker("find#PickerFiles", {text: "quarterly"})
+        return {top, reports, found, blank, searched, folderScreen, otherFound}
     },
-    then({top, reports, found, blank, searched}) {
+    then({top, reports, found, blank, searched, folderScreen, otherFound}) {
         top.errors == ""
         names(top.fileList).includes("Reports")
         top.fileList.find(row => row.name === "Reports").isDirectory == true
@@ -227,6 +241,10 @@ feature("a folder lists its files with their kinds and the breadcrumbs; a search
         blank.fileList.length == 0
         searched.status == 200
         names(searched.json.fileList) == ["Quarterly numbers.csv"]
+        folderScreen.status == 200
+        names(folderScreen.json.fileList).sort() == ["Quarterly numbers.csv", "Quarterly summary.txt"]
+        otherFound.errors == ""
+        otherFound.fileList.length == 0
     }
 })
 
@@ -297,7 +315,12 @@ feature("Save to Files copies a mail attachment into a folder, renamed the secon
             ec.entity.find("moqui.basic.email.EmailMessageAttachment").condition("emailMessageAttachmentId", ATTACHMENT).one()
         )
         const screen = render("Inbox/Mail/saveFiles", parameters, "post")
+        // the same attachment into a drive the user may not write
+        const intoOther = Object.assign({}, parameters, {driveId: otherDriveId, path: ""})
+        const refusedDrive = attempt("org.moqui.comms.InboxServices.save#MessageFiles", intoOther)
+        const screenRefusedDrive = render("Inbox/Mail/saveFiles", intoOther, "post")
         ec.user.internalLoginUser("basic.comms.files.other")
+        const otherFiles = picker("list#PickerFolder", {driveId: otherDriveId, path: ""}).fileList
         const refused = attempt("org.moqui.comms.InboxServices.save#MessageFiles", parameters)
         const screenRefused = render("Inbox/Mail/saveFiles", parameters, "post")
         const refusedWhole = attempt("org.moqui.comms.InboxServices.save#MessageFiles", {
@@ -305,9 +328,9 @@ feature("Save to Files copies a mail attachment into a folder, renamed the secon
             driveId: personalDriveId,
             path: "Reports"
         })
-        return {saved, again, whole, none, text, kept, screen, refused, refusedWhole, screenRefused}
+        return {saved, again, whole, none, text, kept, screen, refusedDrive, screenRefusedDrive, otherFiles, refused, refusedWhole, screenRefused}
     },
-    then({saved, again, whole, none, text, kept, screen, refused, refusedWhole, screenRefused}) {
+    then({saved, again, whole, none, text, kept, screen, refusedDrive, screenRefusedDrive, otherFiles, refused, refusedWhole, screenRefused}) {
         saved.errors == ""
         saved.result.savedList == [{name: "figures.txt", path: "Reports/figures.txt", outcome: "created"}]
         saved.result.failedList.length == 0
@@ -321,6 +344,13 @@ feature("Save to Files copies a mail attachment into a folder, renamed the secon
         refusedWhole.errors.includes("Attachment not found: " + MESSAGE)
         screen.status == 200
         screen.json.savedList.map(row => row.name) == ["figures (4).txt"]
+        refusedDrive.errors.includes("Folder not found")
+        !refusedDrive.errors.includes("rollback")
+        names(refusedDrive.savedList).length == 0
+        screenRefusedDrive.errors.includes("Folder not found")
+        !screenRefusedDrive.errors.includes("rollback")
+        !screenRefusedDrive.json.savedList
+        names(otherFiles).length == 0
         screenRefused.errors.includes("Attachment not found: " + ATTACHMENT)
         !screenRefused.errors.includes("rollback")
         !screenRefused.json.savedList
@@ -330,9 +360,14 @@ feature("Save to Files copies a mail attachment into a folder, renamed the secon
 feature("a user with no drive is told so, and the picker has nothing to open", {
     when() {
         ec.user.internalLoginUser("basic.comms.files.nodrive")
-        return {data: picker("get#PickerData"), check: render("Inbox/Compose/pickerData", {checkOnly: "true"})}
+        const out = {data: picker("get#PickerData"), check: render("Inbox/Compose/pickerData", {checkOnly: "true"})}
+        // a user whose personal drive is not made yet: the check says there is one and makes none
+        ec.user.internalLoginUser("basic.comms.files.fresh")
+        out.fresh = render("Inbox/Mail/pickerData", {checkOnly: "true"})
+        out.freshDrives = sys(() => ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", FRESH).count())
+        return out
     },
-    then({data, check}) {
+    then({data, check, fresh, freshDrives}) {
         data.errors == ""
         data.hasDrive == false
         data.driveList.length == 0
@@ -340,5 +375,7 @@ feature("a user with no drive is told so, and the picker has nothing to open", {
         data.recentList.length == 0
         check.status == 200
         check.json.hasDrive == false
+        fresh.json.hasDrive == true
+        freshDrives == 0
     }
 })

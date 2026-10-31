@@ -23,8 +23,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>What the picker opens with: the drives the user may open (FileServices.get#UserDrives, without storage
             sizes; the personal drive first, named My files), personalDriveId when that drive is among them, and the user's
             recent files (FileServices.find#Recent, at most recentLimit; none with includeRecent false). hasDrive is false
-            when the user may open no drive at all (the screens then leave out Attach from Files and Save to Files).</description>
+            when the user may open no drive at all (the screens then leave out Attach from Files and Save to Files).
+            checkOnly answers hasDrive alone and writes nothing: a user with no personal drive yet has one (it is made when
+            the picker opens), so only an archived one is looked further into.</description>
         <in-parameters>
+            <parameter name="checkOnly" type="Boolean" default="false"/>
             <parameter name="includeRecent" type="Boolean" default="true"/>
             <parameter name="recentLimit" type="Integer" default="12"/>
         </in-parameters>
@@ -39,6 +42,14 @@ along with this software (see the LICENSE.md file). If not, see
             personalDriveId = null
             driveList = []
             recentList = []
+            if (checkOnly) {
+                if (!ec.user.userId) return
+                // a read only check on page open: get#UserDrives would make the personal drive
+                const own = ec.entity.find('moqui.resource.ResourceDrive').condition('ownerUserId', ec.user.userId)
+                        .condition('driveKindEnumId', 'RdkPersonal').orderBy('driveId').limit(1).list()
+                if (!own.length || own[0].archivedDate == null) { hasDrive = true; return }
+                includeRecent = false
+            }
             const drives = ec.service.sync().name('org.moqui.impl.FileServices.get#UserDrives').parameter('includeUsage', false).call()
             if (ec.message.hasError()) return
             driveList = Array.from(drives.driveList || []).map((drive) => ({driveId: drive.driveId,

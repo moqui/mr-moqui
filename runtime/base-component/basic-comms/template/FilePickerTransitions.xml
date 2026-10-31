@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
     <transition name="pickerData" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#PickerData').parameter('includeRecent', String(checkOnly) !== 'true')
+            const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#PickerData').parameter('checkOnly', String(checkOnly) === 'true')
                     .requireNewTransaction(true).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {hasDrive: false} : {hasDrive: out.hasDrive, personalDriveId: out.personalDriveId,
                 driveList: out.driveList, recentList: out.recentList})
