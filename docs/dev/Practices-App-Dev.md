@@ -129,8 +129,8 @@ Each component is its own git repository. Commit in each repository that a chang
   declared ones are the only ones returned (none declared returns everything, internal helpers included).
 - **Compare reason codes, not message text.** A policy that refuses returns a code (`denied(reason, message)` in
   `mantle/product/PricePolicy.js`), and callers test the code. Matching on an error's wording breaks when the wording
-  changes. A new policy module starts with codes; Accounting's `AccountingPolicy.js` throws plain messages and is
-  still to be converted.
+  changes. A new policy module starts with codes, as Accounting's `AccountingPolicy.js` does through
+  `mantle/ledger/EntityLib.js` (`denied`, `reasonCode`).
 - **Shared screens** (`screen/Shared/*.xml`) take `appRoot` and compute capabilities on the server through the app's
   shared-context service; the mounting app's context adds tabs and filters, never authority (design-crosscut §1.1).
   `sharedLinks` gives the paths to other shared screens under the current app.
