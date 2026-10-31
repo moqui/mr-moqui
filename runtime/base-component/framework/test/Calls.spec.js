@@ -333,3 +333,129 @@ feature("each user's history has their outcome of each call, and missed calls co
         missedAfter.missedCount == 0
     }
 })
+
+// as a guest's page and the /call/<token> route call them: anonymous, by token and credential
+function anon(name, parameters) {
+    ec.user.logoutUser()
+    let out = {}
+    let thrown = ""
+    try {
+        out = ec.service.sync().name("org.moqui.impl.CallServices." + name).parameters(parameters || {}).call() || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors}, out)
+}
+// as the host's /callws calls them: internal work, the refusals answered
+function internal(name, parameters) {
+    let out = {}
+    let thrown = ""
+    try {
+        out = sys(() => ec.service.sync().name("org.moqui.impl.CallServices." + name).parameters(parameters || {}).call()) || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors}, out)
+}
+let link = null
+let guest = null
+
+feature("a call link takes a guest by name into its meeting's lobby, and only someone in the call lets them in", {
+    when() {
+        link = as(A, "create#CallLink", {name: "Spec meeting", policy: "lobby"})
+        const bad = anon("check#CallLinkToken", {token: "not-a-real-token-at-all"})
+        const good = anon("check#CallLinkToken", {token: link.token})
+        guest = anon("join#AsGuest", {token: link.token, displayName: "Visitor"})
+        const noName = anon("join#AsGuest", {token: link.token, displayName: "  "})
+        const waiting = anon("get#GuestState", {credential: guest.credential})
+        const earlyBind = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: guest.callSessionId, callLegId: guest.callLegId})
+        ec.message.clearErrors()
+        const view = as(A, "get#Call", {callSessionId: guest.callSessionId})
+        const waitingParticipant = view.call.participants.find(p => p.admission == "waiting")
+        const stranger = as(D, "admit#Guest", {callSessionId: guest.callSessionId, callParticipantId: waitingParticipant.callParticipantId})
+        const opened = as(A, "open#CallLink", {callLinkId: link.callLinkId})
+        const admitted = as(A, "admit#Guest", {callSessionId: guest.callSessionId, callParticipantId: waitingParticipant.callParticipantId})
+        const inState = anon("get#GuestState", {credential: guest.credential})
+        const bound = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: guest.callSessionId, callLegId: guest.callLegId})
+        const wrongCall = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: direct, callLegId: guest.callLegId})
+        ec.message.clearErrors()
+        const links = as(A, "find#CallLinks")
+        return {bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}
+    },
+    then({bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}) {
+        link.path == "/call/" + link.token
+        bad.valid == false
+        good.valid == true
+        good.routeContext.name == "Spec meeting"
+        good.routeContext.policy == "lobby"
+        guest.admission == "waiting"
+        guest.credential.length >= 20
+        noName.reasonCode == "noName"
+        waiting.admission == "waiting"
+        waiting.people.length == 0
+        earlyBind.reasonCode == "notAdmitted"
+        stranger.reasonCode == "notFound"
+        opened.callSessionId == guest.callSessionId
+        opened.call.myLegStatus == "answered"
+        opened.call.participants.some(p => p.userId == A && p.role == "host")
+        admitted.call.participants.some(p => p.displayName == "Visitor" && p.admission == "admitted")
+        inState.admission == "admitted"
+        inState.people.some(p => p.displayName == "Visitor")
+        bound.generation == 1
+        wrongCall.reasonCode == "notFound"
+        links.linkList.some(l => l.callLinkId == link.callLinkId && l.callSessionId == guest.callSessionId)
+    }
+})
+
+feature("revoking the link removes its guest, whose credential then works nowhere", {
+    when() {
+        const notOwner = as(B, "revoke#CallLink", {callLinkId: link.callLinkId})
+        const revoked = as(A, "revoke#CallLink", {callLinkId: link.callLinkId})
+        const state = anon("get#GuestState", {credential: guest.credential})
+        const bind = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: guest.callSessionId, callLegId: guest.callLegId})
+        ec.message.clearErrors()
+        const again = anon("join#AsGuest", {token: link.token, displayName: "Visitor"})
+        const view = as(A, "get#Call", {callSessionId: guest.callSessionId})
+        return {notOwner, revoked, state, bind, again, view}
+    },
+    then({notOwner, revoked, state, bind, again, view}) {
+        notOwner.reasonCode == "notFound"
+        revoked.revoked == true
+        state.admission == "gone"
+        bind.reasonCode == "notFound"
+        again.reasonCode == "notFound"
+        view.call.participants.some(p => p.displayName == "Visitor" && p.admission == "revoked" && !p.inCall)
+        view.call.status == "active"
+    }
+})
+
+feature("a link that lets guests straight in, guests who leave, and a meeting nobody is in ends", {
+    when() {
+        const open = as(A, "create#CallLink", {name: "Open door", policy: "link"})
+        const g = anon("join#AsGuest", {token: open.token, displayName: "Walk-in"})
+        const left = anon("leave#AsGuest", {credential: g.credential})
+        const after = anon("get#GuestState", {credential: g.credential})
+        // a guest who gives up in the lobby leaves a meeting with nobody in it: the cleanup ends it
+        const lobby = as(A, "create#CallLink", {name: "Waiting room"})
+        const w = anon("join#AsGuest", {token: lobby.token, displayName: "Patient"})
+        anon("leave#AsGuest", {credential: w.credential})
+        const before = session(w.callSessionId)
+        age(SESSION, {callSessionId: w.callSessionId}, "startedDate", 300000)
+        const expired = expire()
+        return {g, left, after, row: session(g.callSessionId), before, expired, emptied: session(w.callSessionId)}
+    },
+    then({g, left, after, row, before, expired, emptied}) {
+        g.admission == "admitted"
+        left.left == true
+        after.admission == "gone"
+        row.statusId == "CssEnded"
+        row.endReasonEnumId == "CerEmpty"
+        before.statusId == "CssActive"
+        expired.endedCount >= 1
+        emptied.endReasonEnumId == "CerEmpty"
+    }
+})

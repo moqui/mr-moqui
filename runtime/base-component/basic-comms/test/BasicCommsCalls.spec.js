@@ -116,3 +116,22 @@ feature("the terminal twin shows the call and leaves it", {
         after.call.status == "ended"
     }
 })
+
+feature("History has Call links, and the Meetings of an app's meetings-source through either mount", {
+    when() {
+        login("john.doe")
+        const own = request(root, "Calls/History", {}, null)
+        const app = bossInstalled ? request(bossRoot, "Calls/History", {}, null) : null
+        const meetings = sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "meetings-source",
+            parameters: {fromDate: new Date(), thruDate: new Date(Date.now() + 7 * 86400000)}})) || {}
+        return {own, app, meetings}
+    },
+    then({own, app, meetings}) {
+        own.status == 200
+        own.output.includes("Call links")
+        !bossInstalled || app.output.includes("Meetings")
+        !bossInstalled || meetings.results.map(r => r.sourceId).includes("boss.calendar")
+        !bossInstalled || meetings.failedParts.length == 0
+        bossInstalled || meetings.unavailable == true
+    }
+})

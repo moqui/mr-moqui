@@ -169,6 +169,7 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | Instance drain | `/health` answers 503 with `draining` | the `isolate-instance` recovery action, through `moqui.monitor.InstanceDrain` | as `/health` (`status-ips` and loopback) | running or reverting the action needs `MONITOR_RECOVER` (or an automatic policy) | A drained instance still serves the requests that reach it; only a load balancer that reads `/health` stops sending more. |
 | Browser RUM | `POST /rum/traces`, `/rum/logs`, `/rum/replay` (webroot `rum.xml`) | off; `telemetry/browser` `enabled="true"` (replay also `replay-enabled="true"`) | the session cookie of a signed-in user, else 401 | the session's CSRF token as for any post; no permission to send, since a user reports only on their own pages | The server replaces the page's identity with the session's user and visit and its own service name, keeps only CLIENT and INTERNAL spans (at most 512 a post), and drops attributes that name a user, visit, source or service. 256 KiB a post, 120 posts a minute per user and visit; a replay is held to its minutes and bytes and to the session that began it. Replays are masked in the browser and read back only with `MONITOR_REPLAY`, never as a report dataset or through Assist; each view is logged. No request or artifact span is written for these paths. |
 | OTLP/gRPC ingest | the trace, logs and metrics collector services on `telemetry/receiver` `grpc-port` (4317) | off; built with `grpc` (Enterprise, Maximal), opened by `grpc-enabled="true"` | the same ingest key, as `authorization: Bearer` or `api_key` metadata | as OTLP ingest | Its own listener at `grpc-bind` (the HTTP bind by default), TLS with the HTTPS certificates else h2c. The edge guard admits each connection. The same body limit (as tonic's decoding limit), rate, concurrency, redaction and queue as OTLP/HTTP. |
+| Call guests | `GET /callws` | on with the rtc feature and `/notws` | none at the upgrade (origin checked as for `/notws`); the first frame must be `{rtc: 'guestAuth', credential}` within 10 s, checked with `get#GuestState` | that guest's own call and leg only | WebSocket of a call link's guest page. It takes `rtc` frames of that call and leg only, and no topic, notification, co-editing or other call's frame. The credential is checked again every 30 s; one that no longer works ends the call for the page and closes the socket. 128 KiB a frame. |
 | Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. Call signaling frames (`rtc`, the rtc feature) bind the socket to a leg only through `CallServices.bind#Connection` as the socket's user (the leg must be theirs and in the call); a frame of a leg the socket did not bind is refused (`notJoined`), each carries the claimed connection generation, which the media node fences, and an SDP or candidate grants nothing. At most 4 bound legs a socket, 128 KiB a frame. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |
@@ -238,7 +239,7 @@ SQL Runner, Service Run, Data Import, Data Snapshot, ElFinder, and `qzSign` are 
 
 ### Token routes
 
-Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiConf.xml` adds them on the `webroot` webapp. `screen/mod.rs` sends a match to token-route dispatch before the ordinary screen. The failure status of a bad token was not read.
+Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiConf.xml` adds them on the `webroot` webapp, and `runtime/base-component/basic-comms/MoquiConf.xml` adds `call`. `screen/mod.rs` sends a match to token-route dispatch before the ordinary screen. The failure status of a bad token was not read.
 
 | Name | URL | Token service | Screen |
 | --- | --- | --- | --- |
@@ -246,8 +247,20 @@ Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiCo
 | `u` | `/u/<token>` | `mantle.party.ConsentServices.check#UnsubscribeToken` | `Unsubscribe.xml`, post-transition `oneClick` |
 | `cal` | `/cal/<token>` | `ironstone.commons.CalendarServices.check#PublishedCalendarToken` | `PublishedCalendar.xml` |
 | `r` | `/r/<token>` | `mantle.request.RequestServices.check#IntakeToken` | `RequestIntake.xml` |
+| `call` | `/call/<token>` | `org.moqui.impl.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
 
 mr-boss also adds a per-client rate limit `request-form` on `POST /r/*/submit`: 5 requests in 60 seconds, burst 5. It applies when per-client web protection is on.
+
+`/call/<token>` is a call link's guest page. Its token is 32 random characters; only its hash is stored. The token is
+refused once the link is revoked or expired. The page's transitions are `joinGuest`, `guestState` and `leaveGuest`,
+without the session token. `joinGuest` takes a name of up to 60 characters and gives a 40-character credential that
+lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 10 a minute, burst 5).
+
+- A guest's credential reaches only that call's signaling, on `GET /callws`. It is never in a URL.
+- `guestState` shows a waiting guest nothing but their admission. Once admitted, a guest sees the names of those in the
+  call. They never see the room, its members or its history.
+- A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
+- Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
 
 ## REST
 

@@ -13,6 +13,8 @@ const LEG = 'moqui.call.CallLeg'
 const CONNECTION = 'moqui.call.CallConnection'
 const USER_LOG = 'moqui.call.CallUserLog'
 const MEDIA_NODE = 'moqui.call.CallMediaNode'
+const LINK = 'moqui.call.CallLink'
+const GUEST = 'moqui.call.CallGuest'
 
 const KIND_CODES = { CskDirect: 'direct', CskGroup: 'group', CskMeeting: 'meeting', CskPhone: 'phone' }
 const STATUS_CODES = { CssRinging: 'ringing', CssActive: 'active', CssEnded: 'ended' }
@@ -42,6 +44,11 @@ const NEVER_CONNECTED_MS = 120000
 const MEDIA_NODE_STALE_MS = 60000
 /** The most people a call rings. */
 const MAX_INVITEES = 50
+/** How long a guest's credential lasts. */
+const GUEST_HOURS = 4
+/** How long a call link lasts by default, and at most, in hours. */
+const LINK_HOURS = 24 * 7
+const LINK_MAX_HOURS = 24 * 90
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -123,7 +130,15 @@ function canSee(session, userId) {
   if (!session || !userId) return false
   const participant = participantOf(session.callSessionId, userId)
   if (participant && participant.admissionStatusId !== 'CasRevoked') return true
+  if (participant) return false
+  if (linkOwner(session) === userId) return true
   return session.kindEnumId !== 'CskDirect' && roomMember(session.chatRoomId, userId)
+}
+
+/** The owner of the call link a meeting was opened by. */
+function linkOwner(session) {
+  if (!session.callLinkId) return null
+  return one(LINK, { callLinkId: session.callLinkId })?.ownerUserId || null
 }
 
 /** The call as a client sees it. */
@@ -267,12 +282,12 @@ function makeParticipant(session, userId, role, admission) {
   return p
 }
 
-function makeLeg(session, participant, status) {
+function makeLeg(session, participant, status, legType) {
   const now = ec.user.nowTimestamp
   const leg = ec.entity.makeValue(LEG)
   leg.setSequencedIdPrimary()
   leg.setFields({
-    callSessionId: session.callSessionId, callParticipantId: participant.callParticipantId, legTypeEnumId: 'CltWeb',
+    callSessionId: session.callSessionId, callParticipantId: participant.callParticipantId, legTypeEnumId: legType || 'CltWeb',
     statusId: status, offeredDate: now, answeredDate: status === 'ClsAnswered' ? now : null,
   }, true, null, null)
   leg.create()
@@ -499,13 +514,14 @@ function join(p) {
     return refuse('notAllowed', 'You were removed from this call')
   }
   if (session.kindEnumId === 'CskDirect' && !participant) return refuse('notFound', 'Call not found')
+  const owner = !participant && linkOwner(session) === me
   if (answeredLegCount(session.callSessionId) >= MAX_INVITEES) return refuse('callFull', 'The call is full')
   const now = ec.user.nowTimestamp
   if (participant) {
     participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: participant.admittedDate || now }, true, null, null)
     participant.update()
   } else {
-    participant = makeParticipant(session, me, 'CprMember', 'CasAdmitted')
+    participant = makeParticipant(session, me, owner ? 'CprHost' : 'CprMember', 'CasAdmitted')
   }
   const leg = makeLeg(session, participant, 'ClsAnswered')
   setLog(session.callSessionId, me, Object.assign({ outcomeEnumId: 'CuoAnswered' },
@@ -573,6 +589,11 @@ function bind(p) {
   if (!leg || leg.callSessionId !== session.callSessionId || participant?.userId !== me) {
     return refuse('notFound', 'Call not found')
   }
+  return bindLeg(session, leg, participant, p.signalingNodeId, me)
+}
+
+/** Binds a socket to an admitted leg that is in the call: the leg's next generation, the older connection fenced. */
+function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
   const now = ec.user.nowTimestamp
@@ -588,13 +609,13 @@ function bind(p) {
   const conn = ec.entity.makeValue(CONNECTION)
   conn.setSequencedIdPrimary()
   conn.setFields({
-    callLegId: leg.callLegId, generation, signalingNodeId: p.signalingNodeId || null, connectedDate: now,
+    callLegId: leg.callLegId, generation, signalingNodeId: signalingNodeId || null, connectedDate: now,
     lastHeartbeatDate: now, statusId: 'CcsActive',
   }, true, null, null)
   conn.create()
   return {
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: session.mediaNodeId,
-    callLegId: leg.callLegId, call: view(session, me),
+    callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,
   }
 }
 
@@ -689,14 +710,35 @@ function expire() {
   const orphaned = Array.from(find(SESSION).condition('statusId', '!=', 'CssEnded').selectField('callSessionId')
     .selectField('mediaNodeId').limit(2000).list()).filter((s) => s.mediaNodeId && !liveNodes.has(s.mediaNodeId))
     .map((s) => ({ callSessionId: s.callSessionId }))
+  // a meeting nobody is in or waiting for, a while after it started (a link opened and left)
+  const startedBefore = new Date(now - NEVER_CONNECTED_MS)
+  const empty = Array.from(find(SESSION).condition('statusId', 'CssActive').condition('kindEnumId', 'CskMeeting')
+    .condition('startedDate', '<', startedBefore).selectField('callSessionId').limit(500).list())
+    .filter((s) => find(LEG).condition('callSessionId', s.callSessionId).condition('statusId', 'in', OPEN_LEG).count() === 0)
+    .map((s) => ({ callSessionId: s.callSessionId }))
+  const expiredGuests = Array.from(find(GUEST).condition('revokedDate', null).condition('credentialExpiry', '<', new Date(now))
+    .selectField('callGuestId').limit(500).list()).map((g) => ({ callGuestId: g.callGuestId }))
   return {
-    endedCount: eachSafely('ringing', ringing) + eachSafely('mediaNodeLost', orphaned),
-    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost),
+    endedCount: eachSafely('ringing', ringing) + eachSafely('mediaNodeLost', orphaned) + eachSafely('empty', empty),
+    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost) + eachSafely('guestExpired', expiredGuests),
   }
 }
 
 /** One cleanup item, in its own transaction. */
 function expireItem(p) {
+  if (p.itemKind === 'guestExpired') {
+    const guest = one(GUEST, { callGuestId: p.callGuestId })
+    if (!guest || guest.revokedDate) return { done: false }
+    revokeGuest(guest, 'CerHangup')
+    return { done: true }
+  }
+  if (p.itemKind === 'empty') {
+    const session = lockSession(p.callSessionId)
+    if (!session || session.statusId === 'CssEnded') return { done: false }
+    if (find(LEG).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_LEG).count() > 0) return { done: false }
+    endSession(session, 'CerEmpty')
+    return { done: true }
+  }
   if (p.itemKind === 'ringing' || p.itemKind === 'mediaNodeLost') {
     const session = lockSession(p.callSessionId)
     if (!session || session.statusId === 'CssEnded') return { done: false }
@@ -748,6 +790,301 @@ function active() {
     .condition('statusId', '!=', 'CssEnded').orderBy('-startedDate').limit(10).list())
   const callList = sessions.map((s) => view(s, me)).filter((c) => ['offered', 'answered'].includes(c.myLegStatus))
   return { callList }
+}
+
+// ---------- call links and guests (W3) ----------
+
+/** The link a token names, when it is not revoked or expired. */
+function linkByToken(token) {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(String(token || ''))) return null
+  const link = find(LINK).condition('tokenHash', ec.user.singleUseCodeHash(String(token))).one()
+  if (!link || link.revokedDate) return null
+  if (link.expiryDate && ms(link.expiryDate) <= nowMs()) return null
+  return link
+}
+
+/** A link to a meeting for people with no account; the token is in the answer only. */
+function createLink(p) {
+  const me = currentUser()
+  if (!me) return refuse('notSignedIn', 'Sign in to make a call link')
+  const name = String(p.name || '').trim().slice(0, 100)
+  if (!name) return refuse('noName', 'Give the link a name')
+  const chatRoomId = p.chatRoomId || null
+  if (chatRoomId) {
+    const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+    if (!access?.canPost) return refuse('notFound', 'Chat room not found')
+  }
+  const hours = Math.min(Math.max(Number(p.expiryHours) || LINK_HOURS, 1), LINK_MAX_HOURS)
+  const token = ec.user.randomString(32)
+  const link = ec.entity.makeValue(LINK)
+  link.setSequencedIdPrimary()
+  link.setFields({
+    tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId,
+    policyEnumId: p.policy === 'link' ? 'ClpLink' : 'ClpLobby', video: p.video === false || p.video === 'false' ? 'N' : 'Y',
+    createdDate: ec.user.nowTimestamp, expiryDate: new Date(nowMs() + hours * 3600000),
+  }, true, null, null)
+  link.create()
+  return { callLinkId: link.callLinkId, token, path: '/call/' + token }
+}
+
+function linkView(link) {
+  const active = Array.from(find(SESSION).condition('callLinkId', link.callLinkId).condition('statusId', '!=', 'CssEnded')
+    .limit(1).list())[0]
+  const waiting = active ? find(PARTICIPANT).condition('callSessionId', active.callSessionId)
+    .condition('admissionStatusId', 'CasWaiting').count() : 0
+  return {
+    callLinkId: link.callLinkId, name: link.name, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
+    video: link.video !== 'N', chatRoomId: link.chatRoomId || null, createdDate: ms(link.createdDate),
+    expiryDate: ms(link.expiryDate), lastUsedDate: ms(link.lastUsedDate), callSessionId: active ? active.callSessionId : null,
+    waitingCount: waiting,
+  }
+}
+
+/** The user's links that still work, newest first. */
+function findLinks() {
+  const me = currentUser()
+  if (!me) return { linkList: [] }
+  const linkList = Array.from(find(LINK).condition('ownerUserId', me).condition('revokedDate', null)
+    .condition('expiryDate', '>', new Date(nowMs())).orderBy('-createdDate').limit(100).list()).map(linkView)
+  return { linkList }
+}
+
+/** A guest leaves the call: their credential ends and their legs close. Removed (CerRemoved), they cannot come back. */
+function revokeGuest(guest, reason) {
+  const now = ec.user.nowTimestamp
+  if (!guest.revokedDate) {
+    guest.set('revokedDate', now)
+    guest.update()
+  }
+  const participant = one(PARTICIPANT, { callGuestId: guest.callGuestId })
+  if (!participant) return
+  if (reason === 'CerRemoved' && !['CasRevoked', 'CasDenied'].includes(participant.admissionStatusId)) {
+    participant.setFields({ admissionStatusId: 'CasRevoked', revokedDate: now }, true, null, null)
+    participant.update()
+  }
+  const session = lockSession(participant.callSessionId)
+  if (!session || session.statusId === 'CssEnded') return
+  for (const leg of rows(LEG, { callParticipantId: participant.callParticipantId })) {
+    if (leg.statusId === 'ClsAnswered') {
+      leaveLeg(session, leg, reason, null)
+    } else if (leg.statusId === 'ClsOffered') {
+      closeLeg(leg, 'ClsCanceled', reason)
+      bump(session)
+      session.update()
+      pushState(session, 'left')
+    }
+  }
+}
+
+/** The owner revokes a link: it takes no one more, and its guests are removed. */
+function revokeLink(p) {
+  const me = currentUser()
+  const link = me && p.callLinkId ? find(LINK).condition('callLinkId', p.callLinkId).forUpdate(true).one() : null
+  if (!link || link.ownerUserId !== me) return refuse('notFound', 'Call link not found')
+  if (link.revokedDate) return { revoked: true, repeated: true }
+  link.set('revokedDate', ec.user.nowTimestamp)
+  link.update()
+  for (const guest of rows(GUEST, { callLinkId: link.callLinkId })) {
+    if (!guest.revokedDate) revokeGuest(guest, 'CerRemoved')
+  }
+  return { revoked: true }
+}
+
+/** The token check of the /call/<token> route: what the public page may show of a link that works. */
+function checkToken(p) {
+  const link = linkByToken(p.token)
+  if (!link) return { valid: false, routeContext: null }
+  const owner = userNames([link.ownerUserId])[link.ownerUserId] || null
+  return {
+    valid: true,
+    routeContext: { name: link.name, ownerName: owner, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby', video: link.video !== 'N' },
+  }
+}
+
+/** The meeting of a link: the one going, else a new one (its owner is not in it until they open it). */
+function linkSession(link) {
+  const going = Array.from(find(SESSION).condition('callLinkId', link.callLinkId).condition('statusId', '!=', 'CssEnded')
+    .orderBy('-startedDate').limit(1).list())[0]
+  if (going) return lockSession(going.callSessionId)
+  const nodes = liveMediaNodes().filter((n) => n.draining !== 'Y')
+  if (!nodes.length) return null
+  const now = ec.user.nowTimestamp
+  const session = ec.entity.makeValue(SESSION)
+  session.setSequencedIdPrimary()
+  session.setFields({
+    chatRoomId: link.chatRoomId || null, callLinkId: link.callLinkId, kindEnumId: 'CskMeeting', statusId: 'CssActive', revision: 1,
+    directionEnumId: 'CdrInternal', video: link.video !== 'N' ? 'Y' : 'N', startedByUserId: link.ownerUserId, startedDate: now,
+    answeredDate: now, mediaNodeId: nodes[0].instanceId, mediaGeneration: 1, encryptionMode: 'dtls-srtp',
+  }, true, null, null)
+  session.create()
+  return session
+}
+
+/** The owner opens a link's meeting from Calls: it starts when none is going, and they are its host. */
+function openLink(p) {
+  const me = currentUser()
+  const link = me && p.callLinkId ? one(LINK, { callLinkId: p.callLinkId }) : null
+  if (!link || link.ownerUserId !== me || link.revokedDate || (link.expiryDate && ms(link.expiryDate) <= nowMs())) {
+    return refuse('notFound', 'Call link not found')
+  }
+  const session = linkSession(link)
+  if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
+  const joined = join({ callSessionId: session.callSessionId })
+  return Object.assign({ callSessionId: session.callSessionId }, joined)
+}
+
+/** A guest opens a link with their name: they are in the meeting, or wait in its lobby. The credential is for their page. */
+function guestJoin(p) {
+  const link = linkByToken(p.token)
+  if (!link) return refuse('notFound', 'This link has expired or was not found')
+  const name = String(p.displayName || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60)
+  if (!name) return refuse('noName', 'Give your name')
+  const session = linkSession(link)
+  if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
+  const guests = find(PARTICIPANT).condition('callSessionId', session.callSessionId).condition('identityKindEnumId', 'CikGuest')
+    .condition('admissionStatusId', 'in', ['CasWaiting', 'CasAdmitted']).count()
+  if (guests >= MAX_INVITEES) return refuse('callFull', 'The call is full')
+  const now = ec.user.nowTimestamp
+  const credential = ec.user.randomString(40)
+  const straightIn = link.policyEnumId === 'ClpLink'
+  const guest = ec.entity.makeValue(GUEST)
+  guest.setSequencedIdPrimary()
+  guest.setFields({
+    callLinkId: link.callLinkId, callSessionId: session.callSessionId, displayName: name,
+    credentialHash: ec.user.singleUseCodeHash(credential), credentialExpiry: new Date(nowMs() + GUEST_HOURS * 3600000),
+    createdDate: now, admittedDate: straightIn ? now : null,
+  }, true, null, null)
+  guest.create()
+  const participant = ec.entity.makeValue(PARTICIPANT)
+  participant.setSequencedIdPrimary()
+  participant.setFields({
+    callSessionId: session.callSessionId, identityKindEnumId: 'CikGuest', callGuestId: guest.callGuestId, displayName: name,
+    roleEnumId: 'CprGuest', admissionStatusId: straightIn ? 'CasAdmitted' : 'CasWaiting', admittedDate: straightIn ? now : null,
+  }, true, null, null)
+  participant.create()
+  const leg = makeLeg(session, participant, straightIn ? 'ClsAnswered' : 'ClsOffered', 'CltGuest')
+  link.set('lastUsedDate', now)
+  link.update()
+  bump(session)
+  session.update()
+  pushState(session, straightIn ? 'joined' : 'guestWaiting', { guestName: name })
+  // the link's owner hears of a guest even when not in the meeting
+  if (!participantOf(session.callSessionId, link.ownerUserId)) {
+    push([link.ownerUserId], {
+      action: straightIn ? 'joined' : 'guestWaiting', callSessionId: session.callSessionId,
+      revision: Number(session.revision || 1), guestName: name, call: view(session, link.ownerUserId),
+    })
+  }
+  return { credential, callSessionId: session.callSessionId, callLegId: leg.callLegId, admission: straightIn ? 'admitted' : 'waiting' }
+}
+
+/** The guest a credential names, with their participant and link, when it still works. */
+function guestOf(credential) {
+  if (!/^[A-Za-z0-9_-]{20,80}$/.test(String(credential || ''))) return null
+  const guest = find(GUEST).condition('credentialHash', ec.user.singleUseCodeHash(String(credential))).one()
+  if (!guest || guest.revokedDate || ms(guest.credentialExpiry) <= nowMs()) return null
+  const link = one(LINK, { callLinkId: guest.callLinkId })
+  if (!link || link.revokedDate) return null
+  const participant = one(PARTICIPANT, { callGuestId: guest.callGuestId })
+  return participant ? { guest, participant, link } : null
+}
+
+/** What a guest's page may know: whether they are let in, whether the call goes on, and the names in it. */
+function guestState(p) {
+  const g = guestOf(p.credential)
+  if (!g) return { admission: 'gone', callStatus: null, people: [] }
+  const session = one(SESSION, { callSessionId: g.participant.callSessionId })
+  const legs = rows(LEG, { callParticipantId: g.participant.callParticipantId })
+  const admitted = session ? participantsOf(session.callSessionId).filter((x) => x.admissionStatusId === 'CasAdmitted') : []
+  const names = userNames(admitted.map((x) => x.userId))
+  return {
+    admission: ADMISSION_CODES[g.participant.admissionStatusId] || null,
+    callStatus: session ? STATUS_CODES[session.statusId] : null,
+    callLegId: (legs.find((leg) => OPEN_LEG.includes(leg.statusId)) || {}).callLegId || null,
+    callSessionId: g.participant.callSessionId,
+    people: g.participant.admissionStatusId === 'CasAdmitted' ? admitted.map((x) => ({ displayName: x.displayName || names[x.userId] || '' })) : [],
+  }
+}
+
+/** A guest's socket binds their leg (the host's /callws, after the credential frame). */
+function guestBind(p) {
+  const g = guestOf(p.credential)
+  if (!g || g.participant.callSessionId !== p.callSessionId) return refuse('notFound', 'Call not found')
+  const session = lockSession(p.callSessionId)
+  if (!session || session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  if (!leg || leg.callParticipantId !== g.participant.callParticipantId) return refuse('notFound', 'Call not found')
+  const participant = one(PARTICIPANT, { callParticipantId: g.participant.callParticipantId })
+  return bindLeg(session, leg, participant, p.signalingNodeId, null)
+}
+
+/** A guest leaves: their leg closes and their credential ends. */
+function guestLeave(p) {
+  const g = guestOf(p.credential)
+  if (!g) return { left: false }
+  revokeGuest(g.guest, 'CerHangup')
+  return { left: true }
+}
+
+/** Someone in the call (or the link's owner) lets a waiting guest in, or not. */
+function admitOrDeny(p, admit) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  const mine = participantOf(session.callSessionId, me)
+  const inIt = !!mine && mine.admissionStatusId === 'CasAdmitted' &&
+    rows(LEG, { callParticipantId: mine.callParticipantId }).some((leg) => leg.statusId === 'ClsAnswered')
+  if (!inIt && linkOwner(session) !== me) return refuse('notAllowed', 'Join the call to let people in')
+  const target = p.callParticipantId ? one(PARTICIPANT, { callParticipantId: p.callParticipantId }) : null
+  if (!target || target.callSessionId !== session.callSessionId) return refuse('notFound', 'Call not found')
+  if (target.admissionStatusId !== 'CasWaiting') return { call: view(session, me), repeated: true }
+  const now = ec.user.nowTimestamp
+  target.setFields(admit ? { admissionStatusId: 'CasAdmitted', admittedDate: now } : { admissionStatusId: 'CasDenied', revokedDate: now },
+    true, null, null)
+  target.update()
+  for (const leg of rows(LEG, { callParticipantId: target.callParticipantId, statusId: 'ClsOffered' })) {
+    if (admit) {
+      leg.setFields({ statusId: 'ClsAnswered', answeredDate: now }, true, null, null)
+      leg.update()
+    } else {
+      closeLeg(leg, 'ClsDeclined', 'CerDeclined')
+    }
+  }
+  if (target.callGuestId) {
+    const guest = one(GUEST, { callGuestId: target.callGuestId })
+    if (guest) {
+      guest.set(admit ? 'admittedDate' : 'revokedDate', now)
+      guest.update()
+    }
+  }
+  bump(session)
+  session.update()
+  pushState(session, admit ? 'admitted' : 'denied', { participantName: target.displayName || null })
+  return { call: view(session, me) }
+}
+
+/** The host (or the link's owner) removes someone from the call: their legs close and they cannot come back. */
+function removeParticipant(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  const mine = participantOf(session.callSessionId, me)
+  if (mine?.roleEnumId !== 'CprHost' && linkOwner(session) !== me) return refuse('notAllowed', 'Only the host removes people')
+  const target = p.callParticipantId ? one(PARTICIPANT, { callParticipantId: p.callParticipantId }) : null
+  if (!target || target.callSessionId !== session.callSessionId || target.userId === me) return refuse('notFound', 'Call not found')
+  if (target.callGuestId) {
+    const guest = one(GUEST, { callGuestId: target.callGuestId })
+    if (guest) revokeGuest(guest, 'CerRemoved')
+  } else {
+    target.setFields({ admissionStatusId: 'CasRevoked', revokedDate: ec.user.nowTimestamp }, true, null, null)
+    target.update()
+    for (const leg of rows(LEG, { callParticipantId: target.callParticipantId })) {
+      if (leg.statusId === 'ClsAnswered') leaveLeg(session, leg, 'CerRemoved', target.userId)
+      else if (leg.statusId === 'ClsOffered') closeLeg(leg, 'ClsCanceled', 'CerRemoved')
+    }
+  }
+  return { call: view(lockSession(session.callSessionId), me) }
 }
 
 const OUTCOME_CODES = { CuoPlaced: 'placed', CuoAnswered: 'answered', CuoMissed: 'missed', CuoDeclined: 'declined' }
@@ -855,7 +1192,9 @@ function capabilities() {
 
 const operations = {
   start, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
-  registerNode, capabilities, history, countMissed, markMissedSeen,
+  registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
+  guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
+  removeParticipant,
 }
 
 function execute(op, parameters) {

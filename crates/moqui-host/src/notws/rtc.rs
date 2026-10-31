@@ -41,6 +41,13 @@ use crate::rtc::{Command, Route};
 
 const BIND_SERVICE: &str = "org.moqui.impl.CallServices.bind#Connection";
 const LEAVE_SERVICE: &str = "org.moqui.impl.CallServices.leave#Call";
+const GUEST_BIND_SERVICE: &str = "org.moqui.impl.CallServices.bind#GuestConnection";
+const GUEST_LEAVE_SERVICE: &str = "org.moqui.impl.CallServices.leave#AsGuest";
+const GUEST_STATE_SERVICE: &str = "org.moqui.impl.CallServices.get#GuestState";
+/// A guest's socket must send its credential this soon.
+const GUEST_AUTH_WAIT: Duration = Duration::from_secs(10);
+/// A guest's credential is checked again this often; one that no longer works closes the socket.
+const GUEST_CHECK: Duration = Duration::from_secs(30);
 const HEARTBEAT_SERVICE: &str = "org.moqui.impl.CallServices.heartbeat#Connections";
 const RELEASE_SERVICE: &str = "org.moqui.impl.CallServices.release#Connection";
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(20);
@@ -123,8 +130,8 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
         return true;
     }
     match op.as_str() {
-        "join" => join(factory, slot, call, leg, id, frame),
-        "leave" => leave(factory, slot, call, leg, id, frame),
+        "join" => join(factory, slot, Who::User(slot.user_id.clone()), call, leg, id, frame),
+        "leave" => leave(factory, slot, Who::User(slot.user_id.clone()), call, leg, id, frame),
         _ => {
             let Some(binding) = bound(slot.id, &call, &leg) else {
                 error(
@@ -149,6 +156,32 @@ fn bound(slot_id: u64, call: &str, leg: &str) -> Option<Binding> {
         .iter()
         .find(|b| b.call == call && b.leg == leg)
         .cloned()
+}
+
+/// Who a socket binds a leg as: its signed-in user, or a guest by their credential.
+#[derive(Clone)]
+enum Who {
+    User(String),
+    Guest(String),
+}
+
+/// Runs `work` as `who`: logged in as the user, or as internal work for a guest (the guest services check the
+/// credential), with service authorization off either way.
+async fn as_who<T: Send + 'static>(
+    factory: &Arc<ExecutionContextFactory>,
+    who: &Who,
+    work: impl FnOnce() -> Result<T, moqui_core::context::Error> + Send + 'static,
+) -> Result<T, moqui_core::context::Error> {
+    match who {
+        Who::User(user_id) => as_user(factory, user_id.clone(), work).await,
+        Who::Guest(_) => {
+            super::on_pool(factory, move || {
+                let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+                work()
+            })
+            .await
+        }
+    }
 }
 
 /// Runs `work` on a request worker logged in as the socket's user, with service authorization off: the call services
@@ -202,23 +235,32 @@ fn call_service(name: &str, parameters: BTreeMap<String, Value>) -> Result<BTree
     }
 }
 
-fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, call: String, leg: String, id: Json, frame: Json) {
+fn join(
+    factory: &Arc<ExecutionContextFactory>,
+    slot: &Arc<Slot>,
+    who: Who,
+    call: String,
+    leg: String,
+    id: Json,
+    frame: Json,
+) {
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
         let own = crate::rtc::own_node(&factory);
-        let (c, l, node) = (call.clone(), leg.clone(), own.clone());
-        let bound = as_user(&factory, slot.user_id.clone(), move || {
-            Ok(call_service(
-                BIND_SERVICE,
-                BTreeMap::from([
-                    ("callSessionId".to_string(), Value::string(&c)),
-                    ("callLegId".to_string(), Value::string(&l)),
-                    ("signalingNodeId".to_string(), Value::string(&node)),
-                ]),
-            ))
-        })
-        .await;
+        let mut parameters = BTreeMap::from([
+            ("callSessionId".to_string(), Value::string(&call)),
+            ("callLegId".to_string(), Value::string(&leg)),
+            ("signalingNodeId".to_string(), Value::string(&own)),
+        ]);
+        let service = match &who {
+            Who::User(_) => BIND_SERVICE,
+            Who::Guest(credential) => {
+                parameters.insert("credential".to_string(), Value::string(credential));
+                GUEST_BIND_SERVICE
+            }
+        };
+        let bound = as_who(&factory, &who, move || Ok(call_service(service, parameters))).await;
         let out = match bound {
             Ok(Ok(out)) => out,
             Ok(Err((code, message))) => return error(&slot, &call, &leg, &id, &code, &message),
@@ -259,24 +301,35 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, call: String, 
     });
 }
 
-fn leave(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, call: String, leg: String, id: Json, frame: Json) {
+fn leave(
+    factory: &Arc<ExecutionContextFactory>,
+    slot: &Arc<Slot>,
+    who: Who,
+    call: String,
+    leg: String,
+    id: Json,
+    frame: Json,
+) {
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
         if let Some(binding) = bound(slot.id, &call, &leg) {
             forward(&factory, &slot, &binding, &Json::Null, frame);
         }
-        let (c, l) = (call.clone(), leg.clone());
-        let left = as_user(&factory, slot.user_id.clone(), move || {
-            Ok(call_service(
+        let (service, parameters) = match &who {
+            Who::User(_) => (
                 LEAVE_SERVICE,
                 BTreeMap::from([
-                    ("callSessionId".to_string(), Value::string(&c)),
-                    ("callLegId".to_string(), Value::string(&l)),
+                    ("callSessionId".to_string(), Value::string(&call)),
+                    ("callLegId".to_string(), Value::string(&leg)),
                 ]),
-            ))
-        })
-        .await;
+            ),
+            Who::Guest(credential) => (
+                GUEST_LEAVE_SERVICE,
+                BTreeMap::from([("credential".to_string(), Value::string(credential))]),
+            ),
+        };
+        let left = as_who(&factory, &who, move || Ok(call_service(service, parameters))).await;
         if let Some(list) = lock(bindings()).get_mut(&slot.id) {
             list.retain(|b| !(b.call == call && b.leg == leg));
         }
@@ -477,4 +530,190 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
             }
         }
     });
+}
+
+// ---------- the guest socket (W3) ----------
+
+/// The call and leg a guest's socket may signal for, and its credential.
+struct GuestScope {
+    call: String,
+    leg: String,
+    credential: String,
+}
+
+/// `GET /callws`: the socket of a guest's page (the /call/<token> page), with no session. Its first frame is
+/// `{rtc: 'guestAuth', credential}`, within 10 seconds; the credential (from `join#AsGuest`) is checked with
+/// `get#GuestState` and names one call and leg. After that the socket takes only `rtc` frames of that call and leg:
+/// no topics, no co-editing, nothing else. The credential is checked again every 30 seconds; when it no longer works
+/// (revoked, expired, the guest denied or removed) the page is told the call ended and the socket closes.
+/// Adds `/callws` to the routes.
+pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
+    app.route("/callws", axum::routing::get(guest_upgrade))
+}
+
+pub(crate) async fn guest_upgrade(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+    site: super::RequestSite,
+    axum::extract::State(state): axum::extract::State<Arc<crate::http::HttpState>>,
+) -> axum::response::Response {
+    if !super::origin_allowed(&state.factory, &headers, &site, "call") {
+        return crate::http::plain(403, "origin not allowed");
+    }
+    let factory = Arc::clone(&state.factory);
+    let shutdown = state.shutdown.clone();
+    ws.max_message_size(MAX_FRAME)
+        .max_frame_size(MAX_FRAME)
+        .on_upgrade(move |socket| run_guest(socket, factory, shutdown))
+}
+
+/// The guest's state by credential: (admission, callSessionId, callLegId), or None when the check could not run.
+async fn guest_state(factory: &Arc<ExecutionContextFactory>, credential: &str) -> Option<(String, String, String)> {
+    let parameters = BTreeMap::from([("credential".to_string(), Value::string(credential))]);
+    let out = as_who(factory, &Who::Guest(credential.to_string()), move || {
+        Ok(call_service(GUEST_STATE_SERVICE, parameters))
+    })
+    .await;
+    let out = match out {
+        Ok(Ok(out)) => out,
+        _ => return None,
+    };
+    let text = |k: &str| out.get(k).map(to_plain_string).unwrap_or_default();
+    Some((text("admission"), text("callSessionId"), text("callLegId")))
+}
+
+async fn run_guest(
+    mut socket: axum::extract::ws::WebSocket,
+    factory: Arc<ExecutionContextFactory>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    use axum::extract::ws::Message;
+    let first = tokio::time::timeout(GUEST_AUTH_WAIT, socket.recv()).await;
+    let credential = match first {
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Json>(&text)
+            .ok()
+            .filter(|f| f.get("rtc").and_then(Json::as_str) == Some("guestAuth"))
+            .and_then(|f| f.get("credential").and_then(Json::as_str).map(str::to_string))
+            .filter(|c| !c.is_empty() && c.len() <= 100),
+        _ => None,
+    };
+    let Some(credential) = credential else {
+        return refuse_guest(socket, "badRequest").await;
+    };
+    let Some((admission, call, leg)) = guest_state(&factory, &credential).await else {
+        return refuse_guest(socket, "unavailable").await;
+    };
+    if !matches!(admission.as_str(), "admitted" | "waiting") || call.is_empty() || leg.is_empty() {
+        return refuse_guest(socket, "notFound").await;
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel(super::SOCKET_QUEUE);
+    let id = super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // a guest is no user: its id matches no notification's recipients, and it has no topics
+    let slot = Arc::new(Slot {
+        id,
+        user_id: format!("guest:{call}:{leg}"),
+        session_id: "guest".to_string(),
+        topics: Mutex::new(std::collections::HashSet::new()),
+        tx,
+        overflow: tokio::sync::Notify::new(),
+    });
+    super::register(&slot);
+    let scope = GuestScope {
+        call: call.clone(),
+        leg: leg.clone(),
+        credential: credential.clone(),
+    };
+    let authed = json!({"topic": format!("rtc:{call}"), "rtc": "guestAuthed", "callSessionId": call, "callLegId": leg,
+        "admission": admission});
+    let mut open = socket.send(Message::Text(authed.to_string().into())).await.is_ok();
+    let mut check = tokio::time::interval(GUEST_CHECK);
+    check.tick().await;
+    let mut ping = tokio::time::interval(super::PING_EVERY);
+    ping.tick().await;
+    while open {
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+            () = slot.overflow.notified() => break,
+            _ = check.tick() => {
+                let still = guest_state(&factory, &scope.credential).await;
+                if !matches!(still, Some((ref a, _, _)) if a == "admitted" || a == "waiting") {
+                    let ended = json!({"topic": format!("rtc:{}", scope.call), "rtc": "ended", "callSessionId": scope.call,
+                        "callLegId": scope.leg, "reason": "removed"});
+                    let _ = socket.send(Message::Text(ended.to_string().into())).await;
+                    break;
+                }
+            }
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Text(text))) => guest_frame(&factory, &slot, &scope, &text),
+                Some(Ok(Message::Ping(payload))) => open = socket.send(Message::Pong(payload)).await.is_ok(),
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
+            push = rx.recv() => {
+                let Some(push) = push else { break };
+                open = socket.send(Message::Text(push.text.into())).await.is_ok();
+            }
+            _ = ping.tick() => open = socket.send(Message::Ping(Vec::new().into())).await.is_ok(),
+        }
+    }
+    super::unregister(id);
+    socket_closed(&factory, id);
+}
+
+/// Tells a guest's page its link does not work, and closes the socket.
+async fn refuse_guest(mut socket: axum::extract::ws::WebSocket, code: &str) {
+    use axum::extract::ws::{CloseFrame, Message};
+    let frame = json!({"rtc": "error", "code": code, "message": "this link no longer works"});
+    let _ = socket.send(Message::Text(frame.to_string().into())).await;
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: 1008,
+            reason: "refused".into(),
+        })))
+        .await;
+}
+
+/// A guest's frame: only `rtc` frames of its own call and leg.
+fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: &GuestScope, text: &str) {
+    let Ok(frame) = serde_json::from_str::<Json>(text) else {
+        return;
+    };
+    let Some(op) = frame.get("rtc").and_then(Json::as_str).map(str::to_string) else {
+        return;
+    };
+    let id = frame.get("id").cloned().unwrap_or(Json::Null);
+    let call = frame.get("callSessionId").and_then(Json::as_str).unwrap_or_default();
+    let leg = frame.get("callLegId").and_then(Json::as_str).unwrap_or_default();
+    if call != scope.call || leg != scope.leg {
+        error(
+            slot,
+            &scope.call,
+            &scope.leg,
+            &id,
+            "notAllowed",
+            "a guest signals only for their own call",
+        );
+        return;
+    }
+    let who = Who::Guest(scope.credential.clone());
+    match op.as_str() {
+        "join" => join(factory, slot, who, scope.call.clone(), scope.leg.clone(), id, frame),
+        "leave" => leave(factory, slot, who, scope.call.clone(), scope.leg.clone(), id, frame),
+        _ => match bound(slot.id, &scope.call, &scope.leg) {
+            Some(binding) => forward(factory, slot, &binding, &id, frame),
+            None => error(
+                slot,
+                &scope.call,
+                &scope.leg,
+                &id,
+                "notJoined",
+                "join the call on this connection first",
+            ),
+        },
+    }
 }

@@ -61,6 +61,8 @@ fn read_frames(ws: &mut Ws) -> Vec<Json> {
             {
                 return frames
             }
+            // the server closed the socket (a refused guest): what came before is the answer
+            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => return frames,
             Err(e) => panic!("socket read: {e}"),
         }
     }
@@ -363,4 +365,175 @@ fn a_direct_call_over_the_socket_and_the_media_port() {
         _ => None,
     });
     assert_eq!(status.as_deref(), Some("ended"));
+}
+
+fn open_guest_socket(address: SocketAddr) -> Ws {
+    let uri: tungstenite::http::Uri = format!("ws://{address}/callws").parse().unwrap();
+    let (socket, _) = connect(ClientRequestBuilder::new(uri)).unwrap();
+    if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+        tcp.set_read_timeout(Some(Duration::from_millis(5))).unwrap();
+    }
+    socket
+}
+
+fn first_frame(ws: &mut Ws, wait: Duration) -> Option<Json> {
+    let until = Instant::now() + wait;
+    while Instant::now() < until {
+        if let Some(frame) = read_frames(ws).into_iter().next() {
+            return Some(frame);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+#[test]
+fn a_guest_by_link_joins_over_its_own_socket_and_revoking_the_link_ends_it() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_properties("rtc-guest", None, &[("rtc_media_port", "0")]);
+    let http = gate.server.address();
+    let factory = std::sync::Arc::clone(gate.server.factory());
+
+    let (call_id, host_leg, guest_leg, credential, link_id) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            if call("org.moqui.impl.CallServices.get#Capabilities", &[]).get("active") == Some(&Value::Bool(true)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let link = call(
+            "org.moqui.impl.CallServices.create#CallLink",
+            &[("name", Value::string("Guest test"))],
+        );
+        let link_id = text(&link, "callLinkId");
+        let token = text(&link, "token");
+        let opened = call(
+            "org.moqui.impl.CallServices.open#CallLink",
+            &[("callLinkId", Value::string(&link_id))],
+        );
+        moqui_core::user::logout().unwrap();
+        let guest = call(
+            "org.moqui.impl.CallServices.join#AsGuest",
+            &[
+                ("token", Value::string(&token)),
+                ("displayName", Value::string("Visitor")),
+            ],
+        );
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let state = call(
+            "org.moqui.impl.CallServices.get#Call",
+            &[("callSessionId", Value::string(text(&opened, "callSessionId")))],
+        );
+        let waiting = match state.get("call") {
+            Some(Value::Map(m)) => match m.get("participants") {
+                Some(Value::List(list)) => list
+                    .iter()
+                    .find_map(|p| match p {
+                        Value::Map(p) if p.get("admission").map(to_plain_string).as_deref() == Some("waiting") => {
+                            p.get("callParticipantId").map(to_plain_string)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        };
+        call(
+            "org.moqui.impl.CallServices.admit#Guest",
+            &[
+                ("callSessionId", Value::string(text(&opened, "callSessionId"))),
+                ("callParticipantId", Value::string(&waiting)),
+            ],
+        );
+        (
+            text(&opened, "callSessionId"),
+            text(&opened, "callLegId"),
+            text(&guest, "callLegId"),
+            text(&guest, "credential"),
+            link_id,
+        )
+    };
+    assert!(!call_id.is_empty() && !host_leg.is_empty() && !guest_leg.is_empty() && !credential.is_empty());
+
+    // a socket whose first frame is no credential that works is refused
+    let mut bad = open_guest_socket(http);
+    bad.send(Message::Text(
+        json!({"rtc": "guestAuth", "credential": "x".repeat(40)})
+            .to_string()
+            .into(),
+    ))
+    .unwrap();
+    let refused = first_frame(&mut bad, Duration::from_secs(5)).expect("an answer");
+    assert_eq!(refused["code"], json!("notFound"), "{refused}");
+
+    let john_cookie = crate::common::sign_in(http, "john.doe", "moqui");
+    factory.flush_sessions().unwrap();
+    let mut host = Peer::new(open_socket(http, &john_cookie), &call_id, &host_leg);
+    let mut guest_ws = open_guest_socket(http);
+    guest_ws
+        .send(Message::Text(
+            json!({"rtc": "guestAuth", "credential": credential}).to_string().into(),
+        ))
+        .unwrap();
+    let authed = first_frame(&mut guest_ws, Duration::from_secs(5)).expect("authed");
+    assert_eq!(authed["rtc"], json!("guestAuthed"), "{authed}");
+    assert_eq!(authed["callLegId"], json!(guest_leg));
+    // a guest socket takes no topics
+    guest_ws.send(Message::Text("subscribe:ALL".into())).unwrap();
+    let mut guest = Peer::new(guest_ws, &call_id, &guest_leg);
+    host.join();
+    guest.join();
+    let flowed = run_until(&mut [&mut host, &mut guest], Duration::from_secs(10), |p| {
+        p.iter().all(|p| p.received >= 20)
+    });
+    assert!(
+        flowed,
+        "audio both ways: host {} guest {}; frames {:?} {:?}",
+        host.received, guest.received, host.frames, guest.frames
+    );
+    // a guest signals only for its own leg
+    guest
+        .ws
+        .send(Message::Text(
+            json!({"rtc": "subscribe", "id": 21, "callSessionId": call_id, "callLegId": host_leg, "publisher": guest_leg, "layer": "low"})
+                .to_string()
+                .into(),
+        ))
+        .unwrap();
+    run_until(&mut [&mut host, &mut guest], Duration::from_secs(3), |p| {
+        p[1].frames.iter().any(|f| f["id"] == json!(21))
+    });
+    let other = guest
+        .frames
+        .iter()
+        .find(|f| f["id"] == json!(21))
+        .cloned()
+        .unwrap_or(Json::Null);
+    assert_eq!(other["code"], json!("notAllowed"), "{other}");
+    assert!(
+        !guest.frames.iter().any(|f| f.get("rtc").is_none()),
+        "no notification reached the guest"
+    );
+
+    // revoking the link removes the guest: its page hears the call ended for it
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        call(
+            "org.moqui.impl.CallServices.revoke#CallLink",
+            &[("callLinkId", Value::string(&link_id))],
+        );
+    }
+    let ended = run_until(&mut [&mut host, &mut guest], Duration::from_secs(5), |p| {
+        p[1].frame("ended").is_some()
+    });
+    assert!(ended, "guest frames {:?}", guest.frames);
 }

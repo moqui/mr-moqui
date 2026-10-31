@@ -46,6 +46,23 @@ The Calls screen says when calls are unavailable (`get#Capabilities`): supported
    with its last leg. A socket that closes keeps its leg for 30 seconds. A reconnect joins again with the next
    generation, and the media node refuses the old connection's frames.
 
+## Guests by link
+
+A call link (Calls, Call links; `create#CallLink`) is `/call/<token>`, a page in the public shell for a person with no
+account (`basic-comms` `CallGuest.xml`, the `call` token route). The token is shown once, and only its hash is kept.
+
+1. The guest gives a name. `join#AsGuest` opens the link's meeting, starting one when none is going. The guest is a
+   participant with no login and a guest leg. With a lobby, they wait until someone in the call lets them in (Let in,
+   Turn away); a link set to "straight in" admits them at once.
+2. The guest's page gets a credential that lasts 4 hours. It sends the credential in the first frame of its own socket,
+   `/callws`, never in a URL. That socket takes only the rtc frames of the guest's own call and leg: no topics, no
+   notifications, nothing of the room or its history.
+3. Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs. The socket
+   checks the credential every 30 seconds and closes when it no longer works.
+
+The link's owner opens its meeting from Calls (Open) as its host. A meeting nobody is in or waiting for ends after two
+minutes.
+
 ## Cluster
 
 A call's media lives on one node, `CallSession.mediaNodeId`, chosen at start among the live `CallMediaNode` rows. A frame
@@ -59,7 +76,9 @@ the reason "media server lost"; the users start a new call. There is no seamless
   simulcast layers following the bandwidth estimate, audio only below the floor, renegotiation both ways and glare, ICE
   restart, ICE-TCP, generations, and media taken out and put in.
 - `cargo test -p moqui-host --test it rtc::`: a direct call on a real server, with str0m peers on loopback UDP signaling
-  through `/notws`.
+  through `/notws`, and a guest on `/callws`: a bad credential refused, media both ways, another leg's frames refused,
+  and revoking the link ending it.
 - `./moq test framework --spec Calls`: the call state machine.
 - `./moq test basic-comms --spec BasicCommsCalls`: the screens' transitions through both mounts.
-- `./moq test-client basic-comms --serve`: a call in two Chromium pages with fake media. It needs `rtc` in the binary.
+- `./moq test-client basic-comms --serve`: a call in two Chromium pages with fake media (`CallFlow`), and a guest by
+  link let in from the lobby (`CallGuestFlow`). It needs `rtc` in the binary.

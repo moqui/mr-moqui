@@ -1,0 +1,23 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- CallGuest (CallGuest.xml), in the public shell: m-call-guest, the call client's guest page (webroot js/WebrootCall.js,
+    which the public shell loads for this route), with the link the token check answered ($root.context: its name, its
+    owner's name, the policy, video) and the route's path ($root.basePath) its transitions are under. -->
+<template><div class="m-call-guest-screen">
+    <m-call-guest :base="$root.basePath" :link="$root.context || {}"></m-call-guest>
+</div></template>
+
+<script>
+module.exports = { name: 'CallGuest' };
+</script>

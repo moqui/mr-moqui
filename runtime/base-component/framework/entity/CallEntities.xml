@@ -31,6 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
             now). encryptionMode is what protects its media: dtls-srtp (hop by hop through the SFU) until W8.</description>
         <field name="callSessionId" type="id" is-pk="true"/>
         <field name="chatRoomId" type="id"/>
+        <field name="callLinkId" type="id"><description>The call link a meeting was opened by (its guests come in through it)</description></field>
         <field name="kindEnumId" type="id"/>
         <field name="statusId" type="id"/>
         <field name="revision" type="number-integer" default="1"/>
@@ -63,6 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="many" related="moqui.call.CallLeg" short-alias="legs">
             <key-map field-name="callSessionId"/></relationship>
         <index name="CALL_SESSION_ROOM"><index-field name="chatRoomId"/><index-field name="statusId"/></index>
+        <index name="CALL_SESSION_LINK"><index-field name="callLinkId"/><index-field name="statusId"/></index>
         <index name="CALL_SESSION_STATUS"><index-field name="statusId"/><index-field name="ringExpireDate"/></index>
         <index name="CALL_SESSION_IDEM"><index-field name="startedByUserId"/><index-field name="idempotencyKey"/></index>
         <seed-data>
@@ -252,6 +254,55 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Missed" enumId="CuoMissed" enumCode="missed" enumTypeId="CallOutcome" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Declined" enumId="CuoDeclined" enumCode="declined" enumTypeId="CallOutcome" sequenceNum="4"/>
         </seed-data>
+    </entity>
+
+    <entity entity-name="CallLink" package="moqui.call" use="transactional" cache="never">
+        <description>A link to a meeting, for people with no account (W3): /call/&lt;token&gt;. Only the token's hash is kept
+            (the token is shown once, when the link is made). policyEnumId: ClpLobby, a guest waits until someone in the call
+            admits them; ClpLink, a guest comes straight in. Opening the link starts its meeting (a CallSession with this
+            callLinkId) when none is going. A revoked or expired link takes no one, and revoking it removes its guests.</description>
+        <field name="callLinkId" type="id" is-pk="true"/>
+        <field name="tokenHash" type="text-medium"/>
+        <field name="name" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="policyEnumId" type="id"/>
+        <field name="video" type="text-indicator"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expiryDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" title="CallLinkPolicy" related="moqui.basic.Enumeration" short-alias="policy">
+            <key-map field-name="policyEnumId"/></relationship>
+        <index name="CALL_LINK_TOKEN" unique="true"><index-field name="tokenHash"/></index>
+        <index name="CALL_LINK_OWNER"><index-field name="ownerUserId"/><index-field name="revokedDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Link Policy" enumTypeId="CallLinkPolicy"/>
+            <moqui.basic.Enumeration description="Guests wait to be admitted" enumId="ClpLobby" enumCode="lobby" enumTypeId="CallLinkPolicy" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Guests come straight in" enumId="ClpLink" enumCode="link" enumTypeId="CallLinkPolicy" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallGuest" package="moqui.call" use="transactional" cache="never">
+        <description>A person in a call with no login, by a call link: their name and a short-lived credential (only its
+            hash), which their page sends in the first frame of its own socket (/callws), never in a URL. The credential
+            reaches only this call's signaling; it ends at credentialExpiry, or when the guest or the link is revoked.</description>
+        <field name="callGuestId" type="id" is-pk="true"/>
+        <field name="callLinkId" type="id"/>
+        <field name="callSessionId" type="id"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="credentialHash" type="text-medium"/>
+        <field name="credentialExpiry" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="admittedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallLink" short-alias="link"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <index name="CALL_GUEST_CRED" unique="true"><index-field name="credentialHash"/></index>
+        <index name="CALL_GUEST_LINK"><index-field name="callLinkId"/><index-field name="revokedDate"/></index>
     </entity>
 
     <entity entity-name="CallMediaNode" package="moqui.call" use="nontransactional" cache="never">

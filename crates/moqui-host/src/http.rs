@@ -246,6 +246,8 @@ pub(crate) async fn listen(
         moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "/notws");
         notws::collab::install(&factory, shutdown_rx.clone());
         notws::rtc::install(&factory, shutdown_rx.clone());
+        // a call guest's socket (the /call/<token> page; notws/rtc.rs), with no session: the rtc feature
+        let app = notws::rtc::guest_route(app);
         app.route("/notws", get(notws::upgrade))
     } else {
         moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "");

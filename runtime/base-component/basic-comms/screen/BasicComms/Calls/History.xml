@@ -16,8 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
     why not, when not), New call (people picked by name, a video or an audio call), the calls ringing for the user or that
     they are in (Answer, Decline or Open), and the user's call history: All, Missed, Placed and Answered (outcome), each
     call with the others in it, when, how long, and Call back (the same people, or the room's call). Opening Missed marks
-    the missed calls seen, so they no longer count on Home. The rows come from org.moqui.impl.CallServices
-    find#ActiveCalls and find#Calls. An app adds actions to a call with ext-action slot="call-actions" (the
+    the missed calls seen, so they no longer count on Home. Call links (W3): a link to a meeting for people with no
+    account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
+    Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
+    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. An app adds actions to a call with ext-action slot="call-actions" (the
     item: callSessionId). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
@@ -46,6 +48,37 @@ along with this software (see the LICENSE.md file). If not, see
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a call link: its address once, in the message -->
+    <transition name="createLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
+                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (out.path) ec.message.addMessage(ec.resource.expand('Call link made: ${url} (copy it now: it is shown only this once)', '',
+                {url: ec.web.getWebappRootUrl('webroot', null, true, false) + out.path}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="openLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.open#CallLink').parameter('callLinkId', callLinkId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="revokeLink">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallServices.revoke#CallLink').parameter('callLinkId', callLinkId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Call link revoked'), 'success')
+        ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
@@ -107,6 +140,24 @@ along with this software (see the LICENSE.md file). If not, see
             video: row.video ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
             unseen: !!row.unseen}))
         historyCount = Number(found.callListCount || 0)
+
+        // the call links that still work, and the meetings of the next week from the apps' providers
+        const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
+        linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
+            policyText: link.policy === 'link' ? L('Straight in') : L('Lobby'), kindText: link.video ? L('Video') : L('Audio'),
+            expiryText: when(link.expiryDate), stateText: link.callSessionId ? (link.waitingCount ? ec.resource.expand('In progress, ${n} waiting', '',
+                {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
+        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7'}
+        const nowMillis = Number(ec.user.nowTimestamp)
+        const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
+            parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        meetingsAvailable = !meetings.unavailable
+        meetingList = []
+        for (const result of Array.from(meetings.results || [])) for (const meeting of Array.from(result.meetingList || []))
+            meetingList.push({title: meeting.title || '', whenText: meeting.whenText || when(meeting.startDate), joinUrl: meeting.joinUrl || null,
+                link: meeting.link || null, isNow: !!meeting.isNow})
+        meetingsFailed = Array.from(meetings.failedParts || []).length > 0
         hasMore = (historyPage + 1) * 25 < historyCount
         nextPage = historyPage + 1
     ]]></script></actions>
@@ -169,5 +220,47 @@ along with this software (see the LICENSE.md file). If not, see
             </form-list>
             <link url="." text="More" condition="hasMore" btn-type="default"><parameter name="outcome" from="shownOutcome"/><parameter name="pageIndex" from="nextPage"/></link>
         </box-body></container-box>
+        <container-row>
+            <row-col lg="7" md="12">
+                <container-box><box-header title="Call links"/><box-body>
+                    <label type="p" style="m-muted" text="A link to a meeting for people with no account: they open it in a browser and give their name. With a lobby, someone in the call lets each one in."/>
+                    <form-single name="NewCallLink" transition="createLink" map="newLink">
+                        <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
+                        <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
+                        <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="expiryDays"><default-field title="Works for"><drop-down><option key="1" text="A day"/><option key="7" text="A week"/>
+                            <option key="30" text="A month"/><option key="90" text="90 days"/></drop-down></default-field></field>
+                        <field name="submitButton"><default-field title="Make a link"><submit icon="sym_o_add_link"/></default-field></field>
+                    </form-single>
+                    <form-list name="CallLinks" list="linkList" skip-form="true">
+                        <field name="name"><default-field title="Link"><display/></default-field></field>
+                        <field name="policyText"><default-field title="Guests"><display/></default-field></field>
+                        <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><display/></default-field></field>
+                        <field name="expiryText"><default-field title="Until"><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="openLink" text="Open" icon="sym_o_call" condition="callsActive"><parameter name="callLinkId"/></link>
+                            <link url="revokeLink" text="Revoke" icon="sym_o_link_off" confirmation="Revoke this link? Its guests leave the call."><parameter name="callLinkId"/></link>
+                        </default-field></field>
+                    </form-list>
+                </box-body></container-box>
+            </row-col>
+            <row-col lg="5" md="12">
+                <section name="Meetings" condition="meetingsAvailable"><widgets>
+                    <container-box><box-header title="Meetings"/><box-body>
+                        <section name="MeetingsFailed" condition="meetingsFailed"><widgets><label type="p" style="text-warning" text="Some meetings could not be read."/></widgets></section>
+                        <section name="NoMeetings" condition="!meetingList.length"><widgets><label type="p" style="m-muted" text="No meetings in the next week."/></widgets></section>
+                        <form-list name="MeetingList" list="meetingList" skip-form="true">
+                            <field name="title"><default-field title="Meeting"><display/></default-field></field>
+                            <field name="whenText"><default-field title="When"><display/></default-field></field>
+                            <field name="actions"><default-field title="">
+                                <link url="${joinUrl}" url-type="plain" text="Join" icon="sym_o_videocam" condition="joinUrl" target-window="_blank"/>
+                                <link url="${link}" url-type="plain" text="Open" icon="sym_o_event" condition="link"/>
+                            </default-field></field>
+                        </form-list>
+                    </box-body></container-box>
+                </widgets></section>
+            </row-col>
+        </container-row>
     </widgets>
 </screen>

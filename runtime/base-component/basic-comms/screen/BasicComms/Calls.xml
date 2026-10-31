@@ -107,6 +107,54 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a call link: made (its path, with the token, in this answer only), and its meeting opened by its owner -->
+    <transition name="createCallLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby',
+                video: String(video) !== 'false', expiryHours: expiryHours ? Number(expiryHours) : null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLinkId: out.callLinkId || null, path: out.path || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="openCallLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.open#CallLink').parameters({callLinkId: callLinkId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callSessionId: out.callSessionId || null, callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the lobby of a call link's meeting, and the host's removing someone -->
+    <transition name="admitGuest">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.admit#Guest').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="denyGuest">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.deny#Guest').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="removeParticipant">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.remove#Participant').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- people to call, for the New call picker -->
     <transition name="searchUsers" read-only="true">
         <actions>

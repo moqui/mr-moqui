@@ -68,6 +68,8 @@
         sharing: false,
         hand: false,
         participantsOpen: false,
+        // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
+        lobbyNotice: null,
         settings: readSettings(),
         capabilities: null
     });
@@ -143,6 +145,12 @@
             if (!data || data.kind !== "call") return;
             if (data.call) call.remember(data.call);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
+            if (data.action === "guestWaiting") state.lobbyNotice = { callSessionId: data.callSessionId, guestName: data.guestName || "" };
+            if (data.action === "admitted" || data.action === "denied" || data.action === "ended") {
+                const view = state.calls[data.callSessionId];
+                const still = view && (view.participants || []).some((p) => p.admission === "waiting");
+                if (!still && state.lobbyNotice && state.lobbyNotice.callSessionId === data.callSessionId) state.lobbyNotice = null;
+            }
             if (data.action === "ring" && root.document && root.document.hidden && root.Notification && root.Notification.permission === "granted") {
                 // a tab in the background shows the ring as a notification too (a closed one gets the Web Push)
                 try {
@@ -228,6 +236,10 @@
 
         // ---- the media ----
         send(frame) {
+            if (call.guest) {
+                call.guest.send(frame);
+                return;
+            }
             const client = call.vm && call.vm.notificationClient;
             if (client) client.send(frame);
         },
@@ -280,7 +292,8 @@
             const legId = state.legId;
             if (call.unsubscribe) call.unsubscribe();
             const client = call.vm && call.vm.notificationClient;
-            if (client) call.unsubscribe = client.registerListener("rtc:" + id, call.onFrame);
+            if (call.guest) call.unsubscribe = null;
+            else if (client) call.unsubscribe = client.registerListener("rtc:" + id, call.onFrame);
             if (call.pc) {
                 try { call.pc.close(); } catch (e) { /* closed */ }
             }
@@ -558,6 +571,10 @@
 
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
         hangUp() {
+            if (call.guest) {
+                call.guest.close();
+                call.guest = null;
+            }
             if (call.unsubscribe) {
                 call.unsubscribe();
                 call.unsubscribe = null;
@@ -575,6 +592,66 @@
             call.sentLayers = {};
             call.screenStream = null;
             call.screenTx = null;
+        },
+
+        // ---- a guest of a call link (the /call/<token> page): a socket of its own, the credential in its first frame ----
+        joinAsGuest(options) {
+            if (call.guest) call.guest.close();
+            const guest = call.openGuestSocket(options.credential);
+            call.guest = guest;
+            return guest.ready.then(() => call.join(options.callSessionId, options.callLegId, { video: options.video, stream: options.stream }));
+        },
+        openGuestSocket(credential) {
+            const scheme = root.location.protocol === "https:" ? "wss://" : "ws://";
+            const guest = { socket: null, queue: [], open: false, closed: false, tries: 0 };
+            let readyResolve = null;
+            let readyReject = null;
+            guest.ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+            const connect = () => {
+                const socket = new root.WebSocket(scheme + root.location.host + "/callws");
+                guest.socket = socket;
+                socket.onopen = () => socket.send(JSON.stringify({ rtc: "guestAuth", credential }));
+                socket.onmessage = (event) => {
+                    let frame = null;
+                    try { frame = JSON.parse(event.data); } catch (err) { return; }
+                    if (!frame || !frame.rtc) return;
+                    if (frame.rtc === "guestAuthed") {
+                        const reconnect = guest.open === false && guest.tries > 0;
+                        guest.open = true;
+                        guest.queue.splice(0).forEach((text) => socket.send(text));
+                        readyResolve();
+                        if (reconnect && state.current) call.rejoin();
+                        return;
+                    }
+                    if (frame.rtc === "error" && !frame.callSessionId) {
+                        state.error = t("This link no longer works.");
+                        readyReject(new Error(frame.code || "refused"));
+                        guest.closed = true;
+                        return;
+                    }
+                    call.onFrame(frame);
+                };
+                socket.onclose = () => {
+                    guest.open = false;
+                    // a dropped socket comes back while the page is in the call, a few times
+                    if (!guest.closed && state.current && guest.tries < 5) {
+                        guest.tries++;
+                        state.phase = "reconnecting";
+                        setTimeout(connect, 1000 * guest.tries);
+                    }
+                };
+            };
+            guest.send = (frame) => {
+                const text = JSON.stringify(frame);
+                if (guest.open && guest.socket.readyState === 1) guest.socket.send(text);
+                else guest.queue.push(text);
+            };
+            guest.close = () => {
+                guest.closed = true;
+                try { if (guest.socket) guest.socket.close(); } catch (err) { /* closed */ }
+            };
+            connect();
+            return guest;
         },
 
         saveSettings(changes) {
@@ -684,6 +761,7 @@
             decline(view) { moqui.call.decline(view.callSessionId); },
             back() { if (this.call.current) moqui.call.open(this.call.current); },
             returnTo(view) { moqui.call.open(view.callSessionId); },
+            openLobby() { const id = this.call.lobbyNotice && this.call.lobbyNotice.callSessionId; this.call.lobbyNotice = null; if (id) moqui.call.open(id); },
             leaveElsewhere(view) { moqui.call.request("leaveCall", { callSessionId: view.callSessionId }); },
             leave() { moqui.call.leave(); }
         },
@@ -704,6 +782,11 @@
             '<template v-slot:avatar><q-icon name="sym_o_call"></q-icon></template>{{t(\'You are in a call\')}}: {{fromName(view)}}' +
             '<template v-slot:action><q-btn flat no-caps :label="t(\'Return to the call\')" @click="returnTo(view)"></q-btn>' +
             '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="leaveElsewhere(view)"></q-btn></template></q-banner></q-page-sticky>' +
+            '<q-page-sticky v-if="call.lobbyNotice && !onCallScreen && !ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2060">' +
+            '<q-banner dense rounded class="m-tonal"><template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>' +
+            '{{call.lobbyNotice.guestName}} {{t(\'is waiting to join your call\')}}' +
+            '<template v-slot:action><q-btn flat no-caps :label="t(\'Open the call\')" @click="openLobby"></q-btn>' +
+            '<q-btn flat round dense icon="sym_o_close" :aria-label="t(\'Close\')" @click="call.lobbyNotice = null"></q-btn></template></q-banner></q-page-sticky>' +
             '<q-page-sticky v-if="call.current && !onCallScreen" position="bottom-right" :offset="[16, 16]" style="z-index:2000">' +
             '<q-card class="m-live-call" style="width:320px">' +
             '<div class="m-live-call-media cursor-pointer" style="height:180px;background:#000" @click="back">' +
@@ -770,6 +853,8 @@
             },
             canShare() { return !!(root.navigator && root.navigator.mediaDevices && root.navigator.mediaDevices.getDisplayMedia); },
             raisedCount() { return this.remotes.filter((r) => r.hand).length + (this.call.hand ? 1 : 0); },
+            // guests in the lobby of a call link's meeting, for those in the call to let in
+            waiting() { const v = this.known; return v ? (v.participants || []).filter((p) => p.admission === "waiting") : []; },
             reactions() { return ["👍", "👏", "😂", "❤️", "🎉", "🙋"]; },
             elapsed() { return this.now && elapsedText(this.call.startedAt); }
         },
@@ -849,6 +934,14 @@
                 const ring = tile.speaking ? ";box-shadow:0 0 0 3px var(--q-positive)" : "";
                 return "position:relative;background:#000;border-radius:8px;overflow:hidden;" + (this.mainTile === tile ? "height:100%" : "aspect-ratio:16/9") + ring;
             },
+            admit(p, yes) {
+                moqui.call.request(yes ? "admitGuest" : "denyGuest", { callSessionId: this.callSessionId, callParticipantId: p.callParticipantId })
+                    .then(() => this.load());
+            },
+            remove(p) {
+                moqui.call.request("removeParticipant", { callSessionId: this.callSessionId, callParticipantId: p.callParticipantId })
+                    .then(() => this.load());
+            },
             handOf(p) {
                 if (p.userId === moqui.call.me) return this.call.hand;
                 return (p.legs || []).some((leg) => this.call.remotes[leg.callLegId] && this.call.remotes[leg.callLegId].hand);
@@ -861,6 +954,10 @@
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
+            '<q-banner v-for="p in (inThis || isHost) ? waiting : []" :key="\'w\' + p.callParticipantId" dense rounded class="m-tonal">' +
+            '<template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>{{p.displayName}} {{t(\'is waiting to join\')}}' +
+            '<template v-slot:action><q-btn flat no-caps color="positive" :label="t(\'Let in\')" @click="admit(p, true)"></q-btn>' +
+            '<q-btn flat no-caps color="negative" :label="t(\'Turn away\')" @click="admit(p, false)"></q-btn></template></q-banner>' +
             '<div v-if="!known && !loading" class="m-muted">{{t(\'Call not found\')}}</div>' +
             // the lobby
             '<div v-if="known && !inThis && canJoin" class="row q-col-gutter-md">' +
@@ -909,9 +1006,140 @@
             '<q-item v-for="p in known.participants || []" :key="p.callParticipantId"><q-item-section avatar><m-avatar :name="p.displayName" :user-id="p.userId || undefined" size="28px"></m-avatar></q-item-section>' +
             '<q-item-section><q-item-label>{{p.displayName}}<span v-if="p.role === \'host\'" class="text-caption m-muted"> · {{t(\'host\')}}</span></q-item-label>' +
             '<q-item-label caption>{{p.inCall ? t(\'In the call\') : p.ringing ? t(\'Ringing\') : t(\'Not in the call\')}}</q-item-label></q-item-section>' +
-            '<q-item-section side><q-icon v-if="handOf(p)" name="sym_o_back_hand" color="warning"></q-icon></q-item-section></q-item></q-list>' +
+            '<q-item-section side class="row no-wrap items-center"><q-icon v-if="handOf(p)" name="sym_o_back_hand" color="warning"></q-icon>' +
+            '<q-btn v-if="isHost && p.userId !== moquiCallMe() && p.admission === \'admitted\'" flat dense round size="sm" icon="sym_o_person_remove" :aria-label="t(\'Remove from the call\')" @click="remove(p)"><q-tooltip>{{t(\'Remove from the call\')}}</q-tooltip></q-btn>' +
+            '</q-item-section></q-item></q-list>' +
             "</div>"
     };
     components["m-call"].methods.moquiCall = () => moqui.call;
     components["m-call"].methods.moquiCallMe = () => moqui.call.me;
+    // The page of a call link for a person with no account (basic-comms CallGuest): the link's name, the guest's name, the
+    // camera preview, Join or Ask to join, the lobby until someone lets them in, then the call. base is the route's path
+    // (/call/<token>): its transitions check the token and take the credential in the body.
+    components["m-call-guest"] = {
+        name: "mCallGuest",
+        props: { base: String, link: { type: Object, default: () => ({}) } },
+        data() {
+            return { call: state, name: "", phase: "lobby", credential: null, callSessionId: null, callLegId: null, preview: null,
+                people: [], poll: null, error: "", busy: false, video: this.link.video !== false };
+        },
+        computed: {
+            inCall() { return this.call.current && this.call.current === this.callSessionId; },
+            remotes() { return Object.values(this.call.remotes); },
+            gridStyle() {
+                const n = this.remotes.length + 1;
+                const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+                return "display:grid;gap:8px;grid-template-columns:repeat(" + cols + ",1fr)";
+            }
+        },
+        mounted() {
+            try { this.name = (root.localStorage && root.localStorage.getItem("moqui.call.guestName")) || ""; } catch (err) { this.name = ""; }
+            this.startPreview();
+        },
+        beforeUnmount() {
+            clearInterval(this.poll);
+            if (this.preview && !this.inCall) this.preview.getTracks().forEach((track) => track.stop());
+        },
+        methods: {
+            t,
+            post(name, params) {
+                return moqui.request(this.base + "/" + name, { method: "POST", params }).then((result) => result.json || {});
+            },
+            startPreview() {
+                call.getMedia(this.video).then((stream) => { this.preview = stream; });
+            },
+            join() {
+                const name = String(this.name || "").trim();
+                if (!name || this.busy) return;
+                try { if (root.localStorage) root.localStorage.setItem("moqui.call.guestName", name); } catch (err) { /* private window */ }
+                this.busy = true;
+                this.error = "";
+                this.post("joinGuest", { displayName: name }).then((json) => {
+                    this.busy = false;
+                    if (!json.credential) { this.error = json.errors || t("This link no longer works."); return; }
+                    this.credential = json.credential;
+                    this.callSessionId = json.callSessionId;
+                    this.callLegId = json.callLegId;
+                    if (json.admission === "admitted") this.enter();
+                    else this.waitInLobby();
+                }, () => { this.busy = false; this.error = t("This link no longer works."); });
+            },
+            waitInLobby() {
+                this.phase = "waiting";
+                this.poll = setInterval(() => this.checkState(), 2000);
+            },
+            checkState() {
+                this.post("guestState", { credential: this.credential }).then((json) => {
+                    this.people = json.people || [];
+                    if (json.admission === "admitted" && this.phase === "waiting") {
+                        clearInterval(this.poll);
+                        this.enter();
+                    } else if (json.admission !== "waiting" && json.admission !== "admitted" || json.callStatus === "ended") {
+                        clearInterval(this.poll);
+                        this.phase = json.admission === "denied" ? "denied" : "ended";
+                        call.hangUp();
+                    }
+                }, () => null);
+            },
+            enter() {
+                this.phase = "in";
+                const stream = this.preview;
+                call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream })
+                    .catch(() => { this.phase = "ended"; });
+                // the names in the call, now and then (a guest hears of no one by push)
+                this.poll = setInterval(() => this.checkState(), 5000);
+            },
+            leave() {
+                const credential = this.credential;
+                call.send({ rtc: "leave", callSessionId: this.callSessionId, callLegId: this.callLegId });
+                call.hangUp();
+                clearInterval(this.poll);
+                this.phase = "left";
+                this.preview = null;
+                if (credential) this.post("leaveGuest", { credential }).catch(() => null);
+            }
+        },
+        watch: {
+            "call.current"(now) {
+                if (!now && this.phase === "in") { this.phase = "ended"; clearInterval(this.poll); }
+            }
+        },
+        template:
+            '<div class="m-call-guest column q-gutter-md q-pa-md" style="max-width:1100px;margin:0 auto">' +
+            '<div><div class="text-h5">{{link.name || t(\'Call\')}}</div><div v-if="link.ownerName" class="text-caption m-muted">{{t(\'With\')}} {{link.ownerName}}</div></div>' +
+            '<q-banner v-if="error" dense rounded class="m-tonal text-negative">{{error}}</q-banner>' +
+            // the lobby: name, preview, join
+            '<div v-if="phase === \'lobby\' || phase === \'waiting\'" class="row q-col-gutter-md">' +
+            '<div class="col-12 col-md-7"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
+            '<m-call-video v-if="preview && preview.getVideoTracks().length" :stream="preview" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
+            '<div v-else class="fit flex flex-center text-white">{{t(\'No camera or no permission for it\')}}</div></div></div>' +
+            '<div class="col-12 col-md-5 column q-gutter-sm">' +
+            '<q-input v-model="name" outlined dense maxlength="60" :label="t(\'Your name\')" :disable="phase === \'waiting\'" @keyup.enter="join"></q-input>' +
+            '<q-btn v-if="phase === \'lobby\'" unelevated color="primary" icon="sym_o_call" :loading="busy" :disable="!name.trim()" :label="link.policy === \'link\' ? t(\'Join\') : t(\'Ask to join\')" @click="join"></q-btn>' +
+            '<div v-if="phase === \'waiting\'" class="row items-center q-gutter-sm"><q-spinner size="20px"></q-spinner><span>{{t(\'Waiting for someone in the call to let you in\')}}</span></div>' +
+            '</div></div>' +
+            // the call
+            '<div v-if="phase === \'in\'">' +
+            '<div :style="gridStyle">' +
+            '<div style="position:relative;background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
+            '<m-call-video v-if="call.localStream && call.localStream.getVideoTracks().length && !call.cameraOff" :stream="call.localStream" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
+            '<div v-else class="fit flex flex-center text-white">{{name}}</div>' +
+            '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{name}}</div></div>' +
+            '<div v-for="r in remotes" :key="r.legId" style="position:relative;background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
+            '<m-call-video v-if="(r.screen || r.stream) && (r.screen || r.stream).getVideoTracks().length && !r.cameraOff" :stream="r.screen || r.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
+            '<div v-else class="fit flex flex-center text-white">{{r.name}}</div>' +
+            '<m-call-audio :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
+            '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{r.name}}</div></div></div>' +
+            '<div class="text-caption m-muted q-mt-xs">{{people.map(p => p.displayName).join(\', \')}}</div>' +
+            '<div class="row justify-center q-gutter-sm q-mt-sm">' +
+            '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"></q-btn>' +
+            '<q-btn round unelevated :color="call.cameraOff ? \'negative\' : \'grey-8\'" :icon="call.cameraOff ? \'sym_o_videocam_off\' : \'sym_o_videocam\'" :aria-label="t(\'Camera\')" @click="moquiCall().toggleCamera()"></q-btn>' +
+            '<q-btn round unelevated :color="call.hand ? \'warning\' : \'grey-8\'" icon="sym_o_back_hand" :aria-label="t(\'Raise your hand\')" @click="moquiCall().toggleHand()"></q-btn>' +
+            '<q-btn round unelevated color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"></q-btn></div></div>' +
+            '<div v-if="phase === \'denied\'" class="text-subtitle1">{{t(\'You were not let in to this call.\')}}</div>' +
+            '<div v-if="phase === \'ended\'" class="text-subtitle1">{{t(\'The call has ended for you.\')}}</div>' +
+            '<div v-if="phase === \'left\'" class="text-subtitle1">{{t(\'You left the call.\')}}</div>' +
+            "</div>"
+    };
+    components["m-call-guest"].methods.moquiCall = () => moqui.call;
 })(globalThis);

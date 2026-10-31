@@ -45,3 +45,8 @@ pub(super) fn handle(_factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, 
 pub(super) fn socket_closed(_factory: &Arc<ExecutionContextFactory>, _slot_id: u64) {}
 
 pub(crate) fn install(_factory: &Arc<ExecutionContextFactory>, _shutdown: tokio::sync::watch::Receiver<bool>) {}
+
+/// No `/callws` without calls: a guest's page is told the link does not work.
+pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
+    app
+}
