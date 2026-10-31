@@ -164,7 +164,7 @@ lettre = { version = "0.11", default-features = false, features = [
 imap = { version = "=3.0.0-alpha.15", default-features = false }
 # Inbound MIME for poll#EmailServer: nested multiparts, RFC 2047 words, charsets, folded headers. Defaults are
 # empty; the single-byte charsets are built in, and `full_encoding` (encoding_rs for multi-byte CJK) stays off.
-mail-parser = { version = "0.11", default-features = false }
+mail-parser = { version = "1", default-features = false }
 # Direct so IMAP and POP3 can build a ClientConfig on aws-lc. ring stays off.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
 webpki-roots = "1"

@@ -196,11 +196,9 @@ fn a_sent_message_exports_with_its_files() {
         .attachments()
         .map(|part| {
             (
-                mail_parser::MimeHeaders::attachment_name(part)
-                    .unwrap_or_default()
-                    .to_string(),
-                part.contents().to_vec(),
-                mail_parser::MimeHeaders::content_id(part).map(str::to_string),
+                part.attachment_name().unwrap_or_default().to_string(),
+                part.decoded().into_owned(),
+                part.content_id().map(str::to_string),
             )
         })
         .collect();
@@ -323,7 +321,7 @@ fn a_received_message_keeps_its_stored_headers() {
     assert_eq!(parsed.body_text(0).as_deref().map(str::trim), Some("Hello"));
     assert!(parsed.body_html(0).is_some_and(|html| html.contains("<p>Hello</p>")));
     assert_eq!(parsed.message_id(), Some("news1@example.org"));
-    assert!(parsed.header("List-Unsubscribe").is_some());
+    assert!(parsed.headers().value("List-Unsubscribe").is_some());
 
     // only the client's own headers (an automatic reply's): the message as made
     let own = super::with_received_headers(

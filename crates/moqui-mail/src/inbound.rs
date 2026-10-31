@@ -1114,17 +1114,20 @@ pub(super) fn parse_rfc822(bytes: &[u8]) -> Inbound {
         return message;
     };
     for header in parsed.headers() {
-        push_header(&mut message.headers, header.name(), raw_header_value(bytes, header));
+        push_header(
+            &mut message.headers,
+            header.raw_name(),
+            raw_header_value(bytes, &header),
+        );
     }
     message.subject = parsed.subject().unwrap_or_default().to_string();
     message.from = parsed
         .from()
-        .and_then(mail_parser::Address::first)
-        .map(address_text)
+        .and_then(|list| list.first())
+        .map(|mailbox| address_text(&mailbox))
         .unwrap_or_default();
-    let list = |address: Option<&mail_parser::Address<'_>>| -> Vec<String> {
-        address
-            .map(|address| address.iter().map(address_text).collect())
+    let list = |list: Option<mail_parser::AddressList<'_>>| -> Vec<String> {
+        list.map(|list| list.mailboxes().map(|mailbox| address_text(&mailbox)).collect())
             .unwrap_or_default()
     };
     message.to = list(parsed.to());
@@ -1133,14 +1136,14 @@ pub(super) fn parse_rfc822(bytes: &[u8]) -> Inbound {
     message.sent = parsed.date().map_or(Value::Null, |date| {
         stamp_millis(date.to_timestamp().saturating_mul(1000))
     });
-    leaf_parts(&parsed, bytes, 0, &mut message.parts, 0);
+    leaf_parts(parsed.root_part(), bytes, &mut message.parts, 0);
     message
 }
 
 /// A header's value as written, unfolded: what JavaMail's `Header.getValue` gives.
 fn raw_header_value(bytes: &[u8], header: &mail_parser::Header<'_>) -> String {
-    let start = usize::try_from(header.offset_start).unwrap_or(0).min(bytes.len());
-    let end = usize::try_from(header.offset_end)
+    let start = usize::try_from(header.offset_start()).unwrap_or(0).min(bytes.len());
+    let end = usize::try_from(header.offset_end())
         .unwrap_or(0)
         .clamp(start, bytes.len());
     let text = String::from_utf8_lossy(&bytes[start..end]);
@@ -1158,7 +1161,7 @@ fn raw_header_value(bytes: &[u8], header: &mail_parser::Header<'_>) -> String {
 }
 
 /// `InternetAddress.toString`: the name and the address in angle brackets, or the address alone.
-pub(super) fn address_text(addr: &mail_parser::Addr<'_>) -> String {
+pub(super) fn address_text(addr: &mail_parser::Mailbox<'_>) -> String {
     let address = addr.address().unwrap_or_default();
     match addr.name().filter(|name| !name.is_empty()) {
         Some(name) if name.contains([',', '"', '<', '>', '@', ';', ':']) => {
@@ -1169,31 +1172,29 @@ pub(super) fn address_text(addr: &mail_parser::Addr<'_>) -> String {
     }
 }
 
-/// The parts with content under `id`, depth first, as Java's `makeBodyPartList`. A nested message is skipped, as in Java.
-fn leaf_parts(message: &mail_parser::Message<'_>, raw: &[u8], id: u32, out: &mut Vec<Value>, depth: usize) {
-    use mail_parser::{MimeHeaders, PartType};
-    let Some(part) = message.part(id) else {
-        return;
-    };
+/// The parts with content under `part`, depth first, as Java's `makeBodyPartList`. A nested message is skipped, as in
+/// Java.
+fn leaf_parts(part: mail_parser::MessagePart<'_>, raw: &[u8], out: &mut Vec<Value>, depth: usize) {
+    use mail_parser::PartKind;
     if depth > 32 {
         return;
     }
-    match &part.body {
-        PartType::Multipart(children) => {
-            for child in children {
-                leaf_parts(message, raw, *child, out, depth + 1);
+    match part.kind() {
+        PartKind::Multipart => {
+            for child in part.children() {
+                leaf_parts(child, raw, out, depth + 1);
             }
             return;
         }
-        PartType::Message(_) => return,
+        PartKind::Message(_) => return,
         _ => {}
     }
     let mut map = IndexMap::new();
     let content_type = part
         .headers()
         .iter()
-        .find(|header| header.name().eq_ignore_ascii_case("content-type"))
-        .map_or_else(|| "text/plain".to_string(), |header| raw_header_value(raw, header));
+        .find(|header| header.raw_name().eq_ignore_ascii_case("content-type"))
+        .map_or_else(|| "text/plain".to_string(), |header| raw_header_value(raw, &header));
     map.insert("contentType".into(), Value::string(content_type));
     if let Some(name) = part.attachment_name() {
         map.insert("filename".into(), Value::string(name));
@@ -1204,14 +1205,17 @@ fn leaf_parts(message: &mail_parser::Message<'_>, raw: &[u8], id: u32, out: &mut
             Value::string(disposition.ctype().to_ascii_lowercase()),
         );
     }
-    match &part.body {
-        PartType::Text(text) | PartType::Html(text) => {
-            map.insert("contentText".into(), Value::string(text.as_ref()));
+    match part.kind() {
+        PartKind::Text | PartKind::Html => {
+            map.insert(
+                "contentText".into(),
+                Value::string(part.text().unwrap_or_default().as_ref()),
+            );
         }
-        PartType::Binary(bytes) | PartType::InlineBinary(bytes) => {
-            map.insert("contentBytes".into(), Value::Bytes(bytes.to_vec()));
+        PartKind::Binary | PartKind::InlineBinary => {
+            map.insert("contentBytes".into(), Value::Bytes(part.decoded().into_owned()));
         }
-        PartType::Multipart(_) | PartType::Message(_) => {}
+        PartKind::Multipart | PartKind::Message(_) => {}
     }
     out.push(Value::Map(map));
 }

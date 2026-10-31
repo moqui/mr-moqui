@@ -18,7 +18,7 @@
 //! by In-Reply-To and References into `rootEmailMessageId` and `parentEmailMessageId`. A reply that arrived before
 //! the message it answers is taken into that message's thread when it comes.
 
-use mail_parser::{MessageParser, MimeHeaders, PartType};
+use mail_parser::{MessageParser, PartRole, TextList};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
@@ -104,7 +104,7 @@ pub(super) fn parse_message(raw: &[u8]) -> Result<Parsed, String> {
     let known_headers = message
         .headers()
         .iter()
-        .filter(|header| !header.name().trim().is_empty())
+        .filter(|header| !header.raw_name().trim().is_empty())
         .count();
     if known_headers == 0 {
         return Err("it has no header fields".to_string());
@@ -113,21 +113,21 @@ pub(super) fn parse_message(raw: &[u8]) -> Result<Parsed, String> {
     if !header_block.contains(':') {
         return Err("it has no header fields".to_string());
     }
-    let ids = |value: &mail_parser::HeaderValue<'_>| -> Vec<String> {
-        match value {
-            mail_parser::HeaderValue::Text(text) => vec![angle(text)],
-            mail_parser::HeaderValue::TextList(list) => list.iter().map(|id| angle(id)).collect(),
-            _ => Vec::new(),
-        }
+    let ids = |list: Option<TextList<'_>>| -> Vec<String> {
+        list.map(|list| list.iter().map(angle).collect()).unwrap_or_default()
     };
-    let list = |address: Option<&mail_parser::Address<'_>>| -> String {
-        address
-            .map(|address| address.iter().map(address_text).collect::<Vec<_>>().join(", "))
-            .unwrap_or_default()
+    let list = |list: Option<mail_parser::AddressList<'_>>| -> String {
+        list.map(|list| {
+            list.mailboxes()
+                .map(|mailbox| address_text(&mailbox))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
     };
     let (from_address, from_name) = message
         .from()
-        .and_then(mail_parser::Address::first)
+        .and_then(|list| list.first())
         .map(|addr| {
             (
                 addr.address().unwrap_or_default().to_string(),
@@ -136,13 +136,13 @@ pub(super) fn parse_message(raw: &[u8]) -> Result<Parsed, String> {
         })
         .unwrap_or_default();
     let mut htmls = Vec::new();
-    for index in 0..message.html_body_count() {
+    for index in 0..message.html_body().len() {
         if let Some(html) = message.body_html(index) {
             htmls.push(html.into_owned());
         }
     }
     let mut texts = Vec::new();
-    for index in 0..message.text_body_count() {
+    for index in 0..message.text_body().len() {
         if let Some(text) = message.body_text(index) {
             texts.push(text.into_owned());
         }
@@ -159,8 +159,13 @@ pub(super) fn parse_message(raw: &[u8]) -> Result<Parsed, String> {
         .to_ascii_lowercase();
     let snippet = snippet_of(text.as_deref().unwrap_or_default());
     let mut files = Vec::new();
-    for (index, part) in message.attachments().enumerate() {
-        files.push(part_file(part, index + 1));
+    // The attachments (RFC 8621), and media shown in both bodies, which the RFC leaves out of them: each is a file.
+    let stored = message
+        .root()
+        .parts()
+        .filter(|part| part.is_attachment() || part.role() == PartRole::MediaBody);
+    for (index, part) in stored.enumerate() {
+        files.push(part_file(&part, index + 1));
     }
     let has_attachment = files.iter().any(|file| !file.inline);
     Ok(Parsed {
@@ -224,7 +229,7 @@ pub(super) fn snippet_of(text: &str) -> String {
 }
 
 fn part_file(part: &mail_parser::MessagePart<'_>, index: usize) -> PartFile {
-    let nested = matches!(part.body, PartType::Message(_));
+    let nested = part.is_message();
     let content_type = if nested {
         "message/rfc822".to_string()
     } else {
@@ -243,7 +248,7 @@ fn part_file(part: &mail_parser::MessagePart<'_>, index: usize) -> PartFile {
     // inline: a part the HTML shows by its Content-ID; one with no Content-ID cannot be shown there, so it is listed
     let attached = part
         .content_disposition()
-        .is_some_and(mail_parser::ContentType::is_attachment);
+        .is_some_and(|disposition| disposition.is_attachment());
     let inline = !content_id.is_empty() && !attached;
     let file_name = part
         .attachment_name()
@@ -268,7 +273,7 @@ fn part_file(part: &mail_parser::MessagePart<'_>, index: usize) -> PartFile {
         content_type,
         content_id,
         inline,
-        bytes: part.contents().to_vec(),
+        bytes: part.decoded().into_owned(),
     }
 }
 

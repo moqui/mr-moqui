@@ -1895,6 +1895,22 @@ fn parse_message_reads_headers_bodies_and_files() {
     assert!(super::store::parse_message(b"   \r\n").is_err());
 }
 
+/// An image shown between two text parts is in both bodies, so RFC 8621 leaves it out of the attachments; it is still
+/// one of the message's files.
+#[test]
+fn parse_message_keeps_media_shown_in_the_body() {
+    let raw = "Message-ID: <media@example.com>\r\nFrom: a@x\r\nTo: b@x\r\nSubject: Photo\r\nMIME-Version: 1.0\r\n\
+        Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+        --b\r\nContent-Type: text/plain\r\n\r\nBefore\r\n\
+        --b\r\nContent-Type: image/png\r\nContent-Disposition: inline; filename=\"photo.png\"\r\n\
+        Content-Transfer-Encoding: base64\r\n\r\niVBORw0K\r\n\
+        --b\r\nContent-Type: text/plain\r\n\r\nAfter\r\n--b--\r\n";
+    let parsed = super::store::parse_message(raw.as_bytes()).unwrap();
+    assert_eq!(parsed.files.len(), 1);
+    assert_eq!(parsed.files[0].file_name, "photo.png");
+    assert_eq!(parsed.files[0].bytes, b"\x89PNG\r\n");
+}
+
 /// A draft saved here goes to the server's Drafts at the next sync (`\Draft`, with a Message-ID the sync then knows it
 /// by), a save after replaces that copy, and the send takes it out of Drafts: the copy in Sent has the same Message-ID.
 /// A draft discarded before its change went leaves nothing there.
