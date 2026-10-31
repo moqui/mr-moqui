@@ -54,9 +54,12 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 
 ## Chat and presence
 
+Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
+and acceptance gates in [§7](Comms-Framework.md#7-order). The plan and its review refinements are not yet implemented.
+
 | Item | Source |
 |---|---|
-| Calls (`ChatRoomMember.inCall` is not set); a link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
+| Calls (`UserStatus.inCall` awaits call services); a link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
 
 ## Files and drives
 
