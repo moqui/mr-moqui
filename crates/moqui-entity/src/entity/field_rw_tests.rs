@@ -57,6 +57,32 @@ fn audit_stack_without_an_entered_context_is_empty_not_null() {
     }
 }
 
+/// A create-or-update that creates the row audits it once it has inserted (the insert does nothing when another
+/// transaction made the row first, and is then not audited as a create), and one that updates it audits the update.
+#[test]
+fn create_or_update_audits_the_create_and_the_update() {
+    let facade = audit_facade();
+    for username in ["bob", "bob2"] {
+        let mut user = facade.make_value("moqui.security.UserAccount").unwrap();
+        user.set("userId", Value::string("AUDIT_STACK"));
+        user.set("username", Value::string(username));
+        user.create_or_update(&facade).unwrap();
+    }
+    let audits = username_audits(&facade);
+    let values: Vec<(Option<&str>, Option<&str>)> = audits
+        .iter()
+        .map(|row| {
+            (
+                row.get("oldValueText").and_then(Value::as_str),
+                row.get("newValueText").and_then(Value::as_str),
+            )
+        })
+        .collect();
+    assert_eq!(values.len(), 2, "{values:?}");
+    assert!(values.contains(&(None, Some("bob"))), "{values:?}");
+    assert!(values.contains(&(Some("bob"), Some("bob2"))), "{values:?}");
+}
+
 /// As Java's `FieldInfo`, every bound value of an encrypted field is sealed, whatever the operator.
 #[test]
 fn every_bound_value_of_an_encrypted_field_is_sealed() {
