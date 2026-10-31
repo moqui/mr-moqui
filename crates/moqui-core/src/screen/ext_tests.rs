@@ -42,7 +42,7 @@ fn items_parse_with_one_target_and_sort_by_sequence() {
     let screen = node(
         r#"<screen>
             <ext-action name="b.second" slot="message-actions" sequence="20" label="Second" transition="fileOnRecord">
-                <parameter name="chatEventId" from="eventId"/><parameter name="chatRoomId"/>
+                <parameter name="chatEventId" from="eventId"/><parameter name="chatRoomId"/><parameter name="kind" value="task"/>
             </ext-action>
             <ext-action name="a.first" slot="message-actions" sequence="10" label="First" screen="CreateTask" condition="!archived"/>
             <ext-action name="bad.both" slot="x" screen="A" transition="b"/>
@@ -63,6 +63,7 @@ fn items_parse_with_one_target_and_sort_by_sequence() {
             ("chatRoomId".to_string(), "chatRoomId".to_string())
         ]
     );
+    assert_eq!(items.actions[1].values, [("kind".to_string(), "task".to_string())]);
     assert_eq!(items.actions[0].target, "dialog");
     assert_eq!(items.panels.len(), 1);
     assert_eq!(items.panels[0].target, "page");

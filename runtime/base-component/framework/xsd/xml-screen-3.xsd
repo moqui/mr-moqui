@@ -618,6 +618,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>A display test on the item's
             fields: field, !field, field == 'value' or field != 'value'. Never an authorization rule: the target checks access
             when called.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="hook" type="xs:string"><xs:annotation><xs:documentation>A provider hook the item needs
+            (create-from, record-link): it is left out for a user no app answers that hook for.</xs:documentation></xs:annotation></xs:attribute>
     </xs:attributeGroup>
     <xs:element name="ext-action"><xs:annotation><xs:documentation>
         An action another app adds to this screen's items (plans/Comms-Framework.md §3.3): a .qvue screen renders the actions of
@@ -625,10 +627,11 @@ along with this software (see the LICENSE.md file). If not, see
         parameters, as a dialog or a page) or transition (a transition of this screen, posted with them).
     </xs:documentation></xs:annotation><xs:complexType>
         <xs:sequence><xs:element name="parameter" minOccurs="0" maxOccurs="unbounded"><xs:annotation><xs:documentation>
-            A parameter of the target and the item field it takes (from; the same name when empty). Nothing else of the
-            item is passed.</xs:documentation></xs:annotation><xs:complexType>
+            A parameter of the target and the item field it takes (from; the same name when empty), or a fixed value. Nothing
+            else of the item is passed.</xs:documentation></xs:annotation><xs:complexType>
             <xs:attribute name="name" type="xs:string" use="required"/>
             <xs:attribute name="from" type="xs:string"/>
+            <xs:attribute name="value" type="xs:string"/>
         </xs:complexType></xs:element></xs:sequence>
         <xs:attributeGroup ref="ext-item-attributes"/>
         <xs:attribute name="transition" type="xs:string"/>

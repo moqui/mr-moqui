@@ -822,7 +822,16 @@ impl Session {
                     .and_then(serde_json::Value::as_array)
                     .into_iter()
                     .flatten()
+                    .filter(|parameter| parameter.get("value").is_none())
                     .map(|parameter| (json_text(parameter, "name"), json_text(parameter, "from")))
+                    .collect(),
+                values: action
+                    .get("parameters")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|parameter| parameter.get("value").is_some())
+                    .map(|parameter| (json_text(parameter, "name"), json_text(parameter, "value")))
                     .collect(),
                 condition: action.get("condition").filter(|test| test.is_object()).map(|test| {
                     (

@@ -831,9 +831,11 @@ carries the same lists as `extActions` and `extPanels`:
   parameters: [ { name, from } ] }
 ```
 
-- A target the user may not view is left out, and a `transition` the screen does not have is logged and left out. The target
-  checks access again when it is called; a `condition` only hides an item, it is never an authorization rule.
-- Only the mapped fields of the item (`parameters`, `from` a field of the item) reach the target, never the whole item.
+- A target the user may not view is left out, and a `transition` the screen does not have is logged and left out. An item
+  with a `hook` (a provider hook it needs, such as `create-from`) is left out for a user no app answers that hook for. The
+  target checks access again when it is called; a `condition` only hides an item, it is never an authorization rule.
+- Only the mapped fields of the item (`parameters`, `from` a field of the item) reach the target, never the whole item; a
+  parameter may instead have a fixed `value` (the kind of record to make).
 - A `screen` action opens in the shell's dialog (`target="page"`: as the page), with the parameters in its query; a
   `transition` action is posted with them, and `m-ext-actions` emits `done` after it. `as="buttons"` draws buttons in place of
   menu items.

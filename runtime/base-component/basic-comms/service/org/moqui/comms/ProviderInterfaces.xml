@@ -44,11 +44,18 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="record" noun="Lookup" type="interface">
-        <description>record-lookup: record cards {entityName, id, title, status, url} for a text or an id (recordList).</description>
+        <description>record-lookup, by operation (org.moqui.comms.ChatScreenServices.lookup#Records combines the answers):
+            info (records [{recordEntityName, recordId}]: recordList of {recordEntityName, recordId, entity, visible, title,
+            typeLabel, url, icon}), card (recordEntityName, recordId: card, as m-record-card shows it), search (text:
+            optionList of {value: entity|id, label}) and links (body: recordList of {entity, id}, the records a message's links
+            name). A record the user may not see is answered visible false, or not at all.</description>
         <in-parameters>
-            <parameter name="text"/>
+            <parameter name="operation" required="true"><description>info, card, search or links</description></parameter>
+            <parameter name="records" type="List"/>
             <parameter name="recordEntityName"/>
             <parameter name="recordId"/>
+            <parameter name="text"/>
+            <parameter name="body" allow-html="any"/>
             <parameter name="limit" type="Integer" default="10"/>
         </in-parameters>
     </service>

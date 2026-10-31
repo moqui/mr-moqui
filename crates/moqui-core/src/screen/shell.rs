@@ -515,17 +515,22 @@ pub struct DeclaredProvider {
 /// root or no provider.
 #[must_use]
 pub fn declared_providers(factory: &Arc<crate::context::ExecutionContextFactory>, hook: &str) -> Vec<DeclaredProvider> {
-    let root = super::with_current_render(|state| state.url_info.path_defs.first().map(|def| def.location.clone()))
-        .flatten()
-        .or_else(|| super::info::root_screen_for_host(factory, "", "webroot").ok())
-        .unwrap_or_else(|| super::ROOT_SCREEN.to_string());
     let facade = super::ScreenFacade::of(factory);
-    let has_apps_root = facade
-        .screen_def(factory, &root)
-        .is_ok_and(|def| def.subscreens.get(APPS_PATH).is_some());
-    if !has_apps_root {
+    let has_apps = |root: &str| {
+        facade
+            .screen_def(factory, root)
+            .is_ok_and(|def| def.subscreens.get(APPS_PATH).is_some())
+    };
+    // the render's root when it has the apps root (a request under webroot), else the webroot webapp's (a service, a job,
+    // or a screen test rendered from an app root)
+    let render_root =
+        super::with_current_render(|state| state.url_info.path_defs.first().map(|def| def.location.clone())).flatten();
+    let conf_root = super::info::root_screen_for_host(factory, "", "webroot")
+        .ok()
+        .unwrap_or_else(|| super::ROOT_SCREEN.to_string());
+    let Some(root) = render_root.into_iter().chain([conf_root]).find(|root| has_apps(root)) else {
         return Vec::new();
-    }
+    };
     let mut out: Vec<DeclaredProvider> = Vec::new();
     for app in apps_under(factory, &facade, &root, &[APPS_PATH.to_string()]) {
         let Some(providers) = app.def.shell_providers.as_ref() else {

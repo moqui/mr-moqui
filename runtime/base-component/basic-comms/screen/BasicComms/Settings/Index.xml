@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The Comms settings index (mr-boss design-drawers-commons.md §17 Settings; style-guide §3.9 Settings): a card per settings group with
     a line about it and the links into its pages: Mail accounts (how many, and how many need attention), Identities and
-    signatures, Rules, Out of office (on or off) and Text blocks. An app that mounts Settings adds its own cards to the
+    signatures, Rules, Out of office (on or off), Text blocks and Chat. An app that mounts Settings adds its own cards to the
     SettingsCards row with a screen-extend (widgets-extend where="append"). The counts are failure tolerant: a part that
     fails leaves its line out. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -67,6 +67,10 @@ along with this software (see the LICENSE.md file). If not, see
             <row-col md="4" sm="6"><container-box><box-header title="Text blocks"/><box-body>
                 <label type="p" text="Text you write often, one click or a / and a shortcut away in a message; yours or shared with a group." style="m-muted"/>
                 <link url="../TextBlocks" text="Text blocks" icon="sym_o_short_text"/>
+            </box-body></container-box></row-col>
+            <row-col md="4" sm="6"><container-box><box-header title="Chat"/><box-body>
+                <label type="p" text="Notifications, sounds, Enter to send, message previews and when you show as away." style="m-muted"/>
+                <link url="../Chat" text="Chat settings" icon="sym_o_chat"/>
             </box-body></container-box></row-col>
         </container-row>
     </widgets>

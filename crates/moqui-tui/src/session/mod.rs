@@ -1837,6 +1837,8 @@ pub(crate) struct ExtAction {
     pub url: String,
     /// `(target parameter, page parameter)`.
     pub parameters: Vec<(String, String)>,
+    /// `(target parameter, fixed value)`.
+    pub values: Vec<(String, String)>,
     /// `(field, op, value)` of its condition, if it has one.
     pub condition: Option<(String, String, String)>,
 }
@@ -1861,6 +1863,9 @@ impl ExtAction {
         let mut query = Vec::new();
         for (name, from) in &self.parameters {
             let value = page.get(from).filter(|value| !value.is_empty())?;
+            query.push(format!("{}={}", encode(name), encode(value)));
+        }
+        for (name, value) in &self.values {
             query.push(format!("{}={}", encode(name), encode(value)));
         }
         Some(if query.is_empty() {

@@ -12,8 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- BasicComms, the framework's Comms app (plans/Comms-Framework.md §3): mail settings now, then chat, the Inbox, calls and
-    voice, usable with only the framework. Another app mounts these screens under its own root and adds to them through
+<!-- BasicComms, the framework's Comms app (plans/Comms-Framework.md §3): chat and the mail settings now, then the Inbox,
+    calls and voice, usable with only the framework. Another app mounts these screens under its own root and adds to them through
     screen-extend, its shell-providers' provider hooks, and ext-action and ext-panel (§3.3, §3.4). Authorized for ALL_USERS by
     BASIC_COMMS (data/BasicCommsSetupData.xml). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -23,11 +23,18 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="appRoot" value="BasicComms"/>
     </always-actions>
 
-    <subscreens default-item="Settings" always-use-full-path="true"/>
+    <subscreens default-item="Chat" always-use-full-path="true"/>
 
-    <!-- What Comms offers the suite shell: the Settings go-to key. -->
+    <!-- What Comms offers the suite shell: a chat message in the + menu, the palette's Chat rooms (the # prefix), the mention
+        notifications, and go-to keys. -->
     <shell-providers>
-        <keymap><key keys="g m" label="Mail settings" screen="BasicComms/Settings/MailAccounts"/></keymap>
+        <quick-create kind="chatMessage" label="Chat message" icon="sym_o_chat" screen="BasicComms/Panel/Chat" sequence="70"/>
+        <palette-source group="Rooms" label="Chat rooms" icon="sym_o_chat" prefix="#" service="org.moqui.comms.ChatScreenServices.search#PaletteRooms" sequence="31"/>
+        <notification-topic topic="ChatMention"/>
+        <keymap>
+            <key keys="g c" label="Chat" screen="BasicComms/Chat"/>
+            <key keys="g m" label="Mail settings" screen="BasicComms/Settings/MailAccounts"/>
+        </keymap>
     </shell-providers>
 
     <widgets><subscreens-panel id="basic-comms-panel" type="popup"/></widgets>

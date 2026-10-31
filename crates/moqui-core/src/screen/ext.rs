@@ -19,10 +19,11 @@
 //! Each has a provider-qualified `name` (its key: a later extension replaces the whole descriptor), a `slot` of the
 //! screen's (`message-actions`, `room-header`, ...), a `sequence`, a `label` and `icon`, and one target: a `screen` (a
 //! path from the declaring screen; a dialog unless `target="page"`), or for an action a `transition` of the declaring
-//! screen. `parameter` children map an item's fields to the target's parameters (`name`, `from`); nothing else of the
-//! item is passed. `condition` is a display test on the item's fields (`field`, `!field`, `field == 'v'`,
-//! `field != 'v'`), never an authorization rule: the server leaves out a target the user may not view, and the target
-//! checks access again when it is called.
+//! screen. `parameter` children map an item's fields to the target's parameters (`name`, `from`), or give one a fixed
+//! `value` (the kind of record to make); nothing else of the item is passed. `condition` is a display test on the item's fields (`field`, `!field`, `field == 'v'`,
+//! `field != 'v'`), never an authorization rule: the server leaves out a target the user may not view, and an item whose
+//! `hook` (a provider hook it needs, such as `create-from`) no app the user may open answers; the target checks access
+//! again when it is called.
 
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -50,8 +51,12 @@ pub struct ExtItem {
     pub condition: Option<Condition>,
     /// `(name, from)`: the target's parameter and the item field it takes.
     pub parameters: Vec<(String, String)>,
+    /// `(name, value)`: a target parameter with a fixed value.
+    pub values: Vec<(String, String)>,
     /// The text of a confirmation asked before the action runs.
     pub confirm: String,
+    /// A provider hook (`create-from`) the item needs: it is left out for a user no app answers that hook for.
+    pub hook: String,
 }
 
 /// The display test of an item, parsed from `condition`.
@@ -160,8 +165,17 @@ fn item_of(node: &MNode, kind: &str, location: &str) -> Option<ExtItem> {
         }
     };
     let mut parameters = Vec::new();
+    let mut values = Vec::new();
     for parameter in node.children_named("parameter") {
         let target = attr(&parameter, "name");
+        if let Some(value) = parameter.attribute("value") {
+            if !is_field_name(&target) {
+                tracing::error!("{location}: {kind} {name} has a parameter that is not a field name; skipped");
+                return None;
+            }
+            values.push((target, value));
+            continue;
+        }
         let from = Some(attr(&parameter, "from"))
             .filter(|from| !from.is_empty())
             .unwrap_or_else(|| target.clone());
@@ -187,7 +201,9 @@ fn item_of(node: &MNode, kind: &str, location: &str) -> Option<ExtItem> {
         },
         condition,
         parameters,
+        values,
         confirm: attr(node, "confirm"),
+        hook: attr(node, "hook"),
     })
 }
 
@@ -267,6 +283,12 @@ fn item_json(
     def: &ScreenDef,
     item: &ExtItem,
 ) -> Result<Option<Value>, Error> {
+    if !item.hook.is_empty() {
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::require_authz);
+        if super::shell::declared_providers(factory, &item.hook).is_empty() {
+            return Ok(None);
+        }
+    }
     let url = if item.transition.is_empty() {
         let names = relative_names(screen_names, &item.screen);
         let info = match ScreenUrlInfo::resolve(factory, root, &names, 0) {
@@ -350,6 +372,12 @@ fn item_json(
                     parameter.insert("from".into(), Value::string(from));
                     Value::Map(parameter)
                 })
+                .chain(item.values.iter().map(|(name, value)| {
+                    let mut parameter = Item::new();
+                    parameter.insert("name".into(), Value::string(name));
+                    parameter.insert("value".into(), Value::string(value));
+                    Value::Map(parameter)
+                }))
                 .collect(),
         ),
     );

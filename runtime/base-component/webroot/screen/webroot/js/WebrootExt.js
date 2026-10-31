@@ -71,6 +71,10 @@
         params(declared, item) {
             const out = {}
             for (const parameter of declared.parameters || []) {
+                if (parameter.value != null) {
+                    out[parameter.name] = parameter.value
+                    continue
+                }
                 const value = fieldOf(item, parameter.from)
                 if (value != null && value !== "") out[parameter.name] = value
             }
