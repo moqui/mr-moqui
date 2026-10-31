@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
 use turn_server_proto::api::{
     SocketAllocateError, TcpConnectError, Transmit as TurnTransmit, TurnServerApi, TurnServerPollRet,

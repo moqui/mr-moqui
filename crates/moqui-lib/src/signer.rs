@@ -35,7 +35,7 @@ use rsa::pkcs8::DecodePrivateKey;
 use rsa::sha2::{Sha256, Sha384, Sha512};
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use rsa::RsaPrivateKey;
-use sha1_digest_011::Sha1;
+use sha1::Sha1;
 
 use crate::error::Error;
 

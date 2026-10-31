@@ -19,8 +19,8 @@ use moqui_lib::sync::lock;
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::document::Document;
 
-mod exponential;
 pub mod browser;
+mod exponential;
 pub mod ingest;
 pub mod maintenance;
 pub mod operation;
@@ -1781,10 +1781,7 @@ pub fn error_fingerprint(kind: &str, message: &str, stack: &str) -> String {
         .map(|line| numbers.replace_all(line, "?").into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    format!(
-        "{:x}",
-        Sha256::digest(format!("{kind}\n{normalized}\n{frames}").as_bytes())
-    )
+    moqui_lib::codec::hex_encode(&Sha256::digest(format!("{kind}\n{normalized}\n{frames}").as_bytes()))
 }
 
 /// `text` with each variable part (quoted text, hex, a UUID, a number) replaced by `replacement`: the masking that
@@ -1814,21 +1811,18 @@ fn error_document(span: &Document) -> Document {
     let fingerprint = error_fingerprint(&kind, &message, &stack);
     document.insert(
         "fingerprint".into(),
-        Value::String(format!(
-            "{:x}",
-            Sha256::digest(
-                format!(
-                    "{}\n{}\n{fingerprint}",
-                    if span.contains_key("source.id") {
-                        text(span, "source.id")
-                    } else {
-                        text(span, "source.name")
-                    },
-                    text(span, "service.name")
-                )
-                .as_bytes()
+        Value::String(moqui_lib::codec::hex_encode(&Sha256::digest(
+            format!(
+                "{}\n{}\n{fingerprint}",
+                if span.contains_key("source.id") {
+                    text(span, "source.id")
+                } else {
+                    text(span, "source.name")
+                },
+                text(span, "service.name")
             )
-        )),
+            .as_bytes(),
+        ))),
     );
     let timestamp = span
         .get("start")

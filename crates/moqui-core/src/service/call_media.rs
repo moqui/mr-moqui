@@ -51,7 +51,7 @@ fn make_ice_servers(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     use base64::Engine;
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     let leg = parameters
         .get("callLegId")
         .filter(|v| !is_empty(v))

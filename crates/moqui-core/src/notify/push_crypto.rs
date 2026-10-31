@@ -22,7 +22,7 @@ use base64::Engine;
 use hkdf::Hkdf;
 use p256::ecdsa::signature::Signer;
 use p256::{PublicKey, SecretKey};
-use sha2_11::Sha256;
+use sha2::Sha256;
 
 /// Web Push is built into this host.
 pub(crate) const BUILT: bool = true;

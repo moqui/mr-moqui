@@ -67,7 +67,7 @@ pub(crate) fn adapters(entity: &EntityFacade) -> Result<Vec<Adapter>, Error> {
 
 fn sha256(text: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    moqui_lib::codec::hex_encode(&Sha256::digest(text.as_bytes()))
 }
 
 /// What one run of an action's adapter did.
@@ -428,7 +428,7 @@ fn webhook(adapter: &Adapter, row: &EntityValue, incident: &EntityValue, token: 
         let Some(secret) = moqui_lib::env::get_property(&adapter.secret_property) else {
             return Ran::Failed(format!("secret property {} is not set", adapter.secret_property));
         };
-        use hmac::Mac;
+        use hmac::{KeyInit, Mac};
         let Ok(mut mac) = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()) else {
             return Ran::Failed("the webhook secret cannot key an HMAC".into());
         };

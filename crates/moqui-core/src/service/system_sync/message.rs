@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use indexmap::IndexMap;
 use moqui_lib::codec::hex_encode;
 use moqui_lib::error::Error as LibError;

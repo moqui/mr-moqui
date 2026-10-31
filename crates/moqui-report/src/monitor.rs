@@ -261,7 +261,7 @@ pub fn authenticate(ec: &ExecutionContext, token: &str) -> Result<(String, Strin
 }
 
 fn key_hash(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    moqui_lib::codec::hex_encode(&Sha256::digest(token.as_bytes()))
 }
 
 fn auth_unavailable(error: impl std::error::Error + Send + Sync + 'static) -> Error {

@@ -109,17 +109,16 @@ indexmap = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"
-sha1 = "0.10"
+sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.22"
 # SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The rsa release candidate is the one russh and huskarl already
-# resolve, so the graph has one rsa. It needs digest 0.11, so its SHA-1 is sha1 0.11 under another name and the
-# SHA-2 variants come from rsa's own re-export. plans/archive/License-Review.md records RUSTSEC-2023-0071.
+# resolve, so the graph has one rsa. Its digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix).
+# plans/archive/License-Review.md records RUSTSEC-2023-0071.
 rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
-sha1-digest-011 = { package = "sha1", version = "0.11", features = ["oid"] }
 rand_core = "0.10"
 # Name rustls. On 0.13 that is aws-lc, but default-tls must not be inherited:
 # a later release could point default-tls back at native-tls.
@@ -137,13 +136,13 @@ encoding_rs = "0.8"
 # --- moqui-core (no direct tokio, axum, postgres, mysql, or postgresql_embedded) ---
 # Linked component crates submit their implementation catalogue (moqui_core::native::submit_component!).
 inventory = "0.3.25"
-# Field encryption. pbkdf2 0.12 stays on hmac 0.12 and sha2 0.10.
+# Field encryption. pbkdf2 0.13 is on the hmac 0.13 and sha2 0.11 above.
 # aes, cbc, and des share cipher 0.5. cbc alloc is the Vec padding API.
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 des = "0.9"
-pbkdf2 = "0.12"
-md-5 = "0.10"
+pbkdf2 = "0.13"
+md-5 = "0.11"
 
 # Mail (moqui-mail): lettre, imap, mail-parser; rustls and webpki-roots are the host's too.
 # Do not enable the feature named rustls-tls: on this crate it selects ring.
@@ -305,7 +304,6 @@ huskarl = "0.11"
 # as it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple.
 hkdf = "0.13"
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
-sha2_11 = { package = "sha2", version = "0.11", default-features = false }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
 ipp = { version = "8", default-features = false }

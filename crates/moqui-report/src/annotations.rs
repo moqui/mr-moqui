@@ -109,7 +109,7 @@ pub fn schema_hash(entity: &moqui_core::entity::EntityFacade) -> String {
             .collect()
     });
     tables.sort();
-    let mut hash = format!("{:x}", Sha256::digest(tables.join(";").as_bytes()));
+    let mut hash = moqui_lib::codec::hex_encode(&Sha256::digest(tables.join(";").as_bytes()));
     hash.truncate(32);
     hash
 }

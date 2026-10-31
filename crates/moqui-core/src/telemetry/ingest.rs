@@ -898,10 +898,9 @@ fn series_fingerprint(name: &str, resource: &Document, attributes: &Document, so
         .map(|(key, value)| format!("{key}={}", moqui_lib::object::to_plain_string(value)))
         .collect();
     fields.sort();
-    format!(
-        "{:x}",
-        Sha256::digest(format!("{source}\n{name}\n{}", fields.join("\n")).as_bytes())
-    )
+    moqui_lib::codec::hex_encode(&Sha256::digest(
+        format!("{source}\n{name}\n{}", fields.join("\n")).as_bytes(),
+    ))
 }
 
 #[cfg(test)]
