@@ -187,9 +187,9 @@ totp-rs = { version = "6", default-features = false, features = [
 ] }
 tracing = "0.1"
 # Direct SDK instrumentation; no tracing bridge. gRPC is only the receiver, under moqui-host's `grpc`.
-opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "logs"] }
-opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "metrics", "logs", "with-serde"] }
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "trace", "metrics", "logs", "with-serde"] }
 prost = "0.14"
 # The OTLP/gRPC receiver (moqui-host `grpc` feature): the server half only; opentelemetry-proto's gen-tonic has the services.
 tonic = { version = "0.14", default-features = false, features = ["server", "router", "gzip"] }
@@ -274,7 +274,7 @@ mysql = { version = "28", default-features = false, features = [
 ] }
 axum = { version = "0.8", features = ["macros", "ws"] }
 tower = "0.5"
-# Pin the 0.6 line so 0.7 is not selected.
+# The 0.6 line reqwest 0.13 also links; 0.7 would be a second tower-http.
 tower-http = { version = "0.6", default-features = false, features = [
     "compression-gzip",
     "fs",
@@ -284,7 +284,8 @@ tower-http = { version = "0.6", default-features = false, features = [
 # none). Both are already in the graph under axum with these features.
 hyper = { version = "1", default-features = false, features = ["http1", "server"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio", "server", "http1"] }
-# The PDF browser's DevTools socket (crates/moqui-host/src/pdf). Already in the graph under axum's ws feature.
+# The PDF browser's DevTools socket (crates/moqui-host/src/pdf). Already in the graph under axum's ws feature; it moves
+# with axum's (0.30 would be a second tungstenite).
 # chromiumoxide was the plan; its untagged-enum message parsing fails under serde_json arbitrary_precision.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
