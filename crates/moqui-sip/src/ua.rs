@@ -20,10 +20,14 @@
 //! here is what protects the listener and the trunks whatever the services say:
 //!
 //! - **Who may call in.** An INVITE is taken from a trunk's signaling addresses (its host's addresses and the
-//!   `inbound` ones its profile lists), or with a digest answer for a trunk's username. Anything else is challenged
-//!   ([`crate::digest::NonceBook`]: expiring nonces, nonce counts that cannot be replayed), and each failed answer
-//!   counts against its source address ([`crate::guard`]): at the limit everything from that address is dropped
-//!   unanswered, before a transaction is made. No account is locked.
+//!   `inbound` ones its profile lists), or, for a PBX trunk only ([`TrunkConfig::inbound_digest`]), with a digest
+//!   answer for its username. A provider trunk's credentials are its account's at the provider, so they never open the
+//!   listener: anyone could guess them online. Anything else is challenged ([`crate::digest::NonceBook`]: expiring
+//!   nonces, nonce counts that cannot be replayed), and each failed answer counts against its source address
+//!   ([`crate::guard`]): at the limit everything from that address is dropped unanswered, before a transaction is made.
+//!   No account is locked. An `inbound` range wider than /8 (IPv4) or /32 (IPv6) is ignored.
+//! - **Floods.** New requests are held to a rate per source, and dropped while the endpoint runs its most
+//!   transactions; stream connections past their cap are closed ([`crate::guard::RequestGate`]).
 //! - **Credentials.** A trunk's digest credentials answer only its realm and the algorithms its profile allows
 //!   ([`crate::digest::answer`]); a challenge for anything else fails the registration or the call, with the reason.
 //! - **Outbound.** CANCEL while ringing, forked answers (the first wins, the others are ACKed and ended with BYE) and
@@ -58,7 +62,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::digest::{self, Algorithm, Authorization, Challenge, Credentials, NonceBook, Verdict};
-use crate::guard::{Failure, GuardPolicy, SourceGuard};
+use crate::guard::{Admit, Failure, GuardPolicy, RequestGate, RequestLimits, SourceGuard};
 use crate::race::{self, Race};
 
 /// How long a challenge's nonce lasts.
@@ -70,8 +74,12 @@ const REGISTER_EXPIRES: u32 = 300;
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 /// How long a REGISTER waits for its answer.
 const REGISTER_WAIT: Duration = Duration::from_secs(32);
-/// The early answers kept at most.
+/// The early answers kept at most, and how long one waits for its leg.
 const MAX_EARLY: usize = 1_000;
+const EARLY_TTL: Duration = Duration::from_secs(30);
+/// The widest `inbound` ranges taken: an IPv4 /8, an IPv6 /32.
+const MIN_V4_PREFIX: u32 = 8;
+const MIN_V6_PREFIX: u32 = 32;
 
 /// A signaling transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +137,9 @@ pub struct TrunkConfig {
     pub register: bool,
     /// Addresses (or CIDR ranges) the provider sends calls from, besides the host's own.
     pub inbound: Vec<String>,
+    /// Calls in may sign in with this trunk's digest credentials from any address: a PBX's profile only. A provider's
+    /// calls come only from its addresses (or to its registration).
+    pub inbound_digest: bool,
     /// Its media must be SRTP.
     pub srtp: bool,
 }
@@ -181,6 +192,7 @@ pub struct UaConfig {
     /// The realm of this UA's challenges.
     pub realm: String,
     pub guard: GuardPolicy,
+    pub limits: RequestLimits,
     pub user_agent: String,
 }
 
@@ -323,8 +335,8 @@ struct Inner {
     events: mpsc::UnboundedSender<UaEvent>,
     trunks: Mutex<HashMap<String, TrunkEntry>>,
     legs: Mutex<HashMap<String, Leg>>,
-    /// Answers given before their leg's decision arrived.
-    early: Mutex<std::collections::HashSet<String>>,
+    /// Answers given before their leg's decision arrived, with when; past [`EARLY_TTL`] they are dropped.
+    early: Mutex<HashMap<String, Instant>>,
     guard: Arc<Mutex<SourceGuard>>,
     nonces: Mutex<NonceBook>,
     bound: Bound,
@@ -339,19 +351,72 @@ pub struct Ua {
 }
 
 /// Drops what blocked sources send, before rsipstack makes a transaction of it.
+/// Drops what a blocked source sends, and holds new requests and stream connections to their limits
+/// ([`RequestGate`]), before rsipstack makes a transaction of them.
 struct BlockInspector {
     guard: Arc<Mutex<SourceGuard>>,
+    gate: Arc<Mutex<RequestGate>>,
+    /// The endpoint, once built, for its running transactions.
+    endpoint: Arc<std::sync::OnceLock<std::sync::Weak<EndpointInner>>>,
+}
+
+/// A request outside a dialog (no To tag), other than the ACK and CANCEL of one this side already has.
+fn is_new_request(message: &SipMessage) -> bool {
+    let SipMessage::Request(request) = message else {
+        return false;
+    };
+    if matches!(request.method, Method::Ack | Method::Cancel) {
+        return false;
+    }
+    request
+        .to_header()
+        .map(|to| !to.value().contains(";tag="))
+        .unwrap_or(true)
 }
 
 #[async_trait::async_trait]
 impl TransportEventInspector for BlockInspector {
     async fn handle(&self, event: TransportEvent) -> Option<TransportEvent> {
-        if let TransportEvent::Incoming(_, _, from) = &event {
-            if let Ok(addr) = from.get_socketaddr() {
-                if lock(&self.guard).is_blocked(addr.ip(), Instant::now()) {
+        match &event {
+            TransportEvent::Incoming(message, _, from) => {
+                let Ok(addr) = from.get_socketaddr() else {
+                    return Some(event);
+                };
+                let now = Instant::now();
+                if lock(&self.guard).is_blocked(addr.ip(), now) {
                     return None;
                 }
+                if is_new_request(message) {
+                    let running = self
+                        .endpoint
+                        .get()
+                        .and_then(std::sync::Weak::upgrade)
+                        .map(|e| e.get_stats().running_transactions)
+                        .unwrap_or(0);
+                    match lock(&self.gate).admit(addr.ip(), running, now) {
+                        Admit::Pass => {}
+                        Admit::RateLimited => {
+                            tracing::debug!("SIP: {} sends past its rate, dropped", addr.ip());
+                            return None;
+                        }
+                        Admit::Busy => {
+                            tracing::warn!("SIP: {running} transactions running, a new request from {addr} dropped");
+                            return None;
+                        }
+                    }
+                }
             }
+            TransportEvent::New(connection) if connection.is_reliable() => {
+                if !lock(&self.gate).connection_opened() {
+                    tracing::warn!("SIP: too many connections, {} closed", connection.get_addr());
+                    let connection = connection.clone();
+                    tokio::spawn(async move {
+                        let _ = connection.close().await;
+                    });
+                }
+            }
+            TransportEvent::Closed(connection) if connection.is_reliable() => lock(&self.gate).connection_closed(),
+            _ => {}
         }
         Some(event)
     }
@@ -369,28 +434,39 @@ fn sip_err(err: impl std::fmt::Display) -> String {
 }
 
 /// Whether `ip` is `entry` (an address or a CIDR range).
+/// A range wider than /8 (IPv4) or /32 (IPv6), `0.0.0.0/0` and `::/0` among them, matches nothing: it would take calls
+/// from most of the internet without a digest. The voice services refuse such an entry when it is saved.
 fn matches_address(ip: IpAddr, entry: &str) -> bool {
-    let entry = entry.trim();
-    let (net, bits) = match entry.split_once('/') {
-        Some((net, bits)) => (net, bits.parse::<u32>().ok()),
-        None => (entry, None),
-    };
-    let Ok(net) = net.parse::<IpAddr>() else {
+    let Some((net, bits)) = inbound_range(entry) else {
         return false;
     };
     match (ip, net) {
         (IpAddr::V4(a), IpAddr::V4(b)) => {
-            let bits = bits.unwrap_or(32).min(32);
-            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+            let mask = u32::MAX << (32 - bits);
             u32::from(a) & mask == u32::from(b) & mask
         }
         (IpAddr::V6(a), IpAddr::V6(b)) => {
-            let bits = bits.unwrap_or(128).min(128);
-            let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+            let mask = u128::MAX << (128 - bits);
             u128::from(a) & mask == u128::from(b) & mask
         }
         _ => false,
     }
+}
+
+/// An `inbound` entry as an address and prefix length, or `None` when it is not one or is too wide.
+pub fn inbound_range(entry: &str) -> Option<(IpAddr, u32)> {
+    let entry = entry.trim();
+    let (net, bits) = match entry.split_once('/') {
+        Some((net, bits)) => (net, Some(bits.trim().parse::<u32>().ok()?)),
+        None => (entry, None),
+    };
+    let net = net.trim().parse::<IpAddr>().ok()?;
+    let (most, least) = match net {
+        IpAddr::V4(_) => (32, MIN_V4_PREFIX),
+        IpAddr::V6(_) => (128, MIN_V6_PREFIX),
+    };
+    let bits = bits.unwrap_or(most);
+    (least..=most).contains(&bits).then_some((net, bits))
 }
 
 fn header_values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
@@ -456,16 +532,20 @@ impl Ua {
         } else {
             &config.user_agent
         };
+        let endpoint_slot = Arc::new(std::sync::OnceLock::new());
         let endpoint: Endpoint = EndpointBuilder::new()
             .with_user_agent(user_agent)
             .with_transport_layer(transport_layer)
             .with_cancel_token(stop.child_token())
             .with_transport_inspector(Box::new(BlockInspector {
                 guard: Arc::clone(&guard),
+                gate: Arc::new(Mutex::new(RequestGate::new(config.limits))),
+                endpoint: Arc::clone(&endpoint_slot),
             }))
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
         let endpoint_inner = endpoint.inner.clone();
+        let _ = endpoint_slot.set(Arc::downgrade(&endpoint_inner));
         {
             let serve = endpoint_inner.clone();
             tokio::spawn(async move {
@@ -480,7 +560,7 @@ impl Ua {
             events,
             trunks: Mutex::new(HashMap::new()),
             legs: Mutex::new(HashMap::new()),
-            early: Mutex::new(std::collections::HashSet::new()),
+            early: Mutex::new(HashMap::new()),
             guard,
             nonces: Mutex::new(NonceBook::new(
                 if config.realm.is_empty() {
@@ -581,8 +661,10 @@ impl Ua {
     pub fn answer(&self, leg: &str) -> Result<(), String> {
         if !lock(&self.inner.legs).contains_key(leg) {
             let mut early = lock(&self.inner.early);
+            let now = Instant::now();
+            early.retain(|_, at| now.duration_since(*at) < EARLY_TTL);
             if early.len() < MAX_EARLY {
-                early.insert(leg.to_string());
+                early.insert(leg.to_string(), now);
             }
             return Ok(());
         }
@@ -1187,15 +1269,17 @@ impl Inner {
             .find_map(|v| Authorization::parse(&v));
         let method = tx.original.method.to_string();
         let verdict = given.as_ref().map(|auth| {
+            // a PBX trunk's credentials only: a provider's are its account's, never a way in
             let trunk = lock(&self.trunks)
                 .values()
                 .find(|t| {
                     let c = &t.config.credentials;
-                    c.auth_username
-                        .as_deref()
-                        .filter(|u| !u.is_empty())
-                        .unwrap_or(&c.username)
-                        == auth.username
+                    t.config.inbound_digest
+                        && c.auth_username
+                            .as_deref()
+                            .filter(|u| !u.is_empty())
+                            .unwrap_or(&c.username)
+                            == auth.username
                         && !c.password.is_empty()
                 })
                 .map(|t| t.config.clone());
@@ -1313,7 +1397,10 @@ impl Inner {
                 if let Err(err) = dialog.ringing(None, None) {
                     tracing::debug!("SIP INVITE {call_id}: 180 not sent: {err}");
                 }
-                if lock(&self.early).remove(&leg) {
+                let early = lock(&self.early)
+                    .remove(&leg)
+                    .is_some_and(|at| at.elapsed() < EARLY_TTL);
+                if early {
                     if let Err(err) = self.accept(&leg) {
                         tracing::debug!("SIP leg {leg}: not answered: {err}");
                     }

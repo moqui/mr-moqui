@@ -27,7 +27,9 @@ along with this software (see the LICENSE.md file). If not, see
             provider profile that allows it (VppPlainLan), never a silent downgrade (D-V4). authJson holds the digest
             credentials, encrypted: {username, password, authUsername, realm, algorithms}; a realm, when set, is the only one
             they answer, and algorithms the only digest algorithms (SHA-256 first). inboundAddresses are the provider's
-            signaling addresses (IPs or CIDRs, comma separated) whose INVITEs need no digest. statusId is what the SIP
+            signaling addresses (IPs or CIDRs no wider than a /8, or a /32 for IPv6; comma separated) whose INVITEs need no
+            digest. Only a trunk whose profile is a PBX's (VppPlainLan) takes calls signed with its digest credentials from
+            other addresses; a provider's credentials never sign a call in. statusId is what the SIP
             engine last reported: registered (or reachable without registering), failed with lastErrorText.</description>
         <field name="voiceTrunkId" type="id" is-pk="true"/>
         <field name="name" type="text-medium"/>

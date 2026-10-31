@@ -139,8 +139,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EngineConfig" authenticate="false" allow-remote="false">
         <description>Internal (the SIP engine, at start and on reload): the enabled trunks with
-            their credentials decrypted (a trunk whose credentials do not read is logged and left out), the fraud policy, and the
-            source addresses blocked now.</description>
+            their credentials decrypted (a trunk whose credentials do not read is logged and left out) and inboundDigest (true
+            only for a PBX's profile: its credentials may sign a call in), the fraud policy, and the source addresses blocked
+            now.</description>
         <out-parameters>
             <parameter name="trunkList" type="List"/>
             <parameter name="policy" type="Map"/>
@@ -263,7 +264,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Make a trunk, or change one (voiceTrunkId). TLS with SRTP is the default; UDP
             or TCP signaling, or plain RTP, needs a provider profile that allows them (insecureNotAllowed otherwise). An empty
             password keeps the old one. algorithms: the digest algorithms the credentials answer (SHA-256, SHA-512-256, MD5),
-            comma separated. The SIP engines reload. The VoiceAdmin permission.</description>
+            comma separated. inboundAddresses: addresses or ranges no wider than a /8 (IPv4) or a /32 (IPv6), so not 0.0.0.0/0
+            or ::/0 (badInboundAddress otherwise). The SIP engines reload. The VoiceAdmin permission.</description>
         <in-parameters>
             <parameter name="voiceTrunkId"/>
             <parameter name="name"/>

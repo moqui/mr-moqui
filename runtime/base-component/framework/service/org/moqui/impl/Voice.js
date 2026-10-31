@@ -31,6 +31,14 @@ const PHONE_NOTICES = ['recording', 'recordingAck', 'captions']
 const PHONE_LEGS = ['CltPstn', 'CltSipDevice']
 /** A node with no heartbeat in this long is not up. */
 const NODE_STALE_MS = 60000
+/**
+ * The profiles of a PBX: only their trunks' digest credentials sign a call in from any address. A provider trunk's are
+ * its account's at the provider, which anyone could guess online, so its calls come only from its addresses.
+ */
+const PBX_PROFILES = ['VppPlainLan']
+/** The widest inbound ranges a trunk takes: an IPv4 /8, an IPv6 /32 (moqui-sip ua.rs inbound_range). */
+const MIN_V4_PREFIX = 8
+const MIN_V6_PREFIX = 32
 /** Provider profiles proven by an authorized live check (docs/interfaces/SIP.md); none yet. */
 const VERIFIED_PROFILES = []
 const DEFAULT_POLICY = {
@@ -473,6 +481,7 @@ function engineConfig() {
         algorithms: algorithms.length ? algorithms : ['SHA-256', 'MD5'], register: trunk.registerFlag === 'Y',
         inboundAddresses: list(trunk.inboundAddresses), emergencyCapable: trunk.emergencyCapable === 'Y',
         fromDomain: trunk.fromDomain || null, profile: one('moqui.basic.Enumeration', { enumId: trunk.providerProfileEnumId })?.enumCode || 'generic',
+        inboundDigest: PBX_PROFILES.includes(trunk.providerProfileEnumId),
       })
     } catch (err) {
       ec.logger.error(`Voice trunk ${trunk.voiceTrunkId} left out of the SIP engine, its credentials do not read: ${err && err.message ? err.message : err}`)
@@ -575,6 +584,21 @@ function capabilities() {
 
 // ---------- administration ----------
 
+/** An inbound address entry's problem, or null: an IPv4 or IPv6 address, or a range no wider than a /8 or a /32. */
+function inboundEntryProblem(entry) {
+  const [net, bits, extra] = String(entry).split('/')
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(net)
+  const isV4 = !!v4 && v4.slice(1).every((part) => Number(part) <= 255)
+  const isV6 = !isV4 && /^[0-9a-fA-F:.]+$/.test(net) && net.includes(':')
+  if (extra !== undefined || (!isV4 && !isV6)) return 'not an address or range'
+  if (bits === undefined) return null
+  if (!/^\d{1,3}$/.test(bits)) return 'not an address or range'
+  const prefix = Number(bits)
+  if (prefix > (isV4 ? 32 : 128)) return 'not an address or range'
+  if (prefix < (isV4 ? MIN_V4_PREFIX : MIN_V6_PREFIX)) return isV4 ? 'wider than a /8' : 'wider than a /32'
+  return null
+}
+
 function profileAllowsInsecure(enumId) {
   return one('moqui.basic.Enumeration', { enumId, enumTypeId: 'VoiceProviderProfile' })?.optionValue === 'Y'
 }
@@ -622,6 +646,11 @@ function storeTrunk(p) {
   }
   const host = String(pick('host', '') || '').trim()
   if (!host || /[\s/@]/.test(host)) return refuse('badTrunk', 'A trunk needs a host name or address')
+  const inbound = blank(pick('inboundAddresses', null)) ? [] : list(pick('inboundAddresses', ''))
+  for (const entry of inbound) {
+    const problem = inboundEntryProblem(entry)
+    if (problem) return refuse('badInboundAddress', `Inbound address ${entry}: ${problem}; list the provider's own addresses`)
+  }
   const port = blank(pick('port', null)) ? null : Number(pick('port', null))
   if (port != null && !(port > 0 && port < 65536)) return refuse('badTrunk', 'The port is 1 to 65535')
   let auth = {}
@@ -643,7 +672,7 @@ function storeTrunk(p) {
   const fields = {
     name: String(pick('name', host) || host).trim(), host, port, transportEnumId, mediaEncryptionEnumId, providerProfileEnumId,
     authJson: JSON.stringify(auth), registerFlag: flag(pick('registerFlag', 'N')), emergencyCapable: flag(pick('emergencyCapable', 'N')),
-    inboundAddresses: blank(pick('inboundAddresses', null)) ? null : list(pick('inboundAddresses', '')).join(','),
+    inboundAddresses: inbound.length ? inbound.join(',') : null,
     fromDomain: blank(pick('fromDomain', null)) ? null : String(pick('fromDomain', '')).trim(), disabled: flag(pick('disabled', 'N')),
   }
   if (!trunk) {

@@ -32,6 +32,9 @@ Every listener is off until its setting is set.
 | `sip_rtp_host` | `sip_host` | The address the RTP sockets bind |
 | `sip_public_address` | the bound address | The address in Contact headers and SDP, for a server behind 1:1 NAT. A host bound to every address does not start without it |
 | `sip_tls_ca_file` | the system bundle (`/etc/ssl/certs/ca-certificates.crt`) | The CA certificates that verify a trunk's TLS certificate |
+| `sip_request_rate`, `sip_request_burst` | `20`, `100` | New requests (outside a dialog: INVITE, REGISTER, OPTIONS and the rest) a second from one source, and how many it may send at once; past them its requests are dropped unanswered. `0` turns it off |
+| `sip_max_transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
+| `sip_max_connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -64,7 +67,8 @@ A trunk is set up with these:
 - the digest credentials: username, an authentication username when the provider's differs, the password, the
   realm, and the algorithms allowed;
 - whether to register;
-- the provider's signaling addresses calls come from;
+- the provider's signaling addresses calls come from (addresses or ranges, none wider than a /8, or a /32 for IPv6:
+  `0.0.0.0/0` and `::/0` are refused);
 - a From domain;
 - whether it takes emergency calls;
 - a provider profile.
@@ -91,8 +95,14 @@ its status and last error are on the trunk. The admins get a `VoiceAlert` notifi
 
 **Incoming calls** are taken:
 
-- from a trunk's host addresses and the signaling addresses listed on it, or
-- from another address, with a digest answer for a trunk's username (a PBX that authenticates its calls).
+- from a trunk's host addresses and the signaling addresses listed on it (a registering trunk's calls come from its
+  host too), or
+- for a trunk with the profile "PBX on a private network" only, from another address with a digest answer for that
+  trunk's username: a PBX that authenticates its calls.
+
+A provider trunk's credentials are its account's at the provider, so they never sign a call in: anyone could guess
+them online, and a guess would be the provider's password. A call that answers with them is refused, and counts as a
+failed digest of its source.
 
 The number called (the Request-URI's user, in E.164) is looked up in `PhoneNumber`. A number routed to a user rings
 that user's tabs and devices like a call from a colleague. An unknown number gets 404; with no media server, 480.
@@ -187,6 +197,9 @@ notice that comes while another plays waits for it.
 Scanners probe SIP listeners for weak credentials, then place international calls (§5.2). Each of these is a release
 gate.
 
+- **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
+  dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections` are closed
+  ([Settings](#settings); `moqui-sip` `guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
     replayed (`moqui-sip` `digest.rs`).
@@ -285,11 +298,15 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - cancel and a crossing answer;
   - forked answers;
   - failed digests blocking a source;
+  - a provider trunk's credentials refused for a call in, a PBX trunk's taken;
+  - a flood from one source held to its rate while another source calls in;
+  - inbound ranges wider than a /8 or a /32 ignored;
   - a call over TLS with SRTP;
   - two phone legs mixed.
 - `cargo test -p moqui-host --test it sip::`: an outbound and an inbound call on a real server, through a fake trunk,
   heard by a browser stand-in.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, and prompts queued one after
   another.
-- `./moq test framework --spec Voice`: the services' authorization, fraud controls, emergency routing, a phone leg's
+- `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
+  only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.

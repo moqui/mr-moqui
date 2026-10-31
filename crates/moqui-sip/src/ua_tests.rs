@@ -224,8 +224,44 @@ fn trunk_config(trunk: &FakeTrunk, register: bool) -> TrunkConfig {
         domain: None,
         register,
         inbound: Vec::new(),
+        inbound_digest: false,
         srtp: false,
     }
+}
+
+/// A trunk to a PBX, whose calls in may sign in with its digest credentials from anywhere.
+fn pbx_config(trunk: &FakeTrunk, id: &str, username: &str, password: &str) -> TrunkConfig {
+    let mut config = trunk_config(trunk, false);
+    config.id = id.to_string();
+    config.credentials.username = username.to_string();
+    config.credentials.password = password.to_string();
+    config.inbound_digest = true;
+    config
+}
+
+/// An INVITE from `from` signed with `username` and `password` for the challenge the UA gave it, as a PBX sends one.
+async fn signed_invite(h: &Harness, from: &FakeTrunk, call_id: &str, username: &str, password: &str, offer: &str) {
+    from.invite(h.addr, &format!("{call_id}-0"), "+15551230000", "200", offer)
+        .await;
+    let challenge = header_values(&from.response(407).await.headers, "Proxy-Authenticate");
+    let parsed = Challenge::parse(&challenge[0]).unwrap();
+    let credentials = Credentials {
+        username: username.to_string(),
+        password: password.to_string(),
+        ..Default::default()
+    };
+    let uri = format!("sip:+15551230000@{}", h.addr);
+    let auth = digest::answer(&credentials, &parsed, "INVITE", &uri, "cx").unwrap();
+    let text = format!(
+        "INVITE {uri} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-{call_id}\r\nMax-Forwards: 70\r\n\
+         From: <sip:200@{}>;tag={call_id}\r\nTo: <{uri}>\r\nCall-ID: {call_id}\r\nCSeq: 1 INVITE\r\nProxy-Authorization: {auth}\r\n\
+         Contact: <sip:200@{}>\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{offer}",
+        from.addr,
+        from.addr,
+        from.addr,
+        offer.len()
+    );
+    from.send(&text, h.addr).await;
 }
 
 async fn media_socket() -> (UdpSocket, SocketAddr) {
@@ -632,7 +668,8 @@ async fn hold_by_reinvite_both_ways() {
 async fn failed_digests_block_the_source_and_never_the_trunk() {
     let trunk = FakeTrunk::on("127.0.0.1").await;
     let mut h = Harness::start().await;
-    h.ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    h.ua.set_trunks(vec![pbx_config(&trunk, "T1", "acct", "pw-of-acct")])
+        .await;
     let scanner = FakeTrunk::on("127.0.0.2").await;
     let offer = sdp::offer(&LocalMedia::new("127.0.0.2".parse().unwrap(), 4_000, None));
     // no credentials: a challenge
@@ -705,28 +742,109 @@ async fn failed_digests_block_the_source_and_never_the_trunk() {
     assert!(matches!(h.main_event().await, UaEvent::Incoming(call) if call.trunk_id == "T1"));
     // and the right credentials from another address are taken
     let other = FakeTrunk::on("127.0.0.3").await;
-    other.invite(h.addr, "pbx-0", "+15551230000", "200", &offer).await;
-    let challenge = header_values(&other.response(407).await.headers, "Proxy-Authenticate");
-    let parsed = Challenge::parse(&challenge[0]).unwrap();
-    let credentials = Credentials {
-        username: "acct".to_string(),
-        password: "pw-of-acct".to_string(),
-        ..Default::default()
-    };
-    let uri = format!("sip:+15551230000@{}", h.addr);
-    let auth = digest::answer(&credentials, &parsed, "INVITE", &uri, "cx").unwrap();
-    let text = format!(
-        "INVITE {uri} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-pbx-1\r\nMax-Forwards: 70\r\n\
-         From: <sip:200@{}>;tag=pbx-1\r\nTo: <{uri}>\r\nCall-ID: pbx-1\r\nCSeq: 1 INVITE\r\nProxy-Authorization: {auth}\r\n\
-         Contact: <sip:200@{}>\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{offer}",
-        other.addr,
-        other.addr,
-        other.addr,
-        offer.len()
-    );
-    other.send(&text, h.addr).await;
+    let offer = sdp::offer(&LocalMedia::new("127.0.0.3".parse().unwrap(), 4_000, None));
+    signed_invite(&h, &other, "pbx-1", "acct", "pw-of-acct", &offer).await;
     assert!(matches!(h.main_event().await, UaEvent::Incoming(call) if call.trunk_id == "T1" && call.from == "200"));
     h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn a_provider_trunk_s_credentials_never_sign_a_call_in_and_a_pbx_trunk_s_do() {
+    let provider = FakeTrunk::on("127.0.0.1").await;
+    let pbx = FakeTrunk::on("127.0.0.4").await;
+    let mut h = Harness::start().await;
+    // the provider's account at the provider, and a PBX's trunk with its own credentials; both other than the caller's
+    // address, so only a digest could let the call in
+    h.ua.set_trunks(vec![
+        trunk_config(&provider, false),
+        pbx_config(&pbx, "PBX", "pbx-user", "pw-of-pbx"),
+    ])
+    .await;
+    let caller = FakeTrunk::on("127.0.0.5").await;
+    let offer = sdp::offer(&LocalMedia::new("127.0.0.5".parse().unwrap(), 4_000, None));
+    // the provider's right password is refused, and counts as a failure of its source
+    signed_invite(&h, &caller, "prov-1", "acct", "pw-of-acct", &offer).await;
+    match h.main_event().await {
+        UaEvent::AuthFailure { username, .. } => assert_eq!(username, "acct"),
+        other => panic!("{other:?}"),
+    }
+    caller.response(403).await;
+    // the PBX's is taken, from the same address, with the same request
+    signed_invite(&h, &caller, "pbx-1", "pbx-user", "pw-of-pbx", &offer).await;
+    assert!(matches!(h.main_event().await, UaEvent::Incoming(call) if call.trunk_id == "PBX"));
+    h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn a_flood_from_one_source_is_dropped_while_another_source_is_answered() {
+    let (tx, mut events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 1.0,
+                burst: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    let flood = FakeTrunk::on("127.0.0.6").await;
+    let offer = sdp::offer(&LocalMedia::new("127.0.0.6".parse().unwrap(), 4_000, None));
+    for n in 0..20 {
+        flood
+            .invite(addr, &format!("flood-{n}"), "+15551230000", "100", &offer)
+            .await;
+    }
+    // three challenges (the burst), each once whatever its retransmissions, and nothing for the rest
+    let mut answered = std::collections::BTreeSet::new();
+    while let Some((message, _)) = flood.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            answered.insert(response.call_id_header().unwrap().value().to_string());
+        }
+    }
+    assert_eq!(answered.len(), 3, "{answered:?}");
+    // the trunk, another source, still calls in
+    trunk
+        .invite(addr, "in-ok", "+15551230000", "+15557770000", &offer)
+        .await;
+    let incoming = loop {
+        match tokio::time::timeout(WAIT, events.recv()).await.unwrap().unwrap() {
+            UaEvent::Incoming(call) => break call,
+            _ => continue,
+        }
+    };
+    assert_eq!(incoming.trunk_id, "T1");
+    ua.shutdown();
+}
+
+#[test]
+fn an_inbound_range_wider_than_a_slash_8_or_a_slash_32_matches_nothing() {
+    let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+    assert!(matches_address(ip("203.0.113.9"), "203.0.113.0/24"));
+    assert!(matches_address(ip("203.0.113.9"), "203.0.113.9"));
+    assert!(matches_address(ip("10.1.2.3"), "10.0.0.0/8"));
+    for wide in [
+        "0.0.0.0/0",
+        "0.0.0.0/7",
+        "::/0",
+        "2001:db8::/31",
+        "203.0.113.0/33",
+        "nonsense",
+        "10.0.0.0/x",
+    ] {
+        assert!(!matches_address(ip("10.1.2.3"), wide), "{wide}");
+        assert!(!matches_address(ip("2001:db8::1"), wide), "{wide}");
+        assert!(inbound_range(wide).is_none(), "{wide}");
+    }
+    assert!(matches_address(ip("2001:db8::1"), "2001:db8::/32"));
 }
 
 fn pem(label: &str, der: &[u8]) -> Vec<u8> {
@@ -779,6 +897,7 @@ async fn a_call_over_tls_with_srtp_between_two_user_agents() {
         domain: None,
         register: false,
         inbound: Vec::new(),
+        inbound_digest: false,
         srtp: true,
     };
     near.set_trunks(vec![peer("FAR", far_tls.port(), Transport::Tls)]).await;

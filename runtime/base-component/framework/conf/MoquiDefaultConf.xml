@@ -201,7 +201,9 @@
         sip_rtp_ports the UDP range of the phone legs' RTP (one port a leg) on sip_rtp_host (sip_host by default);
         sip_public_address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
         a host binds every address); sip_tls_ca_file the CA certificates for TLS to trunks (the system bundle by default).
-        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). -->
+        Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
+        (0 turns one off): sip_request_rate new requests a second from one source, sip_request_burst of them at once;
+        sip_max_transactions, past which new requests are dropped; sip_max_connections, TCP and TLS connections at once. -->
     <default-property name="sip_port" value=""/>
     <default-property name="sip_host" value="127.0.0.1"/>
     <default-property name="sip_tls_port" value=""/>
@@ -210,6 +212,10 @@
     <default-property name="sip_rtp_host" value=""/>
     <default-property name="sip_public_address" value=""/>
     <default-property name="sip_tls_ca_file" value=""/>
+    <default-property name="sip_request_rate" value="20"/>
+    <default-property name="sip_request_burst" value="100"/>
+    <default-property name="sip_max_transactions" value="2000"/>
+    <default-property name="sip_max_connections" value="500"/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>

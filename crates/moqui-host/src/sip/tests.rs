@@ -45,6 +45,26 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
     assert_eq!(s.rtp_host, "127.0.0.3".parse::<IpAddr>().unwrap());
     assert_eq!(s.public, Some("198.51.100.20".parse().unwrap()));
     assert_eq!(s.ca_file, Some(PathBuf::from("/nowhere/ca.pem")));
+    assert_eq!(s.limits, RequestLimits::default());
+    let s = settings(&[
+        ("sip_port", "5060"),
+        ("sip_request_rate", "5"),
+        ("sip_request_burst", "10"),
+        ("sip_max_transactions", "300"),
+        ("sip_max_connections", "many"),
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        s.limits,
+        RequestLimits {
+            rate: 5.0,
+            burst: 10,
+            max_transactions: 300,
+            max_connections: 500,
+        },
+        "one that is not a number keeps its default"
+    );
     assert!(settings(&[("sip_port", "fifty")]).is_err());
     assert!(settings(&[("sip_port", "5060"), ("sip_public_address", "sip.example")]).is_err());
 }

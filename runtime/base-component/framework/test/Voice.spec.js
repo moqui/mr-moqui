@@ -151,6 +151,29 @@ feature("UDP or plain RTP needs a profile that allows it, never a silent downgra
     }
 })
 
+feature("only a PBX trunk's credentials sign a call in; inbound addresses wider than a /8 or a /32 are refused", {
+    when() {
+        const pbx = admin("store#VoiceTrunk", {name: "Office PBX", host: "10.0.0.6", transportEnumId: "VtrUdp", mediaEncryptionEnumId: "VmePlain",
+            providerProfileEnumId: "VppPlainLan", username: "pbx", password: "secret-2"})
+        const config = sys(() => ec.service.sync().name("org.moqui.impl.VoiceServices.get#EngineConfig").call())
+        const digestOf = id => config.trunkList.find(t => t.voiceTrunkId == id).inboundDigest
+        const wide = ["0.0.0.0/0", "::/0", "10.0.0.0/7", "2001:db8::/31", "sip.example.test", "203.0.113.0/33"]
+            .map(inboundAddresses => admin("store#VoiceTrunk", {voiceTrunkId: trunkId, inboundAddresses}))
+        const narrow = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, inboundAddresses: "203.0.113.0/24, 10.0.0.0/8, 2001:db8::/32, 198.51.100.7"})
+        const row = sys(() => ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", trunkId).one())
+        if (pbx.voiceTrunkId) admin("delete#VoiceTrunk", {voiceTrunkId: pbx.voiceTrunkId})
+        admin("store#VoiceTrunk", {voiceTrunkId: trunkId, inboundAddresses: ""})
+        return {pbxDigest: digestOf(pbx.voiceTrunkId), providerDigest: digestOf(trunkId), wide, narrow, row}
+    },
+    then({pbxDigest, providerDigest, wide, narrow, row}) {
+        pbxDigest == true
+        providerDigest == false
+        wide.every(r => r.reasonCode == "badInboundAddress")
+        narrow.errors == ""
+        row.inboundAddresses == "203.0.113.0/24,10.0.0.0/8,2001:db8::/32,198.51.100.7"
+    }
+})
+
 feature("a call goes out from a granted number; the same call from a number not granted is refused", {
     when() {
         nodesUp()

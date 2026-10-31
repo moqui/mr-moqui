@@ -77,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="authUsername"><default-field title="Authentication ID" tooltip="When the provider gives one apart from the username"><text-line size="30"/></default-field></field>
                     <field name="realm"><default-field title="Realm" tooltip="The only realm the credentials answer; empty answers the trunk's"><text-line size="30"/></default-field></field>
                     <field name="algorithms"><default-field title="Digest algorithms" tooltip="SHA-256, SHA-512-256, MD5; comma separated"><text-line size="30"/></default-field></field>
-                    <field name="inboundAddresses"><default-field title="Provider addresses" tooltip="The provider's signaling IPs or CIDRs, comma separated: their calls need no digest"><text-line size="40"/></default-field></field>
+                    <field name="inboundAddresses"><default-field title="Provider addresses" tooltip="The provider's signaling IPs or CIDRs (no wider than a /8, or a /32 for IPv6), comma separated: their calls need no digest. Only a PBX trunk's username and password sign calls in from elsewhere"><text-line size="40"/></default-field></field>
                     <field name="fromDomain"><default-field title="From domain"><text-line size="30"/></default-field></field>
                     <field name="registerFlag"><default-field title="Register"><check><option key="Y" text="Register with the provider"/></check></default-field></field>
                     <field name="emergencyCapable"><default-field title="Emergency"><check><option key="Y" text="Takes emergency calls"/></check></default-field></field>

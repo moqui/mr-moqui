@@ -51,7 +51,7 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use moqui_sip::dial::{self, DestinationClass, DialPolicy};
 use moqui_sip::digest::{Algorithm, Credentials};
-use moqui_sip::guard::GuardPolicy;
+use moqui_sip::guard::{GuardPolicy, RequestLimits};
 use moqui_sip::sdp::{self, Direction, LocalMedia};
 use moqui_sip::srtp::MasterKey;
 use moqui_sip::ua::{
@@ -85,6 +85,30 @@ pub(crate) struct SipSettings {
     pub rtp_ports: String,
     pub public: Option<IpAddr>,
     pub ca_file: Option<PathBuf>,
+    /// The flood caps: `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`.
+    pub limits: RequestLimits,
+}
+
+/// The flood caps from the properties; one that is not a number is logged and keeps its default.
+fn limits_from(property: &dyn Fn(&str) -> String) -> RequestLimits {
+    fn read<T: std::str::FromStr>(property: &dyn Fn(&str) -> String, name: &str, default: T) -> T {
+        let value = property(name);
+        let value = value.trim();
+        if value.is_empty() {
+            return default;
+        }
+        value.parse().unwrap_or_else(|_| {
+            tracing::error!("SIP: {name} {value} is not a number, its default is used");
+            default
+        })
+    }
+    let defaults = RequestLimits::default();
+    RequestLimits {
+        rate: read(property, "sip_request_rate", defaults.rate).max(0.0),
+        burst: read(property, "sip_request_burst", defaults.burst),
+        max_transactions: read(property, "sip_max_transactions", defaults.max_transactions),
+        max_connections: read(property, "sip_max_connections", defaults.max_connections),
+    }
 }
 
 fn bind_address(host: &str, port: u16, name: &str) -> Result<SocketAddr, String> {
@@ -151,6 +175,7 @@ pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<
         rtp_ports: or("sip_rtp_ports", "20000-20999"),
         public,
         ca_file,
+        limits: limits_from(property),
     }))
 }
 
@@ -302,6 +327,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             .map(|p| p.to_string())
             .unwrap_or_else(|| "moqui".to_string()),
         guard: GuardPolicy::default(),
+        limits: settings.limits,
         user_agent: "Moqui".to_string(),
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
@@ -715,6 +741,7 @@ impl Engine {
                     domain: Some(text(trunk, "fromDomain")).filter(|d| !d.is_empty()),
                     register: flag(trunk, "register"),
                     inbound: texts(trunk, "inboundAddresses"),
+                    inbound_digest: flag(trunk, "inboundDigest"),
                     srtp,
                 });
             }
