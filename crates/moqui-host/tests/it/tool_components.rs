@@ -104,9 +104,10 @@ fn ipp_stub() -> (u16, Seen) {
             let mut response =
                 IppRequestResponse::new_response(IppVersion::v1_1(), StatusCode::SuccessfulOk, id).unwrap();
             let mut add = |tag: DelimiterTag, name: &str, value: IppValue| {
-                response
-                    .attributes_mut()
-                    .add(tag, IppAttribute::new(name.try_into().unwrap(), value));
+                response.attributes_mut().add(
+                    tag,
+                    IppAttribute::new(ipp::value::IppName::try_from(name).unwrap(), value),
+                );
             };
             let uri = |text: String| IppValue::Uri(text.as_str().try_into().unwrap());
             let name = |text: &str| IppValue::NameWithoutLanguage(text.try_into().unwrap());

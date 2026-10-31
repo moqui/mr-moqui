@@ -51,8 +51,10 @@ const SERVICES: &str = r#"<services>
 
 fn request(server: &mut Server, id: i32, method: &str, params: Json) -> Json {
     let response = server.answer(&Request::new(RequestId::from(id), method.to_string(), params));
-    assert!(response.error.is_none(), "{method}: {:?}", response.error);
-    response.result.unwrap_or(Json::Null)
+    match response.response_result {
+        Ok(result) => result,
+        Err(error) => panic!("{method}: {error:?}"),
+    }
 }
 
 #[test]
@@ -196,5 +198,5 @@ fn the_language_server_answers_on_the_example_component() {
         "textDocument/rename".into(),
         json!({}),
     ));
-    assert!(unknown.error.is_some());
+    assert!(unknown.response_result.is_err());
 }

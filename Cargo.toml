@@ -309,7 +309,7 @@ aes-gcm = { version = "0.11", default-features = false, features = ["aes", "allo
 sha2_11 = { package = "sha2", version = "0.11", default-features = false }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
-ipp = { version = "7", default-features = false }
+ipp = { version = "8", default-features = false }
 
 # WebRTC for calls (moqui-rtc, plans/Comms-Framework.md §6.2, D-W1): sans-IO ICE-lite, DTLS-SRTP, simulcast, TWCC.
 # default-features off leaves out its examples (rouille); aws-lc-rs is the crypto rustls already links.

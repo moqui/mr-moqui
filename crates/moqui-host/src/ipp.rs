@@ -128,7 +128,8 @@ fn parse_error(err: impl std::fmt::Display) -> Error {
 }
 
 fn attribute(name: &str, value: IppValue) -> Result<IppAttribute, Error> {
-    Ok(IppAttribute::new(name.try_into().map_err(parse_error)?, value))
+    let name: ipp::value::IppName = name.try_into().map_err(parse_error)?;
+    Ok(IppAttribute::new(name, value))
 }
 
 fn name_value(text: &str) -> Result<IppValue, Error> {
