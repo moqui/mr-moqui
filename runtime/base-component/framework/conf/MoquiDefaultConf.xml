@@ -175,6 +175,22 @@
     <default-property name="turn_max_allocations" value="1000"/>
     <default-property name="turn_max_kbps" value="4000"/>
     <default-property name="turn_allowed_peers" value=""/>
+    <!-- Call recording (W5; docs/interfaces/Call-Recording.md, D-V5): off by default. call_recording_enabled lets a call's
+        host record it; every leg gets the notice, logged per leg. call_recording_ack_required: each leg must acknowledge it,
+        and the recording pauses while a current leg has not (or after one withdraws). call_recording_policy_revision is
+        logged with each notice; change it when the policy's wording changes. call_recording_retention_days: recordings are
+        deleted this long after they start (0 keeps them). The recorder's limits: call_recording_queue_frames, the frames
+        queued from the media thread (a recorder further behind fails); call_recording_segment_mb and
+        call_recording_segment_minutes, when a file is cut into the next segment; call_recording_max_mb, a recording's
+        total, where it stops. -->
+    <default-property name="call_recording_enabled" value="false"/>
+    <default-property name="call_recording_ack_required" value="false"/>
+    <default-property name="call_recording_policy_revision" value="1"/>
+    <default-property name="call_recording_retention_days" value="90"/>
+    <default-property name="call_recording_queue_frames" value="4096"/>
+    <default-property name="call_recording_segment_mb" value="64"/>
+    <default-property name="call_recording_segment_minutes" value="30"/>
+    <default-property name="call_recording_max_mb" value="2048"/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>

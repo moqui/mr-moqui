@@ -43,6 +43,12 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
   or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
   there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+- **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
+  pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
+  consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
+  recording waits until all have. Calls, Recordings lists the recordings you made and those of calls you host: play one
+  part with everyone's audio and video together, download each file, and delete your own. The terminal lists them with
+  Delete. Recordings are deleted after the server's retention period ([Call recording](../interfaces/Call-Recording.md)).
 - **Captions.** Where the administrator turned them on (`call_captions_enabled`) and a speech to text model is set up,
   anyone in a call can press CC. Everyone in the call, including people who join later, sees that captions are on and
   which service hears what they say; each line names its speaker. When the service is slow or down, the captions say
@@ -102,5 +108,5 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 ## Tests
 
 `./moq test basic-comms`: every screen in qvt and tui, the mail settings and Inbox of a user with no party, the drive
-picker (`BasicCommsFiles`), chat, the provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the provider hooks and the app's parts through both mounts. IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

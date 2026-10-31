@@ -17,6 +17,9 @@
 //! message goes on the `rtc-signal` cluster topic to that node only ([`crate::cluster::send_to`]), after the caller's
 //! transaction commits; moqui-host's rtc module takes it there. A node that is gone is logged and skipped: its calls
 //! end on their own when its heartbeat stops (`expire#Calls`).
+//!
+//! `org.moqui.impl.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
+//! recordings' `dbresource://` root.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -33,7 +36,64 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, send_media_control)?;
     rust_service!(map, make_ice_servers)?;
+    rust_service!(map, store_recording_file)?;
     Ok(())
+}
+
+/// Where a media node's recorder spools its files, under the runtime directory (`SPOOL` in moqui-host
+/// `src/rtc/recorder.rs`).
+const RECORDING_SPOOL: &str = "tmp/call-recording";
+/// Where the recordings' files are kept.
+const RECORDING_ROOT: &str = "dbresource://moqui/call/recording/";
+
+/// `store#RecordingFile`: a spooled segment file (`tempPath`, under the runtime's [`RECORDING_SPOOL`]) to
+/// `contentLocation` (under [`RECORDING_ROOT`]); the spooled file is deleted once stored. Anything else is refused, so
+/// the service reads no other local file and writes no other place.
+fn store_recording_file(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let text = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|v| !is_empty(v))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let (temp_path, location) = (text("tempPath"), text("contentLocation"));
+    let rest = location.strip_prefix(RECORDING_ROOT).unwrap_or_default();
+    if rest.is_empty()
+        || rest
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(LibError::new(format!("{location} is not a call recording location")));
+    }
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| LibError::new("store#RecordingFile needs an execution context"))?;
+    let spool = factory.runtime_dir().join(RECORDING_SPOOL);
+    let path = std::path::Path::new(&temp_path);
+    let inside = match (path.canonicalize(), spool.canonicalize()) {
+        (Ok(file), Ok(root)) => file.starts_with(&root) && file.is_file(),
+        _ => false,
+    };
+    if !inside {
+        return Err(LibError::new(format!("{temp_path} is not a call recording spool file")));
+    }
+    let bytes = std::fs::read(path).map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?;
+    factory
+        .resource()
+        .write_bytes(&location, &bytes)
+        .map_err(|e| LibError::new(format!("the recording file {location} was not stored: {}", e.message())))?;
+    if let Err(err) = std::fs::remove_file(path) {
+        tracing::warn!("the spooled recording {temp_path} was not removed: {err}");
+    }
+    let mut out = BTreeMap::new();
+    out.insert(
+        "byteSize".to_string(),
+        Value::I64(i64::try_from(bytes.len()).unwrap_or(i64::MAX)),
+    );
+    Ok(out)
 }
 
 /// The secret TURN credentials are signed with, shared by every media node and any coturn (`turn_auth_secret`).

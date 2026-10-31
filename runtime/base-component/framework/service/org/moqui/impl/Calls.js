@@ -229,6 +229,17 @@ function mediaControl(session, message) {
   }).disableAuthz().call()
 }
 
+/**
+ * The call's recording (W5, CallRecordings.js) hears of a leg bound (a late joiner's notice), a leg gone, or the end;
+ * only while one is going. It never fails the call's own change.
+ */
+function recordingChange(callSessionId, change, callLegId) {
+  if (find('moqui.call.CallRecording').condition('callSessionId', callSessionId)
+    .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).count() === 0) return
+  ec.service.sync().name('org.moqui.impl.CallRecordingServices.note#CallChange')
+    .parameters({ callSessionId, change, callLegId: callLegId || null }).disableAuthz().call()
+}
+
 /** Sets UserStatus.inCall from the user's answered legs of calls that have not ended, publishing a change. */
 function updatePresence(userIds) {
   for (const userId of new Set(userIds.filter((id) => id))) {
@@ -318,6 +329,7 @@ function closeLeg(leg, status, reason) {
       const total = Number(log?.durationSeconds || 0) + seconds(leg.answeredDate, now)
       setLog(leg.callSessionId, participant.userId, { durationSeconds: total })
     }
+    recordingChange(leg.callSessionId, 'legLeft', leg.callLegId)
   }
 }
 
@@ -325,6 +337,8 @@ function closeLeg(leg, status, reason) {
 function endSession(session, reason) {
   if (session.statusId === 'CssEnded') return
   const now = ec.user.nowTimestamp
+  // a recording stops first, so the legs closing below do not resume it
+  recordingChange(session.callSessionId, 'ended')
   for (const leg of legsOf(session.callSessionId)) {
     if (leg.statusId === 'ClsAnswered') {
       closeLeg(leg, 'ClsLeft', reason)
@@ -613,6 +627,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
     lastHeartbeatDate: now, statusId: 'CcsActive',
   }, true, null, null)
   conn.create()
+  recordingChange(session.callSessionId, 'legBound', leg.callLegId)
   return {
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,

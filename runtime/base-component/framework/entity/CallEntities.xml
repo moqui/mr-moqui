@@ -318,6 +318,171 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="draining" type="text-indicator"><description>Y: takes no new calls, its calls finish</description></field>
     </entity>
 
+    <!-- ========== Recording (W5; plans/Comms-Framework.md §5.4 "Recording", §6.4, D-V5) ==========
+        A recording of a call (CallRecording) is made on the call's media node: each published track as its own file
+        (Opus in Ogg, VP8 in WebM, no transcoding) and the mixed audio of the whole call (Opus in Ogg), cut into segments
+        (CallRecordingSegment) at each pause and resume and at a size or time cap. Every leg gets the notice, and it is
+        logged per leg (CallRecordingConsent). Reached only through org.moqui.impl.CallRecordingServices, which checks who
+        may record and read (CallRecordings.js). -->
+
+    <entity entity-name="CallRecording" package="moqui.call" use="transactional" cache="never">
+        <description>A recording of a call, started by ownerUserId (a host of the call). kindEnumId: CrkPerTrack (each
+            track and the mixed audio) or CrkMixed (the mixed audio only). statusId: CrsRecording, CrsPaused (pauseReason:
+            user; ack, while a current leg has not acknowledged the notice; withdrawn, after one withdrew), CrsStopped,
+            CrsFailed (the recorder failed: lastErrorText; the call went on). segmentPeriod counts the recording's periods:
+            each resume starts the next, and the segments of one period play together. retentionUntilDate: expire#Recordings
+            deletes its files and rows after it.</description>
+        <field name="callRecordingId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="pauseReason" type="text-short"/>
+        <field name="segmentPeriod" type="number-integer" default="1"/>
+        <field name="policyRevision" type="text-short"/>
+        <field name="ackRequired" type="text-indicator"/>
+        <field name="mediaNodeId" type="text-medium"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="retentionUntilDate" type="date-time"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one" title="CallRecordingKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one" title="CallRecording" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <relationship type="many" related="moqui.call.CallRecordingTrack" short-alias="tracks">
+            <key-map field-name="callRecordingId"/></relationship>
+        <relationship type="many" related="moqui.call.CallRecordingSegment" short-alias="segments">
+            <key-map field-name="callRecordingId"/></relationship>
+        <index name="CALL_REC_SESSION"><index-field name="callSessionId"/><index-field name="statusId"/></index>
+        <index name="CALL_REC_OWNER"><index-field name="ownerUserId"/><index-field name="startedDate"/></index>
+        <index name="CALL_REC_RETENTION"><index-field name="retentionUntilDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Recording Kind" enumTypeId="CallRecordingKind"/>
+            <moqui.basic.Enumeration description="Each track and the mixed audio" enumId="CrkPerTrack" enumCode="perTrack" enumTypeId="CallRecordingKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="The mixed audio" enumId="CrkMixed" enumCode="mixed" enumTypeId="CallRecordingKind" sequenceNum="2"/>
+
+            <moqui.basic.StatusType description="Call Recording" statusTypeId="CallRecording"/>
+            <moqui.basic.StatusItem statusId="CrsRecording" statusTypeId="CallRecording" sequenceNum="1" description="Recording"/>
+            <moqui.basic.StatusItem statusId="CrsPaused" statusTypeId="CallRecording" sequenceNum="2" description="Paused"/>
+            <moqui.basic.StatusItem statusId="CrsStopped" statusTypeId="CallRecording" sequenceNum="3" description="Stopped"/>
+            <moqui.basic.StatusItem statusId="CrsFailed" statusTypeId="CallRecording" sequenceNum="4" description="Failed"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsRecording" toStatusId="CrsPaused" transitionName="Pause"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsPaused" toStatusId="CrsRecording" transitionName="Resume"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsRecording" toStatusId="CrsStopped" transitionName="Stop"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsPaused" toStatusId="CrsStopped" transitionName="Stop"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsRecording" toStatusId="CrsFailed" transitionName="Fail"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="CrsPaused" toStatusId="CrsFailed" transitionName="Fail"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallRecordingTrack" package="moqui.call" use="transactional" cache="never">
+        <description>One track of a recording: a leg's microphone, camera, screen or screen audio (callLegId, source), or
+            the mixed audio of the call (trackKindEnumId CrtMix, no leg). codec is opus or vp8, contentType audio/ogg or
+            video/webm. A track ends when its leg leaves or the recording stops.</description>
+        <field name="callRecordingTrackId" type="id" is-pk="true"/>
+        <field name="callRecordingId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="trackKindEnumId" type="id"/>
+        <field name="source" type="text-short"/>
+        <field name="codec" type="text-short"/>
+        <field name="contentType" type="text-short"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one-nofk" related="moqui.call.CallParticipant" short-alias="participant"/>
+        <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one" title="CallRecordingTrackKind" related="moqui.basic.Enumeration" short-alias="trackKind">
+            <key-map field-name="trackKindEnumId"/></relationship>
+        <index name="CALL_REC_TRACK"><index-field name="callRecordingId"/><index-field name="callLegId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Recording Track Kind" enumTypeId="CallRecordingTrackKind"/>
+            <moqui.basic.Enumeration description="Audio" enumId="CrtAudio" enumCode="audio" enumTypeId="CallRecordingTrackKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Video" enumId="CrtVideo" enumCode="video" enumTypeId="CallRecordingTrackKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Mixed audio" enumId="CrtMix" enumCode="mix" enumTypeId="CallRecordingTrackKind" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallRecordingSegment" package="moqui.call" use="transactional" cache="never">
+        <description>One file of a track: segmentPeriod (the recording's period, from its start or a resume) and segmentSeq
+            (its order in the track); fromDate and thruDate; startOffsetMs, from the start of its period, to play the tracks
+            of a period together; durationMs from the media's own timing; contentLocation (dbresource://, reached only
+            through get#RecordingFile) and byteSize. processingStatusId: CrgStored, CrgFailed (not stored), CrgDeleted (by
+            retention or by its owner).</description>
+        <field name="callRecordingSegmentId" type="id" is-pk="true"/>
+        <field name="callRecordingId" type="id"/>
+        <field name="callRecordingTrackId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="segmentPeriod" type="number-integer"/>
+        <field name="segmentSeq" type="number-integer"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="startOffsetMs" type="number-integer"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="contentLocation" type="text-medium"/>
+        <field name="contentType" type="text-short"/>
+        <field name="byteSize" type="number-integer"/>
+        <field name="processingStatusId" type="id"/>
+        <field name="lastErrorText" type="text-long"/>
+        <relationship type="one" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one" related="moqui.call.CallRecordingTrack" short-alias="track"/>
+        <relationship type="one" title="CallRecordingSegment" related="moqui.basic.StatusItem" short-alias="processingStatus">
+            <key-map field-name="processingStatusId" related="statusId"/></relationship>
+        <index name="CALL_REC_SEG"><index-field name="callRecordingId"/><index-field name="segmentPeriod"/></index>
+        <index name="CALL_REC_SEG_TRACK"><index-field name="callRecordingTrackId"/><index-field name="segmentSeq"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Call Recording Segment" statusTypeId="CallRecordingSegment"/>
+            <moqui.basic.StatusItem statusId="CrgStored" statusTypeId="CallRecordingSegment" sequenceNum="1" description="Stored"/>
+            <moqui.basic.StatusItem statusId="CrgFailed" statusTypeId="CallRecordingSegment" sequenceNum="2" description="Not stored"/>
+            <moqui.basic.StatusItem statusId="CrgDeleted" statusTypeId="CallRecordingSegment" sequenceNum="3" description="Deleted"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallRecordingConsent" package="moqui.call" use="transactional" cache="never">
+        <description>The recording notice one leg got, and its answer. recordingScope: what is recorded (perTrack or
+            mixed); policyRevision: the deployment's policy (call_recording_policy_revision) at the notice. noticeDate and
+            noticeMethodEnumId: CnmWeb (the browser's indicator and prompt, the rtc recording frame) or CnmVoice (a voice
+            prompt on a phone leg, notify#LegRecording). ackRequired: the policy asked this leg to acknowledge
+            (call_recording_ack_required); ackDate and ackMethodEnumId (CamClick, CamDtmf) once it did. Staying on the call
+            after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording.</description>
+        <field name="callRecordingConsentId" type="id" is-pk="true"/>
+        <field name="callRecordingId" type="id"/>
+        <field name="callSessionId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="recordingScope" type="text-short"/>
+        <field name="policyRevision" type="text-short"/>
+        <field name="noticeDate" type="date-time"/>
+        <field name="noticeMethodEnumId" type="id"/>
+        <field name="ackRequired" type="text-indicator"/>
+        <field name="ackDate" type="date-time"/>
+        <field name="ackMethodEnumId" type="id"/>
+        <field name="withdrawnDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one-nofk" related="moqui.call.CallParticipant" short-alias="participant"/>
+        <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one" title="CallRecordingNoticeMethod" related="moqui.basic.Enumeration" short-alias="noticeMethod">
+            <key-map field-name="noticeMethodEnumId"/></relationship>
+        <relationship type="one" title="CallRecordingAckMethod" related="moqui.basic.Enumeration" short-alias="ackMethod">
+            <key-map field-name="ackMethodEnumId"/></relationship>
+        <index name="CALL_REC_CONSENT" unique="true"><index-field name="callRecordingId"/><index-field name="callLegId"/></index>
+        <index name="CALL_REC_CONSENT_SES"><index-field name="callSessionId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Recording Notice Method" enumTypeId="CallRecordingNoticeMethod"/>
+            <moqui.basic.Enumeration description="Browser indicator" enumId="CnmWeb" enumCode="web" enumTypeId="CallRecordingNoticeMethod" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Voice prompt" enumId="CnmVoice" enumCode="voice" enumTypeId="CallRecordingNoticeMethod" sequenceNum="2"/>
+
+            <moqui.basic.EnumerationType description="Call Recording Acknowledgement Method" enumTypeId="CallRecordingAckMethod"/>
+            <moqui.basic.Enumeration description="Click" enumId="CamClick" enumCode="click" enumTypeId="CallRecordingAckMethod" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Keypad (DTMF)" enumId="CamDtmf" enumCode="dtmf" enumTypeId="CallRecordingAckMethod" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+
     <!-- ========== W6: captions and transcripts (plans/Comms-Framework.md §5.4, §6.4) ==========
         Appended after the call entities (and after W5's recording block when both are merged). callRecordingId and
         voicemailId are plain ids for now: CallRecording (W5) and Voicemail (V2) arrive in their own steps, and the merge

@@ -64,6 +64,12 @@ account (`basic-comms` `CallGuest.xml`, the `call` token route). The token is sh
 The link's owner opens its meeting from Calls (Open) as its host. A meeting nobody is in or waiting for ends after two
 minutes.
 
+## Recording
+
+A call's host can record it when `call_recording_enabled` is on: each track as sent (Opus in Ogg, VP8 in WebM) and the
+mixed audio, made on the media node, with a notice to every leg and the `rtc` frame `recording`. See
+[Call recording](Call-Recording.md).
+
 ## Captions
 
 Live captions are off unless `call_captions_enabled` is `true`, and they need a speech to text provider: a model bound

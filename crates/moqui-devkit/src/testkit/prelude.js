@@ -23,6 +23,7 @@
         T.caseName = null;
         T.tempSequences = [];
         T.dataErrors = [];
+        T.properties = new Map();
     };
     T.reset(null);
     T.setConditions = (conditions) => { T.conditions = conditions; };
@@ -164,6 +165,8 @@
                 } finally {
                     for (const name of T.tempSequences) ec.entity.tempResetSequencedIdPrimary(name);
                     T.tempSequences = [];
+                    for (const [name, before] of T.properties) __moquiTestHost.setProperty(name, before);
+                    T.properties = new Map();
                 }
             }
         } catch (e) {
@@ -359,6 +362,12 @@
 
     // ---- helpers ----
 
+    // setProperty(name, value): a process property, as a conf property, for this spec (null clears it); each is put back
+    // as it was after cleanupSpec
+    define("setProperty", (name, value) => {
+        const before = __moquiTestHost.setProperty(String(name), value == null ? null : String(value));
+        if (!T.properties.has(String(name))) T.properties.set(String(name), before == null ? null : before);
+    });
     define("skip", (reason) => { throw new Skipped(reason == null || reason === "" ? "skipped" : String(reason)); });
 
     define("dec", (v) => toDecimal(v));

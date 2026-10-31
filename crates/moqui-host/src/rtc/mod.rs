@@ -27,6 +27,7 @@
 pub(crate) mod captions;
 mod driver;
 pub(crate) mod media;
+pub(crate) mod recorder;
 mod tcp;
 mod turn;
 
@@ -67,6 +68,12 @@ pub(crate) enum Command {
     },
     CloseRoom {
         room: String,
+    },
+    /// The recording notice (an rtc `recording` frame) for every leg of the room, kept for the legs that join later
+    /// until the recording stops (`recorder.rs`).
+    Notice {
+        room: String,
+        frame: Json,
     },
     /// A datagram from a browser's ICE-TCP connection.
     TcpIn {
@@ -242,6 +249,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     };
     let (tx, rx) = sync_channel(COMMAND_QUEUE);
     *lock(media()) = Some(tx.clone());
+    recorder::sweep(factory.runtime_dir());
     let stop = Arc::new(AtomicBool::new(false));
     let own = own_node(factory);
     // ICE-TCP, when its port is set: a listener that does not bind is logged, and the UDP media goes on

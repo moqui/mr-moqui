@@ -74,7 +74,10 @@
         capabilities: null,
         // live captions of the current call (W6): whether the CC button shows (allowed), whether they are on, who
         // transcribes (the notice), why they are unavailable, and the last lines {key, leg, name, text, gap, at}
-        captions: { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] }
+        captions: { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] },
+        // recording (W5), by callSessionId: {enabled, ackRequired, canRecord, recording: {callRecordingId, state, pauseReason,
+        // kind, ackRequired} or null, myConsent: {acknowledged, withdrawn, ackRequired} or null, failed}
+        recordingOf: {}
     });
 
     const call = {
@@ -236,6 +239,49 @@
         },
         open(callSessionId) {
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
+        },
+
+        // ---- recording (W5): the policy, the call's recording and this leg's notice; a guest asks with its credential ----
+        recordingRequest(name, params, method) {
+            if (call.guest && call.guest.recording) return Promise.resolve(call.guest.recording(name));
+            return call.request(name, params, method);
+        },
+        noteRecording(callSessionId, json) {
+            if (!callSessionId || !json) return;
+            const was = state.recordingOf[callSessionId] || {};
+            state.recordingOf[callSessionId] = Object.assign({}, was, {
+                enabled: json.enabled != null ? !!json.enabled : !!was.enabled,
+                ackRequired: json.ackRequired != null ? !!json.ackRequired : !!was.ackRequired,
+                canRecord: json.canRecord != null ? !!json.canRecord : !!was.canRecord,
+                recording: json.recording !== undefined ? json.recording : was.recording || null,
+                myConsent: json.myConsent !== undefined ? json.myConsent : was.myConsent || null
+            });
+        },
+        loadRecording(callSessionId) {
+            if (!callSessionId) return Promise.resolve({});
+            return call.recordingRequest("recordingState", { callSessionId }, "GET").then((json) => {
+                if (json && !json.reasonCode) call.noteRecording(callSessionId, json);
+                return json || {};
+            }, () => ({}));
+        },
+        // the host's startRecording, stopRecording, pauseRecording, resumeRecording; anyone's ackRecording or
+        // withdrawRecording; then the state again (this leg's notice changed)
+        recordingAction(callSessionId, name) {
+            const rec = state.recordingOf[callSessionId] || {};
+            const params = { callSessionId, callRecordingId: rec.recording ? rec.recording.callRecordingId : null };
+            return call.recordingRequest(name, params).then(() => call.loadRecording(callSessionId));
+        },
+        // the media node's recording frame, to every leg and again to one that joins late
+        recordingFrame(frame) {
+            const id = frame.callSessionId;
+            const going = frame.state === "recording" || frame.state === "paused";
+            const was = state.recordingOf[id] || {};
+            const known = was.recording && was.recording.callRecordingId === frame.callRecordingId;
+            call.noteRecording(id, { recording: going ? { callRecordingId: frame.callRecordingId, state: frame.state, pauseReason: frame.pauseReason || null,
+                kind: frame.kind || null, ackRequired: !!frame.ackRequired } : null });
+            state.recordingOf[id].failed = frame.state === "failed";
+            // a new recording: this leg's notice is new too
+            if (going && !known) call.loadRecording(id);
         },
 
         // ---- the media ----
@@ -422,6 +468,9 @@
                 case "captions":
                     call.onCaption(frame);
                     break;
+                case "recording":
+                    call.recordingFrame(frame);
+                    break;
                 case "ended":
                     call.hangUp(frame.reason || "ended");
                     break;
@@ -589,6 +638,7 @@
 
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
         hangUp() {
+            if (state.current) delete state.recordingOf[state.current];
             if (call.guest) {
                 call.guest.close();
                 call.guest = null;
@@ -618,6 +668,7 @@
             if (call.guest) call.guest.close();
             const guest = call.openGuestSocket(options.credential);
             guest.iceServers = options.iceServers || null;
+            guest.recording = options.recording || null;
             call.guest = guest;
             return guest.ready.then(() => call.join(options.callSessionId, options.callLegId, { video: options.video, stream: options.stream }));
         },
@@ -754,6 +805,16 @@
         },
         template: '<audio ref="audio" autoplay></audio>'
     };
+
+    // The recording indicator's text (W5): recording, or why it is paused.
+    function recordingText(recording) {
+        if (!recording) return "";
+        if (recording.state === "recording") return t("Recording");
+        if (recording.pauseReason === "ack") return t("Recording paused: waiting for everyone to acknowledge");
+        if (recording.pauseReason === "withdrawn") return t("Recording paused: someone withdrew consent");
+        return t("Recording paused");
+    }
+    moqui.callRecordingText = recordingText;
 
     function elapsedText(since) {
         if (!since) return "";
@@ -918,7 +979,14 @@
             // live captions (W6): the last lines of the last ten seconds, and the notice of who hears the audio
             captionLines() { return this.call.captions.lines.filter((line) => this.now - line.at < 10000); },
             captionNotice() { return captionNotice(this.call.captions); },
-            elapsed() { return this.now && elapsedText(this.call.startedAt); }
+            elapsed() { return this.now && elapsedText(this.call.startedAt); },
+            // recording (W5): the policy and the call's recording, this leg's notice
+            rec() { return this.call.recordingOf[this.callSessionId] || null; },
+            recording() { return this.rec ? this.rec.recording : null; },
+            recordingText() { return recordingText(this.recording); },
+            canRecord() { return !!(this.rec && this.rec.enabled && this.rec.canRecord && this.inThis); },
+            needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
+            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); }
         },
         watch: {
             callSessionId() { this.load(); }
@@ -939,6 +1007,7 @@
                 moqui.call.request("callState", { callSessionId: this.callSessionId }, "GET").then((json) => {
                     this.view = json.call || null;
                     this.loading = false;
+                    if (this.view && this.view.status !== "ended") moqui.call.loadRecording(this.callSessionId);
                     if (this.view && !this.inThis && this.view.status !== "ended") this.startPreview();
                     if (this.view && this.inThis) moqui.call.loadCaptions(this.callSessionId);
                 }, () => (this.loading = false));
@@ -992,6 +1061,7 @@
                 start.then(() => this.load());
             },
             leave() { moqui.call.leave().then(() => this.load()); },
+            recAction(name) { moqui.call.recordingAction(this.callSessionId, name); },
             endForAll() { moqui.call.endForAll().then(() => this.load()); },
             tileStyle(tile) {
                 const ring = tile.speaking ? ";box-shadow:0 0 0 3px var(--q-positive)" : "";
@@ -1014,9 +1084,15 @@
             '<div class="m-call column q-gutter-sm">' +
             '<div class="row items-center"><div class="text-h6 q-mr-md">{{known ? (known.participants || []).filter(p => p.userId !== moquiCallMe()).map(p => p.displayName).join(\', \') || t(\'Call\') : t(\'Call\')}}</div>' +
             '<q-chip dense square :color="known && known.status === \'ended\' ? \'grey-6\' : \'positive\'" text-color="white">{{stateText}}</q-chip>' +
+            '<q-chip v-if="recording" dense square :color="recording.state === \'recording\' ? \'negative\' : \'warning\'" text-color="white" icon="sym_o_fiber_manual_record" class="m-call-recording">{{recordingText}}</q-chip>' +
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
+            '<q-banner v-if="recording && inThis" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" color="negative"></q-icon></template>' +
+            '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
+            '<template v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
+            '<q-btn v-if="!withdrawn" flat no-caps color="negative" :label="t(\'Withdraw consent\')" @click="recAction(\'withdrawRecording\')"></q-btn></template></q-banner>' +
+            '<q-banner v-if="rec && rec.failed && inThis" dense rounded class="m-tonal text-warning">{{t(\'The recording stopped: the recorder failed. The call goes on.\')}}</q-banner>' +
             '<q-banner v-for="p in (inThis || isHost) ? waiting : []" :key="\'w\' + p.callParticipantId" dense rounded class="m-tonal">' +
             '<template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>{{p.displayName}} {{t(\'is waiting to join\')}}' +
             '<template v-slot:action><q-btn flat no-caps color="positive" :label="t(\'Let in\')" @click="admit(p, true)"></q-btn>' +
@@ -1064,6 +1140,11 @@
             '<q-btn v-for="emoji in reactions" :key="emoji" flat dense size="lg" v-close-popup @click="moquiCall().sendReaction(emoji)">{{emoji}}</q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="grey-8" :icon="call.layout === \'speaker\' ? \'sym_o_grid_view\' : \'sym_o_person\'" :aria-label="call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')" @click="moquiCall().setLayout(call.layout === \'speaker\' ? \'grid\' : \'speaker\')"><q-tooltip>{{call.layout === \'speaker\' ? t(\'Grid view\') : t(\'Speaker view\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_group" :aria-label="t(\'Participants\')" @click="call.participantsOpen = !call.participantsOpen"><q-badge v-if="raisedCount" color="warning" floating>{{raisedCount}}</q-badge><q-tooltip>{{t(\'Participants\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canRecord && !recording" round unelevated color="grey-8" icon="sym_o_radio_button_checked" :aria-label="t(\'Record\')" @click="recAction(\'startRecording\')"><q-tooltip>{{t(\'Record the call\')}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="canRecord && recording" round unelevated color="negative" icon="sym_o_radio_button_checked" :aria-label="t(\'Recording\')"><q-tooltip>{{recordingText}}</q-tooltip><q-menu><div class="column q-pa-xs">' +
+            '<q-btn v-if="recording.state === \'recording\'" flat no-caps align="left" icon="sym_o_pause" :label="t(\'Pause recording\')" v-close-popup @click="recAction(\'pauseRecording\')"></q-btn>' +
+            '<q-btn v-if="recording.state === \'paused\' && recording.pauseReason === \'user\'" flat no-caps align="left" icon="sym_o_play_arrow" :label="t(\'Resume recording\')" v-close-popup @click="recAction(\'resumeRecording\')"></q-btn>' +
+            '<q-btn flat no-caps align="left" color="negative" icon="sym_o_stop" :label="t(\'Stop recording\')" v-close-popup @click="recAction(\'stopRecording\')"></q-btn></div></q-menu></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"><q-tooltip>{{t(\'Leave\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="isHost && known && known.kind !== \'direct\'" flat no-caps color="negative" :label="t(\'End for everyone\')" @click="endForAll"></q-btn>' +
             '<m-ext-actions v-if="known" slot="call-actions" :item="{callSessionId: callSessionId}"></m-ext-actions></div>' +
@@ -1107,6 +1188,10 @@
             remotes() { return Object.values(this.call.remotes); },
             // live captions (W6): a guest gets the notice and the lines as every leg does, by its socket
             captionNotice() { return captionNotice(this.call.captions); },
+            rec() { return this.callSessionId ? this.call.recordingOf[this.callSessionId] || null : null; },
+            recording() { return this.rec ? this.rec.recording : null; },
+            needsAck() { const r = this.rec; return !!(r && r.recording && r.recording.ackRequired && !(r.myConsent && r.myConsent.acknowledged)); },
+            withdrawn() { const r = this.rec; return !!(r && r.recording && r.myConsent && r.myConsent.withdrawn); },
             gridStyle() {
                 const n = this.remotes.length + 1;
                 const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
@@ -1150,6 +1235,7 @@
                 this.poll = setInterval(() => this.checkState(), 2000);
             },
             checkState() {
+                this.post("recordingState", { credential: this.credential }).then((json) => call.noteRecording(this.callSessionId, json), () => null);
                 this.post("guestState", { credential: this.credential }).then((json) => {
                     this.people = json.people || [];
                     if (json.admission === "admitted" && this.phase === "waiting") {
@@ -1166,10 +1252,15 @@
                 this.phase = "in";
                 const stream = this.preview;
                 call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream,
-                    iceServers: () => this.post("iceServers", { credential: this.credential }) })
+                    iceServers: () => this.post("iceServers", { credential: this.credential }),
+                    recording: (name) => this.post(name, { credential: this.credential }) })
                     .catch(() => { this.phase = "ended"; });
                 // the names in the call, now and then (a guest hears of no one by push)
                 this.poll = setInterval(() => this.checkState(), 5000);
+            },
+            recAction(name) {
+                this.post(name, { credential: this.credential }).then(() => this.post("recordingState", { credential: this.credential }))
+                    .then((json) => call.noteRecording(this.callSessionId, json), () => null);
             },
             leave() {
                 const credential = this.credential;
@@ -1190,6 +1281,11 @@
             '<div class="m-call-guest column q-gutter-md q-pa-md" style="max-width:1100px;margin:0 auto">' +
             '<div><div class="text-h5">{{link.name || t(\'Call\')}}</div><div v-if="link.ownerName" class="text-caption m-muted">{{t(\'With\')}} {{link.ownerName}}</div></div>' +
             '<q-banner v-if="error" dense rounded class="m-tonal text-negative">{{error}}</q-banner>' +
+            '<q-banner v-if="recording" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" :color="recording.state === \'recording\' ? \'negative\' : \'warning\'"></q-icon></template>' +
+            '<div class="text-weight-medium">{{moquiRecordingText(recording)}}</div>' +
+            '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
+            '<template v-if="phase === \'in\'" v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
+            '<q-btn v-if="!withdrawn" flat no-caps color="negative" :label="t(\'Withdraw consent\')" @click="recAction(\'withdrawRecording\')"></q-btn></template></q-banner>' +
             // the lobby: name, preview, join
             '<div v-if="phase === \'lobby\' || phase === \'waiting\'" class="row q-col-gutter-md">' +
             '<div class="col-12 col-md-7"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
@@ -1225,4 +1321,5 @@
             "</div>"
     };
     components["m-call-guest"].methods.moquiCall = () => moqui.call;
+    components["m-call-guest"].methods.moquiRecordingText = recordingText;
 })(globalThis);

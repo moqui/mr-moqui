@@ -70,6 +70,8 @@ struct Driver<'a> {
     media: Media,
     /// A frame each leg gets when it joins, by room: the captions notice (`captions.rs`).
     notices: HashMap<String, Json>,
+    /// Each recorded room's last recording notice, for a leg that joins later (W5).
+    recording_notices: HashMap<String, Json>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -97,6 +99,7 @@ pub(super) fn run(
         revoke,
         media: Media::default(),
         notices: HashMap::new(),
+        recording_notices: HashMap::new(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -201,7 +204,17 @@ impl Driver<'_> {
                     json!({"rtc": "participant", "callLegId": leg, "connected": false}),
                 );
             }
+            Command::Notice { room, frame } => {
+                let over = matches!(frame.get("state").and_then(Json::as_str), Some("stopped" | "failed"));
+                self.to_room(&room, None, frame.clone());
+                if over {
+                    self.recording_notices.remove(&room);
+                } else {
+                    self.recording_notices.insert(room, frame);
+                }
+            }
             Command::CloseRoom { room } => {
+                self.recording_notices.remove(&room);
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
                 self.notices.remove(&room);
@@ -334,6 +347,10 @@ impl Driver<'_> {
         }
         // a leg that joins a room with captions on gets their notice (late joiners and guests too)
         if let Some(notice) = self.notices.get(room).filter(|_| joined).cloned() {
+            self.to_leg(&key, generation, notice);
+        }
+        // a leg that joins a room being recorded gets the notice after its answer
+        if let Some(notice) = self.recording_notices.get(room).filter(|_| joined).cloned() {
             self.to_leg(&key, generation, notice);
         }
     }

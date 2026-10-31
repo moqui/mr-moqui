@@ -466,6 +466,7 @@ function, is refused when the file loads rather than run with conditions that ca
 | `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect |
 | `withProperty(name, value, fn)` | Run `fn` with a process property set (`null` clears it), then put it back: a switch the code under test reads with `System.getProperty`, such as `call_captions_enabled` |
 | `assert(condition, message)` | A condition outside the top level of a block |
+| `setProperty(name, value)` | Sets a process property for this spec, as a conf property would (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. Each one is put back as it was after `cleanupSpec`. For a policy switch such as `call_recording_enabled` |
 | `sum(list, field)`, `dec(value)` | A decimal sum of a field, and a value as a decimal |
 | `log` | `ec.logger` |
 

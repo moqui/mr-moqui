@@ -296,6 +296,7 @@ jQuery, Moment, Bootstrap 3, Select2, and the rest of `CombinedBase` are removed
 | Shiro, FreeMarker, Groovy, Jetty, SnakeYAML, Jackson | Apache-2.0 | Not linked. Permissive, and still not carried. |
 | `native-tls`, vendored OpenSSL inside the Rust binary | OpenSSL 3 is Apache-2.0 | Kept out so the binary has one TLS stack. Permissive either way. The postmaster may still load the host `libssl.so.3`. |
 | `comrak`'s C regex backend | `comrak` itself is BSD-2-Clause | Not in the graph. |
+| `ogg`; `webm-iterable`, `mkv-element` (call recording, W5) | BSD-3-Clause; MIT | Not added. The recording files' writers are in house (`moqui-rtc` `record/`: Ogg pages with their CRC, and the EBML of WebM), because each is a few hundred lines and the recorder needs only the write side, with its own control of pages, granule positions, clusters and timestamps. The `webm` crate is never used. No new crate, so nothing new in the graph. |
 
 ## Enforcement once the workspace exists
 

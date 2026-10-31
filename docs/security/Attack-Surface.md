@@ -426,6 +426,19 @@ Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature 
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
 
+### Call recording
+
+Off unless `call_recording_enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. Only a
+host of the call starts, pauses, resumes or stops it (`org.moqui.impl.CallRecordingServices`). The recorder runs on the
+media node, takes frames from a bounded queue and spools under `runtime/tmp/call-recording/`. `store#RecordingFile`
+(internal, `allow-remote="false"`) refuses a spool path outside that directory and a location outside
+`dbresource://moqui/call/recording/`. The files are read only through `get#RecordingFile` by segment id, from the
+BasicComms Calls `Recordings` screen's `recordingFile` transition: the one who recorded it and the call's hosts get the
+file, anyone else "not found" (an empty JSON answer) for the same id. No route serves those `dbresource://` locations
+to users, and an app's record links (BOSS) go through the same services. The guest page's `ackRecording` and
+`withdrawRecording` take the guest's credential and act on its own leg only. Every leg gets the notice, and each is
+logged (`CallRecordingConsent`). Retention deletes the files and rows (`expire_Recordings_hourly`).
+
 ### TURN
 
 The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off

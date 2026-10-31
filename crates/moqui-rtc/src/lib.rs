@@ -27,8 +27,10 @@
 //! The forwarding is the SFU's own, not str0m's, so [`tap`] can take each frame out (for the SIP mixer, recording and
 //! captions) and put frames in (a SIP leg's audio, as one more participant). [`audio`] decodes, mixes and encodes that
 //! audio off the media thread: the codecs, resampling, the per-leg jitter buffer and the mix-minus mixer.
+//! [`record`] writes a call's tracks and its mixed audio as files (Opus in Ogg, VP8 in WebM), sans-IO.
 
 pub mod audio;
+pub mod record;
 pub mod sfu;
 pub mod tap;
 pub mod turn;

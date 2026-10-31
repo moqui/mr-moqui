@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     why not, when not), New call (people picked by name, a video or an audio call), the calls ringing for the user or that
     they are in (Answer, Decline or Open), and the user's call history: All, Missed, Placed and Answered (outcome), each
     call with the others in it, when, how long, and Call back (the same people, or the room's call). Opening Missed marks
-    the missed calls seen, so they no longer count on Home. Call links (W3): a link to a meeting for people with no
+    the missed calls seen, so they no longer count on Home; Recordings opens the call recordings (W5, Recordings.xml). Call links (W3): a link to a meeting for people with no
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
     org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. An app adds actions to a call with ext-action slot="call-actions" (the
@@ -205,6 +205,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Placed" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'placed'"/>
                 <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default"><parameter name="outcome" value="answered"/></link>
                 <label text="Answered" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'answered'"/>
+                <link url="../Recordings" text="Recordings" icon="sym_o_radio_button_checked" btn-type="default"/>
             </container>
             <section name="NoHistory" condition="!historyList.length"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
             <form-list name="CallHistory" list="historyList" skip-form="true">
