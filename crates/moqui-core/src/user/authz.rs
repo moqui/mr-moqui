@@ -219,6 +219,40 @@ pub fn authorize(artifact_type: &str, name: &str, action: &str) -> Result<(), Er
     }
 }
 
+/// Whether an `AT_ENTITY` frame for `action` on `name` would be allowed against the top of the stack, as a push
+/// decides it (`requires_authz` from the entity's `authorize-skip`), without pushing it, counting a hit or recording a
+/// failure: a check of whether the user may, not a use. For a write that needs two actions allowed before it runs,
+/// such as an upsert that creates or updates (Parity-Diffs, atomic create-or-update).
+///
+/// # Errors
+///
+/// Returns an error when the user's authorization records cannot be read.
+pub(crate) fn entity_permitted(name: &str, action: &str, requires_authz: bool) -> Result<bool, Error> {
+    if !context_entered() {
+        return Ok(true);
+    }
+    let StackAuthz {
+        last,
+        ancestor_deny,
+        authz_disabled: disabled,
+    } = ExecutionContext::with_current(|ec| ec.stack_authz_state()).unwrap_or(StackAuthz::NO_CONTEXT);
+    let (permitted, _) = is_permitted(
+        AT_ENTITY,
+        name,
+        action,
+        &Permit {
+            requires_authz,
+            authz_disabled: disabled,
+            count_tarpit: false,
+            is_access: false,
+            parameters: None,
+        },
+        last.as_ref(),
+        ancestor_deny,
+    )?;
+    Ok(permitted)
+}
+
 /// Authorize `action` on an artifact by its own authorization records only: an inheritable authorization of the frames
 /// below (the screen or service asking) is not taken, as it is by [`authorize`]. For the artifacts whose rights are their
 /// own whatever asks, git repositories (`AT_GIT_REPOSITORY`): the git server has no frames below, so the code screens

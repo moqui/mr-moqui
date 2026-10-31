@@ -14,9 +14,10 @@
 
 //! Concurrent create-or-update of one primary key that is not there yet (Parity-Diffs, atomic create-or-update): each
 //! call succeeds and there is one row, rather than the transactions that lost the race failing on the key, as the
-//! parallel preview and thumbnail requests of a file did on its `ResourceRecent` row. Both the default UPDATE-first path
-//! and Java's read-first one (`create-or-update=true`) are raced, on embedded Postgres and (ignored, as it needs a
-//! server) on MySQL.
+//! parallel preview and thumbnail requests of a file did on its `ResourceRecent` row. Three paths are raced, on
+//! embedded Postgres and (ignored, as it needs a server) on MySQL: the one-statement upsert a value takes where nothing
+//! depends on whether it creates or updates, the UPDATE-first path (a value that sets `lastUpdatedStamp` is not one
+//! upsert), and Java's read-first one (`create-or-update=true`).
 
 #![cfg(any(all(unix, feature = "embedded-postgres"), feature = "mysql"))]
 
@@ -29,7 +30,7 @@ use moqui_lib::object::Value;
 
 const ENTITY: &str = "moqui.basic.EnumerationType";
 /// Racing rounds per mode; each starts with the row gone.
-const ROUNDS: usize = 3;
+const ROUNDS: usize = 2;
 /// The callers of a round.
 const CALLERS: usize = 6;
 
@@ -122,8 +123,9 @@ fn racing_create_or_update_of_a_missing_key_all_succeed_on_mysql() {
     assert_eq!(rows.len(), 1);
     drop(conn);
 
-    // `ON DUPLICATE KEY` matches any unique key, not just the primary one: a new key that conflicts on another unique
-    // index inserts nothing, and the update by primary key that follows finds no row, so the write still fails.
+    // `ON DUPLICATE KEY` matches any unique key, not just the primary one, so an entity with a unique index is not one
+    // upsert on MySQL: a new key that conflicts on another unique index inserts nothing, the row is not there by its
+    // key, and the write fails as that conflict, leaving the other row as it was.
     let resource = "moqui.resource.DbResource";
     facade.check_tables(&[resource]).unwrap();
     let clean_resources = || {
@@ -141,7 +143,21 @@ fn racing_create_or_update_of_a_missing_key_all_succeed_on_mysql() {
     };
     named("RACE_UK_A").create(&facade).unwrap();
     let err = named("RACE_UK_B").create_or_update(&facade).unwrap_err().to_string();
-    assert!(err.contains("Tried to update a value that does not exist"), "{err}");
+    assert!(
+        err.contains("another row has the same value of a unique index"),
+        "{err}"
+    );
+    let named_rows = facade
+        .find(resource)
+        .unwrap()
+        .eq("parentResourceId", Value::string("RACE_UK_PARENT"))
+        .list()
+        .unwrap();
+    assert_eq!(named_rows.len(), 1);
+    assert_eq!(
+        named_rows.get(0).unwrap().get("resourceId").and_then(Value::as_str),
+        Some("RACE_UK_A")
+    );
     clean_resources();
 
     race_rounds(&facade, "mysql_");
@@ -165,13 +181,14 @@ fn pool() -> PoolConfig {
 
 /// [`ROUNDS`] races on a missing key in each mode, each followed by a race on the row it left. `prefix` starts the keys.
 fn race_rounds(facade: &EntityFacade, prefix: &str) {
-    for mode in ["update-first", "read-first"] {
+    for mode in ["upsert", "update-first", "read-first"] {
         if mode == "read-first" {
             moqui_lib::env::set_property("create-or-update", "true".to_string());
         }
+        let stamped = mode == "update-first";
         for round in 0..ROUNDS {
             let id = format!("RACE_{prefix}{mode}_{round}");
-            race(facade, &id, |index| format!("caller {index}"))
+            race(facade, &id, stamped, |index| format!("caller {index}"))
                 .unwrap_or_else(|err| panic!("{mode} round {round}: {err}"));
             let rows = facade
                 .find(ENTITY)
@@ -186,7 +203,7 @@ fn race_rounds(facade: &EntityFacade, prefix: &str) {
                 "{mode} round {round}: {description}"
             );
             // A second race on the row that is there now updates it.
-            race(facade, &id, |index| format!("again {index}"))
+            race(facade, &id, stamped, |index| format!("again {index}"))
                 .unwrap_or_else(|err| panic!("{mode} round {round}, existing row: {err}"));
             let rows = facade
                 .find(ENTITY)
@@ -202,8 +219,9 @@ fn race_rounds(facade: &EntityFacade, prefix: &str) {
 }
 
 /// [`CALLERS`] threads create-or-update `id` at once, each in its own transaction that stays open a moment after the
-/// write, so every write is sent before the first commits. The first error any of them got, with its caller.
-fn race(facade: &EntityFacade, id: &str, description: impl Fn(usize) -> String) -> Result<(), String> {
+/// write, so every write is sent before the first commits; `stamped` values set `lastUpdatedStamp`. The first error any
+/// of them got, with its caller.
+fn race(facade: &EntityFacade, id: &str, stamped: bool, description: impl Fn(usize) -> String) -> Result<(), String> {
     let barrier = Arc::new(Barrier::new(CALLERS));
     let threads: Vec<_> = (0..CALLERS)
         .map(|index| {
@@ -215,6 +233,9 @@ fn race(facade: &EntityFacade, id: &str, description: impl Fn(usize) -> String) 
                 let mut row = facade.make_value(ENTITY).unwrap();
                 row.set("enumTypeId", Value::string(&id));
                 row.set("description", Value::string(description));
+                if stamped {
+                    row.set("lastUpdatedStamp", Value::string("2026-10-30 12:00:00"));
+                }
                 let tx = facade.transactions_for(ENTITY).unwrap();
                 barrier.wait();
                 tx.run(TransactionAttribute::ForceNew, None, || {

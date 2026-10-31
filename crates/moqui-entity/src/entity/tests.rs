@@ -25,7 +25,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
 use super::crypto::CryptConfig;
-use super::{EntityFacade, EntityGroup};
+use super::{EntityFacade, EntityGroup, FieldMap};
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 use crate::transaction::{PoolConfig, TransactionManager};
 
@@ -816,6 +816,9 @@ struct StoreTape {
     exists: bool,
     /// Another transaction creates the row just before the next insert.
     created_by_another: bool,
+    /// The next insert that does nothing on a conflict meets another row's unique index value, so it counts no row
+    /// and this row stays missing (MySQL's `ON DUPLICATE KEY UPDATE` takes any unique index).
+    unique_conflict: bool,
 }
 
 struct StoreDriver {
@@ -849,7 +852,10 @@ impl DbConnection for StoreConn {
                 tape.exists = true;
             }
             let if_missing = sql.ends_with(" DO NOTHING") || sql.contains(" ON DUPLICATE KEY UPDATE ");
-            if if_missing && tape.exists {
+            if if_missing && std::mem::take(&mut tape.unique_conflict) {
+                return Ok(0);
+            }
+            if if_missing && tape.exists && !sql.contains(" DO UPDATE ") && !sql.contains(" = VALUES(") {
                 return Ok(0);
             }
             tape.exists = true;
@@ -939,6 +945,19 @@ fn open_store(exists: bool, dialect: &str) -> (EntityFacade, Arc<Mutex<StoreTape
     (facade, tape)
 }
 
+/// [`open_store`] with a `create` ECA rule on `TestEntity`, so a create-or-update is not one upsert (a rule depends on
+/// whether it creates) and takes the UPDATE-first or the find-then-write path. The rule does not run here: no context
+/// is entered.
+fn open_store_no_upsert(exists: bool, dialect: &str) -> (EntityFacade, Arc<Mutex<StoreTape>>) {
+    let (facade, tape) = open_store(exists, dialect);
+    super::load_feed::add_eca_rules(
+        &facade,
+        r#"<eecas><eeca entity="moqui.test.TestEntity" on-create="true"><actions><log message="x"/></actions></eeca></eecas>"#,
+    )
+    .unwrap();
+    (facade, tape)
+}
+
 fn writes(tape: &Arc<Mutex<StoreTape>>) -> Vec<(String, usize)> {
     let tape = tape.lock().unwrap_or_else(|err| err.into_inner());
     tape.sql
@@ -955,9 +974,116 @@ fn test_value(facade: &EntityFacade) -> super::EntityValue {
     value
 }
 
+/// Where nothing depends on whether it creates or updates, a create-or-update of a value not read from the database is
+/// one statement that does either, for a new row and for one that is there (Parity-Diffs, atomic create-or-update).
+#[test]
+fn create_or_update_where_an_upsert_fits_is_one_statement() {
+    for dialect in ["postgres", "mysql"] {
+        let (facade, tape) = open_store(false, dialect);
+        facade.create_value(&test_value(&facade)).unwrap();
+        let direct_insert = tape.lock().unwrap().sql[0].clone();
+        for exists in [false, true] {
+            {
+                let mut tape = tape.lock().unwrap();
+                tape.exists = exists;
+                tape.sql.clear();
+                tape.params.clear();
+            }
+            facade.create_or_update_value(&test_value(&facade)).unwrap();
+            let tape = tape.lock().unwrap();
+            assert_eq!(tape.sql.len(), 1, "{dialect}, exists={exists}: {:?}", tape.sql);
+            let sql = &tape.sql[0];
+            assert!(sql.starts_with(&direct_insert), "{dialect}: {sql}");
+            if dialect == "mysql" {
+                assert!(
+                    sql.contains(" ON DUPLICATE KEY UPDATE `TEST_MEDIUM` = VALUES(`TEST_MEDIUM`)"),
+                    "{sql}"
+                );
+            } else {
+                assert!(
+                    sql.contains(" ON CONFLICT (\"test_id\") DO UPDATE SET \"test_medium\" = EXCLUDED.\"test_medium\""),
+                    "{sql}"
+                );
+            }
+            assert!(tape.exists);
+        }
+    }
+}
+
+/// A value that sets only the key: one insert that does nothing when the row is there, since an update would write
+/// nothing.
+#[test]
+fn create_or_update_of_only_the_key_inserts_it_if_missing() {
+    for (dialect, ending) in [
+        ("postgres", " ON CONFLICT (\"test_id\") DO NOTHING"),
+        ("mysql", " ON DUPLICATE KEY UPDATE `TEST_ID` = `TEST_ID`"),
+    ] {
+        for exists in [false, true] {
+            let (facade, tape) = open_store(exists, dialect);
+            let mut value = facade.make_value("moqui.test.TestEntity").unwrap();
+            value.set("testId", Value::string("T1"));
+            facade.create_or_update_value(&value).unwrap();
+            let tape = tape.lock().unwrap();
+            assert_eq!(tape.sql.len(), 1, "{dialect}, exists={exists}: {:?}", tape.sql);
+            assert!(tape.sql[0].ends_with(ending), "{}", tape.sql[0]);
+        }
+    }
+}
+
+/// A value read from the database writes only what it changed, and one that sets `lastUpdatedStamp` keeps an update's
+/// stamp rule: neither is one upsert.
+#[test]
+fn create_or_update_of_a_read_value_or_a_given_stamp_is_not_one_upsert() {
+    let (facade, tape) = open_store(true, "postgres");
+    let mut read = facade
+        .find("moqui.test.TestEntity")
+        .unwrap()
+        .eq("testId", Value::string("T1"))
+        .one()
+        .unwrap()
+        .expect("the row");
+    read.set("testMedium", Value::string("read then changed"));
+    tape.lock().unwrap().sql.clear();
+    tape.lock().unwrap().params.clear();
+    facade.create_or_update_value(&read).unwrap();
+    let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
+    assert_eq!(kinds, ["UPDATE"], "{kinds:?}");
+
+    tape.lock().unwrap().sql.clear();
+    tape.lock().unwrap().params.clear();
+    let mut stamped = test_value(&facade);
+    stamped.set("lastUpdatedStamp", Value::string("2026-10-30 12:00:00"));
+    facade.create_or_update_value(&stamped).unwrap();
+    let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
+    assert_eq!(kinds, ["UPDATE"], "{kinds:?}");
+}
+
+/// On MySQL `ON DUPLICATE KEY UPDATE` takes a conflict on any unique index, so an entity with one is not stored as one
+/// upsert there (a new key with another row's unique value would update that row); on Postgres the conflict target is
+/// the primary key.
+#[test]
+fn an_upsert_does_not_fit_an_entity_with_a_unique_index_on_mysql() {
+    let fields: FieldMap = [
+        ("lockId", Value::string("L1")),
+        ("repositoryId", Value::string("R1")),
+        ("lockPath", Value::string("a.bin")),
+    ]
+    .into_iter()
+    .map(|(name, value)| (Arc::from(name), value))
+    .collect();
+    for (dialect, fits) in [("postgres", true), ("mysql", false)] {
+        let (facade, _tape) = open_store(false, dialect);
+        assert_eq!(
+            facade.upsert_fits("moqui.resource.GitLfsLock", &fields).unwrap(),
+            fits,
+            "{dialect}"
+        );
+    }
+}
+
 #[test]
 fn create_or_update_on_an_existing_row_is_one_update_with_the_same_sql_as_update() {
-    let (facade, tape) = open_store(true, "postgres");
+    let (facade, tape) = open_store_no_upsert(true, "postgres");
     facade.update_value(&test_value(&facade)).unwrap();
     let direct = tape.lock().unwrap().sql.clone();
     assert_eq!(direct.len(), 1, "{direct:?}");
@@ -971,7 +1097,7 @@ fn create_or_update_on_an_existing_row_is_one_update_with_the_same_sql_as_update
 
 #[test]
 fn create_or_update_on_a_new_row_updates_nothing_then_inserts_as_before() {
-    let (facade, tape) = open_store(false, "postgres");
+    let (facade, tape) = open_store_no_upsert(false, "postgres");
     facade.create_value(&test_value(&facade)).unwrap();
     let direct_insert = tape.lock().unwrap().sql.clone();
     let direct_params = tape.lock().unwrap().params[0].clone();
@@ -999,13 +1125,15 @@ fn create_or_update_on_a_new_row_updates_nothing_then_inserts_as_before() {
 
 /// Another transaction creates the row between the UPDATE that found none and the insert: the insert does nothing and
 /// the row is updated, with the statement an update of a row that is there writes, so the call does not fail on the key.
+/// On MySQL the row is read (locking) before the update, as the insert's count does not tell the key from another
+/// unique index.
 #[test]
 fn create_or_update_that_loses_the_race_for_a_new_row_updates_it() {
     for (dialect, expected) in [
-        ("postgres", ["UPDATE", "INSERT", "UPDATE"]),
-        ("mysql", ["SELECT", "INSERT", "UPDATE"]),
+        ("postgres", vec!["UPDATE", "INSERT", "UPDATE"]),
+        ("mysql", vec!["SELECT", "INSERT", "SELECT", "UPDATE"]),
     ] {
-        let (facade, tape) = open_store(true, dialect);
+        let (facade, tape) = open_store_no_upsert(true, dialect);
         facade.update_value(&test_value(&facade)).unwrap();
         let direct_update = tape.lock().unwrap().sql[0].clone();
         {
@@ -1018,12 +1146,28 @@ fn create_or_update_that_loses_the_race_for_a_new_row_updates_it() {
         facade.create_or_update_value(&test_value(&facade)).unwrap();
         let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
         assert_eq!(kinds, expected, "{dialect}: {kinds:?}");
-        assert_eq!(tape.lock().unwrap().sql[2], direct_update, "{dialect}");
+        assert_eq!(tape.lock().unwrap().sql.last(), Some(&direct_update), "{dialect}");
     }
 }
 
+/// On MySQL an insert that does nothing because another row has the same value of a unique index (no row has the key)
+/// fails as that conflict, not as an update of a missing row.
 #[test]
-fn create_or_update_flag_selects_java_read_first_and_defaults_to_update_first() {
+fn create_or_update_that_meets_another_unique_value_on_mysql_names_the_conflict() {
+    let (facade, tape) = open_store_no_upsert(false, "mysql");
+    tape.lock().unwrap().unique_conflict = true;
+    let err = facade.create_or_update_value(&test_value(&facade)).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("another row has the same value of a unique index"),
+        "{err}"
+    );
+    let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
+    assert_eq!(kinds, ["SELECT", "INSERT", "SELECT"], "{kinds:?}");
+}
+
+#[test]
+fn create_or_update_flag_selects_java_read_first_and_defaults_to_one_upsert() {
     const CHILD: &str = "MOQUI_TEST_CREATE_OR_UPDATE_CHILD";
     if std::env::var_os(CHILD).is_none() {
         // Run each setting in its own process; process properties must not affect parallel tests.
@@ -1031,7 +1175,7 @@ fn create_or_update_flag_selects_java_read_first_and_defaults_to_update_first() 
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command.args([
                 "--exact",
-                "entity::tests::create_or_update_flag_selects_java_read_first_and_defaults_to_update_first",
+                "entity::tests::create_or_update_flag_selects_java_read_first_and_defaults_to_one_upsert",
             ]);
             command.env(CHILD, "true").env_remove("create-or-update");
             if let Some(setting) = setting {
@@ -1042,23 +1186,31 @@ fn create_or_update_flag_selects_java_read_first_and_defaults_to_update_first() 
         return;
     }
     let java = moqui_lib::env::get_prop_or_env("create-or-update") == "true";
-    for exists in [false, true] {
-        let (facade, tape) = open_store(exists, "postgres");
+    for (upsert_fits, exists) in [(true, false), (true, true), (false, false), (false, true)] {
+        let (facade, tape) = if upsert_fits {
+            open_store(exists, "postgres")
+        } else {
+            open_store_no_upsert(exists, "postgres")
+        };
         facade.create_or_update_value(&test_value(&facade)).unwrap();
         let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
-        let expected = match (java, exists) {
-            (true, false) => vec!["SELECT", "INSERT"],
-            (true, true) => vec!["SELECT", "UPDATE"],
-            (false, false) => vec!["UPDATE", "INSERT"],
-            (false, true) => vec!["UPDATE"],
+        let expected = match (java, upsert_fits, exists) {
+            (true, _, false) => vec!["SELECT", "INSERT"],
+            (true, _, true) => vec!["SELECT", "UPDATE"],
+            (false, true, _) => vec!["INSERT"],
+            (false, false, false) => vec!["UPDATE", "INSERT"],
+            (false, false, true) => vec!["UPDATE"],
         };
-        assert_eq!(kinds, expected, "java={java}, exists={exists}");
+        assert_eq!(
+            kinds, expected,
+            "java={java}, upsert_fits={upsert_fits}, exists={exists}"
+        );
     }
 }
 
 #[test]
 fn create_or_update_keeps_find_then_write_for_dialects_that_do_not_report_matched_rows() {
-    let (facade, tape) = open_store(true, "mysql");
+    let (facade, tape) = open_store_no_upsert(true, "mysql");
     facade.create_or_update_value(&test_value(&facade)).unwrap();
     let kinds: Vec<String> = writes(&tape).into_iter().map(|(kind, _)| kind).collect();
     assert_eq!(kinds, ["SELECT", "UPDATE"], "{kinds:?}");

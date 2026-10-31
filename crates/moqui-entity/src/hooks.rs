@@ -83,6 +83,9 @@ pub struct EntityHooks {
     pub disable_authz: fn() -> Option<Guard>,
     /// Push an `AT_ENTITY` frame (name, action, whether it needs an allow, hit sub type); `None` with no context.
     pub push_entity: fn(&str, &str, bool, &str) -> Option<Result<(), Error>>,
+    /// Whether an `AT_ENTITY` frame (name, action, whether it needs an allow) would be allowed, without pushing it or
+    /// counting a hit; `None` with no context.
+    pub entity_permitted: fn(&str, &str, bool) -> Option<Result<bool, Error>>,
     pub pop_artifact: fn(),
     /// Set the hit sub type of the frame on top.
     pub set_hit_detail: fn(&str),
@@ -154,6 +157,7 @@ impl EntityHooks {
         authz_disabled: || false,
         disable_authz: || None,
         push_entity: |_, _, _, _| None,
+        entity_permitted: |_, _, _| None,
         pop_artifact: || {},
         set_hit_detail: |_| {},
         stack_names: String::new,

@@ -316,10 +316,14 @@ the form is gone and the service refuses the call.
 To load more on a server that already has data, stop it and run `moqui load types=...` (or `./moq load-production
 ...`). On embedded Postgres a second process cannot open the data directory while the server holds it.
 
-By default an entity's create-or-update is UPDATE first, then INSERT. `-D create-or-update=true` switches to Moqui
-Java's read-first form (SELECT, then INSERT or UPDATE). In both, the INSERT does nothing when another transaction has
-created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated, so
-concurrent calls for one new key do not fail on it ([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
+By default an entity's create-or-update is one statement that inserts or updates (`INSERT ... ON CONFLICT (pk) DO
+UPDATE`, on MySQL `ON DUPLICATE KEY UPDATE`) where nothing depends on which it does: no create or update ECA rule, no
+audit-logged, create-only or defaulted field, no optimistic lock, and the user may both create and update the entity.
+Otherwise it is UPDATE first, then INSERT. `-D create-or-update=true` switches to Moqui Java's read-first form
+(SELECT, then INSERT or UPDATE). Where the row is looked for first, the INSERT does nothing when another transaction
+has created the row since (`ON CONFLICT DO NOTHING`, on MySQL `ON DUPLICATE KEY UPDATE`), and that row is then updated.
+Either way, concurrent calls for one new key do not fail on it
+([Parity-Diffs](../plans/Parity-Diffs.md#atomic-create-or-update-2026-10-30)).
 
 ## Database and search
 

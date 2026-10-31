@@ -60,6 +60,9 @@ moqui_entity::hooks::submit! {
                 Ok(())
             })
         },
+        entity_permitted: |name, action, requires_authz| {
+            ExecutionContext::with_current(|_| crate::user::entity_permitted(name, action, requires_authz))
+        },
         pop_artifact: || {
             ExecutionContext::with_current(|ec| {
                 let _ = ec.pop();
