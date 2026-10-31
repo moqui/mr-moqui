@@ -424,7 +424,7 @@ pub(crate) fn dispatch_refs(args: &[String]) -> Result<(), Error> {
             "--in" => outgoing = false,
             "--out" => outgoing = true,
             "--json" => json = true,
-            "--server" => server = rest.next().cloned(),
+            "--server" => server = Some(rest.next().ok_or_else(|| crate::usage::command_usage("refs"))?.clone()),
             other if let Some(url) = other.strip_prefix("--server=") => server = Some(url.to_string()),
             other if let Some(found) = ProjectArg::parse(other, &mut rest) => {
                 project = Some(found.ok_or_else(|| crate::usage::command_usage("refs"))?);
@@ -575,6 +575,16 @@ fn remote_refs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refs_with_a_flag_without_its_value_is_the_usage_error() {
+        for flag in ["--server", "--java", "--project"] {
+            let err = dispatch_refs(&["a#B".to_string(), flag.to_string()])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("moqui help refs"), "{flag}: {err}");
+        }
+    }
 
     #[test]
     fn check_takes_the_server_either_way() {
