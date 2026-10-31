@@ -324,7 +324,15 @@ fn detected_java_checkout() -> Option<PathBuf> {
 fn mr_framework_for(configured: Option<PathBuf>, exe: Option<&Path>) -> Option<PathBuf> {
     let is_framework = |dir: &Path| dir.join("component.xml").is_file() && dir.join("conf/MoquiDefaultConf.xml").is_file();
     if let Some(dir) = configured.filter(|dir| !dir.as_os_str().is_empty()) {
-        return Some(dir);
+        // One that is not a framework directory is passed over, so the error says what was not found.
+        if is_framework(&dir) {
+            return Some(dir);
+        }
+        tracing::warn!(
+            "MOQUI_FRAMEWORK {} has no component.xml and conf/MoquiDefaultConf.xml, so it is not an MR Moqui framework",
+            dir.display()
+        );
+        return None;
     }
     let exe_dir = exe?.parent()?;
     exe_dir

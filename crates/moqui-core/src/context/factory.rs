@@ -217,7 +217,7 @@ pub struct BootOptions {
     /// The directory of the framework component's artifacts (entity, service, screen, data) when it is not the
     /// framework directory: a Java Moqui checkout's `framework`, which has no conf of its own, read by the artifact tools
     /// on a model-only boot (`moqui refs`, `moqui check`, `moqui lsp`). The conf, XSDs and templates stay the framework
-    /// directory's; the framework directory's own entities and services load first, so the component's override them.
+    /// directory's; its entities and services are not loaded, the component's are in their place.
     pub framework_component: Option<PathBuf>,
 }
 

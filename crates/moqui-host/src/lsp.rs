@@ -725,7 +725,11 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
         match arg.as_str() {
             "--server" => server_url = rest.next().cloned(),
             other if let Some(url) = other.strip_prefix("--server=") => server_url = Some(url.to_string()),
-            "--java" => java = rest.next().map(PathBuf::from),
+            "--java" => {
+                java = Some(PathBuf::from(
+                    rest.next().ok_or_else(|| crate::usage::command_usage("lsp"))?,
+                ))
+            }
             other if let Some(dir) = other.strip_prefix("--java=") => java = Some(PathBuf::from(dir)),
             "--stdio" => {}
             _ => return Err(crate::usage::command_usage("lsp")),
