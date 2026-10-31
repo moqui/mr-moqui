@@ -1155,7 +1155,10 @@ pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen
   overlay transaction (`moqui_core::entity::sim_step`) and puts each step under a savepoint: a step that fails, is
   refused an outside effect or rolls back a transaction it wrote in is rolled back to its savepoint with the sim
   session's state, and the next step runs. The read runs under a savepoint that is always rolled back; its entity
-  values and lists come back as plain maps.
+  values and lists come back as plain maps. A sim write fails as the same write would in production: a create of a
+  key that exists (in the sim or production), an update of one that does not; a create-or-update of a production row
+  updates it in the sim. Sim ids count from -1 again in each run, so a caller keeps a step's `createdKeys` only until
+  its next run.
 
 ## Chat members, triggers and AI tasks
 

@@ -438,37 +438,66 @@ fn a_non_key_find_sees_the_sim_update_not_the_stale_row() {
     assert!(production_columns(&started.driver, "TCNPK2").is_none());
 }
 
-/// Groovy's "HOLD create of a row that exists in production fails like production, and update of a missing row fails"
-/// throws `EntityException` for both. The overlay insert does not see the production key, so both calls return `Ok`
-/// and only the sim find changes.
+/// Groovy's "HOLD create of a row that exists in production fails like production, and update of a missing row fails":
+/// both are errors in the sim too, and write nothing. A create-or-update is as on the database, and an update of a row
+/// the sim deleted fails.
 #[test]
-fn a_sim_create_of_a_production_key_overlays_it_and_a_missing_update_inserts() {
+fn a_sim_create_of_a_production_key_and_a_missing_update_fail_like_production() {
     let _lock = crate::common::shared();
     let started = start_facade("dup", &["moqui.test.TestEntity"], true);
     let facade = &started.facade;
     create_test(facade, "TCDUP1", "real");
+    create_test(facade, "TCDEL1", "real");
 
     enter_sim(facade).unwrap();
     let _leave = ExitSim(facade);
     let mut dup = facade.make_value("moqui.test.TestEntity").unwrap();
     dup.set("testId", Value::string("TCDUP1"));
     dup.set("testMedium", Value::string("dup"));
-    // Groovy throws. This create returns Ok.
-    dup.create(facade).unwrap();
+    let err = dup.create(facade).unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
     let seen = find_one(facade, "moqui.test.TestEntity", "testId", "TCDUP1").unwrap();
-    assert_eq!(text(&seen, "testId"), "TCDUP1");
-    assert_eq!(text(&seen, "testMedium"), "dup");
-    let stored = production_columns(&started.driver, "TCDUP1").unwrap();
-    assert_eq!(stored.0, "real");
+    assert_eq!(text(&seen, "testMedium"), "real");
 
     let mut missing = facade.make_value("moqui.test.TestEntity").unwrap();
     missing.set("testId", Value::string("TCNOROW"));
     missing.set("testMedium", Value::string("x"));
-    // Groovy's update of a missing row throws ("does not exist"). This update returns Ok.
-    missing.update(facade).unwrap();
-    let created = find_one(facade, "moqui.test.TestEntity", "testId", "TCNOROW").unwrap();
-    assert_eq!(text(&created, "testId"), "TCNOROW");
-    assert_eq!(text(&created, "testMedium"), "x");
+    let err = missing.update(facade).unwrap_err();
+    assert!(err.to_string().contains("does not exist"), "{err}");
+    assert!(find_one(facade, "moqui.test.TestEntity", "testId", "TCNOROW").is_none());
+    missing.create_or_update(facade).unwrap();
+    assert_eq!(
+        text(
+            &find_one(facade, "moqui.test.TestEntity", "testId", "TCNOROW").unwrap(),
+            "testMedium"
+        ),
+        "x"
+    );
+    dup.create_or_update(facade).unwrap();
+    assert_eq!(
+        text(
+            &find_one(facade, "moqui.test.TestEntity", "testId", "TCDUP1").unwrap(),
+            "testMedium"
+        ),
+        "dup"
+    );
+
+    let mut gone = facade.make_value("moqui.test.TestEntity").unwrap();
+    gone.set("testId", Value::string("TCDEL1"));
+    gone.delete(facade).unwrap();
+    gone.set("testMedium", Value::string("after"));
+    assert!(gone.update(facade).is_err());
+    // Created again after its delete, as on the database
+    gone.create(facade).unwrap();
+    assert_eq!(
+        text(
+            &find_one(facade, "moqui.test.TestEntity", "testId", "TCDEL1").unwrap(),
+            "testMedium"
+        ),
+        "after"
+    );
+
+    assert_eq!(production_columns(&started.driver, "TCDUP1").unwrap().0, "real");
     assert!(production_columns(&started.driver, "TCNOROW").is_none());
 }
 

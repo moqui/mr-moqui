@@ -1218,7 +1218,11 @@ impl EntityFacade {
             None => Cow::Borrowed(&*cache_values),
         };
         let mut affected = 1;
-        if cache::gate_write(self, entity_name, operation, &plain)? == WriteGate::Handled {
+        let gate = cache::gate_write(self, entity_name, operation, &plain, probe || if_missing)?;
+        if gate == WriteGate::Missed {
+            return Ok(0);
+        }
+        if gate == WriteGate::Handled {
             load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), None);
         } else {
             let mut after_values = eca_after.then(|| (*cache_values).clone());
@@ -1379,7 +1383,7 @@ impl EntityFacade {
     }
 
     /// As Java's `updateExtended`: an update of a row that is not there is an error, not a silent no-op.
-    fn missing_update(&self, entity_name: &str, values: &FieldMap) -> String {
+    pub(crate) fn missing_update(&self, entity_name: &str, values: &FieldMap) -> String {
         let keys = self
             .with_entity(entity_name, |entity, _, _| pk_values(entity, values))
             .unwrap_or_default()

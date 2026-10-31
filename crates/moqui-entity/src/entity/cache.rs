@@ -82,11 +82,13 @@ pub struct FindLookup {
 ///
 /// `Handled` means this module stored the write or ran it itself. Return that only when the write
 /// will not be lost: a transaction cache inside an open frame, or a sim write already sent to the
-/// overlay. `on_write` still runs after either variant and is the one-cache invalidation.
+/// overlay. `on_write` still runs after either variant and is the one-cache invalidation. `Missed` is a sim write that
+/// wrote nothing, as on the database: an update probe that matched no row, or a create-if-missing of a row that is there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteGate {
     Proceed,
     Handled,
+    Missed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -867,12 +869,14 @@ fn build_views_by_member(facade: &EntityFacade) -> HashMap<String, Vec<String>> 
     map
 }
 
-/// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller.
+/// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller. `quiet` is an update that matches
+/// no row, or a create of a row that is there, without an error: `update_if_exists` and `create_if_missing`.
 pub fn gate_write(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
     values: &FieldMap,
+    quiet: bool,
 ) -> Result<WriteGate, Error> {
     let op = parse_op(operation)?;
     if super::fence::active() {
@@ -898,8 +902,8 @@ pub fn gate_write(
             tx.with_connection(|_| Ok(()))?;
         }
         note_sim_write(&tx)?;
-        write_sim(facade, entity_name, op, values, &prepared)?;
-        return Ok(WriteGate::Handled);
+        let written = write_sim(facade, entity_name, op, values, &prepared, quiet)?;
+        return Ok(if written { WriteGate::Handled } else { WriteGate::Missed });
     }
     tx.with_connection(|_| Ok(()))?;
     let token = tx.frame_token().ok_or_else(|| Error::new("no transaction in place"))?;
@@ -1496,65 +1500,74 @@ fn write_sim(
     op: Op,
     plain: &FieldMap,
     prepared: &SealedWrite,
-) -> Result<(), Error> {
+    quiet: bool,
+) -> Result<bool, Error> {
     let hit = sim_hit(&prepared.full_name, &prepared.pk)?;
     // The overlay dialect rejects insert-or-update. A new sim row is an insert; a written row is an update.
     // A replica row is in the sim table already, as a written one is.
     let present = hit.written || hit.replica;
+    // A row the sim has not written or deleted is the database's: the write sees it as the database would.
+    let stored = if !present && !hit.tombstone && op != Op::Delete {
+        load_by_pk(facade, entity_name, plain)?
+    } else {
+        None
+    };
     let op = match op {
-        Op::Upsert if present => Op::Update,
+        Op::Upsert if present || stored.is_some() => Op::Update,
         Op::Upsert => Op::Create,
         other => other,
     };
-    if op == Op::Update && hit.tombstone {
-        return Ok(());
+    // As on the database: an update of a row that is not there (or that the sim deleted) and a create of a row that is
+    // there are errors, or write nothing when quiet.
+    if op == Op::Update && !present && stored.is_none() {
+        if quiet {
+            return Ok(false);
+        }
+        return Err(Error::new(facade.missing_update(entity_name, plain)));
     }
-    if op == Op::Create && present {
+    if op == Op::Create && (present || stored.is_some()) {
+        if quiet {
+            return Ok(false);
+        }
         return Err(Error::new(format!(
-            "create of existing sim row {} {}",
+            "Tried to create a value that already exists [{}: {}]",
             prepared.full_name, prepared.pk
         )));
     }
     if op == Op::Delete && !hit.table {
         note_sim(&prepared.full_name, &prepared.pk, Op::Delete, false);
-        return Ok(());
+        return Ok(true);
     }
-    let sealed_copy = if op == Op::Update && !present {
-        match load_by_pk(facade, entity_name, plain)? {
-            Some(row) => Some(seal(facade, entity_name, "create", row)?),
-            None => None,
-        }
-    } else {
-        None
+    let sealed_copy = match stored {
+        Some(row) if op == Op::Update => Some(seal(facade, entity_name, "create", row)?),
+        _ => None,
     };
     let ddl = if hit.table {
         None
     } else {
         Some(create_sql(facade, entity_name)?)
     };
-    let statements = sim_statements(facade, entity_name, op, &hit, &prepared.sealed, sealed_copy.as_ref())?;
+    let statements = sim_statements(facade, entity_name, op, &prepared.sealed, sealed_copy.as_ref())?;
     let sim = facade
         .sim_transactions()
         .ok_or_else(|| Error::new("sim transactions are not configured"))?;
     run_overlay(&sim, &hit.schema, ddl.as_deref(), &statements)?;
     note_sim(&prepared.full_name, &prepared.pk, op, ddl.is_some());
-    Ok(())
+    Ok(true)
 }
 
 fn sim_statements(
     facade: &EntityFacade,
     entity_name: &str,
     op: Op,
-    hit: &SimHit,
     sealed: &FieldMap,
     sealed_copy: Option<&FieldMap>,
 ) -> Result<Vec<(String, Vec<Value>)>, Error> {
     let mut statements = Vec::new();
+    // An update of a database row the sim has not written copies the row into the sim first
     if let Some(copied) = sealed_copy {
         push_statement(&mut statements, dml(facade, entity_name, Op::Create, copied)?);
         push_statement(&mut statements, dml(facade, entity_name, Op::Update, sealed)?);
-    } else if op == Op::Update && !hit.written && !hit.replica {
-        push_statement(&mut statements, dml(facade, entity_name, Op::Create, sealed)?);
     } else {
         push_statement(&mut statements, dml(facade, entity_name, op, sealed)?);
     }
