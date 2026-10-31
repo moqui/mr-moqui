@@ -194,7 +194,10 @@ A call to a number routed to a user (`PnrUser`) or a ring group (`PnrRingGroup`)
 "ring these users and numbers for so long", a voicemail box, a refusal or the end. The engine rings the first step for
 its seconds (`voicemailSeconds`); when its timer ends, when everyone rung declines, or when a forward to a number fails,
 the engine asks `begin#Voicemail` as before, and the plan answers with its next step: `mode: ring` with `ringSeconds`
-(the engine rings on, with a new timer that replaces the last), the plan's box, or nothing (the call ends).
+(the engine rings on, with a new timer that replaces the last), the plan's box, or nothing (the call ends). Each step has a
+token (`CallRoute.stepSeq`, `stepToken` in the answers): the engine's timer and the services' `voicemail` control carry
+the token of the step they came from, and one that arrives after the plan moved on is `stale` and changes nothing, so a
+late decline or timer of an earlier step cannot skip the step that rings now.
 
 **A user's rules** (Settings, Call handling; `CallHandlingRule`, read in `sequenceNum` order, each while its schedule
 is open or closed):

@@ -594,7 +594,8 @@ fn audio_for(
 
 impl Engine {
     /// Sends the leg to voicemail (reason noAnswer, busy, declined or access): the services move the call there first.
-    pub(super) fn start_voicemail(&mut self, leg: &str, reason: &str) {
+    /// `step` is the token of the plan's step this comes from (V3), so the services ignore a stale one.
+    pub(super) fn start_voicemail(&mut self, leg: &str, reason: &str, step: Option<String>) {
         if !self.legs.contains_key(leg)
             || self.voicemail.contains_key(leg)
             || !self.voicemail_starting.insert(leg.to_string())
@@ -602,7 +603,8 @@ impl Engine {
             return;
         }
         let Some(entry) = self.legs.get(leg) else { return };
-        let parameters = serde_json::json!({"callSessionId": entry.room, "callLegId": leg, "reason": reason});
+        let parameters =
+            serde_json::json!({"callSessionId": entry.room, "callLegId": leg, "reason": reason, "stepToken": step});
         let (factory, commands, leg, reason) = (
             Arc::clone(&self.factory),
             self.commands.clone(),
@@ -626,7 +628,8 @@ impl Engine {
             Ok(out) => out,
             Err(err) => {
                 let code = err.split(':').next().unwrap_or_default();
-                if matches!(code, "answered" | "callEnded") {
+                // stale: a timer or control of a step the plan has already left (V3), which changes nothing
+                if matches!(code, "answered" | "callEnded" | "stale") {
                     tracing::debug!("SIP leg {leg}: not to voicemail ({reason}): {err}");
                 } else {
                     tracing::warn!("SIP leg {leg}: voicemail did not start ({reason}), the call ends: {err}");
@@ -640,7 +643,7 @@ impl Engine {
         if text(&out, "mode") == "ring" {
             tracing::debug!("SIP leg {leg}: rings its next step ({reason})");
             match super::number(&out, "ringSeconds").filter(|s| *s > 0) {
-                Some(seconds) => self.ring_timer(&leg, seconds),
+                Some(seconds) => self.ring_timer(&leg, seconds, super::step_token(&out)),
                 None => self.ring_timers.clear(&leg),
             }
             return;
@@ -857,8 +860,8 @@ impl Engine {
     /// The timer of an inbound call's rings: unanswered by now, it goes to voicemail.
     /// Starts the leg's ring timer, replacing the one it had: when it ends the call goes on to its next step (V3) or to
     /// voicemail, through `begin#Voicemail`.
-    pub(super) fn ring_timer(&mut self, leg: &str, seconds: u64) {
-        let generation = self.ring_timers.arm(leg);
+    pub(super) fn ring_timer(&mut self, leg: &str, seconds: u64, step: Option<String>) {
+        let generation = self.ring_timers.arm(leg, step);
         let (commands, leg) = (self.commands.clone(), leg.to_string());
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(seconds)).await;

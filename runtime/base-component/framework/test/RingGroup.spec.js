@@ -111,8 +111,8 @@ function nodesUp() {
     })
 }
 const receive = () => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: GROUP_NUMBER, fromNumber: CALLER, fromName: "Spec Caller", instanceId: NODE})
-const begin = (call, reason) => engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId, callLegId: call.callLegId,
-    reason: reason || "noAnswer"})
+const begin = (call, reason, stepToken) => engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId, callLegId: call.callLegId,
+    reason: reason || "noAnswer", stepToken: stepToken || null})
 function legsOfUser(callSessionId, userId) {
     return sys(() => {
         const p = ec.entity.find("moqui.call.CallParticipant").condition({callSessionId, userId}).one()
@@ -308,6 +308,33 @@ feature("the group's box is its members': a message one of them heard is heard f
         m1After.voicemail.heard == true
         outsider.reasonCode == "notFound"
         outsiderAudio.reasonCode == "notFound"
+    }
+})
+
+feature("a stale step's timer or voicemail control does nothing: only the step the plan is on moves it on", {
+    when() {
+        const call = receive()
+        const first = offered(call.callSessionId)
+        const next = begin(call, "noAnswer", call.stepToken)
+        // the first step's decline (or its timer) arrives after the second step began: it is stale, and M2 rings on
+        const stale = begin(call, "declined", call.stepToken)
+        const stillRinging = offered(call.callSessionId)
+        const m2Log = log(call.callSessionId, M2)
+        const third = begin(call, "noAnswer", next.stepToken)
+        const thirdRung = offered(call.callSessionId)
+        endCall(call.callSessionId)
+        return {call, first, next, stale, stillRinging, m2Log, third, thirdRung}
+    },
+    then({call, first, next, stale, stillRinging, m2Log, third, thirdRung}) {
+        call.stepToken != null
+        first.join(",") == M1
+        next.mode == "ring"
+        next.stepToken != call.stepToken
+        stale.reasonCode == "stale"
+        stillRinging.join(",") == M2
+        m2Log.outcomeEnumId == null
+        third.mode == "ring"
+        thirdRung.join(",") == M3
     }
 })
 

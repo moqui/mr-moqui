@@ -245,11 +245,13 @@ along with this software (see the LICENSE.md file). If not, see
             one: mode ring with ringSeconds (a ring group's next member, a forward; the engine rings on with a new timer), or the
             plan's box (a ring group's shares it among its members); noRoute when the plan ends with no box (the call ends).
             Refused (reasonCode) when the call has ended, someone answered it (answered) or it is not an inbound phone call
-            (notFound).</description>
+            (notFound); stale when stepToken, the step the engine's timer or the voicemail control came from, is not the
+            plan's current one (the plan moved on; nothing changes). A ring answer carries its step's stepToken.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId" required="true"/>
             <parameter name="reason"/>
+            <parameter name="stepToken"/>
         </in-parameters>
         <out-parameters>
             <parameter name="mode"/>
@@ -260,6 +262,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromNumber"/>
             <parameter name="fromName"/>
             <parameter name="ringSeconds" type="Integer"/>
+            <parameter name="stepToken"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('begin', context))</script></actions>

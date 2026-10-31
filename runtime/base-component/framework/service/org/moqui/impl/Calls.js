@@ -623,7 +623,9 @@ function declineRing(session, participant, leg, userId) {
   session.update()
   pushState(session, 'declined', { declinedBy: userId })
   // V3: the call's handling plan goes on (a ring group's next member, a forward), or to voicemail
-  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) phoneControl(session, 'voicemail', { reason: 'declined' })
+  if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) {
+    phoneControl(session, 'voicemail', { reason: 'declined', stepToken: routeStepToken(session.callSessionId) })
+  }
 }
 
 function join(p) {
@@ -1364,6 +1366,15 @@ function phoneLegsOf(callSessionId) {
 }
 
 /** Tells the SIP engine on the call's node about its phone legs ({action: 'answer'}, and extra), after the commit. */
+/**
+ * The token of the step an inbound call's handling plan is on (V3, CallRoute.stepSeq), null for a call with none: the
+ * voicemail control carries it, so the engine's begin#Voicemail for a step the plan has since left does nothing.
+ */
+function routeStepToken(callSessionId) {
+  const route = one('moqui.call.CallRoute', { callSessionId })
+  return route ? String(Number(route.stepSeq) || 0) : null
+}
+
 function phoneControl(session, action, extra) {
   if (!session.mediaNodeId) return
   for (const leg of phoneLegsOf(session.callSessionId)) {
@@ -1679,7 +1690,7 @@ function forwardEvent(session, leg, p) {
     pushState(session, 'left')
     const stillRinging = find(LEG).condition('callSessionId', session.callSessionId).condition('statusId', 'ClsOffered').count()
     if (!stillRinging && session.statusId === 'CssRinging' && session.directionEnumId === 'CdrInbound') {
-      phoneControl(session, 'voicemail', { reason: 'noAnswer' })
+      phoneControl(session, 'voicemail', { reason: 'noAnswer', stepToken: routeStepToken(session.callSessionId) })
     }
     return {}
   }

@@ -201,9 +201,10 @@ function begin(p) {
   }
   // V3: the call's handling plan says where it goes next: another step that rings (the engine rings on), a box, or the end
   const plan = ec.resource.script(CALL_HANDLING).execute('advance', { callSessionId: p.callSessionId, callLegId: p.callLegId,
-    reason: p.reason }) || {}
-  if (plan.handled && plan.reasonCode) return refuse(plan.reasonCode, plan.reasonCode === 'noRoute' ? 'Nobody takes this call' : 'This call cannot go to voicemail now')
-  if (plan.handled && plan.mode === 'ring') return { mode: 'ring', ringSeconds: plan.ringSeconds || null }
+    reason: p.reason, stepToken: p.stepToken }) || {}
+  if (plan.handled && plan.reasonCode) return refuse(plan.reasonCode, plan.reasonCode === 'noRoute' ? 'Nobody takes this call'
+    : plan.reasonCode === 'stale' ? 'The call has moved on from that step' : 'This call cannot go to voicemail now')
+  if (plan.handled && plan.mode === 'ring') return { mode: 'ring', ringSeconds: plan.ringSeconds || null, stepToken: plan.stepToken || null }
   const moved = ec.resource.script(CALLS).execute('phoneToVoicemail', { callSessionId: p.callSessionId, callLegId: p.callLegId }) || {}
   if (moved.reasonCode) return refuse(moved.reasonCode, 'This call cannot go to voicemail now')
   const userId = Array.from(moved.userIdList || [])[0]

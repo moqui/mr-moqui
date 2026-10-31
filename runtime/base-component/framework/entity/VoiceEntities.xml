@@ -509,7 +509,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The handling plan of an inbound phone call, made when it arrives: its steps (planJson: ring these users
             and numbers for so long, then the next; a voicemail box; a refusal; the end), the step it is on, and how many
             forwards it took (hopCount, bounded by call_forward_max_hops). The SIP engine's ring timer and a forward that fails
-            move it on (CallHandlingServices advance, through begin#Voicemail).</description>
+            move it on (CallHandlingServices advance, through begin#Voicemail). stepSeq counts the steps run: the engine's timer
+            and the services' voicemail control carry it as stepToken, so one of a step the plan already left does nothing.</description>
         <field name="callSessionId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="ringGroupId" type="id"/>
@@ -517,6 +518,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromNumber" type="text-short"/>
         <field name="planJson" type="text-very-long"/>
         <field name="stepIndex" type="number-integer"/>
+        <field name="stepSeq" type="number-integer"/>
         <field name="hopCount" type="number-integer"/>
         <field name="createdDate" type="date-time"/>
         <field name="stepDate" type="date-time"/>

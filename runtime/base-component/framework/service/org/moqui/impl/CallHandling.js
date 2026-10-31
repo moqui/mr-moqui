@@ -564,9 +564,14 @@ function runFrom(route, index, displayName) {
 }
 
 function save(route, index) {
-  route.setFields({ stepIndex: index, stepDate: ec.user.nowTimestamp }, true, null, null)
+  route.setFields({ stepIndex: index, stepSeq: (Number(route.stepSeq) || 0) + 1, stepDate: ec.user.nowTimestamp }, true, null, null)
   route.update()
   return {}
+}
+
+/** The token of the step a plan is on: the engine's timer and the voicemail control carry it back to advance. */
+function stepToken(route) {
+  return String(Number(route.stepSeq) || 0)
 }
 
 /**
@@ -593,8 +598,8 @@ function inbound(p) {
   route.create()
   const out = runFrom(route, 0, p.displayName)
   const answer = { callSessionId: started.callSessionId, callLegId: started.phoneLegId }
-  if (out.mode === 'ring') return Object.assign(answer, { voicemail: null, voicemailSeconds: out.ringSeconds })
-  if (out.mode === 'voicemail') return Object.assign(answer, { voicemail: 'busy' })
+  if (out.mode === 'ring') return Object.assign(answer, { voicemail: null, voicemailSeconds: out.ringSeconds, stepToken: stepToken(route) })
+  if (out.mode === 'voicemail') return Object.assign(answer, { voicemail: 'busy', stepToken: stepToken(route) })
   // nothing to ring and no box: the call ends at once
   calls('phoneEvent', { callSessionId: started.callSessionId, callLegId: started.phoneLegId, event: 'failed' })
   return { reasonCode: out.mode === 'reject' ? out.reasonCode : 'unavailable' }
@@ -611,6 +616,8 @@ function advance(p) {
   if (!route) return { handled: false }
   const session = find(SESSION).condition('callSessionId', p.callSessionId).forUpdate(true).one()
   if (!session || session.statusId === 'CssEnded') return { handled: true, reasonCode: 'callEnded' }
+  // a timer or control of a step the plan has already left (one that arrived late) changes nothing
+  if (!blank(p.stepToken) && String(p.stepToken) !== stepToken(route)) return { handled: true, reasonCode: 'stale' }
   const closed = calls('closeOffers', { callSessionId: p.callSessionId })
   if (closed.reasonCode) return { handled: true, reasonCode: closed.reasonCode }
   const steps = planOf(route)
@@ -619,7 +626,7 @@ function advance(p) {
   const displayName = closed.displayName || null
   const out = p.reason === 'busy' || current.type === 'voicemail' ? runFrom(route, index, displayName)
     : runFrom(route, index + 1, displayName)
-  if (out.mode === 'ring') return { handled: true, mode: 'ring', ringSeconds: out.ringSeconds }
+  if (out.mode === 'ring') return { handled: true, mode: 'ring', ringSeconds: out.ringSeconds, stepToken: stepToken(route) }
   if (out.mode === 'voicemail') return { handled: true, mode: 'voicemail', voicemailBoxId: out.voicemailBoxId }
   return { handled: true, reasonCode: 'noRoute' }
 }

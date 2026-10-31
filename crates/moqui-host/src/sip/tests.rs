@@ -256,15 +256,31 @@ fn call_handling_refusals_answer_their_sip_status() {
 #[test]
 fn only_a_leg_s_last_ring_timer_moves_its_call_on() {
     let mut timers = super::RingTimers::default();
-    let first = timers.arm("L1");
+    let first = timers.arm("L1", Some("1".to_string()));
     // the plan's next step rings with a new timer: the first one's end does nothing
-    let second = timers.arm("L1");
-    let other = timers.arm("L2");
-    assert!(!timers.fire("L1", first));
-    assert!(timers.fire("L1", second));
+    let second = timers.arm("L1", Some("2".to_string()));
+    let other = timers.arm("L2", None);
+    assert_eq!(timers.fire("L1", first), None);
+    // the current one's end carries its step's token, which begin#Voicemail checks against the plan's step
+    assert_eq!(timers.fire("L1", second), Some(Some("2".to_string())));
     // once fired it is gone: a repeat does nothing
-    assert!(!timers.fire("L1", second));
+    assert_eq!(timers.fire("L1", second), None);
     // a step with no timer, or a leg that ended, clears it
     timers.clear("L2");
-    assert!(!timers.fire("L2", other));
+    assert_eq!(timers.fire("L2", other), None);
+}
+
+#[test]
+fn a_step_token_reads_from_text_or_a_number() {
+    assert_eq!(
+        super::step_token(&serde_json::json!({"stepToken": "7"})),
+        Some("7".to_string())
+    );
+    assert_eq!(
+        super::step_token(&serde_json::json!({"stepToken": 7})),
+        Some("7".to_string())
+    );
+    assert_eq!(super::step_token(&serde_json::json!({"stepToken": ""})), None);
+    assert_eq!(super::step_token(&serde_json::json!({"stepToken": null})), None);
+    assert_eq!(super::step_token(&serde_json::json!({})), None);
 }

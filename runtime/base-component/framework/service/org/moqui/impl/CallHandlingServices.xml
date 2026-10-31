@@ -47,6 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callLegId"/>
             <parameter name="voicemail"/>
             <parameter name="voicemailSeconds" type="Integer"/>
+            <parameter name="stepToken"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('inbound', context))</script></actions>
@@ -56,16 +57,19 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (VoicemailServices.begin#Voicemail): the call's current step is over (reason
             noAnswer: its ring timer, or a forward that failed; declined: everyone rung declined) or it goes to voicemail now
             (busy). handled false for a call with no plan. Else mode ring (the next step rings for ringSeconds) or voicemail
-            (voicemailBoxId), or reasonCode answered, callEnded or noRoute.</description>
+            (voicemailBoxId), or reasonCode answered, callEnded, noRoute, or stale (stepToken is not the current step's:
+            nothing changes). A ring answer carries the new step's stepToken.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId"/>
             <parameter name="reason"/>
+            <parameter name="stepToken"/>
         </in-parameters>
         <out-parameters>
             <parameter name="handled" type="Boolean"/>
             <parameter name="mode"/>
             <parameter name="ringSeconds" type="Integer"/>
+            <parameter name="stepToken"/>
             <parameter name="voicemailBoxId"/>
             <parameter name="reasonCode"/>
         </out-parameters>

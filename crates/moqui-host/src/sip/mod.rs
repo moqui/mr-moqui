@@ -642,30 +642,39 @@ struct Engine {
 }
 
 /// The ring timers of the inbound legs (V3): a leg has at most one that counts, the one armed last, so a timer a later step
-/// of the call's handling plan replaced does nothing when it ends.
+/// of the call's handling plan replaced does nothing when it ends. Each carries its step's token (`CallRoute.stepSeq`),
+/// which `begin#Voicemail` checks, so a timer or control of a step the plan already left cannot skip the step it is on.
 #[derive(Default)]
-pub(crate) struct RingTimers(HashMap<String, u64>);
+pub(crate) struct RingTimers(HashMap<String, (u64, Option<String>)>);
 
 impl RingTimers {
-    /// A new timer for the leg, replacing its last: the generation its end reports.
-    pub(crate) fn arm(&mut self, leg: &str) -> u64 {
-        let generation = self.0.get(leg).map_or(1, |g| g + 1);
-        self.0.insert(leg.to_string(), generation);
+    /// A new timer for the leg and its step's token, replacing its last: the generation its end reports.
+    pub(crate) fn arm(&mut self, leg: &str, step: Option<String>) -> u64 {
+        let generation = self.0.get(leg).map_or(1, |(g, _)| g + 1);
+        self.0.insert(leg.to_string(), (generation, step));
         generation
     }
 
-    /// A timer ended: true (and forgotten) when it is the leg's current one.
-    pub(crate) fn fire(&mut self, leg: &str, generation: u64) -> bool {
-        if self.0.get(leg) != Some(&generation) {
-            return false;
+    /// A timer ended: when it is the leg's current one, its step's token (and it is forgotten); else None.
+    pub(crate) fn fire(&mut self, leg: &str, generation: u64) -> Option<Option<String>> {
+        if self.0.get(leg).map(|(g, _)| *g) != Some(generation) {
+            return None;
         }
-        self.0.remove(leg);
-        true
+        self.0.remove(leg).map(|(_, step)| step)
     }
 
     /// The leg's timer no longer counts (the leg ended, or its step has no timer).
     pub(crate) fn clear(&mut self, leg: &str) {
         self.0.remove(leg);
+    }
+}
+
+/// A step token from a services' answer or a control (`stepToken`), when it has one.
+pub(crate) fn step_token(body: &Json) -> Option<String> {
+    match body.get("stepToken") {
+        Some(Json::String(token)) if !token.is_empty() => Some(token.clone()),
+        Some(Json::Number(token)) => Some(token.to_string()),
+        _ => None,
     }
 }
 
@@ -961,12 +970,14 @@ impl Engine {
         // V2: voicemail busy or access sends it to voicemail at once; voicemailSeconds is how long it rings before it does
         let mut voicemail_now = None;
         let mut ring_seconds = None;
+        let mut step = None;
         let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
             Ok(out) => {
                 let room = text(&out, "callSessionId");
                 let leg = text(&out, "callLegId");
                 voicemail_now = Some(text(&out, "voicemail")).filter(|v| !v.is_empty());
                 ring_seconds = number(&out, "voicemailSeconds").filter(|s| *s > 0);
+                step = step_token(&out);
                 if room.is_empty() || leg.is_empty() {
                     Err(404)
                 } else {
@@ -1037,8 +1048,8 @@ impl Engine {
                     },
                 );
                 match (voicemail_now, ring_seconds) {
-                    (Some(reason), _) => self.start_voicemail(&leg, &reason),
-                    (None, Some(seconds)) => self.ring_timer(&leg, seconds),
+                    (Some(reason), _) => self.start_voicemail(&leg, &reason, step),
+                    (None, Some(seconds)) => self.ring_timer(&leg, seconds, step),
                     (None, None) => {}
                 }
             }
@@ -1111,11 +1122,11 @@ impl Engine {
                 self.voicemail_event(&leg, voicemail::Event::Idle(wait));
             }
             Command::RingTimeout { leg, generation } => {
-                if !self.ring_timers.fire(&leg, generation) {
+                let Some(step) = self.ring_timers.fire(&leg, generation) else {
                     return;
-                }
+                };
                 if self.legs.get(&leg).is_some_and(|entry| !entry.answered) {
-                    self.start_voicemail(&leg, "noAnswer");
+                    self.start_voicemail(&leg, "noAnswer", step);
                 }
             }
         }
@@ -1177,10 +1188,11 @@ impl Engine {
                 });
             }
             "reload" => self.reload().await,
-            // V2: its user declined it (CallServices decline#Call)
+            // V2: its user declined it (CallServices decline#Call); V3: of the plan's step stepToken, so one sent for a
+            // step the plan has left does nothing
             "voicemail" => {
                 let reason = Some(text(body, "reason")).filter(|r| !r.is_empty());
-                self.start_voicemail(&leg, reason.as_deref().unwrap_or("declined"));
+                self.start_voicemail(&leg, reason.as_deref().unwrap_or("declined"), step_token(body));
             }
             "ringDevice" => self.ring_device(body),
             "dropDevice" => self.drop_device(body),
