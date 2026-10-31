@@ -152,6 +152,10 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:choice>
             <xs:element ref="subscreens" minOccurs="0"/>
             <xs:element ref="shell-providers" minOccurs="0"/>
+            <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="ext-action"/>
+                <xs:element ref="ext-panel"/>
+            </xs:choice>
             <xs:element ref="pre-actions" minOccurs="0"/>
             <xs:group ref="section-elements"/>
         </xs:sequence>
@@ -176,6 +180,20 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element ref="transition-include"/>
             </xs:choice>
             <xs:element ref="subscreens" minOccurs="0"/>
+            <xs:element ref="shell-providers" minOccurs="0"><xs:annotation><xs:documentation>
+                Merged into the screen's shell-providers child by child, by element and key: quick-create by kind,
+                palette-source by group, today-source by service, palette-type by doc-type, notification-topic by topic,
+                keymap by scope (and its keys by keys), palette-action and account-menu-item by screen, response-action by
+                screen and text-parameter, page-action by screen and agent, assist-prompt by screen, entity and text, and
+                the provider hooks (inbox-source and the others) by name. An equal key is replaced where it was; a new one
+                is added at the end. Labels never identify an entry.
+            </xs:documentation></xs:annotation></xs:element>
+            <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="ext-action"><xs:annotation><xs:documentation>Replaces the screen's ext-action of the
+                    same name, the whole descriptor, or adds one.</xs:documentation></xs:annotation></xs:element>
+                <xs:element ref="ext-panel"><xs:annotation><xs:documentation>Replaces the screen's ext-panel of the
+                    same name, or adds one.</xs:documentation></xs:annotation></xs:element>
+            </xs:choice>
 
             <xs:element name="actions-extend" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
                 <xs:group minOccurs="0" maxOccurs="unbounded" ref="AllOperations"/>
@@ -529,7 +547,106 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="assist-prompt"/>
             <xs:element ref="response-action"/>
             <xs:element ref="page-action"/>
+            <xs:element ref="inbox-source"/>
+            <xs:element ref="recipient-source"/>
+            <xs:element ref="record-lookup"/>
+            <xs:element ref="record-link"/>
+            <xs:element ref="create-from"/>
+            <xs:element ref="invitation"/>
+            <xs:element ref="contact-card"/>
+            <xs:element ref="meetings-source"/>
+            <xs:element ref="call-context"/>
+            <xs:element ref="home-source"/>
+            <xs:element ref="external-conversation"/>
         </xs:choice>
+    </xs:complexType></xs:element>
+    <xs:attributeGroup name="provider-attributes">
+        <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>Provider-qualified
+            (boss.internal): the sourceId of what it answers, and its key in a screen-extend.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="service" type="xs:string" use="required"><xs:annotation><xs:documentation>The service that
+            answers, implementing the hook's interface. It runs as the app root that declares it, with that app's
+            authorization and entity filters; a userId or app passed as data grants nothing.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="sequence" type="xs:integer"/>
+    </xs:attributeGroup>
+    <xs:complexType name="provider-type">
+        <xs:attributeGroup ref="provider-attributes"/>
+    </xs:complexType>
+    <xs:element name="inbox-source" type="provider-type"><xs:annotation><xs:documentation>
+        Comms providers (plans/Comms-Framework.md §3.3). The framework calls every provider of a hook declared by the app roots
+        the user may open (org.moqui.impl.ShellServices.call#Providers) and combines the answers: a read runs each in its own
+        transaction, and one that fails is logged and listed in failedParts while the others answer; a mutation reports the
+        first failure; with no provider the feature is skipped (unavailable). inbox-source: accounts, settings and pages of
+        threads (the Internal account and mailboxes of IronStone BOSS).
+    </xs:documentation></xs:annotation></xs:element>
+    <xs:element name="recipient-source" type="provider-type"><xs:annotation><xs:documentation>People, groups and lists with
+        addresses for a text (Compose's recipients).</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="record-lookup" type="provider-type"><xs:annotation><xs:documentation>Record cards (entityName, id, title,
+        status, url) for a text or id.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="record-link" type="provider-type"><xs:annotation><xs:documentation>Links a message or chat event to a
+        record.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="create-from" type="provider-type"><xs:annotation><xs:documentation>Creates a record (a task, a request)
+        from a message or chat event; answers the new record's url.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="invitation" type="provider-type"><xs:annotation><xs:documentation>Answers a calendar invitation (an iMIP
+        part).</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="contact-card" type="provider-type"><xs:annotation><xs:documentation>A contact card for an address or
+        number, with an add-to-contacts action.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="meetings-source" type="provider-type"><xs:annotation><xs:documentation>A user's meetings in a range, with
+        their call links.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="call-context" type="provider-type"><xs:annotation><xs:documentation>Who a caller is and their open records
+        (a screen pop).</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="home-source" type="provider-type"><xs:annotation><xs:documentation>Other cards of the Comms Home and their
+        rows.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="external-conversation" type="provider-type"><xs:annotation><xs:documentation>Files a bridged conversation
+        on a record, with an idempotency key.</xs:documentation></xs:annotation></xs:element>
+
+    <!-- ================ Declared actions and panels ================ -->
+    <xs:attributeGroup name="ext-item-attributes">
+        <xs:attribute name="name" type="xs:string" use="required"><xs:annotation><xs:documentation>Provider-qualified
+            (boss.createTask): the key a screen-extend replaces it by.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="slot" type="xs:string" use="required"><xs:annotation><xs:documentation>Where the screen shows it: one
+            of the slots the screen's component renders (Comms: message-actions, thread-toolbar, room-header,
+            chat-message-actions, compose-toolbar, call-actions, voicemail-actions; panels: room-panel, contact-card,
+            mailbox-sidebar).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="sequence" type="xs:integer"/>
+        <xs:attribute name="label" type="xs:string"/>
+        <xs:attribute name="icon" type="xs:string"/>
+        <xs:attribute name="screen" type="xs:string"><xs:annotation><xs:documentation>A path from this screen (Dialog,
+            ../Other/Page), never a location or URL. Left out for a user who may not view it.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="target" default="dialog"><xs:simpleType><xs:restriction base="xs:token">
+            <xs:enumeration value="dialog"/><xs:enumeration value="page"/>
+        </xs:restriction></xs:simpleType></xs:attribute>
+        <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>A display test on the item's
+            fields: field, !field, field == 'value' or field != 'value'. Never an authorization rule: the target checks access
+            when called.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="hook" type="xs:string"><xs:annotation><xs:documentation>A provider hook the item needs
+            (create-from, record-link): it is left out for a user no app answers that hook for.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:attributeGroup>
+    <xs:element name="ext-action"><xs:annotation><xs:documentation>
+        An action another app adds to this screen's items (plans/Comms-Framework.md §3.3): a .qvue screen renders the actions of
+        a slot in its menus (m-ext-actions), the terminal client lists them. Exactly one of screen (opened with the mapped
+        parameters, as a dialog or a page) or transition (a transition of this screen, posted with them).
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:sequence><xs:element name="parameter" minOccurs="0" maxOccurs="unbounded"><xs:annotation><xs:documentation>
+            A parameter of the target and the item field it takes (from; the same name when empty), or a fixed value. Nothing
+            else of the item is passed.</xs:documentation></xs:annotation><xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="from" type="xs:string"/>
+            <xs:attribute name="value" type="xs:string"/>
+        </xs:complexType></xs:element></xs:sequence>
+        <xs:attributeGroup ref="ext-item-attributes"/>
+        <xs:attribute name="transition" type="xs:string"/>
+        <xs:attribute name="confirm" type="xs:string"/>
+    </xs:complexType></xs:element>
+    <xs:element name="ext-panel"><xs:annotation><xs:documentation>
+        A panel another app adds to a slot of this screen (m-ext-panel): the screen at screen, loaded with the mapped parameters.
+        It decides per item and renders nothing when nothing applies; one that fails shows a named unavailable state and the
+        other panels still render.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:sequence><xs:element name="parameter" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="from" type="xs:string"/>
+        </xs:complexType></xs:element></xs:sequence>
+        <xs:attributeGroup ref="ext-item-attributes"/>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="shell-link-attributes">
         <xs:attribute name="label" type="xs:string" use="required"/>

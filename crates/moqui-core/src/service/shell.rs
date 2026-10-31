@@ -38,6 +38,8 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, get_shell_counts)?;
     rust_service!(map, publish_shell_counts)?;
+    rust_service!(map, call_providers)?;
+    rust_service!(map, get_providers)?;
     Ok(())
 }
 
@@ -60,8 +62,21 @@ pub(crate) fn call_tolerant(
     name: &str,
     parameters: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, Error> {
+    call_tolerant_with(name, parameters, &super::call::CallOptions::default())
+}
+
+/// [`call_tolerant`] with call options (a new transaction for a probe).
+///
+/// # Errors
+///
+/// Returns the call's error, or the errors it recorded.
+pub(crate) fn call_tolerant_with(
+    name: &str,
+    parameters: &BTreeMap<String, Value>,
+    options: &super::call::CallOptions,
+) -> Result<BTreeMap<String, Value>, Error> {
     let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
-    let result = super::call::sync(name, parameters);
+    let result = super::call::sync_with(name, parameters, options);
     let errors: Vec<String> = mark
         .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
         .unwrap_or_default();
@@ -70,6 +85,116 @@ pub(crate) fn call_tolerant(
         Ok(_) if !errors.is_empty() => Err(Error::new(errors.join("; "))),
         Ok(results) => Ok(results),
     }
+}
+
+// ---- the providers ----
+
+fn hook_of(parameters: &BTreeMap<String, Value>) -> Result<String, LibError> {
+    let hook = text(parameters, "hook").unwrap_or_default();
+    if crate::screen::shell::PROVIDER_HOOKS.contains(&hook.as_str()) {
+        Ok(hook)
+    } else {
+        Err(LibError::new(format!("{hook} is not a provider hook")))
+    }
+}
+
+fn factory_now() -> Result<Arc<ExecutionContextFactory>, LibError> {
+    ExecutionContext::with_current(|ec| Arc::clone(ec.factory())).ok_or_else(|| LibError::new("no execution context"))
+}
+
+/// `get#Providers`: the providers of `hook` that the apps the current user may open declare, in order: `sourceId`
+/// (the provider's name), `app` and `service`. A screen shows a feature that needs a provider only when there is one.
+fn get_providers(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let hook = hook_of(parameters)?;
+    // the apps the user may open, even for a caller that disabled authorization
+    let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
+    let declared = crate::screen::shell::declared_providers(&factory_now()?, &hook);
+    let list = declared
+        .iter()
+        .map(|declared| {
+            let mut row = IndexMap::new();
+            row.insert("sourceId".to_string(), Value::string(&declared.provider.name));
+            row.insert("app".to_string(), Value::string(&declared.app));
+            row.insert("service".to_string(), Value::string(&declared.provider.service));
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([("providerList".to_string(), Value::List(list))]))
+}
+
+/// `call#Providers`: call each provider of `hook` (or only `sourceId`) with `parameters`, as the app that declares it,
+/// and combine the answers (plans/Comms-Framework.md §3.3).
+///
+/// - A read (the default) runs each provider in a transaction of its own; one that fails is logged by name and listed
+///   in `failedParts`, and the others still answer. Each answer is in `results` with its `sourceId`, in order; the
+///   pages of several sources are never joined into one.
+/// - A `mutation` stops at the first provider that fails and reports its error.
+/// - No provider for the hook: `unavailable` true and no results, which is not the same as providers answering
+///   nothing.
+fn call_providers(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let hook = hook_of(parameters)?;
+    let mutation = parameters
+        .get("mutation")
+        .is_some_and(|value| to_plain_string(value) == "true");
+    let only = text(parameters, "sourceId");
+    let input: BTreeMap<String, Value> = match parameters.get("parameters") {
+        Some(Value::Map(map)) => map.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+        _ => BTreeMap::new(),
+    };
+    // The apps the user may open, and each provider with that app's authorization and entity filters: checked even for a
+    // caller that disabled authorization, so a provider never reaches past the user.
+    let _authz = ExecutionContext::with_current(ExecutionContext::require_authz);
+    let declared: Vec<_> = crate::screen::shell::declared_providers(&factory_now()?, &hook)
+        .into_iter()
+        .filter(|declared| only.as_deref().is_none_or(|only| declared.provider.name == only))
+        .collect();
+    let mut results = Vec::new();
+    let mut failed = Vec::new();
+    let unavailable = declared.is_empty();
+    let options = super::call::CallOptions {
+        require_new_transaction: Some(!mutation),
+        ..Default::default()
+    };
+    for declared in &declared {
+        let name = &declared.provider.name;
+        let answer =
+            crate::screen::shell::run_in_app(&declared.app_location, declared.app_requires_authentication, || {
+                call_tolerant_with(&declared.provider.service, &input, &options)
+            });
+        match answer {
+            Ok(out) => {
+                let mut row: IndexMap<String, Value> = out.into_iter().collect();
+                row.insert("sourceId".to_string(), Value::string(name));
+                results.push(Value::Map(row));
+            }
+            Err(err) if mutation => {
+                tracing::error!("{hook} provider {name} ({}) failed: {err}", declared.provider.service);
+                ExecutionContext::with_current(|ec| ec.message().add_error(err.to_string()));
+                break;
+            }
+            Err(err) => {
+                tracing::error!(
+                    "{hook} provider {name} ({}) failed; left out: {err}",
+                    declared.provider.service
+                );
+                let mut part = IndexMap::new();
+                part.insert("sourceId".to_string(), Value::string(name));
+                part.insert("error".to_string(), Value::string(err.to_string()));
+                failed.push(Value::Map(part));
+            }
+        }
+    }
+    Ok(BTreeMap::from([
+        ("results".to_string(), Value::List(results)),
+        ("failedParts".to_string(), Value::List(failed)),
+        ("unavailable".to_string(), Value::Bool(unavailable)),
+    ]))
 }
 
 /// The counts services that failed, kept for the factory.

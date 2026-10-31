@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls, History (plans/Comms-Framework.md §5.5, §5.3, W1, W2): whether calls can be made here (a media server running;
+    why not, when not), New call (people picked by name, a video or an audio call), the calls ringing for the user or that
+    they are in (Answer, Decline or Open), and the user's call history: All, Missed, Placed and Answered (outcome), each
+    call with the others in it, when, how long, and Call back (the same people, or the room's call). Opening Missed marks
+    the missed calls seen, so they no longer count on Home. Call links (W3): a link to a meeting for people with no
+    account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
+    Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
+    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. An app adds actions to a call with ext-action slot="call-actions" (the
+    item: callSessionId). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
+
+    <parameter name="outcome"/>
+    <parameter name="pageIndex"/>
+
+    <transition name="newCall">
+        <actions><script><![CDATA[
+            const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
+                video: String(video) !== 'N'}).requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- the same people again, or the room's call for a room's call -->
+    <transition name="callBack">
+        <actions><script><![CDATA[
+            const room = chatRoomId && String(isRoomCall) === 'true' ? chatRoomId : null
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({chatRoomId: room,
+                calleeUserIdList: room ? null : String(otherUserIds || '').split(',').filter((id) => id),
+                video: String(video) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a call link: its address once, in the message -->
+    <transition name="createLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
+                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (out.path) ec.message.addMessage(ec.resource.expand('Call link made: ${url} (copy it now: it is shown only this once)', '',
+                {url: ec.web.getWebappRootUrl('webroot', null, true, false) + out.path}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="openLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.open#CallLink').parameter('callLinkId', callLinkId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="revokeLink">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallServices.revoke#CallLink').parameter('callLinkId', callLinkId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Call link revoked'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="answer">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallServices.answer#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="../Call"><parameter name="callSessionId"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="decline">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallServices.decline#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="searchUsers" read-only="true">
+        <actions>
+            <service-call name="org.moqui.comms.CommsServices.search#Users" in-map="{term:term}" out-map="found"/>
+            <script>ec.web.sendJsonResponse(Array.from(found.userList || []).filter((user) =&gt; user.value !== ec.user.userId).map((user) =&gt; ({value: user.value, label: user.label})))</script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const caps = ec.service.sync().name('org.moqui.impl.CallServices.get#Capabilities').requireNewTransaction(true).disableAuthz().call() || {}
+        callsActive = !!caps.active
+        callsReason = caps.active ? '' : caps.reasonCode === 'notBuilt' ? L('Calls are not built into this server.')
+            : L('Calls are not available: no media server is running. An administrator sets rtc_media_port to start one.')
+        const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
+        const active = ec.service.sync().name('org.moqui.impl.CallServices.find#ActiveCalls').requireNewTransaction(true).disableAuthz().call() || {}
+        callList = Array.from(active.callList || []).map((call) => {
+            const others = Array.from(call.participants || []).filter((p) => p.userId !== ec.user.userId).map((p) => p.displayName)
+            return {callSessionId: call.callSessionId, who: others.join(', ') || L('Just you'),
+                stateText: call.myLegStatus === 'offered' ? L('Ringing') : L('In the call'),
+                kindText: call.video ? L('Video') : L('Audio'), startedText: when(call.startedDate),
+                ringing: call.myLegStatus === 'offered'}
+        })
+        newCall = {calleeUserIdList: [], video: 'Y'}
+
+        // the history, by outcome; the Missed tab marks them seen
+        const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
+        shownOutcome = ['missed', 'placed', 'answered'].includes(outcome) ? outcome : ''
+        if (shownOutcome === 'missed') ec.service.sync().name('org.moqui.impl.CallServices.mark#MissedSeen').requireNewTransaction(true).disableAuthz().call()
+        const missedOut = ec.service.sync().name('org.moqui.impl.CallServices.count#MissedCalls').requireNewTransaction(true).disableAuthz().call() || {}
+        missedText = missedOut.missedCount ? L('Missed') + ' (' + missedOut.missedCount + ')' : L('Missed')
+        historyPage = Math.max(Number(pageIndex) || 0, 0)
+        const found = ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
+            pageIndex: historyPage, pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const minutes = (seconds) => !seconds ? '' : seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
+        historyList = Array.from(found.callList || []).map((row) => ({callSessionId: row.callSessionId,
+            who: row.otherNames.join(', ') || L('Just you'), outcomeText: OUTCOMES[row.outcome] || row.outcome,
+            outcomeIcon: row.outcome === 'missed' ? 'sym_o_phone_missed' : row.role === 'caller' ? 'sym_o_call_made' : 'sym_o_call_received',
+            kindText: row.video ? L('Video') : L('Audio'), whenText: when(row.startedDate), lengthText: minutes(row.durationSeconds),
+            otherUserIds: Array.from(row.otherUserIdList || []).join(','), chatRoomId: row.chatRoomId, isRoomCall: row.kind === 'group' ? 'true' : 'false',
+            video: row.video ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
+            unseen: !!row.unseen}))
+        historyCount = Number(found.callListCount || 0)
+
+        // the call links that still work, and the meetings of the next week from the apps' providers
+        const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
+        linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
+            policyText: link.policy === 'link' ? L('Straight in') : L('Lobby'), kindText: link.video ? L('Video') : L('Audio'),
+            expiryText: when(link.expiryDate), stateText: link.callSessionId ? (link.waitingCount ? ec.resource.expand('In progress, ${n} waiting', '',
+                {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
+        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7'}
+        const nowMillis = Number(ec.user.nowTimestamp)
+        const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
+            parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        meetingsAvailable = !meetings.unavailable
+        meetingList = []
+        for (const result of Array.from(meetings.results || [])) for (const meeting of Array.from(result.meetingList || []))
+            meetingList.push({title: meeting.title || '', whenText: meeting.whenText || when(meeting.startDate), joinUrl: meeting.joinUrl || null,
+                link: meeting.link || null, isNow: !!meeting.isNow})
+        meetingsFailed = Array.from(meetings.failedParts || []).length > 0
+        hasMore = (historyPage + 1) * 25 < historyCount
+        nextPage = historyPage + 1
+    ]]></script></actions>
+
+    <widgets>
+        <label type="h5" text="Calls" style="q-mt-none q-mb-sm"/>
+        <section name="Unavailable" condition="!callsActive"><widgets>
+            <container-box type="warning"><box-body><label type="p" text="${callsReason}"/></box-body></container-box>
+        </widgets></section>
+        <container-row>
+            <row-col lg="5" md="6">
+                <container-box><box-header title="New call"/><box-body>
+                    <form-single name="NewCall" transition="newCall" map="newCall">
+                        <field name="calleeUserIdList"><default-field title="Call">
+                            <drop-down allow-multiple="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down></default-field></field>
+                        <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="submitButton"><default-field title="Call"><submit icon="sym_o_call"/></default-field></field>
+                    </form-single>
+                </box-body></container-box>
+            </row-col>
+            <row-col lg="7" md="6">
+                <container-box><box-header title="Now"/><box-body>
+                    <section name="NoCalls" condition="!callList.length"><widgets><label type="p" text="No call is ringing for you, and you are in no call." style="m-muted"/></widgets></section>
+                    <form-list name="ActiveCalls" list="callList" skip-form="true">
+                        <field name="who"><default-field title="With"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><display/></default-field></field>
+                        <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                        <field name="startedText"><default-field title="Started"><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="answer" text="Answer" icon="sym_o_call" condition="ringing" btn-type="success"><parameter name="callSessionId"/></link>
+                            <link url="decline" text="Decline" icon="sym_o_call_end" condition="ringing" btn-type="danger"><parameter name="callSessionId"/></link>
+                            <link url="../Call" text="Open" icon="sym_o_open_in_new" condition="!ringing"><parameter name="callSessionId"/></link>
+                        </default-field></field>
+                    </form-list>
+                </box-body></container-box>
+            </row-col>
+        </container-row>
+        <container-box><box-header title="History"/><box-body>
+            <container style="q-gutter-xs q-mb-sm">
+                <link url="." text="All" condition="shownOutcome" btn-type="default"/>
+                <label text="All" type="span" style="text-weight-bold q-px-sm" condition="!shownOutcome"/>
+                <link url="." text="${missedText}" condition="shownOutcome != 'missed'" btn-type="default"><parameter name="outcome" value="missed"/></link>
+                <label text="${missedText}" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'missed'"/>
+                <link url="." text="Placed" condition="shownOutcome != 'placed'" btn-type="default"><parameter name="outcome" value="placed"/></link>
+                <label text="Placed" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'placed'"/>
+                <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default"><parameter name="outcome" value="answered"/></link>
+                <label text="Answered" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'answered'"/>
+            </container>
+            <section name="NoHistory" condition="!historyList.length"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
+            <form-list name="CallHistory" list="historyList" skip-form="true">
+                <field name="outcomeText"><default-field title=""><display/></default-field></field>
+                <field name="who"><default-field title="With"><display/></default-field></field>
+                <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                <field name="whenText"><default-field title="When"><display/></default-field></field>
+                <field name="lengthText"><default-field title="Length"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="callBack" text="Call back" icon="sym_o_call" condition="canCallBack">
+                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/></link>
+                </default-field></field>
+            </form-list>
+            <link url="." text="More" condition="hasMore" btn-type="default"><parameter name="outcome" from="shownOutcome"/><parameter name="pageIndex" from="nextPage"/></link>
+        </box-body></container-box>
+        <container-row>
+            <row-col lg="7" md="12">
+                <container-box><box-header title="Call links"/><box-body>
+                    <label type="p" style="m-muted" text="A link to a meeting for people with no account: they open it in a browser and give their name. With a lobby, someone in the call lets each one in."/>
+                    <form-single name="NewCallLink" transition="createLink" map="newLink">
+                        <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
+                        <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
+                        <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="expiryDays"><default-field title="Works for"><drop-down><option key="1" text="A day"/><option key="7" text="A week"/>
+                            <option key="30" text="A month"/><option key="90" text="90 days"/></drop-down></default-field></field>
+                        <field name="submitButton"><default-field title="Make a link"><submit icon="sym_o_add_link"/></default-field></field>
+                    </form-single>
+                    <form-list name="CallLinks" list="linkList" skip-form="true">
+                        <field name="name"><default-field title="Link"><display/></default-field></field>
+                        <field name="policyText"><default-field title="Guests"><display/></default-field></field>
+                        <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><display/></default-field></field>
+                        <field name="expiryText"><default-field title="Until"><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <link url="openLink" text="Open" icon="sym_o_call" condition="callsActive"><parameter name="callLinkId"/></link>
+                            <link url="revokeLink" text="Revoke" icon="sym_o_link_off" confirmation="Revoke this link? Its guests leave the call."><parameter name="callLinkId"/></link>
+                        </default-field></field>
+                    </form-list>
+                </box-body></container-box>
+            </row-col>
+            <row-col lg="5" md="12">
+                <section name="Meetings" condition="meetingsAvailable"><widgets>
+                    <container-box><box-header title="Meetings"/><box-body>
+                        <section name="MeetingsFailed" condition="meetingsFailed"><widgets><label type="p" style="text-warning" text="Some meetings could not be read."/></widgets></section>
+                        <section name="NoMeetings" condition="!meetingList.length"><widgets><label type="p" style="m-muted" text="No meetings in the next week."/></widgets></section>
+                        <form-list name="MeetingList" list="meetingList" skip-form="true">
+                            <field name="title"><default-field title="Meeting"><display/></default-field></field>
+                            <field name="whenText"><default-field title="When"><display/></default-field></field>
+                            <field name="actions"><default-field title="">
+                                <link url="${joinUrl}" url-type="plain" text="Join" icon="sym_o_videocam" condition="joinUrl" target-window="_blank"/>
+                                <link url="${link}" url-type="plain" text="Open" icon="sym_o_event" condition="link"/>
+                            </default-field></field>
+                        </form-list>
+                    </box-body></container-box>
+                </widgets></section>
+            </row-col>
+        </container-row>
+    </widgets>
+</screen>

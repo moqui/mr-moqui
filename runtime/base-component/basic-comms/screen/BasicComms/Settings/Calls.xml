@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Settings, Calls (plans/Comms-Framework.md §5.5): the microphone, camera and speaker a call uses, a ringtone, and whether a
+    call starts muted or with the camera off. These are kept in this browser only (each device has its own), by the page's
+    call store (webroot js/WebrootCall.js); the component is Calls.qvue next to this file. In the terminal there are no
+    devices: the twin says so. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Calls" default-menu-index="7" menu-image="sym_o_call" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Settings/Calls.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Settings/Calls.tui.json" template="false"/></render-mode>
+    </widgets>
+</screen>

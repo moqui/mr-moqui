@@ -21,6 +21,7 @@ members = [
     "crates/moqui-mail",
     "crates/moqui-report",
     "crates/moqui-collab",
+    "crates/moqui-rtc",
     "crates/moqui-dav",
     "crates/moqui-devkit",
     "crates/moqui-drivers",
@@ -76,6 +77,9 @@ moqui-mail = { path = "crates/moqui-mail", default-features = false }
 moqui-report = { path = "crates/moqui-report", default-features = false }
 # Co-edited documents and the collab services, on moqui-core (plans/Crate-Split.md); the host links it in every build.
 moqui-collab = { path = "crates/moqui-collab" }
+# Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
+# links it under its rtc feature and owns the sockets.
+moqui-rtc = { path = "crates/moqui-rtc" }
 # The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
 # host links it in every build.
 moqui-dav = { path = "crates/moqui-dav" }
@@ -300,9 +304,23 @@ p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8
 # OIDC and OAuth 2 client. Default feature is the native JWS verifier.
 # Loopback, metrics, and the experimental key-binding feature stay off.
 huskarl = "0.11"
+# Web Push (RFC 8291 payload encryption, RFC 8292 VAPID) in moqui-core's web-push feature: P-256 ECDH and ES256 from the
+# p256 above, HKDF-SHA-256 and AES-128-GCM. The same RustCrypto generation as p256 0.14; web-push-native was set aside
+# as it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple.
+hkdf = "0.13"
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+sha2_11 = { package = "sha2", version = "0.11", default-features = false }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
 ipp = { version = "7", default-features = false }
+
+# WebRTC for calls (moqui-rtc, plans/Comms-Framework.md §6.2, D-W1): sans-IO ICE-lite, DTLS-SRTP, simulcast, TWCC.
+# default-features off leaves out its examples (rouille); aws-lc-rs is the crypto rustls already links.
+str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"] }
+# The embedded TURN server (moqui-rtc turn/, plans/Comms-Framework.md §6.5, D-W4): sans-IO, std only (no openssl); the
+# host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
+turn-server-proto = { version = "0.7.3", default-features = false, features = ["std"] }
+turn-client-proto = { version = "0.7.3", default-features = false, features = ["std"] }
 
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the

@@ -315,6 +315,10 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         Value::List(super::saved_finds::screen_document_list(&info.target_screen.location)?),
     );
     entry.insert("renderModes".into(), render_modes(&info.target_screen.render_modes));
+    // the declared actions and panels of the screen (ext.rs): the terminal client lists them, a .qvue renders them
+    let (ext_actions, ext_panels) = super::ext::items_json(&state.factory, &root, &full_path, &info.target_screen)?;
+    entry.insert("extActions".into(), ext_actions);
+    entry.insert("extPanels".into(), ext_panels);
     let mut saved_finds = Vec::new();
     for (name, form) in &info.target_screen.forms {
         if !form.list || !form.saved_finds {

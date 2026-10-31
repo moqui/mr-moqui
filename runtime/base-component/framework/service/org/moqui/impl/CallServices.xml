@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls (plans/Comms-Framework.md §5.4, §6.3): starting, ringing, answering, joining, leaving and ending a call, the
+    signaling socket of each leg, and the cleanup that ends what was abandoned. The model is framework/entity/CallEntities.xml;
+    the state machine is Calls.js beside this file. No Java counterpart.
+
+    Access. A user reaches a call they are a participant of, and a group call of a room they are a current member of
+    (they may join it); any other call is "not found". A direct call rings its callee until answered, declined, timed out
+    (call_ring_seconds, 45) or canceled; the first answer wins (the session row is locked) and the other tabs hear it. Only
+    a group call's host ends it for everyone; anyone else leaves. Repeated requests are safe: start#Call with the same
+    idempotencyKey answers the same call, and answering, joining or leaving again answers the state as it is. Refusals
+    carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, noCallee,
+    mediaUnavailable, notSignedIn).
+
+    The pushes, on chatUser:<userId> to each participant's tabs (after the commit):
+      {kind: 'call', action: 'ring', callSessionId, revision, from {userId, name}, video, callKind, chatRoomId, expiresAt, call}
+      {kind: 'call', action: 'answered' | 'declined' | 'joined' | 'left' | 'timedOut' | 'ended', callSessionId, revision, call}
+    call is get#Call's view for that user. A ring also goes by Web Push (send#WebPush), expiring with the ring; an old push
+    opens the call's current state, never a finished ring.
+
+    The media. A call's media is on one node, chosen at start among the live CallMediaNodes the host registers
+    (register#MediaNode). The host's /notws binds a leg's socket with bind#Connection, which claims the next generation
+    and fences the older socket; the media node refuses frames of an older generation. When a leg leaves or the call
+    ends, send#MediaControl tells the media node after the commit. expire#Calls (every minute) ends calls that rang out,
+    legs whose socket did not come back, and calls whose media node stopped. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== Calls ========== -->
+
+    <service verb="start" noun="Call">
+        <description>Start a call: to the users of calleeUserIdList (a direct call to one, through their direct room;
+            a group call of several, through the direct room of the set), or the call of chatRoomId (a member of it; a direct
+            room of two is a direct call, any other a group call, ringing its current members). A room with a call going
+            answers that call with reasonCode callActive instead. The caller is the host and is in the call at once
+            (callLegId). The same idempotencyKey answers the same call (repeated). An external user (EXTERNAL_USER) starts
+            calls only from a room.</description>
+        <in-parameters>
+            <parameter name="calleeUserIdList" type="List"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="video" type="Boolean" default="true"/>
+            <parameter name="idempotencyKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('start', context))</script></actions>
+    </service>
+
+    <service verb="answer" noun="Call">
+        <description>Answer a call ringing for the current user. The first answer wins; a second (another tab)
+            answers the leg already in the call (repeated).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('answer', context))</script></actions>
+    </service>
+
+    <service verb="decline" noun="Call">
+        <description>Decline a call ringing for the current user. A direct call ends (CerDeclined); a group call goes
+            on for the others.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('decline', context))</script></actions>
+    </service>
+
+    <service verb="join" noun="Call">
+        <description>Join a call: one ringing for the user is answered; a group call of a room the user is a member of
+            is joined with a new leg. A removed participant cannot come back.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('join', context))</script></actions>
+    </service>
+
+    <service verb="leave" noun="Call">
+        <description>Leave a call (the user's leg in it, or callLegId when it is theirs). A direct call ends, and a group
+            call when its last leg leaves; a ringing call its caller leaves is canceled.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('leave', context))</script></actions>
+    </service>
+
+    <service verb="end" noun="Call">
+        <description>End a call for everyone: its host, or either side of a direct call.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('end', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="Call">
+        <description>A call as the current user sees it: its state, participants and their legs, and the user's own leg
+            (myLegId, myLegStatus). Not found for a user who may not see it.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('get', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="ActiveCalls">
+        <description>The calls ringing for the current user or that the user is in (at most 10), newest first, as
+            get#Call shows each: what a tab shows after a reload (the ring bar, the LiveCall window).</description>
+        <out-parameters>
+            <parameter name="callList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('active', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="Calls">
+        <description>The current user's call history, newest first, a page at a time (pageIndex, pageSize up to 100): each call
+            with the others in it (otherNames, otherUserIdList), its kind and whether it had video, the user's outcome (placed,
+            answered, missed, declined), when (startedDate) and how long the user was in it (durationSeconds), and for a
+            missed call whether it is unseen. outcome filters by one of those. callListCount counts every row of the filter.</description>
+        <in-parameters>
+            <parameter name="outcome"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callList" type="List"/>
+            <parameter name="callListCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('history', context))</script></actions>
+    </service>
+
+    <service verb="count" noun="MissedCalls">
+        <description>The missed calls of the user (the current one; another only with authorization disabled, as an app's shell
+            counts read it) not seen yet (mark#MissedSeen).</description>
+        <in-parameters><parameter name="userId"/></in-parameters>
+        <out-parameters><parameter name="missedCount" type="Integer"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('countMissed', context))</script></actions>
+    </service>
+
+    <service verb="mark" noun="MissedSeen">
+        <description>The current user saw their missed calls (the Missed tab): they no longer count, and the user's shell counts
+            are sent again.</description>
+        <out-parameters><parameter name="markedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('markMissedSeen', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="Capabilities">
+        <description>Whether calls can be made here: supported (the binary has the rtc feature), configured (this
+            server's media port is set) and active (a media server is up somewhere in the cluster); reasonCode notBuilt or
+            noMediaServer when not active.</description>
+        <out-parameters>
+            <parameter name="supported" type="Boolean"/>
+            <parameter name="configured" type="Boolean"/>
+            <parameter name="active" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('capabilities', context))</script></actions>
+    </service>
+
+    <!-- ========== Call links and guests (W3) ========== -->
+
+    <service verb="create" noun="CallLink">
+        <description>A link to a meeting for people with no account, /call/&lt;token&gt;: its name, an optional room the
+            meeting is the call of (the user must be able to post in it), policy lobby (the default: a guest waits until
+            someone in the call admits them) or link (straight in), with video or not, lasting expiryHours (a week by
+            default, 90 days at most). The token is in this answer only; the link keeps its hash.</description>
+        <in-parameters>
+            <parameter name="name" required="true"/>
+            <parameter name="chatRoomId"/>
+            <parameter name="policy" default-value="lobby"/>
+            <parameter name="video" type="Boolean" default="true"/>
+            <parameter name="expiryHours" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLinkId"/>
+            <parameter name="token"/>
+            <parameter name="path"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('createLink', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="CallLinks">
+        <description>The current user's call links that still work, newest first: name, policy, expiry, its meeting when one
+            is going (callSessionId) and the guests waiting in it.</description>
+        <out-parameters>
+            <parameter name="linkList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('findLinks', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="CallLink">
+        <description>Revoke a call link of the current user's: it takes no one more, and its guests are removed from the
+            call (their legs close and their credentials end).</description>
+        <in-parameters>
+            <parameter name="callLinkId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="revoked" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('revokeLink', context))</script></actions>
+    </service>
+
+    <service verb="open" noun="CallLink">
+        <description>The owner opens a call link's meeting: it starts when none is going, and the owner joins it as its host.</description>
+        <in-parameters>
+            <parameter name="callLinkId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('openLink', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="CallLinkToken" authenticate="anonymous-all">
+        <description>The token check of the /call/&lt;token&gt; route (the token-route in basic-comms MoquiConf): valid when the
+            token names a link that is not revoked or expired. routeContext is what the guest page may show: the link's
+            name, its owner's name, the policy and whether it has video. Nothing else is read for a bad token.</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="routeName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="routeContext" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('checkToken', context))</script></actions>
+    </service>
+
+    <service verb="join" noun="AsGuest" authenticate="anonymous-all">
+        <description>A guest opens a call link with their name: the link's meeting (started when none is going) gets them as a
+            participant with no login and a guest leg, admitted at once by a link policy, else waiting in the lobby (the
+            people in the call and the link's owner hear of it). credential is for the guest's page only: it sends it in the
+            first frame of its call socket (/callws), never in a URL; it lasts 4 hours.</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="displayName" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="credential"/>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="admission"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestJoin', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="GuestState" authenticate="anonymous-all">
+        <description>What a guest's page may know, by its credential: admission (waiting, admitted, denied, revoked; gone for
+            a credential that no longer works), the call's status, the guest's leg, and once admitted the names of those
+            in the call. Nothing of the room or its history.</description>
+        <in-parameters>
+            <parameter name="credential" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="admission"/>
+            <parameter name="callStatus"/>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="people" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestState', context))</script></actions>
+    </service>
+
+    <service verb="leave" noun="AsGuest" authenticate="anonymous-all">
+        <description>A guest leaves the call: their leg closes and their credential ends.</description>
+        <in-parameters>
+            <parameter name="credential" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="left" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestLeave', context))</script></actions>
+    </service>
+
+    <service verb="bind" noun="GuestConnection" authenticate="false" allow-remote="false">
+        <description>Internal (the host's /callws): bind a guest's socket to their leg, as bind#Connection does for a user,
+            by the guest's credential: the leg must be the guest's, admitted and in the call.</description>
+        <in-parameters>
+            <parameter name="credential" required="true"/>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="signalingNodeId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callConnectionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="generation" type="Integer"/>
+            <parameter name="mediaNodeId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestBind', context))</script></actions>
+    </service>
+
+    <service verb="admit" noun="Guest">
+        <description>Let a waiting guest (callParticipantId) into the call: someone in the call, or the link's owner.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callParticipantId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('admit', context))</script></actions>
+    </service>
+
+    <service verb="deny" noun="Guest">
+        <description>Turn a waiting guest away: their leg closes and their credential ends.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callParticipantId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('deny', context))</script></actions>
+    </service>
+
+    <service verb="remove" noun="Participant">
+        <description>The host (or the link's owner) removes someone from the call: their legs close and they cannot come
+            back (a guest's credential ends).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callParticipantId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('removeParticipant', context))</script></actions>
+    </service>
+
+    <!-- ========== The signaling socket and the media node (internal, called by the host) ========== -->
+
+    <service verb="bind" noun="Connection" allow-remote="false">
+        <description>Internal (the host's /notws, as the socket's user): bind the socket to the user's leg of the
+            call. The leg must be the user's, admitted and in the call, and the call not ended. Claims the leg's next
+            generation and fences the older connection (CcsReplaced); the answer tells the socket which media node to signal.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="signalingNodeId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callConnectionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="generation" type="Integer"/>
+            <parameter name="mediaNodeId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('bind', context))</script></actions>
+    </service>
+
+    <service verb="heartbeat" noun="Connections" authenticate="false" allow-remote="false">
+        <description>Internal (the host, every 20 seconds): the connections whose sockets are open,
+            [{callLegId, generation}]; only an active connection of that generation is refreshed.</description>
+        <in-parameters>
+            <parameter name="connectionList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="updatedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('heartbeat', context))</script></actions>
+    </service>
+
+    <service verb="release" noun="Connection" authenticate="false" allow-remote="false">
+        <description>Internal (the host): a leg's socket of that generation closed. The leg stays in the call for
+            the reconnect grace period (30 seconds); expire#Calls ends it after.</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="generation" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="released" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('release', context))</script></actions>
+    </service>
+
+    <service verb="note" noun="MediaEvent" authenticate="false" allow-remote="false">
+        <description>Internal (the media node): what the media of a leg of that generation did: connected (its
+            joinedDate), or quality (qualityJson).</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="generation" type="Integer" required="true"/>
+            <parameter name="event" required="true"/>
+            <parameter name="quality" type="Map"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('mediaEvent', context))</script></actions>
+    </service>
+
+    <service verb="register" noun="MediaNode" authenticate="false" allow-remote="false">
+        <description>Internal (the host, while its media socket is open, every 20 seconds): this server holds call
+            media at mediaAddress. draining: takes no new calls. stopping: the media socket closed; the row goes.</description>
+        <in-parameters>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="mediaAddress"/>
+            <parameter name="draining" type="Boolean" default="false"/>
+            <parameter name="turnUrls"><description>The node's TURN URLs, comma separated, for get#IceServers</description></parameter>
+            <parameter name="stopping" type="Boolean" default="false"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('registerNode', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="IceServers">
+        <description>The ICE servers for the current user's leg in the call, for its RTCPeerConnection: the TURN servers of
+            the call's media node and any external ones (turn_external_urls), with a short-lived credential for this leg
+            (turn_credential_hours, 4). Only for a leg that is admitted and in the call; empty when no TURN is set up.</description>
+        <in-parameters><parameter name="callSessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('iceServers', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="GuestIceServers" authenticate="anonymous-all">
+        <description>A guest's ICE servers, by their credential, as get#IceServers gives a user's: only once admitted.</description>
+        <in-parameters><parameter name="credential" required="true"/></in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestIceServers', context))</script></actions>
+    </service>
+
+    <service verb="make" noun="IceServers" type="rust" location="moqui_core::service::call_media::make_ice_servers"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: the ICE servers of a leg: the TURN URLs (turnUrls, the media node's, and turn_external_urls)
+            with a credential in the TURN REST form coturn's use-auth-secret takes: username &lt;expiry&gt;:&lt;callLegId&gt;,
+            password base64 of HMAC-SHA1 of it with turn_auth_secret. Empty without URLs or a secret.</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="turnUrls"/>
+        </in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/></out-parameters>
+    </service>
+
+    <service verb="send" noun="MediaControl" type="rust" location="moqui_core::service::call_media::send_media_control"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: tell the media node of a call to close a leg ({action: 'closeLeg', callSessionId, callLegId}) or
+            the call ({action: 'closeRoom', callSessionId}), on the rtc-signal cluster topic to that node only, after the
+            caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
+        <in-parameters>
+            <parameter name="mediaNodeId" required="true"/>
+            <parameter name="message" type="Map"/>
+        </in-parameters>
+    </service>
+
+    <!-- ========== Cleanup and counts ========== -->
+
+    <service verb="expire" noun="Calls" authenticate="anonymous-all" transaction="ignore">
+        <description>The job every minute: a ringing call past its ring time ends (CerNoAnswer), a leg ringing past it
+            times out (the callee missed it), an answered leg whose socket closed and did not come back within 30 seconds,
+            or went silent, or never connected, leaves (CerConnectionLost), a call whose media node stopped ends
+            (CerMediaNodeLost), a link's meeting nobody is in or waiting for ends (CerEmpty), and a guest whose credential
+            expired leaves. Each item is on its own, in its own transaction: one that fails is logged and the rest go
+            on. Nothing is deleted.</description>
+        <out-parameters>
+            <parameter name="endedCount" type="Integer"/>
+            <parameter name="legCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('expire', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="Item" authenticate="false" allow-remote="false">
+        <description>Internal: one item of expire#Calls (itemKind ringing, mediaNodeLost, empty, offered, connectionLost or
+            guestExpired).</description>
+        <in-parameters>
+            <parameter name="itemKind" required="true"/>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="callGuestId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="done" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('expireItem', context))</script></actions>
+    </service>
+
+    <service verb="publish" noun="MissedCounts" authenticate="false" allow-remote="false">
+        <description>Internal: send these users their shell counts after their missed calls changed. Failure tolerant: an
+            error is logged, not returned.</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <actions><script><![CDATA[
+            const users = Array.from(new Set((userIdList || []).filter((id) => id)))
+            if (!users.length) return
+            ec.message.pushErrors()
+            ec.service.sync().name('org.moqui.impl.ShellServices.publish#ShellCounts').parameter('userIdList', users).call()
+            if (ec.message.hasError()) ec.logger.warn(`Could not publish the shell counts of ${users.join(', ')}: ${ec.message.errorsString}`)
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        ]]></script></actions>
+    </service>
+</services>

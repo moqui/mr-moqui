@@ -689,6 +689,8 @@ pub struct ScreenDef {
     pub has_tab_menu: bool,
     /// The `shell-providers` of an app root, for the shell data (`shell.rs`).
     pub shell_providers: Option<super::shell::ShellProviders>,
+    /// The declared `ext-action` and `ext-panel` items (`ext.rs`), after `screen-extend`.
+    pub ext_items: super::ext::ExtItems,
     /// The merged screen XML, after `screen-extend`.
     pub source: XmlFragment,
     pub sources: Vec<Source>,
@@ -1080,6 +1082,7 @@ impl ScreenDef {
             trees,
             has_tab_menu,
             shell_providers: super::shell::ShellProviders::of(node, location),
+            ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
@@ -1163,8 +1166,22 @@ fn apply_screen_extends(
 }
 
 fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut Extended) {
+    // The sections and forms that extend the screen's own by name: those outside a widgets-extend, whose widgets are new
+    // ones inserted into the screen (a form there is a form of its own, read with the merged screen).
     let mut found = Vec::new();
-    descendants(extend, &mut found);
+    for child in extend.children() {
+        if child.name() == "widgets-extend" {
+            continue;
+        }
+        let wanted = matches!(
+            child.name().as_str(),
+            "section" | "section-iterate" | "form-single" | "form-list"
+        );
+        if wanted {
+            found.push(child.clone());
+        }
+        descendants(&child, &mut found);
+    }
     for item in found {
         match &*item.name_rc() {
             "section" | "section-iterate" => extended.sections.push(item),
@@ -1182,6 +1199,15 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             Some(base) => base.merge_node_with_child_key(&over, "subscreens-item", &["name"], None),
             None => screen.append_node(over.deep_copy()),
         }
+    }
+    if let Some(over) = extend.first_named("shell-providers") {
+        match screen.first_named("shell-providers") {
+            Some(base) => super::shell::merge_extend(&base, &over),
+            None => screen.append_node(over.deep_copy()),
+        }
+    }
+    for kind in ["ext-action", "ext-panel"] {
+        super::ext::merge_extend(screen, extend, kind);
     }
     for actions_extend in extend.children_named("actions-extend") {
         let kind = actions_extend

@@ -375,6 +375,30 @@ impl ArtifactStack {
     pub(super) fn authz_disabled(&self) -> bool {
         self.authz_depth.get() > 0
     }
+
+    /// Authorization checked until the guard drops, whatever an outer `disable_authz` holds; the outer state comes back
+    /// on drop.
+    pub(super) fn require_authz(&self) -> AuthzRequired {
+        let saved = self.authz_depth.replace(0);
+        AuthzRequired {
+            depth: Rc::clone(&self.authz_depth),
+            saved,
+        }
+    }
+}
+
+/// Restores the authorization-disabled depth an [`ArtifactStack::require_authz`] set aside, when dropped.
+#[must_use = "dropping the guard restores the caller's authorization state"]
+pub struct AuthzRequired {
+    depth: Rc<Cell<u32>>,
+    saved: u32,
+}
+
+impl Drop for AuthzRequired {
+    fn drop(&mut self) {
+        // a guard taken inside and dropped already left the depth at 0; the caller's comes back
+        self.depth.set(self.saved);
+    }
 }
 
 /// Whether a frame pushed by [`super::ExecutionContext::push_checked`] needs an authorization record (Java's

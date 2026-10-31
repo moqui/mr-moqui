@@ -162,6 +162,33 @@ pub struct PageAction {
     pub sequence: Option<i64>,
 }
 
+/// The provider hooks an app root's `shell-providers` may declare (plans/Comms-Framework.md §3.3): services the framework
+/// calls through [`crate::service`]'s `call#Providers` and combines, so several apps answer one hook. Each is declared
+/// with a provider-qualified `name`, a `service` and a `sequence`, and merged by `name` in a screen-extend.
+pub const PROVIDER_HOOKS: [&str; 11] = [
+    "inbox-source",
+    "recipient-source",
+    "record-lookup",
+    "record-link",
+    "create-from",
+    "invitation",
+    "contact-card",
+    "meetings-source",
+    "call-context",
+    "home-source",
+    "external-conversation",
+];
+
+/// A provider of one of the [`PROVIDER_HOOKS`].
+#[derive(Clone, Debug, Default)]
+pub struct ProviderDecl {
+    pub hook: String,
+    /// Provider-qualified (`boss.internal`): the `sourceId` of what it answers, and its key in a screen-extend.
+    pub name: String,
+    pub service: String,
+    pub sequence: Option<i64>,
+}
+
 /// The `shell-providers` element of an app root, read with the screen definition. Each list is in `sequence` order (one
 /// without a sequence counts as 0, and ties keep the order written). Labels are localized and links made when the shell
 /// data is.
@@ -178,6 +205,8 @@ pub struct ShellProviders {
     pub assist_prompts: Vec<AssistPrompt>,
     pub response_actions: Vec<ResponseAction>,
     pub page_actions: Vec<PageAction>,
+    /// The providers of [`PROVIDER_HOOKS`], in `sequence` order.
+    pub providers: Vec<ProviderDecl>,
 }
 
 fn attr(node: &MNode, name: &str) -> String {
@@ -316,6 +345,19 @@ impl ShellProviders {
                         out.page_actions.push(action);
                     }
                 }
+                hook if PROVIDER_HOOKS.contains(&hook) => {
+                    let provider = ProviderDecl {
+                        hook: hook.to_string(),
+                        name: attr(&child, "name"),
+                        service: attr(&child, "service"),
+                        sequence: sequence_of(&child),
+                    };
+                    if provider.name.is_empty() || provider.service.is_empty() {
+                        tracing::error!("{location}: a {hook} needs a name and a service; skipped");
+                    } else {
+                        out.providers.push(provider);
+                    }
+                }
                 other => tracing::error!("{location}: shell-providers has no element {other}; skipped"),
             }
         }
@@ -326,11 +368,190 @@ impl ShellProviders {
         by_sequence(&mut out.assist_prompts, |prompt| prompt.sequence);
         by_sequence(&mut out.response_actions, |action| action.sequence);
         by_sequence(&mut out.page_actions, |action| action.sequence);
+        by_sequence(&mut out.providers, |provider| provider.sequence);
         Some(out)
     }
 }
 
+// ---- screen-extend ----
+
+/// The key a `shell-providers` child is merged by in a screen-extend: a later extension's child with the same element and
+/// key replaces the earlier one in place, and one with a new key is added. Labels never identify an entry. None for an
+/// element with no key (it is added).
+fn provider_key(child: &MNode) -> Option<String> {
+    let name = child.name();
+    let key = match name.as_str() {
+        "quick-create" => {
+            let kind = attr(child, "kind");
+            if kind.is_empty() {
+                attr(child, "screen")
+            } else {
+                kind
+            }
+        }
+        "palette-source" => attr(child, "group"),
+        "today-source" => attr(child, "service"),
+        "palette-type" => attr(child, "doc-type"),
+        "notification-topic" => attr(child, "topic"),
+        "keymap" => attr(child, "scope"),
+        "palette-action" | "account-menu-item" => attr(child, "screen"),
+        "response-action" => format!("{}|{}", attr(child, "screen"), attr(child, "text-parameter")),
+        "page-action" => format!("{}|{}", attr(child, "screen"), attr(child, "agent")),
+        "assist-prompt" => format!(
+            "{}|{}|{}",
+            attr(child, "screen"),
+            attr(child, "entity"),
+            attr(child, "text")
+        ),
+        hook if PROVIDER_HOOKS.contains(&hook) => attr(child, "name"),
+        _ => return None,
+    };
+    Some(key)
+}
+
+/// Merge the `shell-providers` of a screen-extend (`over`) into the screen's (`base`), by [`provider_key`]: an equal
+/// key is replaced where it was, so its order holds; a new one goes at the end. A `keymap` of the same scope merges its
+/// `key` children by `keys`.
+pub(super) fn merge_extend(base: &MNode, over: &MNode) {
+    for child in over.children() {
+        let name = child.name();
+        let Some(key) = provider_key(&child) else {
+            base.append_node(child.deep_copy());
+            continue;
+        };
+        let existing = base
+            .children()
+            .into_iter()
+            .find(|candidate| candidate.name() == name && provider_key(candidate).as_deref() == Some(key.as_str()));
+        match existing {
+            Some(found) if name == "keymap" => {
+                for key_node in child.children_named("key") {
+                    let keys = attr(&key_node, "keys");
+                    match found
+                        .children()
+                        .into_iter()
+                        .find(|candidate| candidate.name() == "key" && attr(candidate, "keys") == keys)
+                        .and_then(|candidate| found.index_of(&candidate))
+                    {
+                        Some(index) => {
+                            let _ = found.replace_child(index, key_node.deep_copy());
+                        }
+                        None => found.append_node(key_node.deep_copy()),
+                    }
+                }
+            }
+            Some(found) => match base.index_of(&found) {
+                Some(index) => {
+                    let _ = base.replace_child(index, child.deep_copy());
+                }
+                None => base.append_node(child.deep_copy()),
+            },
+            None => base.append_node(child.deep_copy()),
+        }
+    }
+}
+
 // ---- the app roots ----
+
+/// The app roots the user may open under the apps root `apps_names` of `root`: see [`Shell::apps`].
+fn apps_under(
+    factory: &Arc<crate::context::ExecutionContextFactory>,
+    facade: &super::ScreenFacade,
+    root: &str,
+    apps_names: &[String],
+) -> Vec<App> {
+    let parents = match ScreenUrlInfo::resolve(factory, root, apps_names, 0) {
+        Ok(info) if info.path_defs.len() > apps_names.len() => info.path_defs[..=apps_names.len()].to_vec(),
+        Ok(_) => {
+            tracing::error!("No apps root at /{} for the shell", apps_names.join("/"));
+            return Vec::new();
+        }
+        Err(err) => {
+            tracing::error!("No apps root at /{} for the shell: {err}", apps_names.join("/"));
+            return Vec::new();
+        }
+    };
+    let apps_def = Arc::clone(&parents[parents.len() - 1]);
+    let mut out = Vec::new();
+    for item in apps_def.subscreens.sorted() {
+        if !item.menu_include || !item.is_valid_in_current_context() {
+            continue;
+        }
+        match facade.screen_def(factory, &item.location) {
+            Ok(def) => {
+                if !def.parameters.is_empty() || !menu::permitted_under(&parents, &def) {
+                    continue;
+                }
+                let mut defs = parents.clone();
+                defs.push(Arc::clone(&def));
+                let mut names = apps_names.to_vec();
+                names.push(item.name.clone());
+                out.push(App {
+                    item: item.clone(),
+                    def,
+                    defs,
+                    names,
+                });
+            }
+            Err(err) => leave_app_out(&item.name, &item.location, &err),
+        }
+    }
+    out
+}
+
+/// A provider an app root the user may open declares.
+#[derive(Clone, Debug)]
+pub struct DeclaredProvider {
+    /// The app root's name under the apps root, and its screen location, the artifact the provider runs under.
+    pub app: String,
+    pub app_location: String,
+    pub app_requires_authentication: bool,
+    pub provider: ProviderDecl,
+}
+
+/// The providers of `hook` that the app roots the current user may open declare, in a render or outside one: from the
+/// apps root of the render's root screen, else of the `webroot` webapp's root screen, in `sequence` order (ties in the
+/// apps' menu order). A provider of the same `name` declared by two apps is the first app's. Empty when there is no apps
+/// root or no provider.
+#[must_use]
+pub fn declared_providers(factory: &Arc<crate::context::ExecutionContextFactory>, hook: &str) -> Vec<DeclaredProvider> {
+    let facade = super::ScreenFacade::of(factory);
+    let has_apps = |root: &str| {
+        facade
+            .screen_def(factory, root)
+            .is_ok_and(|def| def.subscreens.get(APPS_PATH).is_some())
+    };
+    // the render's root when it has the apps root (a request under webroot), else the webroot webapp's (a service, a job,
+    // or a screen test rendered from an app root)
+    let render_root =
+        super::with_current_render(|state| state.url_info.path_defs.first().map(|def| def.location.clone())).flatten();
+    let conf_root = super::info::root_screen_for_host(factory, "", "webroot")
+        .ok()
+        .unwrap_or_else(|| super::ROOT_SCREEN.to_string());
+    let Some(root) = render_root.into_iter().chain([conf_root]).find(|root| has_apps(root)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<DeclaredProvider> = Vec::new();
+    for app in apps_under(factory, &facade, &root, &[APPS_PATH.to_string()]) {
+        let Some(providers) = app.def.shell_providers.as_ref() else {
+            continue;
+        };
+        for provider in providers.providers.iter().filter(|provider| provider.hook == hook) {
+            if out.iter().any(|known| known.provider.name == provider.name) {
+                continue;
+            }
+            out.push(DeclaredProvider {
+                app: app.item.name.clone(),
+                app_location: app.def.location.clone(),
+                app_requires_authentication: app.def.authentication
+                    == crate::screen::definition::Authentication::Required,
+                provider: provider.clone(),
+            });
+        }
+    }
+    out.sort_by_key(|declared| declared.provider.sequence.unwrap_or(0));
+    out
+}
 
 /// An app root the user may open.
 struct App {
@@ -412,45 +633,7 @@ impl<'a> Shell<'a> {
         if !self.has_apps_root {
             return Vec::new();
         }
-        let parents = match ScreenUrlInfo::resolve(&self.state.factory, &self.root, &self.apps_names, 0) {
-            Ok(info) if info.path_defs.len() > self.apps_names.len() => {
-                info.path_defs[..=self.apps_names.len()].to_vec()
-            }
-            Ok(_) => {
-                tracing::error!("No apps root at /{} for the shell", self.apps_names.join("/"));
-                return Vec::new();
-            }
-            Err(err) => {
-                tracing::error!("No apps root at /{} for the shell: {err}", self.apps_names.join("/"));
-                return Vec::new();
-            }
-        };
-        let apps_def = Arc::clone(&parents[parents.len() - 1]);
-        let mut out = Vec::new();
-        for item in apps_def.subscreens.sorted() {
-            if !item.menu_include || !item.is_valid_in_current_context() {
-                continue;
-            }
-            match self.state.facade.screen_def(&self.state.factory, &item.location) {
-                Ok(def) => {
-                    if !def.parameters.is_empty() || !menu::permitted_under(&parents, &def) {
-                        continue;
-                    }
-                    let mut defs = parents.clone();
-                    defs.push(Arc::clone(&def));
-                    let mut names = self.apps_names.clone();
-                    names.push(item.name.clone());
-                    out.push(App {
-                        item: item.clone(),
-                        def,
-                        defs,
-                        names,
-                    });
-                }
-                Err(err) => leave_app_out(&item.name, &item.location, &err),
-            }
-        }
-        out
+        apps_under(&self.state.factory, &self.state.facade, &self.root, &self.apps_names)
     }
 
     /// The `/qapps` link of `screen`, a path under the apps root with an optional query string, with `parameters`
@@ -1144,14 +1327,29 @@ fn run_source_in_app(
     id_match: bool,
 ) -> Result<Option<Value>, Error> {
     let required = app.def.authentication == crate::screen::definition::Authentication::Required;
-    // The app's frame is a check, not a hit: untracked before the source runs, so the source's spans are children of
-    // the request's.
+    run_in_app(&app.def.location, required, || {
+        run_source(source, text, limit, doc_types, id_match)
+    })
+}
+
+/// Run `body` as the app root at `location`: its screen is pushed as the artifact the call runs under, so the app's
+/// authorization record and entity filters apply, then popped. The app's frame is a check, not a hit: untracked
+/// before the body runs, so the body's spans are children of the request's.
+///
+/// # Errors
+///
+/// Returns an error when the user may not view the app root, or the body's error.
+pub fn run_in_app<T>(
+    location: &str,
+    requires_authentication: bool,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
     ExecutionContext::with_current(|ec| {
         ec.push_checked(
             "AT_XML_SCREEN",
-            &app.def.location,
+            location,
             "view",
-            Authz::required_if(required),
+            Authz::required_if(requires_authentication),
             Tarpit::Skip,
             None,
         )?;
@@ -1159,7 +1357,7 @@ fn run_source_in_app(
         Ok::<(), crate::context::Error>(())
     })
     .unwrap_or(Ok(()))?;
-    let answer = run_source(source, text, limit, doc_types, id_match);
+    let answer = body();
     ExecutionContext::with_current(ExecutionContext::pop).unwrap_or(Ok(()))?;
     answer
 }

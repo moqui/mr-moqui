@@ -1,0 +1,1 @@
+[{"t": "dynamicContainer", "id": "CallTui", "url": ${JSON.stringify(sri.buildUrl('../CallTui').addParameter('callSessionId', callSessionId || null).getUrlWithParams())}}]

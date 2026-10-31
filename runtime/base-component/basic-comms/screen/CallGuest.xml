@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- CallGuest (plans/Comms-Framework.md §6.3 Guests, W3, D-A5): the page of a call link for a person with no account, at
+    /call/<token>: the token-route "call" of basic-comms MoquiConf.xml renders it in the public shell after
+    org.moqui.impl.CallServices.check#CallLinkToken accepted the token, so an expired, revoked or unknown link never
+    reaches this screen. The component is CallGuest.qvue next to this file: the link's name and its owner, the guest's
+    name, the camera and microphone preview, Join (or Ask to join for a link with a lobby), the lobby while someone in the
+    call lets them in, then the call over its own socket (/callws). The credential join#AsGuest gives stays in the page; the
+    transitions take it in the body, never the URL, and every one checks the token again (the route gives it as the token
+    parameter, whatever the request says). Nothing of the room or its history is read here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" default-menu-include="false" default-menu-title="Call" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <!-- the guest's name: in the call, or in its lobby; the credential for this page -->
+    <transition name="joinGuest" require-session-token="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.join#AsGuest').parameters({token: token || '',
+                displayName: displayName || ''}).requireNewTransaction(true).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, credential: out.credential || null,
+                callSessionId: out.callSessionId || null, callLegId: out.callLegId || null, admission: out.admission || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the lobby's question: let in yet, and who is in the call -->
+    <transition name="guestState" require-session-token="false" read-only="true">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallServices.get#GuestState').parameter('credential', credential || '')
+                .requireNewTransaction(true).call() || {} : {admission: 'gone'}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({admission: out.admission || 'gone', callStatus: out.callStatus || null, people: out.people || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the guest's ICE servers (TURN), once admitted -->
+    <transition name="iceServers" require-session-token="false" read-only="true">
+        <actions><script><![CDATA[
+            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallServices.get#GuestIceServers').parameter('credential', credential || '')
+                .requireNewTransaction(true).call() || {} : {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({iceServers: out.iceServers || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="leaveGuest" require-session-token="false">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallServices.leave#AsGuest').parameter('credential', credential || '').requireNewTransaction(true).call()
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/CallGuest.qvue" template="false"/>
+            <text type="tui" template="false"><![CDATA[[{"t": "text", "id": "CallGuest", "text": "A call link: open it in a browser to join the call."}]]]></text></render-mode>
+    </widgets>
+</screen>

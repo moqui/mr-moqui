@@ -65,6 +65,8 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootVue.qvt.js` | the `m-*` components and the `/qapps` application |
 | `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`) |
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence, and the account menu's status components |
+| `WebrootExt.js` | `moqui.ext`: the declared actions and panels of a screen (`/extItems`), and `m-ext-actions` and `m-ext-panel`, which a `.qvue` screen puts in its menus and panes ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)) |
+| `WebrootPush.js` | `moqui.push`: registers the service worker `/sw.js`, the account menu's Notifications on this device (`m-push-item`), and the Web Push subscription kept to the signed-in user ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../docs/ai/Assist.md)) |
 | `MoquiQzComponent.js` | QZ Tray printing, loaded only when the user preference `qz.print.enabled` is `true` |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |

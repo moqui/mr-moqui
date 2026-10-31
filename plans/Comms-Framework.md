@@ -1,7 +1,9 @@
 # Comms Framework
 
-Status 2026-10-30: plan, no code. The decisions are in [§8](#8-decisions). The libraries, reference applications and
-review findings are in [§10](#10-libraries-and-sources).
+Status 2026-10-31: P0 (PWA and Web Push), A0–A4 (the extension model and BasicComms), W1 and W2 (calls on the embedded
+SFU), W3 (call links and guests) and W4 (TURN and ICE-TCP) built; see [§7.4](#74-built). The V and C streams are next.
+The decisions are in [§8](#8-decisions). The libraries, reference applications and review findings are in
+[§10](#10-libraries-and-sources).
 
 Comms moves from mr-boss into a framework component, `runtime/base-component/basic-comms`, beside `tools`. It gains
 three things it does not have:
@@ -893,6 +895,22 @@ The W1 spike shows:
 It records versions, release dates, licenses and results. If neither str0m nor `rtc` passes, the dependent features
 wait, and their requirements stay.
 
+**The W1 gate (2026-10-31): str0m passed.**
+
+- **Version and licenses:** str0m 0.24.1 with `aws-lc-rs`, on crates.io as of the gate, MIT OR Apache-2.0. Its new
+  transitive crates are all MIT OR Apache-2.0 (License-Review). `cargo deny check licenses` passes.
+- **Build cost:** the `rtc` feature adds 5.2 MiB to a Dev binary and 56 s to the first build after it is turned on.
+- **Cases passed** (`cargo test -p moqui-rtc`, 14 tests on an in-memory network with simulated time, 0.2 s together):
+  - two and five parties;
+  - simulcast: the high layer unconstrained, the low layer at 350 kbps, up again when freed, audio only below the floor,
+    and a subscription capping the layer;
+  - renegotiation both ways, and glare (the SFU gives way);
+  - ICE restart, and a TCP-only client;
+  - generation fencing;
+  - a tap seeing published frames, and an injected source heard by every peer.
+- **Not yet shown:** five parties on real sockets; TWCC under real network loss. W4 and the live checks of §7.3 cover
+  those.
+
 ### 6.3 Signaling
 
 - **Frames.** A new client frame kind on `/notws`, `rtc`, in `crates/moqui-host/src/notws/rtc.rs` beside
@@ -1142,6 +1160,36 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
   - Draining a media node stops new admissions, and the active calls finish.
   - Actor and homeserver migrations need backups and a rehearsed rollback (§4.3, §4.4).
 
+### 7.4 Built
+
+| Step | What was built | Commits (mr-moqui, mr-boss) | Tests |
+| --- | --- | --- | --- |
+| P0 | The `/qapps` manifest, icons and service worker (`sw.js`: versioned shell assets only); `WebPushSubscription` and `get#WebPushStatus`, `store#`, `delete#`, `send#WebPush` (`service/web_push.rs`); RFC 8291 and 8292 on `p256`, `hkdf`, `aes-gcm` (`notify/push_crypto.rs`, the `web-push` feature in every package); persisted notifications pushed per `pushNotifications`; the account menu's Notifications on this device (`js/WebrootPush.js`) as the only permission prompt; logout and account switch end a subscription | 79f11727 | RFC 8291 vector, VAPID, `sw.js` headers; `WebPush.spec.js` |
+| A0 | `shell-providers` merged by element and key in a screen-extend; the provider hooks and `call#Providers`, `get#Providers` (each as its app, authorization required even under a caller that disabled it); `ext-action` and `ext-panel` (`screen/ext.rs`, `/extItems`, the menu data, `js/WebrootExt.js`, the terminal drawer) | e67efdca | `definition_tests`, `ext_tests`, `tests/shell.rs`, `moqui-tui` `shell` |
+| A1 | `basic-comms` with the mail settings and `MailSettingsServices`; BOSS mounts them and hides BasicComms | c5fd370b, 4b32c17 | `BasicComms.spec.js`; BOSS MailAccounts, MailSettings |
+| A2 | Chat, the tray panel and chat settings; records through `record-lookup`, `record-link`, `create-from`; ext items with fixed values and `hook` | 3048ffea, 32ff28b | `BasicCommsChat.spec.js`; BOSS Chat, ChatPanel, ChatSettings |
+| A3 | Inbox, MessageDetail, Compose, Home; `run#Operation` (D-A8) with email-only framework services | c89628ba, 1ba7cd2 | `BasicCommsInbox.spec.js`; BOSS Inbox, Compose, CommsHome, InboxMailboxes |
+| A4 | The dependency check, [docs/tools/Comms.md](../docs/tools/Comms.md), the attack surface | 6bd856fd | the whole of `basic-comms` and the BOSS specs above, AppStructure, TuiRender |
+| W1 | `crates/moqui-rtc`: the SFU on str0m, with simulcast layers by TWCC, audio only below a floor, glare, generations, taps and injected sources. `moqui.call` (CallEntities) and `CallServices`/`Calls.js`: the state machine, ringing (chatUser pushes, Web Push with `ttlSeconds`), presence, and cleanup (`expire#Calls`). The host's media node (`src/rtc/`, `rtc_media_port`) and `/notws` rtc frames (`notws/rtc.rs`). `cluster::send_to` and the `rtc-signal` topic. BasicComms Calls, History, Call (`m-call`), CallTui, Settings/Calls and the Call button in Chat. `WebrootCall.js`: the store, the ring bar, LiveCall and m-call. BOSS mounts Calls | 45ab9425, ebc570d; with W2 | `moqui-rtc` (14); `cluster::tests::a_direct_send…`; `it rtc::` (a direct call on a real server, 3.4 s); `Calls.spec.js` (11); `BasicCommsCalls.spec.js`; `BasicComms.spec.js`; BOSS AppStructure, TuiRender, Chat, ChatPanel, CommsHome; client `CallFlow` (two Chromium pages with fake media) |
+| W2 | The SFU's active speaker (the audio level extension, held for two looks) and a published track that stops (a screen share ending). In the browser: screen share by the page's own offer, the speaker view and the grid, layers asked by tile size (only the speaker off the call's screen), raised hands, reactions, the participants list, the audio-only notice. `find#Calls`, `count#MissedCalls`, `mark#MissedSeen`; History's All, Missed, Placed and Answered with Call back; Missed calls on Home (BasicComms and IronStone) and in Mantle's shell counts (`calls`) | 45ab9425, ebc570d, mr-mantle 59a57970; with W1 | `moqui-rtc` speaker and share cases; `Calls.spec.js` history; `BasicComms`, `BasicCommsCalls`; BOSS CommsHome, AppStructure, TuiRender; client `CallFlow` (hand and speaker view too); `tui_screens` goldens (the new enumerations) |
+| W3 | `CallLink` and `CallGuest`, `CallSession.callLinkId`. `create#`, `find#`, `revoke#`, `open#CallLink`, `check#CallLinkToken` (the `call` token route), `join#AsGuest`, `get#GuestState`, `bind#GuestConnection`, `leave#AsGuest`, `admit#`/`deny#Guest`, `remove#Participant`; empty meetings and expired guest credentials in `expire#Calls`. The guest socket `/callws` (credential in its first frame, its own call and leg only, checked every 30 s). CallGuest (`m-call-guest` in the public shell); in `m-call` the lobby prompt and Remove; Call links and Meetings in History; the dock's notice of a waiting guest. IronStone's `meetings-source` over its calendar | 027b45ea, 338e41b | `Calls.spec.js` (links, lobby, admission, revocation, straight in, empty meeting); `it rtc::a_guest_by_link…`; `BasicCommsCalls` (Call links, Meetings through both mounts); client `CallGuestFlow` |
+| W4 | `moqui-rtc` `turn/`: the embedded TURN server on `turn-server-proto` (TURN REST credentials, revocation, relay peers only the media nodes, quotas, stream framing). The host: ICE-TCP (`rtc_media_tcp_port`, RFC 4571, `rtc/tcp.rs`), the TURN listeners (UDP, TCP, TLS, 443) and relay sockets (`rtc/turn.rs`), revocation when a leg leaves. `CallMediaNode.turnUrls`; `get#IceServers`, `get#GuestIceServers`, `make#IceServers` (Rust: the credential); the browser fetches its ICE servers before its peer connection. `docs/interfaces/TURN.md` with the coturn profile | this commit | `moqui-rtc` turn (6); `it rtc::ice_tcp_and_a_turn_relay…` (a relay-only peer and a TCP-only peer on a real server); `Calls.spec.js` (ICE servers only for an admitted leg); client `CallFlow`, `CallGuestFlow` |
+
+Left for later:
+- BOSS's own links to its Comms (Chatter, the contact record, the palette and demo services) stay `/qapps/Comms`, its root.
+- The media path is on one node per call. Cascading SFUs are W7.
+- Not yet checked: TURN over TLS and on 443, hairpin NAT, and a browser behind a real UDP-blocking firewall. The tests
+  relay over UDP on loopback, and reach ICE-TCP on loopback. Check the deployment's network before relying on them.
+- The browser shows the missed-call count on Home and the History tab. The `calls` shell count has no header badge yet.
+- Screen share and the active speaker are proven in `moqui-rtc` and in code. The client spec does not exercise them,
+  because headless Chromium has no fake screen picker and its fake microphone is a steady tone.
+- The drive picker (Attach from Files, Save to Files) is IronStone's, through screen-extend; BasicComms alone has none.
+- The framework-only Home has no Needs reply: `find#Messages` has no such filter.
+- mr-boss `design-drawers-commons.md` §12–14 and §17 still describe the screens in full.
+- The hooks `recipient-source`, `invitation`, `contact-card`, `meetings-source`, `call-context`, `home-source` and
+  `external-conversation` are declared but called by nothing yet: IronStone's `inbox-source` answers those parts of the
+  Inbox whole (D-A8).
+
 ---
 
 ## 8. Decisions
@@ -1174,6 +1222,7 @@ D-V5, D-W1 and D-W4, and added D-E1 and D-A7.
 | D-W2 | The SFU for every call, no mesh | Yes |
 | D-W3 | Encrypted calls | Later (W8), by call or room policy, with SFrame and dedicated call keys. Required E2EE refuses unsupported clients, recording, captions and SIP legs |
 | D-W4 | Embedded TURN or coturn | Embedded, on `turn-server-proto`, with coturn documented |
+| D-A8 | An app's Inbox in the BasicComms screens (2026-10-31) | The app's `inbox-source` answers each Inbox, Compose, MessageDetail and Home operation (`run#Operation`), and its page is the list: IronStone's keeps mail and internal messages in one list by date. Without one, the framework answers over the user's mail alone. Nothing is joined |
 
 ## 9. Risks
 
@@ -1218,7 +1267,7 @@ Observed on 2026-10-30 on crates.io, docs.rs and the upstream repositories. Each
 | G.711, G.722 | `ezk-g711`, `ezk-g722`, or in house | MIT | — | Pure Rust. Not `audio-codec` defaults |
 | Resampling | `rubato` | 5.0.1, MIT/Apache-2.0 | — | 8 and 16 kHz to and from 48 kHz |
 | Recording files | `ogg`; `webm-iterable` or `mkv-element` | BSD-3-Clause; MIT | ffmpeg, composited export | No transcoding. Not the `webm` crate |
-| Web Push | `web-push-native` | 0.5.0, MIT/Apache-2.0 | — | RustCrypto; the host's HTTP client sends. Not `web-push` |
+| Web Push | in house on `p256` 0.14, `hkdf` 0.13, `aes-gcm` 0.11 (P0) | MIT/Apache-2.0 | — | RFC 8291 and 8292 in `moqui-core` `notify/push_crypto.rs`, checked against RFC 8291's example. `web-push-native` 0.5.0 was set aside: it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple. Not `web-push` |
 | XMPP | `xmpp-parsers`, `minidom`, `tokio-xmpp`, `jid`, `sasl`; `rxml` | MPL-2.0 (D-C3); rxml MIT | Prosody (MIT), ejabberd (GPL), with an XEP-0114 component | tokio-xmpp 6 `xmlstream::accept_stream`; no dialback module |
 | Matrix | [ruma][ruma] | 0.17.2, MIT | Tuwunel, Continuwuity (Apache-2.0); Synapse (AGPL) | `client-api`, `federation-api`, `appservice-api`, `state-res`, `signatures`, `unstable-msc4186` |
 | Chat E2EE | [matrix-sdk-crypto][matrix-crypto], as `@matrix-org/matrix-sdk-crypto-wasm` | 0.19.1, 18.9.0, Apache-2.0 | — | On vodozemac; about 9 MB, loaded for encrypted rooms |

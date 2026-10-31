@@ -42,6 +42,11 @@ use moqui_lib::sync::lock;
 use crate::http::{plain, HttpState, HttpsRequest};
 
 pub(crate) mod collab;
+#[cfg(feature = "rtc")]
+pub(crate) mod rtc;
+#[cfg(not(feature = "rtc"))]
+#[path = "notws/rtc_off.rs"]
+pub(crate) mod rtc;
 
 type CoreError = moqui_core::context::Error;
 
@@ -404,6 +409,7 @@ async fn run_socket(
     tracing::debug!(session_id = %slot.session_id, user_id = %slot.user_id, "notification socket closed");
     unregister(id);
     collab::socket_closed(&factory, id);
+    rtc::socket_closed(&factory, id);
     offline_when_gone(&factory, &slot.user_id);
 }
 
@@ -427,6 +433,10 @@ async fn handle_incoming(
         Some(Ok(Message::Text(text))) => {
             // a co-editing frame (JSON with `collab`)
             if collab::handle(factory, slot, &text) {
+                return true;
+            }
+            // a call signaling frame (JSON with `rtc`)
+            if rtc::handle(factory, slot, &text) {
                 return true;
             }
             // A topic change is a set update on this socket; it needs no execution context or worker.
@@ -515,6 +525,21 @@ fn offline_when_gone(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
             tracing::warn!(error = %err, user_id = %user_id, "could not mark the user offline");
         }
     });
+}
+
+#[cfg_attr(not(feature = "rtc"), allow(dead_code))]
+/// Sends `text` to the socket `slot_id` of this server, when it is open; false when it is not, or its queue is full
+/// (a call frame is dropped then, and the client renegotiates).
+pub(crate) fn push_to_socket(slot_id: u64, text: String) -> bool {
+    let Some(slot) = lock(sockets()).get(&slot_id).cloned() else {
+        return false;
+    };
+    slot.tx
+        .try_send(Push {
+            text,
+            message_id: String::new(),
+        })
+        .is_ok()
 }
 
 fn has_socket(user_id: &str) -> bool {

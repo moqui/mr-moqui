@@ -3658,6 +3658,84 @@
               return (_openBlock(), _createElementBlock("span", { class: "m-elapsed" }, _toDisplayString(_ctx.text), 1))
             }
         } },
+        "m-ext-actions": { hash: "4d9b8ce6", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_ctx.as === 'buttons')
+                ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.visible, (action) => {
+                    return (_openBlock(), _createBlock(_component_q_btn, {
+                      key: action.name,
+                      "data-ext-action": action.name,
+                      dense: "",
+                      flat: "",
+                      "no-caps": "",
+                      icon: action.icon || undefined,
+                      label: action.label,
+                      onClick: $event => (_ctx.run(action))
+                    }, null, 8, ["data-ext-action", "icon", "label", "onClick"]))
+                  }), 128))
+                : (_openBlock(true), _createElementBlock(_Fragment, { key: 1 }, _renderList(_ctx.visible, (action) => {
+                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                      key: action.name,
+                      "data-ext-action": action.name,
+                      clickable: "",
+                      onClick: $event => (_ctx.run(action))
+                    }, {
+                      default: _withCtx(() => [
+                        (action.icon)
+                          ? (_openBlock(), _createBlock(_component_q_item_section, {
+                              key: 0,
+                              avatar: ""
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_icon, {
+                                  name: action.icon
+                                }, null, 8, ["name"])
+                              ]),
+                              _: 2
+                            }, 1024))
+                          : _createCommentVNode("", true),
+                        _createVNode(_component_q_item_section, null, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(action.label), 1)
+                          ]),
+                          _: 2
+                        }, 1024)
+                      ]),
+                      _: 2
+                    }, 1032, ["data-ext-action", "onClick"])), [
+                      [_directive_close_popup]
+                    ])
+                  }), 128))
+            }
+        } },
+        "m-ext-panel": { hash: "9bcc7da4", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
+
+              return (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.visible, (entry) => {
+                return (_openBlock(), _createElementBlock("div", {
+                  key: entry.panel.name + entry.url,
+                  class: "m-ext-panel",
+                  "data-ext-panel": entry.panel.name
+                }, [
+                  _createVNode(_component_m_dynamic_container, {
+                    id: 'm-ext-panel-' + entry.panel.name,
+                    url: entry.url
+                  }, null, 8, ["id", "url"])
+                ], 8, ["data-ext-panel"]))
+              }), 128))
+            }
+        } },
         "m-field": { hash: "15d75803", make: function (Vue) {
             const { renderSlot: _renderSlot, resolveComponent: _resolveComponent, mergeProps: _mergeProps, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
@@ -5608,7 +5686,70 @@
               }, 8, ["href", "class"]))
             }
         } },
-        "m-qapps-root": { hash: "69507fbd", make: function (Vue) {
+        "m-push-item": { hash: "599d267d", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_q_item = _resolveComponent("q-item")
+
+              return (_ctx.push.permission !== '')
+                ? (_openBlock(), _createBlock(_component_q_item, {
+                    key: 0,
+                    id: "m-account-push",
+                    tag: "label",
+                    clickable: ""
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_icon, { name: "notifications_active" })
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_item_section, null, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_item_label, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.title), 1)
+                            ]),
+                            _: 1
+                          }),
+                          (_ctx.caption)
+                            ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                key: 0,
+                                caption: ""
+                              }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.caption), 1)
+                                ]),
+                                _: 1
+                              }))
+                            : _createCommentVNode("", true)
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_item_section, { side: "" }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_toggle, {
+                            dense: "",
+                            "model-value": _ctx.on,
+                            disable: _ctx.push.busy || _ctx.push.permission === 'denied',
+                            "onUpdate:modelValue": _ctx.toggle
+                          }, null, 8, ["model-value", "disable", "onUpdate:modelValue"])
+                        ]),
+                        _: 1
+                      })
+                    ]),
+                    _: 1
+                  }))
+                : _createCommentVNode("", true)
+            }
+        } },
+        "m-qapps-root": { hash: "adfcf6a5", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
@@ -5630,6 +5771,7 @@
               const _component_m_avatar = _resolveComponent("m-avatar")
               const _component_q_separator = _resolveComponent("q-separator")
               const _component_m_user_status_menu = _resolveComponent("m-user-status-menu")
+              const _component_m_push_item = _resolveComponent("m-push-item")
               const _component_q_toggle = _resolveComponent("q-toggle")
               const _component_m_assist_button = _resolveComponent("m-assist-button")
               const _component_q_toolbar = _resolveComponent("q-toolbar")
@@ -5642,6 +5784,7 @@
               const _component_q_page = _resolveComponent("q-page")
               const _component_m_assist_canvas = _resolveComponent("m-assist-canvas")
               const _component_m_shell_tray = _resolveComponent("m-shell-tray")
+              const _component_m_call_dock = _resolveComponent("m-call-dock")
               const _component_q_page_container = _resolveComponent("q-page-container")
               const _component_q_footer = _resolveComponent("q-footer")
               const _component_q_layout = _resolveComponent("q-layout")
@@ -6306,6 +6449,9 @@
                                               [_directive_close_popup]
                                             ])
                                           : _createCommentVNode("", true),
+                                        (_ctx.pushOn)
+                                          ? (_openBlock(), _createBlock(_component_m_push_item, { key: 6 }))
+                                          : _createCommentVNode("", true),
                                         _createVNode(_component_q_item, {
                                           tag: "label",
                                           clickable: ""
@@ -6386,7 +6532,8 @@
                                           clickable: "",
                                           tag: "a",
                                           href: _ctx.shell.logoutUrl,
-                                          "data-confirm": _ctx.labels.logout + ' ' + _ctx.userFullName + '?'
+                                          "data-confirm": _ctx.labels.logout + ' ' + _ctx.userFullName + '?',
+                                          onClick: _ctx.logoutClick
                                         }, {
                                           default: _withCtx(() => [
                                             _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -6406,7 +6553,7 @@
                                             })
                                           ]),
                                           _: 1
-                                        }, 8, ["href", "data-confirm"])
+                                        }, 8, ["href", "data-confirm", "onClick"])
                                       ]),
                                       _: 1
                                     })
@@ -6492,6 +6639,9 @@
                           : _createCommentVNode("", true),
                         (_ctx.trayTabs.length)
                           ? (_openBlock(), _createBlock(_component_m_shell_tray, { key: 1 }))
+                          : _createCommentVNode("", true),
+                        (_ctx.callsOn)
+                          ? (_openBlock(), _createBlock(_component_m_call_dock, { key: 2 }))
                           : _createCommentVNode("", true)
                       ]),
                       _: 1

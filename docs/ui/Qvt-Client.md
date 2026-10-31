@@ -238,6 +238,13 @@ once per page load:
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,
   and one whose screen does not exist is logged and left out. `requiresRecord` kinds are offered only while `screenContext.record` is set.
   `action` of a key is a client action of the shell (`palette`, `quickCreate`) for a key with no `url`.
+- Another component adds to an app root's providers with a `screen-extend` of it: each child merges by its element and key (a
+  quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's
+  `screen-extend` lists them). An equal key is replaced where it was, a new one is added at the end, and labels never key.
+- The provider hooks (`inbox-source`, `record-link` and the others of plans/Comms-Framework.md §3.3) are not in the shell data: the
+  server calls them through `org.moqui.impl.ShellServices.call#Providers`, each as the app that declares it, and combines what they
+  answer (`results` with each `sourceId`, `failedParts`, `unavailable`); `get#Providers` lists them. Both work outside a render (a
+  service, a job), from the apps the current user may open.
 - `shell` are theme values of the user's theme for `STT_INTERNAL_QUASAR`, found as a render finds a theme (the user's `UserScreenTheme`, a
   group's, the type's `enumCode`, a `DEFAULT` theme of the type) and `DEFAULT_QUASAR` when there is none. They are sent here and not in
   `moqui-config`. `STRT_TRAY_TODAY`, `STRT_TRAY_CHAT`, `STRT_TRAY_NOTIFICATIONS`, `STRT_QUICK_CREATE`, `STRT_MAIL_SCREEN` and
@@ -800,6 +807,93 @@ A closed socket tries again after 30 seconds, six times; the browser coming back
 with its six tries again.
 
 A listener may unregister itself, or another, while it is called: the other listeners of that message still get it.
+
+## Declared actions and panels
+
+A component adds actions and panels to a screen it does not own with `<ext-action>` and `<ext-panel>` in a `screen-extend`
+of that screen (`xml-screen-3.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/Comms-Framework.md §3.3). Each names a
+`slot` of the screen; the screen's `.qvue` decides where a slot's items show:
+
+```html
+<q-menu><q-list>
+    <q-item clickable @click="reply(message)">Reply</q-item>
+    <m-ext-actions slot="message-actions" :item="message" @done="reload"></m-ext-actions>
+</q-list></q-menu>
+<m-ext-panel slot="room-panel" :item="room"></m-ext-panel>
+```
+
+**`GET /extItems/<screen path>`** answers the screen's `{actions, panels}` for the user, and the menu data of the page's screen
+carries the same lists as `extActions` and `extPanels`:
+
+```
+{ name, slot, sequence, label, icon, kind: "screen" | "transition", target: "dialog" | "page", url, confirm,
+  condition: { field, op: "truthy" | "falsy" | "equals" | "not-equals", value } | null,
+  parameters: [ { name, from } ] }
+```
+
+- A target the user may not view is left out, and a `transition` the screen does not have is logged and left out. An item
+  with a `hook` (a provider hook it needs, such as `create-from`) is left out for a user no app answers that hook for. The
+  target checks access again when it is called; a `condition` only hides an item, it is never an authorization rule.
+- Only the mapped fields of the item (`parameters`, `from` a field of the item) reach the target, never the whole item; a
+  parameter may instead have a fixed `value` (the kind of record to make).
+- A `screen` action opens in the shell's dialog (`target="page"`: as the page), with the parameters in its query; a
+  `transition` action is posted with them, and `m-ext-actions` emits `done` after it. `as="buttons"` draws buttons in place of
+  menu items.
+- Each panel loads its screen in an `m-dynamic-container` of its own; one that fails shows the not-found state, and the others
+  still render.
+- The terminal client lists the page screen's `screen` actions in its drawer under Actions, their parameters taken from the
+  page's own.
+
+## Install and Web Push
+
+`/qapps` is an installable web app (a PWA): `Header.html.fancy` links `/manifest.webmanifest` (start `/qapps`, scope `/`,
+the icons under `/images/pwa-icon-*`), and `js/WebrootPush.js` registers the service worker `/sw.js` (served uncached,
+with `Service-Worker-Allowed: /`, by `screen/static_files.rs`).
+
+**What the worker caches.** Only versioned shell assets: a URL with a `v` parameter, or under `/libs/`. Never a screen
+render, a transition, `/rest`, the sockets, or any answer marked `private` or `no-store`, so a shared device keeps no
+page of the last user's. Offline, the shell does not open.
+
+**Notifications on this device.** The account menu's toggle (`m-push-item`) is the only place the page asks for the
+browser's notification permission, so the browser's prompt follows a click. Turned on, it:
+
+1. asks for permission;
+2. subscribes with the server's VAPID public key (`/WebPush/status`, `get#WebPushStatus`);
+3. stores the subscription for the signed-in user (`/WebPush/store`, `store#WebPushSubscription`).
+
+From then on each **persisted** notification the user wants pushed (`pushNotifications` on `NotificationTopicUser`, else
+`NotificationTopic`, else yes but for the `NinUpdates` inbox) also goes to that browser, through
+`send#WebPush` on a service worker (`service/web_push.rs`: RFC 8291 encryption, RFC 8292 VAPID). The payload is the
+title, link and topic, and the message id as the tag, never the message body. A click on the notification focuses an
+open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed.
+
+The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
+
+**Account switch and logout.** A browser's subscription is one user's:
+
+- On each page load the client checks it against the server (`moqui.push.start`). A subscription the server does not
+  hold for the signed-in user, and that this user did not turn on in this browser, is ended in the browser.
+- Storing an endpoint another user had moves it to the new user.
+- The logout link ends the subscription first (bounded at 1.5 seconds).
+- The server's logout deletes the subscriptions the visit stored.
+
+A push service answering 404 or 410 disables the subscription; so do 5 failures in a row. The next page load of a user
+who turned notifications on subscribes again.
+
+**Push is a hint.** The notification list and counts are the server's: a page that comes back, or gets a push while
+open, reads them again. Push carries no phone ring and no background media: a call invitation reaches a closed app only
+as a notification.
+
+| Browser | Push |
+|---|---|
+| Chrome, Edge (desktop, Android) | Yes, through FCM, with the browser running |
+| Firefox (desktop, Android) | Yes, through Mozilla's push service |
+| Safari 16+ (macOS 13+) | Yes, through Apple's push service |
+| Safari on iOS and iPadOS 16.4+ | Only for the web app added to the Home Screen; a Safari tab has none, and the toggle says so |
+| Any browser without the Push API, or a server built without `web-push` | Desktop notifications only while a page is open |
+
+The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
+names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
 
 ## Collaborative editing
 

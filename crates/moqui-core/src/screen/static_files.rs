@@ -137,6 +137,7 @@ pub fn media_type(name: &str) -> &'static str {
         "css" => "text/css; charset=UTF-8",
         "js" | "mjs" => "text/javascript; charset=UTF-8",
         "json" | "map" => "application/json; charset=UTF-8",
+        "webmanifest" => "application/manifest+json; charset=UTF-8",
         "html" | "htm" => "text/html; charset=UTF-8",
         "txt" | "md" | "csv" => "text/plain; charset=UTF-8",
         "svg" => "image/svg+xml",
@@ -185,6 +186,9 @@ fn matches_tag(header: &str, tag: &str) -> bool {
         .split(',')
         .any(|candidate| candidate.trim() == "*" || strip(candidate) == ours)
 }
+
+/// The PWA's service worker (`webroot/screen/webroot/sw.js`), served uncached and allowed the site's root scope.
+const SERVICE_WORKER: &str = "sw.js";
 
 /// Bodies up to this size are sent from memory; a larger one streams, read a window at a time as the client takes it.
 const INLINE_BODY: u64 = 256 * 1024;
@@ -242,7 +246,13 @@ pub fn respond(
         "screen-resource-binary"
     };
     web::apply_conf_headers(Some(factory), kind, &mut headers, false);
-    if versioned || name.contains(".min.") {
+    if name == SERVICE_WORKER {
+        // A browser checks its service worker on each navigation; a cached one would keep an old worker in charge. Its
+        // scope is the whole site, though it is served under the webroot screen.
+        headers.retain(|(key, _)| !key.eq_ignore_ascii_case("Cache-Control"));
+        headers.push(("Cache-Control".to_string(), "no-cache".to_string()));
+        headers.push(("Service-Worker-Allowed".to_string(), "/".to_string()));
+    } else if versioned || name.contains(".min.") {
         headers.retain(|(key, _)| !key.eq_ignore_ascii_case("Cache-Control"));
         headers.push(("Cache-Control".to_string(), LONG_CACHE.to_string()));
     }

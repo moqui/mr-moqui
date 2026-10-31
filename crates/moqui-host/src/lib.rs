@@ -100,6 +100,11 @@ mod llm;
 mod notws;
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 mod port_check;
+#[cfg(feature = "rtc")]
+mod rtc;
+#[cfg(not(feature = "rtc"))]
+#[path = "rtc_off.rs"]
+mod rtc;
 #[cfg(feature = "axum")]
 mod source_body;
 #[cfg(feature = "axum")]
@@ -223,6 +228,20 @@ impl Server {
             *lock(&factory.extension(|_| smtp::SmtpAddress::default()).0)
         }
         #[cfg(not(feature = "inbound-smtp"))]
+        {
+            None
+        }
+    }
+
+    /// The call media socket's address, when this build has the `rtc` feature and `rtc_media_port` is set.
+    #[must_use]
+    pub fn rtc_address(&self) -> Option<std::net::SocketAddr> {
+        #[cfg(feature = "rtc")]
+        {
+            let factory = self.factory.as_ref()?;
+            *lock(&factory.extension(|_| rtc::RtcAddress::default()).0)
+        }
+        #[cfg(not(feature = "rtc"))]
         {
             None
         }
@@ -1447,6 +1466,7 @@ fn boot_server_factory(
             sshd: None,
             cluster_edge: None,
             notify_listener: None,
+            rtc: None,
             factory: Some(factory),
             search,
             facade: Some(facade),
@@ -1507,6 +1527,8 @@ fn boot_server_factory(
     #[cfg(feature = "print")]
     ipp::install();
     tracing::info!("Integrations installed: {}", integrations());
+    // call media (rtc_media_port), after the cluster so the node registers under its instance id
+    let rtc = rtc::start(&factory);
     // last, so mail is taken only once everything it runs is up
     let smtpd = start_smtp(&factory);
     // the webapp's listeners and after-startup actions, as Java's MoquiContextListener runs them
@@ -1527,6 +1549,7 @@ fn boot_server_factory(
         sshd,
         cluster_edge: Some(cluster_edge),
         notify_listener,
+        rtc,
         factory: Some(factory),
         search,
         facade: Some(facade),
@@ -1553,6 +1576,8 @@ struct ServeProcess {
     sshd: Option<ssh::server::SshServer>,
     cluster_edge: Option<crate::cluster_edge::ClusterEdge>,
     notify_listener: Option<crate::cluster_notify::NotifyListener>,
+    /// The call media socket, stopped before the factory (its last act deregisters the node).
+    rtc: Option<crate::rtc::RtcNode>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     search: Option<crate::search::SearchStore>,
     facade: Option<moqui_core::entity::EntityFacade>,
@@ -1567,6 +1592,7 @@ impl Drop for ServeProcess {
             // The listener has already waited out its shutdown deadline; a blocking task still running is left.
             runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
         }
+        self.rtc.take();
         if let Some(factory) = &self.factory {
             factory.shutdown();
         }
@@ -1677,6 +1703,7 @@ pub fn build_features() -> Vec<&'static str> {
         ("tui", cfg!(feature = "tui")),
         ("test-client", cfg!(feature = "test-client")),
         ("devtools", cfg!(feature = "devtools")),
+        ("rtc", cfg!(feature = "rtc")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

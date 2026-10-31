@@ -130,6 +130,38 @@
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
 
+    <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
+        of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
+        rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
+        IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when rtc_media_host binds every
+        address). call_ring_seconds: how long a call rings before it is missed. -->
+    <default-property name="rtc_media_port" value=""/>
+    <default-property name="rtc_media_host" value="127.0.0.1"/>
+    <default-property name="rtc_public_address" value=""/>
+    <default-property name="call_ring_seconds" value="45"/>
+    <!-- ICE-TCP (W4): a TCP port on rtc_media_host for browsers that cannot reach the UDP one; off while empty. -->
+    <default-property name="rtc_media_tcp_port" value=""/>
+    <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
+        block UDP: turn_port (UDP and TCP, 3478 by convention) and turn_tls_port (TLS, 5349), off while empty; turn_tls443_host
+        an address of its own for TLS on 443 (the HTTPS listener does not share it); turn_host the address they bind
+        (rtc_media_host by default) and turn_public_host the name or address in the URLs browsers get (the media node's
+        public address by default); turn_relay_ports the UDP range of the relays. turn_auth_secret signs the short-lived
+        credentials (generated when unset; every media node and any coturn take the same one); turn_credential_hours how
+        long one lasts; turn_external_urls TURN servers elsewhere (coturn with use-auth-secret), comma separated turn: URLs.
+        turn_max_allocations, turn_max_kbps: the quotas; turn_allowed_peers addresses besides the media node a relay may reach. -->
+    <default-property name="turn_port" value=""/>
+    <default-property name="turn_tls_port" value=""/>
+    <default-property name="turn_tls443_host" value=""/>
+    <default-property name="turn_host" value=""/>
+    <default-property name="turn_public_host" value=""/>
+    <default-property name="turn_relay_ports" value="49152-65535"/>
+    <default-property name="turn_auth_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="turn_credential_hours" value="4"/>
+    <default-property name="turn_external_urls" value=""/>
+    <default-property name="turn_max_allocations" value="1000"/>
+    <default-property name="turn_max_kbps" value="4000"/>
+    <default-property name="turn_allowed_peers" value=""/>
+
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>
     <default-property name="entity_ds_host" value="127.0.0.1"/>
@@ -150,6 +182,12 @@
     <default-property name="entity_ds_crypt_pass_old" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
     <!-- Phase 7 signs the session cookie with this key. Phase 2 generates it. -->
     <default-property name="session_cookie_key" value="CHANGEME" is-secret="true"/>
+    <!-- Web Push (VAPID, RFC 8292): the server's P-256 private key, 32 random bytes in base64, generated when unset and
+        shared by the cluster's members (a new key makes every browser subscribe again). The public key is derived from it
+        and given to the browser. web_push_subject is the contact the push services see: a mailto: or https: URL, which a
+        production instance should set to its operator's address. -->
+    <default-property name="web_push_vapid_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="web_push_subject" value="mailto:admin@localhost"/>
     <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from session_cookie_key. -->
     <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
     <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>
@@ -1000,6 +1038,7 @@
         <load-entity location="component://framework/entity/LlmEntities.xml"/>
         <load-entity location="component://framework/entity/AgentEntities.xml"/>
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
+        <load-entity location="component://framework/entity/CallEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1015,6 +1054,7 @@
         <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
+        <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

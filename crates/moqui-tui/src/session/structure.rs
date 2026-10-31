@@ -231,6 +231,7 @@ impl Session {
         if path_changed {
             self.docs.clear();
             self.finds.clear();
+            self.ext_actions.clear();
             self.request_menu();
         }
         if navigate && !self.counts.is_empty() {

@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls (plans/Comms-Framework.md §5.5, §6.6, W1): History (the calls ringing for the user and the ones they are in, a new
+    call) and Call (the lobby and the call view, with the browser's media). The JSON transitions here are what the page's call
+    store (moqui.call, webroot js/WebrootCall.js) and the shell's ring bar and LiveCall window post to, under either mount:
+    each is a service of org.moqui.impl.CallServices, which checks the signed-in user's part in the call itself (a call they
+    may not see is "not found"), so the services run with authorization off as for the chat services, each in its own
+    transaction so that a refusal is an answer and not a failed request; an answer carries the call as the user sees it, or
+    reasonCode and errors. The media goes over the notification socket (notws rtc frames),
+    not these. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Calls" default-menu-index="4" menu-image="sym_o_call" menu-image-type="icon">
+
+    <subscreens default-item="History"/>
+
+    <transition name="startCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : null,
+                chatRoomId: chatRoomId || null, video: String(video) !== 'false', idempotencyKey: idempotencyKey || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callSessionId: out.callSessionId || null, callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="answerCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.answer#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="declineCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.decline#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="joinCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.join#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="leaveCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.leave#Call').parameters({callSessionId: callSessionId || '', callLegId: callLegId || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="endCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.end#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="callState" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.get#Call').parameters({callSessionId: callSessionId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="activeCalls" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.find#ActiveCalls').parameters({}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callList: out.callList || []}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="capabilities" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.get#Capabilities').parameters({}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {supported: !!out.supported, configured: !!out.configured, active: !!out.active}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a call link: made (its path, with the token, in this answer only), and its meeting opened by its owner -->
+    <transition name="createCallLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby',
+                video: String(video) !== 'false', expiryHours: expiryHours ? Number(expiryHours) : null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callLinkId: out.callLinkId || null, path: out.path || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="openCallLink">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.open#CallLink').parameters({callLinkId: callLinkId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {callSessionId: out.callSessionId || null, callLegId: out.callLegId || null, call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the lobby of a call link's meeting, and the host's removing someone -->
+    <transition name="admitGuest">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.admit#Guest').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="denyGuest">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.deny#Guest').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="removeParticipant">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.remove#Participant').parameters({callSessionId: callSessionId || '', callParticipantId: callParticipantId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({reasonCode: out.reasonCode || null, errors}, {call: out.call || null}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the leg's ICE servers (TURN with a short-lived credential), for its RTCPeerConnection: an admitted leg only -->
+    <transition name="iceServers" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.get#IceServers').parameter('callSessionId', callSessionId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({iceServers: out.iceServers || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- people to call, for the New call picker -->
+    <transition name="searchUsers" read-only="true">
+        <actions>
+            <service-call name="org.moqui.comms.CommsServices.search#Users" in-map="{term:term}" out-map="found"/>
+            <script>ec.web.sendJsonResponse(Array.from(found.userList || []).filter((user) =&gt; user.value !== ec.user.userId).map((user) =&gt; ({value: user.value, label: user.label})))</script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets><subscreens-active/></widgets>
+</screen>

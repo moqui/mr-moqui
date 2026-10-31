@@ -1,0 +1,91 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Settings, Calls (Calls.xml): this browser's devices for calls, a ringtone, and how a call starts; saved at once in the
+    page's call store (moqui.call.saveSettings), for this browser only. The device names show once the browser has been
+    allowed the microphone and camera (Test asks). -->
+<template><div class="q-pa-sm" style="max-width:640px">
+    <div class="text-h5 q-mb-sm">{{t('Calls')}}</div>
+    <div v-if="!store" class="m-muted">{{t('Calls are not available on this page.')}}</div>
+    <div v-else class="column q-gutter-md">
+        <q-banner dense rounded class="m-tonal">{{t('These choices are kept in this browser; each of your devices has its own.')}}</q-banner>
+        <q-select dense outlined emit-value map-options :label="t('Microphone')" :options="options('audioinput')" :model-value="settings.audioIn"
+                @update:model-value="(v) => save({audioIn: v})"></q-select>
+        <q-select dense outlined emit-value map-options :label="t('Camera')" :options="options('videoinput')" :model-value="settings.videoIn"
+                @update:model-value="(v) => save({videoIn: v})"></q-select>
+        <q-select dense outlined emit-value map-options :label="t('Speaker')" :options="options('audiooutput')" :model-value="settings.audioOut"
+                @update:model-value="(v) => save({audioOut: v})"></q-select>
+        <div><q-btn flat no-caps icon="sym_o_mic" :label="t('Test the microphone and camera')" @click="test"></q-btn>
+            <q-linear-progress v-if="testing" :value="level" color="positive" class="q-mt-xs"></q-linear-progress></div>
+        <q-toggle :model-value="settings.ringtone" :label="t('Play a ringtone for a call')" @update:model-value="(v) => save({ringtone: v})"></q-toggle>
+        <q-toggle :model-value="settings.joinMuted" :label="t('Start calls muted')" @update:model-value="(v) => save({joinMuted: v})"></q-toggle>
+        <q-toggle :model-value="settings.cameraOff" :label="t('Start calls with the camera off')" @update:model-value="(v) => save({cameraOff: v})"></q-toggle>
+    </div>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'CallSettings',
+    data() { return { devices: [], testing: false, level: 0, stream: null, meter: null }; },
+    computed: {
+        store() { return moqui.call || null; },
+        settings() { return moqui.call ? moqui.call.state.settings : {}; }
+    },
+    mounted() { this.list(); },
+    beforeUnmount() { this.stop(); },
+    methods: {
+        t,
+        list() {
+            const media = window.navigator && window.navigator.mediaDevices;
+            if (media && media.enumerateDevices) media.enumerateDevices().then((list) => { this.devices = list; }, () => null);
+        },
+        options(kind) {
+            return [{ value: '', label: t('The default') }].concat(this.devices.filter((d) => d.kind === kind)
+                .map((d, i) => ({ value: d.deviceId, label: d.label || (t('Device') + ' ' + (i + 1)) })));
+        },
+        save(changes) { if (moqui.call) moqui.call.saveSettings(changes); },
+        test() {
+            this.stop();
+            if (!moqui.call) return;
+            moqui.call.getMedia(true).then((stream) => {
+                if (!stream) return;
+                this.stream = stream;
+                this.testing = true;
+                this.list();
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx || !stream.getAudioTracks().length) return;
+                const ctx = new Ctx();
+                const analyser = ctx.createAnalyser();
+                ctx.createMediaStreamSource(stream).connect(analyser);
+                const data = new Uint8Array(analyser.fftSize);
+                const tick = () => {
+                    analyser.getByteTimeDomainData(data);
+                    let peak = 0;
+                    for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
+                    this.level = Math.min(1, peak / 64);
+                    this.meter.frame = requestAnimationFrame(tick);
+                };
+                this.meter = { ctx, frame: requestAnimationFrame(tick) };
+                setTimeout(() => this.stop(), 10000);
+            });
+        },
+        stop() {
+            if (this.meter) { cancelAnimationFrame(this.meter.frame); try { this.meter.ctx.close(); } catch (e) { /* closed */ } this.meter = null; }
+            if (this.stream) this.stream.getTracks().forEach((track) => track.stop());
+            this.stream = null;
+            this.testing = false;
+        }
+    }
+};
+</script>

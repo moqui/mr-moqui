@@ -724,7 +724,13 @@ pub fn logout() -> Result<(), Error> {
     let _authz = without_authz();
     let update = if let Some(user_id) = session::current_user_id()? {
         match entity_facade() {
-            Ok(facade) => mark_logged_out(&facade, &user_id),
+            Ok(facade) => {
+                // The browser this visit subscribed gets no more pushes for this user.
+                if let Some(visit) = session::visit_id().ok().flatten() {
+                    crate::service::web_push::forget_visit(&facade, &user_id, &visit);
+                }
+                mark_logged_out(&facade, &user_id)
+            }
             Err(_) => Ok(()),
         }
     } else {

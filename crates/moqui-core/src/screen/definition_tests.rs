@@ -84,6 +84,94 @@ fn extensions_apply_in_order() {
     assert_eq!(names_in(&container), ["one", "two"]);
 }
 
+/// A screen-extend's `shell-providers` merge into the screen's by element and key (plans/Comms-Framework.md §3.3): an
+/// equal key replaces in place, a new one is added at the end, a keymap merges its keys by `keys`, labels never key, and
+/// a later component's extension applies over an earlier one's.
+#[test]
+fn shell_providers_merge_by_element_and_key() {
+    let screen = MNode::parse_text(
+        "s",
+        r#"<screen><shell-providers>
+                <quick-create kind="email" label="Email" screen="Inbox/Compose"/>
+                <palette-source group="Rooms" label="Rooms" service="a.find#Rooms"/>
+                <today-source service="a.get#Today" label="Today"/>
+                <notification-topic topic="ChatMention"/>
+                <keymap scope="app"><key keys="g i" label="Inbox" screen="Inbox"/></keymap>
+                <inbox-source name="framework.email" service="a.find#EmailThreads"/>
+                <page-action label="Customize" agent="dev"/>
+            </shell-providers></screen>"#,
+    )
+    .unwrap();
+    let first = MNode::parse_text(
+        "e1",
+        r#"<screen-extend><shell-providers>
+                <palette-source group="Rooms" label="Chat rooms" service="b.find#Rooms"/>
+                <keymap scope="app"><key keys="g i" label="Mail" screen="Mail"/><key keys="g c" label="Chat" screen="Chat"/></keymap>
+                <inbox-source name="boss.internal" service="b.find#InboxThreads" sequence="10"/>
+                <quick-create kind="task" label="Task" screen="Tasks/New"/>
+                <page-action label="Customize again" agent="dev"/>
+            </shell-providers></screen-extend>"#,
+    )
+    .unwrap();
+    let second = MNode::parse_text(
+        "e2",
+        r#"<screen-extend><shell-providers>
+                <inbox-source name="boss.internal" service="c.find#InboxThreads"/>
+                <notification-topic topic="ChatMention"/>
+            </shell-providers></screen-extend>"#,
+    )
+    .unwrap();
+    for extend in [&first, &second] {
+        merge_extend(&screen, extend, "test", &mut Extended::default());
+    }
+    let providers = crate::screen::shell::ShellProviders::of(&screen, "test").unwrap();
+    let quick: Vec<&str> = providers.quick_create.iter().map(|link| link.kind.as_str()).collect();
+    assert_eq!(quick, ["email", "task"]);
+    assert_eq!(providers.palette_sources.len(), 1);
+    assert_eq!(providers.palette_sources[0].service, "b.find#Rooms");
+    assert_eq!(providers.notification_topics, ["ChatMention"]);
+    let keys: Vec<(&str, &str)> = providers.keymaps[0]
+        .keys
+        .iter()
+        .map(|key| (key.keys.as_str(), key.label.as_str()))
+        .collect();
+    assert_eq!(keys, [("g i", "Mail"), ("g c", "Chat")]);
+    let inbox: Vec<(&str, &str)> = providers
+        .providers
+        .iter()
+        .map(|provider| (provider.name.as_str(), provider.service.as_str()))
+        .collect();
+    assert_eq!(
+        inbox,
+        [
+            ("framework.email", "a.find#EmailThreads"),
+            ("boss.internal", "c.find#InboxThreads")
+        ]
+    );
+    assert_eq!(
+        providers.page_actions.len(),
+        1,
+        "a page-action is keyed by screen and agent, not its label"
+    );
+    assert_eq!(providers.page_actions[0].label, "Customize again");
+}
+
+/// A screen with no `shell-providers` takes the extension's whole; `ext-action`s merge by name.
+#[test]
+fn an_extension_adds_shell_providers_and_ext_items_to_a_screen_without_them() {
+    let screen = MNode::parse_text("s", r#"<screen><widgets/></screen>"#).unwrap();
+    let extend = MNode::parse_text(
+        "e",
+        r#"<screen-extend><shell-providers><record-link name="boss.records" service="b.link#Record"/></shell-providers>
+            <ext-action name="boss.file" slot="message-actions" label="File" transition="file"/></screen-extend>"#,
+    )
+    .unwrap();
+    merge_extend(&screen, &extend, "test", &mut Extended::default());
+    let providers = crate::screen::shell::ShellProviders::of(&screen, "test").unwrap();
+    assert_eq!(providers.providers[0].hook, "record-link");
+    assert_eq!(crate::screen::ext::of(&screen, "test").actions[0].name, "boss.file");
+}
+
 /// A fragment is parsed once per thread for its readers, and `node` is still a tree of the caller's own.
 #[test]
 fn readers_of_a_fragment_share_one_parse_on_a_thread() {

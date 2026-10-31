@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <!-- Where links to the Comms screens go in notifications, mail and push: an app that mounts the BasicComms screens under its
+        own root (IronStone BOSS: /qapps/Comms) sets it to that root. -->
+    <default-property name="comms_app_root" value="/qapps/BasicComms"/>
+    <!-- A call link (plans/Comms-Framework.md W3, D-A5): /call/<token>, the guest page screen/CallGuest.xml in the public shell,
+        after org.moqui.impl.CallServices.check#CallLinkToken; a guest joins with their name (a few a minute from a client). -->
+    <webapp-list>
+        <webapp name="webroot">
+            <token-route name="call" screen-location="component://basic-comms/screen/CallGuest.xml"
+                    token-service="org.moqui.impl.CallServices.check#CallLinkToken" title="Call"/>
+            <web-protection>
+                <rate-limit name="call-guest" path="/call/*/joinGuest" methods="POST" requests="10" seconds="60" burst="5"/>
+            </web-protection>
+        </webapp>
+    </webapp-list>
+    <screen-facade>
+        <screen location="component://webroot/screen/webroot/apps.xml">
+            <subscreens-item name="BasicComms" menu-title="Comms" menu-index="22" location="component://basic-comms/screen/BasicComms.xml"/>
+        </screen>
+    </screen-facade>
+</moqui-conf>

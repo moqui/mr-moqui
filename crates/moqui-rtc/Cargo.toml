@@ -1,0 +1,29 @@
+# Calls: the WebRTC endpoint and the selective forwarding unit (SFU) on str0m (plans/Comms-Framework.md §6, D-W1). It is
+# sans-IO: no sockets, threads or clock of its own, and no ExecutionContext, so it sits on moqui-lib only. moqui-host
+# owns the media socket and the driver thread and links this crate under its rtc feature; the call state is the
+# framework's org.moqui.impl.CallServices.
+
+[package]
+name = "moqui-rtc"
+description = "The WebRTC endpoint and SFU for calls, sans-IO."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+hmac = { workspace = true }
+moqui-lib = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha1 = { workspace = true }
+str0m = { workspace = true }
+tracing = { workspace = true }
+turn-server-proto = { workspace = true }
+
+[dev-dependencies]
+turn-client-proto = { workspace = true }
+
+[lints]
+workspace = true

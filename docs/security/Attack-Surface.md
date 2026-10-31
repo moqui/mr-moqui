@@ -119,7 +119,7 @@ An `OPTIONS` preflight is 204 with an empty body, before the servlet chain (`cra
 
 ### Field encryption
 
-`entity_ds_crypt_pass` ships as `MoquiDefaultPassword:CHANGEME` with `is-secret="true"`. It is the `entity-facade` `crypt-pass`. The algorithm is `PBEWithHmacSHA256AndAES_128`, salt `20201202`, 10 iterations. The same secret encrypts an OAuth refresh token and a client secret stored on `EmailOAuthProvider`. Alternate decrypt still tries `PBEWithMD5AndDES` with the current pass and with `entity_ds_crypt_pass_old`, and the AES algorithm with the old pass. The old pass ships as the same `CHANGEME` sentinel and is not replaced by the generator.
+`entity_ds_crypt_pass` ships as `MoquiDefaultPassword:CHANGEME` with `is-secret="true"`. It is the `entity-facade` `crypt-pass`. The algorithm is `PBEWithHmacSHA256AndAES_128`, salt `20201202`, 10 iterations. The same secret encrypts an OAuth refresh token and a client secret stored on `EmailOAuthProvider`, the SSO client secrets (`OauthFlow.secret`, `OidcFlow.secret`), the SAML keystore and private key passwords, and a calendar publish link's token (`CalendarShare.publishToken`, still found by value since the encryption is deterministic). Alternate decrypt still tries `PBEWithMD5AndDES` with the current pass and with `entity_ds_crypt_pass_old`, and the AES algorithm with the old pass. The old pass ships as the same `CHANGEME` sentinel and is not replaced by the generator.
 
 `entity_ds_user` and `entity_ds_password` default to `sa` and `sa`. Those are the old datasource properties. The embedded Postgres client does not connect with them.
 
@@ -169,7 +169,8 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | Instance drain | `/health` answers 503 with `draining` | the `isolate-instance` recovery action, through `moqui.monitor.InstanceDrain` | as `/health` (`status-ips` and loopback) | running or reverting the action needs `MONITOR_RECOVER` (or an automatic policy) | A drained instance still serves the requests that reach it; only a load balancer that reads `/health` stops sending more. |
 | Browser RUM | `POST /rum/traces`, `/rum/logs`, `/rum/replay` (webroot `rum.xml`) | off; `telemetry/browser` `enabled="true"` (replay also `replay-enabled="true"`) | the session cookie of a signed-in user, else 401 | the session's CSRF token as for any post; no permission to send, since a user reports only on their own pages | The server replaces the page's identity with the session's user and visit and its own service name, keeps only CLIENT and INTERNAL spans (at most 512 a post), and drops attributes that name a user, visit, source or service. 256 KiB a post, 120 posts a minute per user and visit; a replay is held to its minutes and bytes and to the session that began it. Replays are masked in the browser and read back only with `MONITOR_REPLAY`, never as a report dataset or through Assist; each view is logged. No request or artifact span is written for these paths. |
 | OTLP/gRPC ingest | the trace, logs and metrics collector services on `telemetry/receiver` `grpc-port` (4317) | off; built with `grpc` (Enterprise, Maximal), opened by `grpc-enabled="true"` | the same ingest key, as `authorization: Bearer` or `api_key` metadata | as OTLP ingest | Its own listener at `grpc-bind` (the HTTP bind by default), TLS with the HTTPS certificates else h2c. The edge guard admits each connection. The same body limit (as tonic's decoding limit), rate, concurrency, redaction and queue as OTLP/HTTP. |
-| Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. |
+| Call guests | `GET /callws` | on with the rtc feature and `/notws` | none at the upgrade (origin checked as for `/notws`); the first frame must be `{rtc: 'guestAuth', credential}` within 10 s, checked with `get#GuestState` | that guest's own call and leg only | WebSocket of a call link's guest page. It takes `rtc` frames of that call and leg only, and no topic, notification, co-editing or other call's frame. The credential is checked again every 30 s; one that no longer works ends the call for the page and closes the socket. 128 KiB a frame. |
+| Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. Call signaling frames (`rtc`, the rtc feature) bind the socket to a leg only through `CallServices.bind#Connection` as the socket's user (the leg must be theirs and in the call); a frame of a leg the socket did not bind is refused (`notJoined`), each carries the claimed connection generation, which the media node fences, and an SDP or candidate grants nothing. At most 4 bound legs a socket, 128 KiB a frame. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |
 | LLM routes | `/a2a`, `/mcp`, `/llm/v1`, Assist streams, public cards | compiled with `llm`; several answer 404 while their flag is false | see [LLM, A2A, MCP, Assist, git, and DAV](#llm-a2a-mcp-assist-git-and-dav) | see that section | Registration is not gated again by the conf flag. A protocol that is off answers 404. |
@@ -201,6 +202,9 @@ Because the root screen does not require a user, static files served as that scr
 | `/menuData` | the script does not check `userId`; `getMenuData` does | `getMenuData` is 401 `Authentication required` with no username, 404 for an unknown screen, and 403 when view is not permitted (`screen/menu.rs`, in-process). The transition script reads `sri.getScreenUrlInfo().extraPathNameList` first. An anonymous `GET /menuData/apps/tools` in the client suite was HTTP 500 (`cannot read property 'extraPathNameList' of undefined`) before that check. The HTTP proof only requires that the body is not the Tools menu. |
 | `/shellData` | same split | 401 `Authentication required` when there is no user id (`screen/shell.rs`). |
 | `/shellSearch` | same split | 401 `Authentication required` when there is no username. Parameters `text`, `groups`, `limit`. |
+| `/extItems` | same split | The declared actions and panels of the screen at the path (`screen/ext.rs`): 401 with no username, 404 for an unknown screen, 403 when view is not permitted. A target the user may not view, and an item whose provider hook the user has none for, is left out; the target checks access again when called. |
+| `/WebPush/status`, `/WebPush/store`, `/WebPush/delete` | none in the screen; `store` and `delete` need a user | The browser's Web Push subscription of the session's user only (`service/web_push.rs`): `store` is 401 without a user and checks the endpoint is https and the keys a P-256 point and 16 bytes; an endpoint stored for another user moves to this one. `delete` touches only this user's row, with no error for another's. Posts need the session's CSRF token. The endpoint is a capability and is not logged. |
+| `/sw.js`, `/manifest.webmanifest` | none | Static files of the PWA: the service worker (served `no-cache`, `Service-Worker-Allowed: /`), which caches only versioned shell assets and never an authenticated answer, and the manifest. |
 | `/listViewColumns` | no `userId` check in the transition | `get#ListViewColumns` with authorization disabled. `values` is sliced to 500. The comment calls it status configuration read without authorization. |
 | `/statusBar` | no `userId` check in the transition | `get#StatusBar` with authorization disabled. |
 | `/shellCounts` | 401 when there is no `userId` | then `get#ShellCounts` with authorization disabled. |
@@ -235,7 +239,7 @@ SQL Runner, Service Run, Data Import, Data Snapshot, ElFinder, and `qzSign` are 
 
 ### Token routes
 
-Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiConf.xml` adds them on the `webroot` webapp. `screen/mod.rs` sends a match to token-route dispatch before the ordinary screen. The failure status of a bad token was not read.
+Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiConf.xml` adds them on the `webroot` webapp, and `runtime/base-component/basic-comms/MoquiConf.xml` adds `call`. `screen/mod.rs` sends a match to token-route dispatch before the ordinary screen. The failure status of a bad token was not read.
 
 | Name | URL | Token service | Screen |
 | --- | --- | --- | --- |
@@ -243,8 +247,20 @@ Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiCo
 | `u` | `/u/<token>` | `mantle.party.ConsentServices.check#UnsubscribeToken` | `Unsubscribe.xml`, post-transition `oneClick` |
 | `cal` | `/cal/<token>` | `ironstone.commons.CalendarServices.check#PublishedCalendarToken` | `PublishedCalendar.xml` |
 | `r` | `/r/<token>` | `mantle.request.RequestServices.check#IntakeToken` | `RequestIntake.xml` |
+| `call` | `/call/<token>` | `org.moqui.impl.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
 
 mr-boss also adds a per-client rate limit `request-form` on `POST /r/*/submit`: 5 requests in 60 seconds, burst 5. It applies when per-client web protection is on.
+
+`/call/<token>` is a call link's guest page. Its token is 32 random characters; only its hash is stored. The token is
+refused once the link is revoked or expired. The page's transitions are `joinGuest`, `guestState` and `leaveGuest`,
+without the session token. `joinGuest` takes a name of up to 60 characters and gives a 40-character credential that
+lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 10 a minute, burst 5).
+
+- A guest's credential reaches only that call's signaling, on `GET /callws`. It is never in a URL.
+- `guestState` shows a waiting guest nothing but their admission. Once admitted, a guest sees the names of those in the
+  call. They never see the room, its members or its history.
+- A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
+- Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
 
 ## REST
 
@@ -389,9 +405,34 @@ The cluster HTTPS listener is separate from the public HTTP and HTTPS listeners.
 
 On whenever the process starts listeners (a normal `moqui` with no command, and `moqui tui --serve`). Empty `cluster_https_port` is **8444**. Empty `cluster_bind_address` is **0.0.0.0**. `0` is ephemeral. Commands that do not serve do not start it. `plans/archive/Cluster.md` still says port 8443. That line is stale. The running default is 8444 (`README.md`, `crates/moqui-host/src/cluster_edge.rs`).
 
-A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, or `session-end`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again.
+A TLS client certificate is mandatory. The verifier accepts only a certificate whose SHA-256 matches this member's `cluster_tls_cert`. The server presents that same certificate. There is no HTTP login and no public app routing. After the handshake, only `POST /cluster/{topic}` for `entity-cache-invalidate`, `notification-message`, `collab-update`, `session-end` or `rtc-signal`. The body must be JSON with `origin_id` and `message_id`, or the answer is 400. An unknown topic or method is 404. The serialized JSON envelope limit is 16 MiB on HTTPS, SSH and Postgres NOTIFY (including payloads kept in `ClusterMessage`). Oversized messages are refused before fan-out. A 4xx response refuses that message without retrying or marking the peer down. At most 64 connections. Cache clears that entity's one-cache. `session-end` drops this process's live copies of the named session ids. Notification and collab messages are published on the local bus and are not fanned out again. `rtc-signal` is sent to one member (`cluster::send_to`, one try from a queue of 1,024 that refuses when full): a call's signaling frames for the node holding its media, its replies for the node holding a leg's socket, and the call services' close messages; a receiver drops one whose `target` is not its instance id (the notify transport reaches every notify member).
 
 Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It needs a Postgres entity database. MySQL refuses startup. It is one connection outside the pool, not a new TCP port. The payload is not authenticated on its own. A payload over 7,900 bytes is a `ClusterMessage` row id. A notification missed while `LISTEN` is down is lost. Reconnect then clears entity caches. The default `cluster_transport` is empty, which means HTTPS POST to `cluster_base_url`.
+
+### Call media
+
+Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream (encrypted calls are W8). The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+
+ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
+RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
+
+### TURN
+
+The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off
+unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_tls443_host`. TLS uses the
+`runtime/cert` certificates. Relays are UDP sockets in `turn_relay_ports`. Its rules:
+
+- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
+  when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
+  is refused, and so is one of a leg that left (revoked by the media node).
+- **Relay peers** are only the media nodes (and `turn_allowed_peers`). A permission or channel to any other address
+  is dropped before the server sees it, and nothing is relayed to or from one.
+- **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
+  allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
+  peers are offered.
+
+coturn can take its place ([TURN](../interfaces/TURN.md)), with the same secret and a deny-all, allow-media-node
+peer rule.
 
 ### Database
 
@@ -432,7 +473,7 @@ The `pdf` feature, which every server package includes, starts headless Chromium
 
 An OpenSearch child starts only when `search_backend` is opensearch, `elasticsearch_url` is loopback (the property default is `http://127.0.0.1:9200`), nothing is already answering, `runtime/opensearch/bin` exists, `opensearch_run` is not `false` (default `true`), and there is no pid file. The default `search_backend` is `postgres`, so the child stays off. User and password properties default to empty.
 
-IPP printing and the SFTP client are outbound. Git, DAV, `/termws`, and `/notws` are routes on the public HTTP server.
+IPP printing and the SFTP client are outbound. Git, DAV, `/termws`, and `/notws` are routes on the public HTTP server. Web Push (the `web-push` feature) posts to the push service named by each subscription a browser stored, with a VAPID token; internal addresses are refused, no redirect is followed, and the payload is encrypted to the browser and holds no message body.
 
 ## Heavy lock-down
 

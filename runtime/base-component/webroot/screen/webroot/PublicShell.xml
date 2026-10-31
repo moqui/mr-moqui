@@ -34,6 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
             footer_scripts.add('/libs/quasar/icon-set/material-symbols-outlined.umd.prod.js')
         footer_scripts.add('/js/MoquiLib.js')
         footer_scripts.add('/js/MoquiL10n.js')
+        // a call link's guest page (/call/<token>, basic-comms): the call client and m-call-guest, registered before the components
+        if (tokenRoute.name === 'call') footer_scripts.add('/js/WebrootCall.js')
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         // loaded for its components: it mounts nothing on a page without the moqui-config block
         footer_scripts.add('/js/WebrootVue.qvt.js')

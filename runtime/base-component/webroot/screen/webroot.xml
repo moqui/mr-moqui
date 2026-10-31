@@ -44,6 +44,16 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- NOTE DEJ 20200806 use save-parameters="true" to re-save parameters otherwise lost from the menuData request under qapps -->
         <default-response type="none" save-parameters="true"/>
     </transition>
+    <!-- The declared actions and panels (ext-action, ext-panel) of the screen at the path after /extItems, for the user:
+        {actions, panels}, the targets they may not view left out (crates/moqui-core/src/screen/ext.rs). A .qvue screen's
+        m-ext-actions and m-ext-panel ask for their own screen's, which menuData also carries for the page's screen. -->
+    <transition name="extItems" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const items = sri.getExtItems(sri.getScreenUrlInfo().extraPathNameList)
+            if (items != null) ec.web.sendJsonResponse(items)
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- The suite shell of /qapps, fetched once per page load: the apps the user may open with their menus to depth two and
         their shell-providers, the shell's theme values and the first counts. menuData stays per path. The JSON is described in
         docs/ui/Qvt-Client.md, "Shell data and providers" (crates/moqui-core/src/screen/shell.rs). 401 without a user. -->

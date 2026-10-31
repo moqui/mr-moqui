@@ -18,6 +18,7 @@
 pub(crate) mod rust_services;
 mod backup;
 pub mod call;
+mod call_media;
 mod chat;
 mod chat_link;
 #[cfg(test)]
@@ -61,6 +62,7 @@ mod tools;
 mod user_keys;
 pub mod util;
 mod validate;
+pub(crate) mod web_push;
 
 pub use call::is_service_defined;
 pub use call::{

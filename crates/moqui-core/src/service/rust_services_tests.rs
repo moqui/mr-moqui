@@ -36,6 +36,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::images::image_writer_mime_types",
         "moqui_core::service::images::upload_rich_text_image",
         "moqui_core::service::images::write_image_service",
+        "moqui_core::service::shell::call_providers",
+        "moqui_core::service::shell::get_providers",
         "moqui_core::service::shell::get_shell_counts",
         "moqui_core::service::shell::publish_shell_counts",
         "moqui_core::service::spreadsheet::load_spreadsheet_entity",
@@ -69,6 +71,10 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::user_keys::get_app_passwords",
         "moqui_core::service::user_keys::revoke_access_token",
         "moqui_core::service::user_keys::revoke_app_password",
+        "moqui_core::service::web_push::delete_subscription",
+        "moqui_core::service::web_push::get_status",
+        "moqui_core::service::web_push::send_web_push",
+        "moqui_core::service::web_push::store_subscription",
     ];
     expected.sort_unstable();
     // A feature this build leaves out registers nothing; its locations resolve through missing_feature.

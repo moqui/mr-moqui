@@ -89,7 +89,9 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::shell::register(&mut map),
         super::user_keys::register(&mut map),
         super::chat::register(&mut map),
+        super::call_media::register(&mut map),
         super::chat_link::register(&mut map),
+        super::web_push::register(&mut map),
         crate::llm_hooks::get().map_or(Ok(()), |hooks| (hooks.register_services)(&mut map)),
     ] {
         if let Err(error) = result {

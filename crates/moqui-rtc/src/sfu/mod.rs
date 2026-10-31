@@ -1,0 +1,824 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The selective forwarding unit: rooms of legs, one str0m [`Rtc`] per leg, and the forwarding between them
+//! (plans/Comms-Framework.md §6.2). A room is a call (its `callSessionId`), a leg a `callLegId`. Each leg's peer is an
+//! ICE-lite endpoint on the node's shared media sockets; datagrams are routed to the peer whose ICE session accepts them.
+//!
+//! - A published track opens a send-only track on every other peer of the room, which the SFU offers to that peer
+//!   ([`SfuEvent::Offer`]); the peer's answer comes back by [`Sfu::handle_answer`]. A peer may offer too (ICE restart,
+//!   a new track); the SFU is the polite side and drops its own outstanding offer for the peer's.
+//! - Video sent in simulcast layers (rids `l`, `m`, `h`) is forwarded one layer per subscriber: the highest the
+//!   subscriber asked for ([`Sfu::subscribe`]) that fits its share of the TWCC estimate, switched at a keyframe of the
+//!   new layer. Below [`SfuConfig::audio_only_below_kbps`] a subscriber gets audio only.
+//! - Every command carries the leg's connection generation; one from an older generation is refused, and a join with a
+//!   newer one replaces the old peer.
+
+mod peer;
+
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use str0m::bwe::Bitrate;
+use str0m::change::{SdpAnswer, SdpOffer};
+use str0m::format::Codec;
+use str0m::media::{Frequency, MediaKind, MediaTime};
+use str0m::net::{Protocol, Receive};
+use str0m::{Candidate, Input, Rtc};
+
+use crate::tap::{Kind, MediaTap, TapFrame};
+use peer::{Peer, Propagated, TrackIn};
+
+/// A leg of a room: the call and the leg ids.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LegKey {
+    pub room: Arc<str>,
+    pub leg: Arc<str>,
+}
+
+impl LegKey {
+    pub fn new(room: &str, leg: &str) -> Self {
+        LegKey {
+            room: room.into(),
+            leg: leg.into(),
+        }
+    }
+}
+
+/// A datagram transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Proto {
+    Udp,
+    Tcp,
+}
+
+impl Proto {
+    fn from_protocol(p: Protocol) -> Self {
+        match p {
+            Protocol::Udp => Proto::Udp,
+            _ => Proto::Tcp,
+        }
+    }
+
+    fn protocol(self) -> Protocol {
+        match self {
+            Proto::Udp => Protocol::Udp,
+            Proto::Tcp => Protocol::Tcp,
+        }
+    }
+}
+
+/// A datagram to send from one of the node's media sockets.
+#[derive(Debug, Clone)]
+pub struct Transmit {
+    pub proto: Proto,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
+    pub contents: Vec<u8>,
+}
+
+/// What a published track carries, as the publishing client declares it (the `publish` frame).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Source {
+    Microphone,
+    Camera,
+    Screen,
+    ScreenAudio,
+    /// A phone or SIP leg's audio, put in through [`Sfu::inject`].
+    Phone,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Microphone => "microphone",
+            Source::Camera => "camera",
+            Source::Screen => "screen",
+            Source::ScreenAudio => "screenAudio",
+            Source::Phone => "phone",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "microphone" => Source::Microphone,
+            "camera" => Source::Camera,
+            "screen" => Source::Screen,
+            "screenAudio" => Source::ScreenAudio,
+            "phone" => Source::Phone,
+            _ => return None,
+        })
+    }
+
+    fn default_for(kind: MediaKind) -> Self {
+        match kind {
+            MediaKind::Audio => Source::Microphone,
+            MediaKind::Video => Source::Camera,
+        }
+    }
+}
+
+/// A simulcast layer, by its rid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Layer {
+    Low,
+    Mid,
+    High,
+}
+
+impl Layer {
+    pub const ALL: [Layer; 3] = [Layer::Low, Layer::Mid, Layer::High];
+
+    pub fn rid(self) -> &'static str {
+        match self {
+            Layer::Low => "l",
+            Layer::Mid => "m",
+            Layer::High => "h",
+        }
+    }
+
+    pub fn from_rid(rid: &str) -> Option<Self> {
+        Some(match rid {
+            "l" => Layer::Low,
+            "m" => Layer::Mid,
+            "h" => Layer::High,
+            _ => return None,
+        })
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "low" => Layer::Low,
+            "mid" => Layer::Mid,
+            "high" => Layer::High,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Layer::Low => "low",
+            Layer::Mid => "mid",
+            Layer::High => "high",
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// The node's media settings and limits.
+#[derive(Debug, Clone)]
+pub struct SfuConfig {
+    /// The UDP addresses peers send to: the media socket's bound address, or its public address behind 1:1 NAT.
+    pub udp_candidates: Vec<SocketAddr>,
+    /// The passive ICE-TCP addresses.
+    pub tcp_candidates: Vec<SocketAddr>,
+    pub max_rooms: usize,
+    pub max_legs_per_room: usize,
+    /// The TWCC estimate a new peer starts from.
+    pub initial_kbps: u64,
+    /// Below this estimate a subscriber gets no video.
+    pub audio_only_below_kbps: u64,
+    /// What each simulcast layer needs, low to high.
+    pub layer_kbps: [u64; 3],
+    /// The estimate kept for each audio track before video is shared out.
+    pub audio_kbps: u64,
+}
+
+impl Default for SfuConfig {
+    fn default() -> Self {
+        SfuConfig {
+            udp_candidates: Vec::new(),
+            tcp_candidates: Vec::new(),
+            max_rooms: 200,
+            max_legs_per_room: 50,
+            initial_kbps: 600,
+            audio_only_below_kbps: 120,
+            layer_kbps: [150, 500, 1_500],
+            audio_kbps: 40,
+        }
+    }
+}
+
+/// Something the caller passes on: to the leg's signaling connection, or to the call services.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SfuEvent {
+    /// An offer for the leg (a track to add or stop); its answer comes back with the same `offer_id`.
+    Offer {
+        key: LegKey,
+        generation: u64,
+        offer_id: u64,
+        sdp: String,
+    },
+    /// ICE and DTLS are up.
+    Connected { key: LegKey, generation: u64 },
+    /// The peer is gone: ICE failed or timed out, or it was replaced or removed.
+    Disconnected { key: LegKey, generation: u64 },
+    /// A track a leg publishes opened or ended.
+    Track {
+        key: LegKey,
+        mid: String,
+        kind: Kind,
+        source: Source,
+        open: bool,
+    },
+    /// The layer a subscriber now gets of a publisher's video; `None` is audio only.
+    Layer {
+        key: LegKey,
+        publisher: Arc<str>,
+        layer: Option<Layer>,
+    },
+    /// A subscriber's TWCC estimate changed.
+    Estimate { key: LegKey, kbps: u64 },
+    /// The leg now speaking in a room, from the audio level header extension: the loudest above the floor, held for two
+    /// looks so a cough does not move the speaker view.
+    ActiveSpeaker { room: Arc<str>, leg: Arc<str> },
+}
+
+/// What [`Sfu::poll_output`] gives.
+#[derive(Debug)]
+pub enum SfuOutput {
+    Transmit(Transmit),
+    Event(SfuEvent),
+    /// Nothing more until this time or the next input.
+    Timeout(Instant),
+}
+
+/// A refused command. [`SfuError::code`] is the reason code the signaling frame carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SfuError {
+    TooManyRooms,
+    RoomFull,
+    /// The command is for an older connection of the leg.
+    StaleGeneration,
+    UnknownLeg,
+    UnknownRoom,
+    BadSdp(String),
+    Rtc(String),
+}
+
+impl SfuError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            SfuError::TooManyRooms => "tooManyRooms",
+            SfuError::RoomFull => "roomFull",
+            SfuError::StaleGeneration => "staleGeneration",
+            SfuError::UnknownLeg => "unknownLeg",
+            SfuError::UnknownRoom => "unknownRoom",
+            SfuError::BadSdp(_) => "badSdp",
+            SfuError::Rtc(_) => "rtcError",
+        }
+    }
+}
+
+impl std::fmt::Display for SfuError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SfuError::BadSdp(m) | SfuError::Rtc(m) => write!(f, "{}: {m}", self.code()),
+            _ => f.write_str(self.code()),
+        }
+    }
+}
+
+type PeerId = u64;
+
+/// A participant with no browser, whose frames the caller writes.
+struct Injected {
+    leg: Arc<str>,
+    track: Arc<TrackIn>,
+}
+
+#[derive(Default)]
+struct Room {
+    peers: Vec<PeerId>,
+    injected: Vec<Injected>,
+    tap: Option<Box<dyn MediaTap>>,
+    speaker: Speaker,
+}
+
+/// The room's active speaker, and the one about to be.
+#[derive(Default)]
+struct Speaker {
+    current: Option<PeerId>,
+    candidate: Option<PeerId>,
+    looks: u8,
+    looked: Option<Instant>,
+}
+
+/// How often the speaker is looked at again.
+const SPEAKER_EVERY: Duration = Duration::from_millis(300);
+/// The loudness a speaker must reach (127 plus the level in negative dBov: 67 is louder than -60 dBov).
+const SPEAKER_FLOOR: f32 = 67.0;
+/// The looks a new speaker must lead.
+const SPEAKER_LOOKS: u8 = 2;
+
+/// The rooms of one media node.
+pub struct Sfu {
+    config: SfuConfig,
+    rooms: HashMap<Arc<str>, Room>,
+    peers: HashMap<PeerId, Peer>,
+    by_leg: HashMap<LegKey, PeerId>,
+    next_id: PeerId,
+    out: VecDeque<SfuOutput>,
+    next_timeout: Option<Instant>,
+}
+
+/// How many passes [`Sfu::drive`] makes before leaving the rest for the next input; each pass forwards what the last
+/// produced, so this bounds the work of one input.
+const MAX_PASSES: usize = 64;
+
+impl Sfu {
+    pub fn new(config: SfuConfig) -> Self {
+        Sfu {
+            config,
+            rooms: HashMap::new(),
+            peers: HashMap::new(),
+            by_leg: HashMap::new(),
+            next_id: 1,
+            out: VecDeque::new(),
+            next_timeout: None,
+        }
+    }
+
+    pub fn config(&self) -> &SfuConfig {
+        &self.config
+    }
+
+    /// The legs with a peer or an injected source in a room.
+    pub fn legs(&self, room: &str) -> Vec<Arc<str>> {
+        let Some(r) = self.rooms.get(room) else {
+            return Vec::new();
+        };
+        let mut legs: Vec<Arc<str>> = r
+            .peers
+            .iter()
+            .filter_map(|id| self.peers.get(id))
+            .map(|p| p.key.leg.clone())
+            .collect();
+        legs.extend(r.injected.iter().map(|i| i.leg.clone()));
+        legs
+    }
+
+    pub fn room_count(&self) -> usize {
+        self.rooms.len()
+    }
+
+    /// The generation of a leg's peer, when it has one.
+    pub fn generation(&self, key: &LegKey) -> Option<u64> {
+        self.by_leg
+            .get(key)
+            .and_then(|id| self.peers.get(id))
+            .map(|p| p.generation)
+    }
+
+    /// A leg joins (or rejoins with a newer generation) with its offer; the answer goes back on its signaling connection.
+    pub fn join(&mut self, now: Instant, key: &LegKey, generation: u64, offer: &str) -> Result<String, SfuError> {
+        if let Some(old) = self.by_leg.get(key).and_then(|id| self.peers.get(id)) {
+            if old.generation >= generation {
+                return Err(SfuError::StaleGeneration);
+            }
+        }
+        if !self.rooms.contains_key(&key.room) && self.rooms.len() >= self.config.max_rooms {
+            return Err(SfuError::TooManyRooms);
+        }
+        let replacing = self.by_leg.get(key).copied();
+        let in_room = self
+            .rooms
+            .get(&key.room)
+            .map(|r| r.peers.len() + r.injected.len())
+            .unwrap_or(0);
+        if replacing.is_none() && in_room >= self.config.max_legs_per_room {
+            return Err(SfuError::RoomFull);
+        }
+        let offer = SdpOffer::from_sdp_string(offer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+
+        let mut rtc = Rtc::builder()
+            .set_ice_lite(true)
+            .clear_codecs()
+            .enable_opus(true, false)
+            .enable_vp8(true)
+            .enable_bwe(Some(Bitrate::kbps(self.config.initial_kbps)))
+            .build(now);
+        for addr in &self.config.udp_candidates {
+            let c = Candidate::host(*addr, "udp").map_err(|e| SfuError::Rtc(e.to_string()))?;
+            rtc.add_local_candidate(c);
+        }
+        for addr in &self.config.tcp_candidates {
+            let c = Candidate::builder()
+                .tcp()
+                .host(*addr)
+                .tcptype(str0m::net::TcpType::Passive)
+                .build()
+                .map_err(|e| SfuError::Rtc(e.to_string()))?;
+            rtc.add_local_candidate(c);
+        }
+        let answer = rtc
+            .sdp_api()
+            .accept_offer(offer)
+            .map_err(|e| SfuError::BadSdp(e.to_string()))?;
+
+        if let Some(old) = replacing {
+            self.remove_peer(old);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut peer = Peer::new(id, key.clone(), generation, rtc, now);
+        let room = self.rooms.entry(key.room.clone()).or_default();
+        for other in room.peers.iter().filter_map(|pid| self.peers.get(pid)) {
+            for t in other.tracks_in() {
+                peer.handle_track_open(Arc::downgrade(t));
+            }
+        }
+        for inj in &room.injected {
+            peer.handle_track_open(Arc::downgrade(&inj.track));
+        }
+        room.peers.push(id);
+        self.peers.insert(id, peer);
+        self.by_leg.insert(key.clone(), id);
+        self.drive(now);
+        Ok(answer.to_sdp_string())
+    }
+
+    /// The leg's answer to an [`SfuEvent::Offer`]. An answer to an offer the SFU dropped (glare) is ignored.
+    pub fn handle_answer(
+        &mut self,
+        now: Instant,
+        key: &LegKey,
+        generation: u64,
+        offer_id: u64,
+        answer: &str,
+    ) -> Result<(), SfuError> {
+        let answer = SdpAnswer::from_sdp_string(answer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let peer = self.peer_mut(key, generation)?;
+        peer.handle_answer(offer_id, answer)?;
+        self.drive(now);
+        Ok(())
+    }
+
+    /// An offer from the leg (an ICE restart, a track added or removed); returns the answer.
+    pub fn handle_offer(
+        &mut self,
+        now: Instant,
+        key: &LegKey,
+        generation: u64,
+        offer: &str,
+    ) -> Result<String, SfuError> {
+        let offer = SdpOffer::from_sdp_string(offer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let peer = self.peer_mut(key, generation)?;
+        let answer = peer.handle_offer(offer)?;
+        self.drive(now);
+        Ok(answer.to_sdp_string())
+    }
+
+    /// A trickled remote candidate (`candidate:...`, as in the browser's `RTCIceCandidate.candidate`).
+    pub fn add_candidate(&mut self, key: &LegKey, generation: u64, candidate: &str) -> Result<(), SfuError> {
+        let text = candidate.strip_prefix("a=").unwrap_or(candidate);
+        let c = Candidate::from_sdp_string(text).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        self.peer_mut(key, generation)?.rtc.add_remote_candidate(c);
+        Ok(())
+    }
+
+    /// What a leg's track at `mid` carries (camera, screen ...), from its `publish` frame.
+    pub fn set_source(&mut self, key: &LegKey, generation: u64, mid: &str, source: Source) -> Result<(), SfuError> {
+        self.peer_mut(key, generation)?.set_source(mid, source);
+        Ok(())
+    }
+
+    /// The layer a subscriber wants of a publisher's video, by its tile size; `None` stops the video.
+    pub fn subscribe(
+        &mut self,
+        now: Instant,
+        key: &LegKey,
+        generation: u64,
+        publisher: &str,
+        layer: Option<Layer>,
+    ) -> Result<(), SfuError> {
+        let config = self.config.clone();
+        let peer = self.peer_mut(key, generation)?;
+        peer.set_wanted(publisher, layer);
+        peer.choose_layers(&config, now);
+        self.drive(now);
+        Ok(())
+    }
+
+    /// The leg leaves; its tracks stop on the other peers.
+    pub fn leave(&mut self, now: Instant, key: &LegKey, generation: u64) -> Result<(), SfuError> {
+        let id = self.peer_id(key, generation)?;
+        self.remove_peer(id);
+        self.drive(now);
+        Ok(())
+    }
+
+    /// Ends a room: every peer is removed and its injected sources and tap dropped.
+    pub fn close_room(&mut self, now: Instant, room: &str) {
+        let Some(r) = self.rooms.get(room) else { return };
+        for id in r.peers.clone() {
+            self.remove_peer(id);
+        }
+        self.rooms.remove(room);
+        self.drive(now);
+    }
+
+    /// Sets the tap that sees every frame published in a room.
+    pub fn set_tap(&mut self, room: &str, tap: Option<Box<dyn MediaTap>>) -> Result<(), SfuError> {
+        let r = self.rooms.get_mut(room).ok_or(SfuError::UnknownRoom)?;
+        r.tap = tap;
+        Ok(())
+    }
+
+    /// Adds a participant whose audio the caller writes with [`Sfu::inject`] (a phone leg's mix-minus, §5.1).
+    pub fn add_injected_source(&mut self, now: Instant, room: &str, leg: &str) -> Result<(), SfuError> {
+        let key = LegKey::new(room, leg);
+        if self.by_leg.contains_key(&key) {
+            return Err(SfuError::StaleGeneration);
+        }
+        let r = self.rooms.get_mut(room).ok_or(SfuError::UnknownRoom)?;
+        if r.injected.iter().any(|i| &*i.leg == leg) {
+            return Ok(());
+        }
+        if r.peers.len() + r.injected.len() >= self.config.max_legs_per_room {
+            return Err(SfuError::RoomFull);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let track = Arc::new(TrackIn::injected(id, key.leg.clone()));
+        for pid in &r.peers {
+            if let Some(p) = self.peers.get_mut(pid) {
+                p.handle_track_open(Arc::downgrade(&track));
+            }
+        }
+        r.injected.push(Injected { leg: key.leg, track });
+        self.drive(now);
+        Ok(())
+    }
+
+    /// Writes one Opus frame of an injected source to every peer of the room. `rtp_time` is at 48 kHz.
+    pub fn inject(&mut self, now: Instant, room: &str, leg: &str, rtp_time: u64, data: &[u8]) -> Result<(), SfuError> {
+        let r = self.rooms.get(room).ok_or(SfuError::UnknownRoom)?;
+        let inj = r.injected.iter().find(|i| &*i.leg == leg).ok_or(SfuError::UnknownLeg)?;
+        let track = inj.track.clone();
+        let pids = r.peers.clone();
+        let time = MediaTime::new(rtp_time, Frequency::FORTY_EIGHT_KHZ);
+        for pid in pids {
+            if let Some(p) = self.peers.get_mut(&pid) {
+                p.write_injected(&track, now, time, data);
+            }
+        }
+        self.drive(now);
+        Ok(())
+    }
+
+    /// Removes an injected source.
+    pub fn remove_injected_source(&mut self, now: Instant, room: &str, leg: &str) {
+        if let Some(r) = self.rooms.get_mut(room) {
+            r.injected.retain(|i| &*i.leg != leg);
+        }
+        self.drive(now);
+    }
+
+    /// A datagram arrived on one of the media sockets. False when no peer's ICE session takes it.
+    pub fn handle_receive(
+        &mut self,
+        now: Instant,
+        proto: Proto,
+        source: SocketAddr,
+        destination: SocketAddr,
+        contents: &[u8],
+    ) -> bool {
+        let Ok(contents) = contents.try_into() else {
+            return false;
+        };
+        let input = Input::Receive(
+            now,
+            Receive {
+                proto: proto.protocol(),
+                source,
+                destination,
+                contents,
+            },
+        );
+        let Some(peer) = self.peers.values_mut().find(|p| p.rtc.accepts(&input)) else {
+            return false;
+        };
+        peer.handle_input(input);
+        self.drive(now);
+        true
+    }
+
+    /// Time passed.
+    pub fn handle_timeout(&mut self, now: Instant) {
+        let config = self.config.clone();
+        for p in self.peers.values_mut() {
+            p.handle_input(Input::Timeout(now));
+            p.tick(&config, now);
+        }
+        self.look_for_speakers(now);
+        self.drive(now);
+    }
+
+    fn look_for_speakers(&mut self, now: Instant) {
+        for (name, room) in &mut self.rooms {
+            let s = &mut room.speaker;
+            if s.looked
+                .is_some_and(|at| now.saturating_duration_since(at) < SPEAKER_EVERY)
+            {
+                continue;
+            }
+            s.looked = Some(now);
+            let loudest = room
+                .peers
+                .iter()
+                .filter_map(|id| self.peers.get(id).map(|p| (*id, p.loudness(now))))
+                .filter(|(_, loud)| *loud >= SPEAKER_FLOOR)
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(id, _)| id);
+            let Some(best) = loudest else {
+                s.candidate = None;
+                s.looks = 0;
+                continue;
+            };
+            if s.current == Some(best) {
+                s.candidate = None;
+                s.looks = 0;
+                continue;
+            }
+            if s.candidate == Some(best) {
+                s.looks += 1;
+            } else {
+                s.candidate = Some(best);
+                s.looks = 1;
+            }
+            if s.looks >= SPEAKER_LOOKS {
+                s.current = Some(best);
+                s.candidate = None;
+                s.looks = 0;
+                if let Some(p) = self.peers.get(&best) {
+                    self.out.push_back(SfuOutput::Event(SfuEvent::ActiveSpeaker {
+                        room: name.clone(),
+                        leg: p.key.leg.clone(),
+                    }));
+                }
+            }
+        }
+    }
+
+    /// The next datagram or event, or the time of the next timeout.
+    pub fn poll_output(&mut self) -> SfuOutput {
+        if let Some(o) = self.out.pop_front() {
+            return o;
+        }
+        SfuOutput::Timeout(
+            self.next_timeout
+                .unwrap_or_else(|| Instant::now() + Duration::from_millis(100)),
+        )
+    }
+
+    fn peer_id(&self, key: &LegKey, generation: u64) -> Result<PeerId, SfuError> {
+        let id = *self.by_leg.get(key).ok_or(SfuError::UnknownLeg)?;
+        let p = self.peers.get(&id).ok_or(SfuError::UnknownLeg)?;
+        if p.generation != generation {
+            return Err(SfuError::StaleGeneration);
+        }
+        Ok(id)
+    }
+
+    fn peer_mut(&mut self, key: &LegKey, generation: u64) -> Result<&mut Peer, SfuError> {
+        let id = self.peer_id(key, generation)?;
+        self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)
+    }
+
+    fn remove_peer(&mut self, id: PeerId) {
+        let Some(mut peer) = self.peers.remove(&id) else { return };
+        peer.rtc.disconnect();
+        if self.by_leg.get(&peer.key) == Some(&id) {
+            self.by_leg.remove(&peer.key);
+        }
+        for t in peer.tracks_in() {
+            self.out.push_back(SfuOutput::Event(SfuEvent::Track {
+                key: peer.key.clone(),
+                mid: t.mid.to_string(),
+                kind: t.kind(),
+                source: t.source(),
+                open: false,
+            }));
+        }
+        self.out.push_back(SfuOutput::Event(SfuEvent::Disconnected {
+            key: peer.key.clone(),
+            generation: peer.generation,
+        }));
+        if let Some(room) = self.rooms.get_mut(&peer.key.room) {
+            room.peers.retain(|p| *p != id);
+            if room.peers.is_empty() && room.injected.is_empty() {
+                self.rooms.remove(&peer.key.room);
+            }
+        }
+    }
+
+    /// Polls every peer to its timeout and forwards what they produced, until nothing is left to forward.
+    fn drive(&mut self, now: Instant) {
+        let config = self.config.clone();
+        let mut next: Option<Instant> = None;
+        for _ in 0..MAX_PASSES {
+            let mut propagated: Vec<Propagated> = Vec::new();
+            next = None;
+            for p in self.peers.values_mut() {
+                let t = p.poll_to_timeout(&config, now, &mut self.out, &mut propagated);
+                next = Some(next.map_or(t, |n: Instant| n.min(t)));
+            }
+            let dead: Vec<PeerId> = self
+                .peers
+                .values()
+                .filter(|p| !p.rtc.is_alive())
+                .map(|p| p.id)
+                .collect();
+            for id in dead {
+                self.remove_peer(id);
+            }
+            if propagated.is_empty() {
+                break;
+            }
+            for item in propagated {
+                self.propagate(item, now);
+            }
+        }
+        self.next_timeout = next;
+    }
+
+    fn propagate(&mut self, item: Propagated, now: Instant) {
+        let origin = item.origin();
+        let Some(room_name) = self.peers.get(&origin).map(|p| p.key.room.clone()) else {
+            return;
+        };
+        let Some(room) = self.rooms.get_mut(&room_name) else {
+            return;
+        };
+        if let Propagated::MediaData(_, ref data, ref track) = item {
+            if let Some(tap) = room.tap.as_mut() {
+                let codec = data.params.spec().codec;
+                let rid = data.rid.as_ref().map(|r| r.to_string());
+                tap.on_frame(&TapFrame {
+                    leg: &track.leg,
+                    kind: track.kind(),
+                    source: track.source(),
+                    rid: rid.as_deref(),
+                    codec: codec_name(codec),
+                    rtp_time: data.time.numer(),
+                    clock_rate: data.time.frequency().get(),
+                    data: &data.data,
+                    keyframe: data.is_keyframe(),
+                    audio_level: data.ext_vals.audio_level,
+                });
+            }
+        }
+        let peers = room.peers.clone();
+        let config = self.config.clone();
+        for pid in peers {
+            let Some(p) = self.peers.get_mut(&pid) else { continue };
+            match &item {
+                Propagated::TrackOpen(_, track) if pid != origin => p.handle_track_open(track.clone()),
+                Propagated::MediaData(_, data, track) if pid != origin => {
+                    p.handle_media_data_out(&config, track, data, now)
+                }
+                Propagated::KeyframeRequest { to, mid, rid, kind, .. } if pid == *to => {
+                    p.request_keyframe(*mid, *rid, *kind, now)
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn codec_name(codec: Codec) -> &'static str {
+    match codec {
+        Codec::Opus => "opus",
+        Codec::Vp8 => "vp8",
+        Codec::Vp9 => "vp9",
+        Codec::H264 => "h264",
+        Codec::Av1 => "av1",
+        Codec::PCMU => "pcmu",
+        Codec::PCMA => "pcma",
+        Codec::G722 => "g722",
+        _ => "other",
+    }
+}
+
+#[cfg(test)]
+mod testnet;
+
+#[cfg(test)]
+mod tests;

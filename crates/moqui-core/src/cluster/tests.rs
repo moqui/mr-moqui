@@ -771,3 +771,75 @@ fn repo_env_stamp(root: &Path) -> Option<(u64, SystemTime)> {
     let meta = std::fs::metadata(root.join("runtime/.env")).ok()?;
     Some((meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)))
 }
+
+#[test]
+fn a_direct_send_goes_to_its_member_only_and_to_this_member_locally() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-direct");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let (ctx, facade) = open_facade();
+    let recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    for (id, url) in [
+        ("inst-direct-media", "https://media.example:8444"),
+        ("inst-direct-other", "https://other.example:8444"),
+    ] {
+        put_member(&facade, id, url, now_value(), &fingerprints.session, &fingerprints.cert);
+    }
+    put_member(
+        &facade,
+        "inst-direct-stale",
+        "https://stale.example:8444",
+        Value::I64(1),
+        &fingerprints.session,
+        &fingerprints.cert,
+    );
+    super::start(ctx.factory()).unwrap();
+    let local = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&local);
+    let _subscription = notify::subscribe(
+        notify::RTC_SIGNAL,
+        Arc::new(move |message: &TopicMessage| sync::lock(&seen).push(message.body.clone())),
+    )
+    .unwrap();
+    let message = |target: &str| TopicMessage {
+        origin_id: notify::origin_id().to_string(),
+        message_id: crate::entity::uuid_v4().unwrap(),
+        body: serde_json::json!({ "target": target, "kind": "frame" }),
+    };
+    super::send_to(
+        &facade,
+        "inst-direct-media",
+        notify::RTC_SIGNAL,
+        &message("inst-direct-media"),
+    )
+    .unwrap();
+    super::send_to(&facade, "inst-direct", notify::RTC_SIGNAL, &message("inst-direct")).unwrap();
+    assert!(super::send_to(
+        &facade,
+        "inst-direct-stale",
+        notify::RTC_SIGNAL,
+        &message("inst-direct-stale")
+    )
+    .is_err());
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while sync::lock(&recording.calls)
+        .iter()
+        .all(|c| c.topic != notify::RTC_SIGNAL)
+        && std::time::Instant::now() < until
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let posted: Vec<String> = sync::lock(&recording.calls)
+        .iter()
+        .filter(|c| c.topic == notify::RTC_SIGNAL)
+        .map(|c| c.base.clone())
+        .collect();
+    assert_eq!(posted, vec!["https://media.example:8444".to_string()]);
+    let local = sync::lock(&local).clone();
+    assert_eq!(local.len(), 1, "{local:?}");
+    assert_eq!(local[0]["target"], "inst-direct");
+    assert!(super::for_this_member(ctx.factory(), &message("inst-direct")));
+    assert!(!super::for_this_member(ctx.factory(), &message("inst-direct-media")));
+}

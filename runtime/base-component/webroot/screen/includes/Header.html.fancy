@@ -13,7 +13,13 @@
 <#if html_keywords><meta name="keywords" content="${html_keywords}"></#if>
 <#if html_description><meta name="description" content="${html_description}"></#if>
 <title><#if html_title>${html_title}<#else><#if parentMenuName>${ec.resource.expand(parentMenuName, "")} - </#if><#if defaultMenuName>${ec.resource.expand(defaultMenuName, "")}</#if></#if></title>
-<link rel="apple-touch-icon" href="/MoquiLogo100.png">
+<#-- the PWA (plans/Comms-Framework.md §7.2): installable from /qapps, its service worker registered by js/WebrootPush.js -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1976d2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Moqui">
+<link rel="apple-touch-icon" href="/images/pwa-icon-192.png">
 <#list sri.getThemeValues("STRT_SHORTCUT_ICON") as iconLocation>
 <link rel="icon" href="${sri.buildUrl(iconLocation).url}">
 </#list>

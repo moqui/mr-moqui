@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Comms Home of BasicComms (plans/Comms-Framework.md §3.2, D-A4; first built as IronStone Comms' CommsHomeServices, mr-boss
+    design-drawers-commons.md §12 Home): the unread of each mail account, flagged, snoozed until today, chat mentions, mail that
+    could not be sent and the chat rooms with unread, each part on its own over the services that own the data. An app's Home
+    (IronStone's adds its internal messages, Needs reply, follow-ups, meetings and mailboxes) answers through its inbox-source
+    provider, by org.moqui.comms.InboxServices.run#Operation. Failure tolerant (AGENTS.md): each part runs in a transaction of
+    its own; one that fails is logged by name, named in failedParts and left out, and the rest is answered. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="CommsHome">
+        <description>Comms Home for the current user, over the user's mail and chat. cardList: the counters, each {key, title,
+            value, icon, link}: one per mail account with its unread Inbox mail, Flagged, Snoozed (back by the end of today),
+            Mentions (chat), Not sent (sends that failed) and Missed calls (not seen yet). roomList: the chat rooms with unread, ten at most. needsReplyList,
+            followUpList, meetingList and mailboxList are an app's (its inbox-source answers this operation) and empty here.
+            hasMailAccount is false until the user has a mail account; problemAccountList names the accounts whose sign-in or
+            sync failed, with canManage (only a manager fixes one). failedParts names what could not be read.</description>
+        <out-parameters>
+            <parameter name="cardList" type="List"/>
+            <parameter name="needsReplyList" type="List"/>
+            <parameter name="followUpList" type="List"/>
+            <parameter name="meetingList" type="List"/>
+            <parameter name="mailboxList" type="List"/>
+            <parameter name="roomList" type="List"/>
+            <parameter name="hasMailAccount" type="Boolean"/>
+            <parameter name="problemAccountList" type="List"/>
+            <parameter name="failedParts" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => text.length > 255 ? text : ec.l10n.localize(text)
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                if (value instanceof Date) return value.getTime()
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            cardList = []; needsReplyList = []; followUpList = []; meetingList = []; mailboxList = []; roomList = []
+            hasMailAccount = false; problemAccountList = []; failedParts = []
+            const nowMillis = toMillis(ec.user.nowTimestamp)
+            const day = (millis) => ec.l10n.format(new Date(Number(millis)), 'yyyy-MM-dd')
+            const todayText = day(nowMillis)
+            const APP = System.getProperty('comms_app_root') || '/qapps/BasicComms'
+            const INBOX = APP + '/Inbox'
+            const count = (n) => ec.l10n.format(n, '#,##0')
+            // one part: its own errors and transaction; a failure leaves it out
+            const part = (name, run) => {
+                ec.message.pushErrors()
+                try {
+                    run()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                } catch (err) {
+                    failedParts.push(name)
+                    ec.logger.error(`Comms Home of user ${ec.user.userId}: ${name} failed and is left out: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            const callService = (name, parameters) => {
+                const out = ec.service.sync().name(name).parameters(parameters || {}).requireNewTransaction(true).call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                if (out == null) throw new Error(`${name} answered nothing`)
+                return out
+            }
+            const threads = (parameters) => Array.from(callService('org.moqui.comms.InboxServices.find#InboxRows', parameters).threadList || [])
+            const whenText = (millis) => {
+                if (millis == null) return ''
+                return day(millis) === todayText ? ec.l10n.format(new Date(Number(millis)), 'h:mm a') : ec.l10n.format(new Date(Number(millis)), 'MMM d')
+            }
+
+            // the unread of each mail account
+            part('unread', () => {
+                const counts = callService('org.moqui.impl.EmailClientServices.get#UserEmailAccounts')
+                let notSent = 0
+                for (const account of Array.from(counts.accountList || [])) {
+                    if (account.isInternal) continue
+                    hasMailAccount = true
+                    notSent += account.outboxErrorCount || 0
+                    if (['EasAuthFailed', 'EasError'].includes(account.statusId)) problemAccountList.push({emailAccountId: account.emailAccountId,
+                        accountName: account.accountName || account.emailAddress, problemText: account.statusId === 'EasAuthFailed' ? L('the sign-in failed') : L('the last sync failed'),
+                        canManage: account.canManage === true,
+                        link: APP + '/Settings/MailAccounts/Account?emailAccountId=' + encodeURIComponent(account.emailAccountId) + (account.statusId === 'EasAuthFailed' ? '&fix=Y' : '')})
+                    cardList.push({key: 'account_' + account.emailAccountId, title: account.accountName || account.emailAddress || L('Mail'),
+                        value: account.unreadCount == null ? '–' : count(account.unreadCount), icon: 'sym_o_mail', link: INBOX + '?account=' + encodeURIComponent(account.emailAccountId)})
+                }
+                if (hasMailAccount) cardList.push({key: 'notSent', title: L('Not sent'), value: count(notSent), icon: notSent ? 'sym_o_error' : 'sym_o_outbox', link: INBOX + '?view=outbox'})
+            })
+            part('flagged', () => {
+                const rows = threads({view: 'flagged', pageSize: 100})
+                cardList.push({key: 'flagged', title: L('Flagged'), value: rows.length >= 100 ? '100+' : count(rows.length), icon: 'sym_o_flag', link: INBOX + '?view=flagged'})
+            })
+            part('snoozed', () => {
+                const rows = threads({view: 'snoozed', pageSize: 200}).filter((row) => row.snoozedThruDate != null && day(toMillis(row.snoozedThruDate)) <= todayText)
+                cardList.push({key: 'snoozed', title: L('Snoozed'), value: count(rows.length), icon: 'sym_o_snooze', link: INBOX + '?view=snoozed'})
+            })
+            // mentions: chat mentions and the unread notes to the user on records (Comments)
+            let rooms = null
+            part('rooms', () => { rooms = callService('org.moqui.impl.ChatServices.find#Rooms', {filter: 'unread', limit: 50}) })
+            part('mentions', () => {
+                const total = rooms?.mentionTotal || 0
+                cardList.push({key: 'mentions', title: L('Mentions'), value: count(total), icon: 'sym_o_alternate_email', link: APP + '/Chat'})
+            })
+            // missed calls not seen yet, into the Calls history's Missed tab
+            part('missedCalls', () => {
+                const missed = callService('org.moqui.impl.CallServices.count#MissedCalls').missedCount || 0
+                cardList.push({key: 'missedCalls', title: L('Missed calls'), value: count(missed), icon: missed ? 'sym_o_phone_missed' : 'sym_o_call',
+                    link: APP + '/Calls/History?outcome=missed'})
+            })
+            if (rooms) roomList = Array.from(rooms.roomList || []).filter((room) => (room.unreadCount || 0) > 0 || (room.mentionCount || 0) > 0).slice(0, 10)
+                .map((room) => ({chatRoomId: room.chatRoomId, name: room.displayName || room.roomName || room.chatRoomId, unreadCount: room.unreadCount || 0,
+                    mentionCount: room.mentionCount || 0, snippet: room.lastMessage ? ((room.lastMessage.senderName ? room.lastMessage.senderName + ': ' : '') +
+                        (room.lastMessage.snippet || '')) : '', link: APP + '/Chat?chatRoomId=' + encodeURIComponent(room.chatRoomId)}))
+        ]]></script></actions>
+    </service>
+</services>

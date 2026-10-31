@@ -1,0 +1,726 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The composer of BasicComms over the user's mail accounts (plans/Comms-Framework.md §3.2, A3; first built as IronStone
+    Comms' ComposeServices, mr-boss design-drawers-commons.md §12): the identities the user sends as, what the composer starts
+    with (a draft, a reply, a forward, a new message), the recipients, a draft saved, its files (uploaded, or copied from the
+    drives), sending with undo and scheduling, and discarding. Every read and write goes through
+    org.moqui.impl.EmailClientServices, which checks the user's access to the account. The screens call
+    org.moqui.comms.InboxServices.run#Operation, which hands an operation to an app's inbox-source provider when there is one
+    (internal messages, contact books and filing on records are IronStone's). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="Identities" allow-remote="false">
+        <description>The identities the user may send as: each identity of an account the user may send from ({value
+            identity:id or account:id, label, emailAccountId, emailIdentityId, emailAddress, displayName, accountName,
+            signatureHtml, signaturePlacementEnumId, useForReplies, isDefault}). defaultValue is the default identity of
+            MAIL_DEFAULT_ACCOUNT when that account is one the user may send from, else the default identity of the first
+            account.</description>
+        <out-parameters>
+            <parameter name="identityList" type="List"/>
+            <parameter name="defaultValue"/>
+            <parameter name="me" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            identityList = []
+            const accounts = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#UserEmailAccounts').call()
+            if (ec.message.hasError()) return
+            const partyId = ec.user.userAccount?.partyId || null
+            const name = ec.user.userAccount?.userFullName || ec.user.username
+            me = {userId: ec.user.userId, partyId: partyId, name: name}
+            defaultValue = null
+            for (const account of Array.from(accounts.accountList || [])) {
+                if (account.isInternal || !account.canSend) continue
+                const identities = Array.from(account.identityList || [])
+                if (identities.length === 0) identityList.push({value: 'account:' + account.emailAccountId, label: `${account.accountName || account.emailAddress} <${account.emailAddress}>`,
+                    emailAccountId: account.emailAccountId, emailIdentityId: null, emailAddress: account.emailAddress, displayName: account.accountName ?? null,
+                    accountName: account.accountName ?? null, signatureHtml: null, signaturePlacementEnumId: null, useForReplies: false, isDefault: true})
+                for (const identity of identities) identityList.push({value: 'identity:' + identity.emailIdentityId,
+                    label: identity.displayName ? `${identity.displayName} <${identity.emailAddress}>` : identity.emailAddress,
+                    emailAccountId: account.emailAccountId, emailIdentityId: identity.emailIdentityId, emailAddress: identity.emailAddress,
+                    displayName: identity.displayName ?? null, accountName: account.accountName ?? null, signatureHtml: identity.signatureHtml ?? null,
+                    signaturePlacementEnumId: identity.signaturePlacementEnumId ?? null, useForReplies: identity.useForReplies === true, isDefault: identity.isDefault === true})
+                if (!defaultValue) {
+                    const mine = identityList.filter((item) => item.emailAccountId === account.emailAccountId)
+                    defaultValue = (mine.find((item) => item.isDefault) || mine[0]).value
+                }
+            }
+            const preferred = String(ec.user.getPreference('MAIL_DEFAULT_ACCOUNT') || '').trim()
+            if (preferred) {
+                const mine = identityList.filter((item) => item.emailAccountId === preferred)
+                if (mine.length) defaultValue = (mine.find((item) => item.isDefault) || mine[0]).value
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="ComposeData">
+        <description>
+            What the composer starts with. A draft (emailMessageId, one the user may send from): its identity, recipients,
+            subject, body (its quoted part apart), attachments and the message it answers. A reply (replyToEmailMessageId, a
+            message the user reads; replyAll for every recipient but the user) or a forward (forwardEmailMessageId: a draft
+            made now, with copies of the files): the account it came to, the sender (its Reply-To) and recipients, "Re:" or
+            "Fwd:" and the quoted message. A new message takes to, cc, bcc, subject and body (mailto style), and the record
+            chip recordEntity, recordId when a record-lookup provider answers for it. Each recipient is {value, label, kind
+            (address), locked}. An internal message or a mailbox post is an app's (its inbox-source answers this operation).
+        </description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="replyToEmailMessageId"/>
+            <parameter name="forwardEmailMessageId"/>
+            <parameter name="replyAll" type="Boolean" default="false"/>
+            <parameter name="replyToCommEventId"/>
+            <parameter name="replyToSender" type="Boolean" default="false"/>
+            <parameter name="contactListId"/>
+            <parameter name="to" allow-html="any"/>
+            <parameter name="cc" allow-html="any"/>
+            <parameter name="bcc" allow-html="any"/>
+            <parameter name="subject" allow-html="any"/>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="recordEntity"/>
+            <parameter name="recordId"/>
+        </in-parameters>
+        <out-parameters><parameter name="compose" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const MAIL = 'org.moqui.impl.EmailClientServices'
+            const L = (text) => ec.l10n.localize(text)
+            const escape = (text) => String(text ?? '').replace(/[<>&"]/g, (ch) => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;'})[ch])
+            const splitAddresses = (text) => {
+                const out = []
+                if (!text) return out
+                let current = '', quote = false, angle = 0
+                for (const ch of String(text)) {
+                    if (ch === '"') quote = !quote
+                    else if (ch === '<' && !quote) angle++
+                    else if (ch === '>' && !quote && angle > 0) angle--
+                    else if ((ch === ',' || ch === ';') && !quote && angle === 0) { if (current.trim()) out.push(current.trim()); current = ''; continue }
+                    current += ch
+                }
+                if (current.trim()) out.push(current.trim())
+                return out.map((entry) => {
+                    const match = /^(.*)<([^>]+)>\s*$/.exec(entry)
+                    if (!match) return {address: entry.replace(/^mailto:/i, '').replace(/^"|"$/g, '').trim(), name: null}
+                    const name = match[1].trim().replace(/^"(.*)"$/, '$1').trim()
+                    return {address: match[2].trim(), name: name || null}
+                })
+            }
+            const addressChip = (entry) => ({value: entry.name ? `"${String(entry.name).replace(/"/g, '')}" <${entry.address}>` : entry.address,
+                label: entry.name ? `${entry.name} <${entry.address}>` : entry.address, kind: 'address', locked: false})
+            const toMillis = (value) => value == null || value === '' ? null : (typeof value === 'number' ? value : Number(value))
+            const dateText = (millis) => millis ? ec.l10n.format(new Date(millis), 'EEE, MMM d, yyyy h:mm a') : ''
+            const ids = ec.service.sync().name('org.moqui.comms.ComposeServices.get#Identities').call()
+            if (ec.message.hasError()) return
+            const identities = Array.from(ids.identityList || [])
+            const prefUndo = ec.user.getPreference('MAIL_UNDO_SECONDS')
+            const placement = ec.user.getPreference('MAIL_SIGNATURE_PLACEMENT')
+            const result = {identityList: identities, fromValue: ids.defaultValue, me: ids.me, to: [], cc: [], bcc: [], subject: '', body: '', quoteHtml: null,
+                emailMessageId: null, parentEmailMessageId: null, isForward: false, parentCommEventId: null, replyToSenderOnly: false, contactListId: null,
+                contactListName: null, record: null, attachmentList: [], undoSeconds: prefUndo != null && prefUndo !== '' ? Number(prefUndo) : 10,
+                signaturePlacement: placement === 'below' ? 'below' : 'above', threadStore: null, threadId: null, kind: 'new'}
+            const identityFor = (accountId, addresses) => {
+                const wanted = new Set(Array.from(addresses || []).map((address) => String(address || '').toLowerCase()))
+                const mine = identities.filter((item) => item.emailAccountId === accountId)
+                return (mine.find((item) => item.emailAddress && wanted.has(String(item.emailAddress).toLowerCase())) || mine.find((item) => item.isDefault) || mine[0] || null)
+            }
+            const myAddresses = new Set(identities.filter((item) => item.emailAddress).map((item) => String(item.emailAddress).toLowerCase()))
+            if (ec.user.userAccount?.emailAddress) myAddresses.add(String(ec.user.userAccount.emailAddress).toLowerCase())
+            const headerValue = (headers, name) => {
+                let found = null
+                for (const line of String(headers || '').split(/\r?\n/)) {
+                    if (found != null) { if (/^[ \t]/.test(line)) { found += ' ' + line.trim(); continue } break }
+                    const colon = line.indexOf(':')
+                    if (colon > 0 && line.substring(0, colon).trim().toLowerCase() === String(name).toLowerCase()) found = line.substring(colon + 1).trim()
+                }
+                return found
+            }
+            // the quoted part of a reply or forward: the message cleaned to the safe set, apart from the editor
+            const quoteOf = (message, forward) => {
+                const fromText = message.fromName ? `${message.fromName} <${message.fromAddress}>` : (message.fromAddress || '')
+                const html = message.body && /<[a-z]/i.test(message.body) ? StringUtilities.cleanHtml(message.body)
+                        : '<p>' + escape(message.bodyText || message.body || '').replace(/\n/g, '<br>') + '</p>'
+                if (forward) return `<div class="ironstone-quote"><p>---------- ${escape(L('Forwarded message'))} ---------<br>${escape(L('From'))}: ${escape(fromText)}<br>` +
+                    `${escape(L('Date'))}: ${escape(dateText(toMillis(message.messageDate)))}<br>${escape(L('Subject'))}: ${escape(message.subject || '')}<br>` +
+                    `${escape(L('To'))}: ${escape(message.toAddresses || '')}</p>${html}</div>`
+                return `<div class="ironstone-quote"><p>${escape(ec.resource.expand('On ${date}, ${name} wrote:', '', {date: dateText(toMillis(message.messageDate)), name: fromText}))}</p>` +
+                    `<blockquote>${html}</blockquote></div>`
+            }
+            const splitQuote = (html) => {
+                const text = String(html || '')
+                const at = text.indexOf('<div class="ironstone-quote">')
+                return at < 0 ? {body: text, quote: null} : {body: text.substring(0, at), quote: text.substring(at)}
+            }
+            const threadMessage = (emailId, headers) => {
+                const out = ec.service.sync().name(MAIL + '.get#Thread').parameters({emailMessageId: emailId, includeHeaders: headers === true}).requireNewTransaction(true).call()
+                if (ec.message.hasError()) return null
+                return {thread: out, message: Array.from(out.messageList || []).find((item) => item.emailMessageId === emailId)}
+            }
+            const fileList = (emailId) => Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailId)
+                    .orderBy('emailMessageAttachmentId').list()).map((file) => ({id: file.emailMessageAttachmentId, name: file.fileName || 'attachment',
+                        size: file.fileSize ?? null, contentType: file.contentType ?? null}))
+
+            if (emailMessageId) {
+                // a draft of the user's
+                const found = threadMessage(emailMessageId, false)
+                if (found == null) return
+                const draft = found.message
+                if (draft.statusId !== 'ES_DRAFT' && !(draft.statusId === 'ES_READY' && draft.sendError)) { ec.message.addError(`Email message ${emailMessageId} is not a draft`); return }
+                if (!draft.canSend) { ec.message.addError(`You may not send from email account ${draft.emailAccountId}`); return }
+                const identity = (draft.emailIdentityId && identities.find((item) => item.emailIdentityId === draft.emailIdentityId)) || identityFor(draft.emailAccountId, [draft.fromAddress])
+                if (identity) result.fromValue = identity.value
+                result.to = splitAddresses(draft.toAddresses).map(addressChip)
+                result.cc = splitAddresses(draft.ccAddresses).map(addressChip)
+                result.bcc = splitAddresses(draft.bccAddresses).map(addressChip)
+                result.subject = draft.subject || ''
+                const parts = splitQuote(draft.body || (draft.bodyText ? '<p>' + escape(draft.bodyText).replace(/\n/g, '<br>') + '</p>' : ''))
+                result.body = parts.body
+                result.quoteHtml = parts.quote
+                result.emailMessageId = emailMessageId
+                result.parentEmailMessageId = draft.parentEmailMessageId
+                result.isForward = !!draft.parentEmailMessageId && !draft.inReplyTo
+                result.attachmentList = fileList(emailMessageId)
+                result.kind = 'draft'
+                if (draft.rootEmailMessageId) { result.threadStore = 'email'; result.threadId = draft.rootEmailMessageId }
+            } else if (replyToEmailMessageId || forwardEmailMessageId) {
+                const parentId = replyToEmailMessageId || forwardEmailMessageId
+                const forward = !replyToEmailMessageId
+                const found = threadMessage(parentId, true)
+                if (found == null) return
+                const parent = found.message
+                const recipients = splitAddresses(parent.toAddresses).concat(splitAddresses(parent.ccAddresses))
+                // from the account it came to when the user may send from it, else the default
+                const sendable = identities.filter((item) => !item.isInternal && item.emailAccountId === parent.emailAccountId)
+                const identity = sendable.length ? identityFor(parent.emailAccountId, recipients.map((entry) => entry.address)) : null
+                if (identity) result.fromValue = identity.value
+                else if (!identities.some((item) => !item.isInternal)) { ec.message.addError(L('Add a mail account to send email')); return }
+                const subjectText = parent.subject || ''
+                result.subject = forward ? (/^fwd?:/i.test(subjectText) ? subjectText : 'Fwd: ' + subjectText) : (/^re:/i.test(subjectText) ? subjectText : 'Re: ' + subjectText)
+                result.quoteHtml = quoteOf(parent, forward)
+                result.parentEmailMessageId = parentId
+                result.isForward = forward
+                result.threadStore = 'email'
+                result.threadId = found.thread.rootEmailMessageId
+                if (!forward) {
+                    const fromMe = myAddresses.has(String(parent.fromAddress || '').toLowerCase())
+                    const replyTo = splitAddresses(headerValue(parent.headersString, 'Reply-To'))
+                    const sender = replyTo.length ? replyTo : [{address: parent.fromAddress, name: parent.fromName}]
+                    const notMe = (entry) => !myAddresses.has(String(entry.address || '').toLowerCase())
+                    let toList = fromMe ? splitAddresses(parent.toAddresses) : sender
+                    let ccList = []
+                    if (replyAll) {
+                        toList = toList.concat(fromMe ? [] : splitAddresses(parent.toAddresses).filter(notMe))
+                        ccList = splitAddresses(parent.ccAddresses).filter(notMe)
+                    }
+                    const seen = new Set()
+                    const unique = (list) => list.filter((entry) => { const key = String(entry.address || '').toLowerCase(); if (!key || seen.has(key)) return false; seen.add(key); return true })
+                    result.to = unique(toList).map(addressChip)
+                    result.cc = unique(ccList).map(addressChip)
+                    result.kind = replyAll ? 'replyAll' : 'reply'
+                } else {
+                    // the forward is a draft now, so the files go with it as copies of their own
+                    if (!identity && !result.fromValue) { ec.message.addError(L('Add a mail account to send email')); return }
+                    const chosen = identities.find((item) => item.value === result.fromValue)
+                    if (!chosen || chosen.isInternal) { ec.message.addError(L('Add a mail account to send email')); return }
+                    const draft = ec.service.sync().name(MAIL + '.save#Draft').parameters({emailAccountId: chosen.emailAccountId, emailIdentityId: chosen.emailIdentityId,
+                        parentEmailMessageId: parentId, isForward: true, subject: result.subject, body: '<p></p>' + result.quoteHtml}).call()
+                    if (ec.message.hasError()) return
+                    const files = []
+                    for (const file of ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', parentId).list()) {
+                        if (!file.attachmentLocation || file.isInline === 'Y') continue
+                        const safe = String(file.fileName || 'attachment').replace(/[\/\\?#%:]/g, '_')
+                        const location = `dbresource://email/${chosen.emailAccountId}/${draft.emailMessageId}/${files.length + 1}-${safe}`
+                        try {
+                            ec.resource.getLocationReference(location).copyFrom(file.attachmentLocation)
+                            files.push({attachmentLocation: location, fileName: file.fileName, fileSize: file.fileSize, contentType: file.contentType})
+                        } catch (err) { ec.logger.warn(`Forward of ${parentId}: the file ${file.fileName} was not copied: ${err && err.message ? err.message : err}`) }
+                    }
+                    if (files.length) {
+                        ec.service.sync().name(MAIL + '.save#Draft').parameters({emailMessageId: draft.emailMessageId, attachmentList: files}).call()
+                        if (ec.message.hasError()) return
+                    }
+                    result.emailMessageId = draft.emailMessageId
+                    result.attachmentList = fileList(draft.emailMessageId)
+                    result.kind = 'forward'
+                }
+            } else if (replyToCommEventId) {
+                ec.message.addError(L('Replies to internal messages are not available here')); return
+            } else {
+                // a new message: mailto-style values, a mailbox to post to
+                for (const [field, text] of [['to', to], ['cc', cc], ['bcc', bcc]]) result[field] = splitAddresses(text).filter((entry) => entry.address).map(addressChip)
+                if (subject) result.subject = String(subject)
+                if (body) result.body = /<[a-z]/i.test(String(body)) ? StringUtilities.cleanHtml(String(body)) : '<p>' + escape(body).replace(/\n/g, '<br>') + '</p>'
+                if (contactListId) { ec.message.addError(L('Mailboxes are not available here')); return }
+            }
+            // the record chip: one the user sees
+            if (recordEntity && recordId) {
+                const looked = ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'info',
+                    records: [{recordEntityName: recordEntity, recordId: recordId}]}).call()
+                ec.message.clearErrors()
+                const info = Array.from(looked?.recordList || [])[0]
+                if (info && info.visible) result.record = {recordEntityName: info.entity || recordEntity, recordId: recordId, title: info.title || recordId,
+                    typeLabel: info.typeLabel || null, icon: info.icon || 'sym_o_link', url: info.url || null}
+            }
+            compose = result
+        ]]></script></actions>
+    </service>
+
+    <service verb="search" noun="Recipients">
+        <description>The recipients the To, Cc and Bcc chips offer for the term: the users of this system (by name or
+            address) and the addresses of the user's recent mail, then what was typed when it is an address. Options
+            {value, label, kind address}: value is the address as a header ("Name" &lt;address&gt;). The people, contact
+            groups and mailboxes of an app's contact books are its own (its inbox-source answers this operation).</description>
+        <in-parameters>
+            <parameter name="term" allow-html="any"/>
+            <parameter name="mode" default-value="email"/>
+            <parameter name="limit" type="Integer" default="12"/>
+        </in-parameters>
+        <out-parameters><parameter name="optionList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            const cf = ec.entity.conditionFactory
+            optionList = []
+            const text = String(term || '').trim()
+            const max = Math.max(1, Math.min(limit || 12, 50))
+            const like = (field) => cf.makeCondition(field, 'like', `%${text}%`, false, true)
+            if (mode === 'internal') return
+            if (text.length < 1) return
+            const seen = new Set()
+            const add = (address, name) => {
+                const key = String(address || '').trim().toLowerCase()
+                if (!key.includes('@') || seen.has(key)) return
+                seen.add(key)
+                const clean = name ? String(name).replace(/"/g, '').trim() : null
+                optionList.push({value: clean ? `"${clean}" <${String(address).trim()}>` : String(address).trim(), label: clean ? `${clean} <${String(address).trim()}>` : String(address).trim(), kind: 'address'})
+            }
+            const userId = ec.user.userId
+            // users of this system, by name or address
+            if (optionList.length < max) for (const account of ec.entity.find('moqui.security.UserAccount').condition(cf.makeCondition([like('username'), like('userFullName'),
+                    like('emailAddress')], 'or')).condition('emailAddress', 'not-equals', null).condition(cf.makeCondition('disabled', 'not-equals', 'Y', true))
+                    .selectField('emailAddress').selectField('userFullName').limit(max).disableAuthz().list()) add(account.emailAddress, account.userFullName)
+            // the user's recent correspondents: addresses of the latest mail in the accounts the user reaches
+            if (optionList.length < max) {
+                const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').requireNewTransaction(true).call()
+                ec.message.clearErrors()
+                const accountIds = Array.from(access?.accountList || []).filter((account) => !account.isInternal).map((account) => account.emailAccountId)
+                if (accountIds.length) {
+                    const rows = Array.from(ec.entity.find('moqui.basic.email.EmailMessage').condition('emailAccountId', 'in', accountIds)
+                            .condition(cf.makeCondition([like('fromAddress'), like('fromName'), like('toAddresses')], 'or'))
+                            .selectField('fromAddress').selectField('fromName').selectField('toAddresses').orderBy('-messageDate').limit(60).list())
+                    const lower = text.toLowerCase()
+                    for (const row of rows) {
+                        if (optionList.length >= max) break
+                        if (String(row.fromAddress || '').toLowerCase().includes(lower) || String(row.fromName || '').toLowerCase().includes(lower)) add(row.fromAddress, row.fromName)
+                        for (const part of String(row.toAddresses || '').split(',')) {
+                            const match = /^(.*)<([^>]+)>\s*$/.exec(part.trim())
+                            const address = match ? match[2].trim() : part.trim()
+                            const name = match ? match[1].trim().replace(/^"(.*)"$/, '$1') : null
+                            if (address.toLowerCase().includes(lower) || String(name || '').toLowerCase().includes(lower)) add(address, name)
+                        }
+                    }
+                }
+            }
+            // what was typed, when it is an address
+            if (/^[^\s@<>,]+@[^\s@<>,]+\.[^\s@<>,]+$/.test(text)) add(text, null)
+            optionList = optionList.slice(0, max)
+        ]]></script></actions>
+    </service>
+
+    <service verb="resolve" noun="Recipients" allow-remote="false">
+        <description>The chips of a recipient field ([{value, label}] or their JSON) for a send: the header text of the
+            address chips. Another kind of chip (a person, group or mailbox of an app's) is refused here; an entry that is not
+            an address is an error naming it.</description>
+        <in-parameters>
+            <parameter name="chipList" type="List"/>
+            <parameter name="chipsJson" allow-html="any"/>
+            <parameter name="mode" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="addressText"/>
+            <parameter name="partyIdList" type="List"/>
+            <parameter name="contactListIdList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const cf = ec.entity.conditionFactory
+            let chips = chipList ? Array.from(chipList) : []
+            if (!chips.length && chipsJson) { try { chips = JSON.parse(chipsJson) } catch (err) { ec.message.addError('The recipients are not JSON'); return } }
+            if (!Array.isArray(chips)) chips = []
+            const addresses = []
+            partyIdList = []
+            contactListIdList = []
+            const seenAddress = new Set()
+            for (const chip of chips) {
+                const value = String((chip && (chip.value ?? chip)) || '').trim()
+                const label = String((chip && chip.label) || value)
+                if (!value) continue
+                if (mode === 'internal' || /^(list|group|party):/.test(value)) {
+                    ec.message.addError(ec.resource.expand('${name} is not an email address', '', {name: label})); return
+                } else {
+                    const match = /<([^>]+)>/.exec(value)
+                    const address = (match ? match[1] : value).trim()
+                    if (!/^[^\s@<>,]+@[^\s@<>,]+$/.test(address)) { ec.message.addError(ec.l10n.localize('Not an email address') + ': ' + label); return }
+                    const key = address.toLowerCase()
+                    if (!seenAddress.has(key)) { seenAddress.add(key); addresses.push(value) }
+                }
+            }
+            addressText = addresses.join(', ')
+        ]]></script></actions>
+    </service>
+
+    <service verb="save" noun="ComposeDraft">
+        <description>Save an email draft (org.moqui.impl.EmailClientServices.save#Draft) from the composer: the identity
+            (fromValue identity:id or account:id of an account the user may send from), the recipient chips, subject and
+            body, with the quoted part of a reply or forward after the body, and for a new draft the message it answers or
+            forwards. Its attachments stay as upload#ComposeAttachment and remove#ComposeAttachment keep them.</description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="fromValue" required="true"/>
+            <parameter name="toJson" allow-html="any"/>
+            <parameter name="ccJson" allow-html="any"/>
+            <parameter name="bccJson" allow-html="any"/>
+            <parameter name="subject" allow-html="any"/>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="bodyText" allow-html="any"/>
+            <parameter name="quoteHtml" allow-html="any"/>
+            <parameter name="parentEmailMessageId"/>
+            <parameter name="isForward" type="Boolean" default="false"/>
+            <parameter name="strict" type="Boolean" default="false"><description>A recipient that is not an address is an error
+                (for a send); a draft keeps only those that are</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="rootEmailMessageId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const ids = ec.service.sync().name('org.moqui.comms.ComposeServices.get#Identities').call()
+            if (ec.message.hasError()) return
+            const identity = Array.from(ids.identityList || []).find((item) => item.value === fromValue)
+            if (!identity || identity.isInternal) { ec.message.addError(ec.l10n.localize('Choose a mail account to send from')); return }
+            const header = (json) => {
+                if (!json) return ''
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.comms.ComposeServices.resolve#Recipients').parameters({chipsJson: json, mode: 'email'}).call()
+                    if (ec.message.hasError()) {
+                        if (strict) throw new Error(ec.message.getErrorsString())
+                        // a draft keeps what it can
+                        let chips = []
+                        try { chips = JSON.parse(json) } catch (err) { chips = [] }
+                        return Array.from(chips).map((chip) => String(chip?.value || '')).filter((value) => value.includes('@') && !value.startsWith('party:')).join(', ')
+                    }
+                    return out.addressText || ''
+                } finally { if (!strict) ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            let toText, ccText, bccText
+            try { toText = header(toJson); ccText = header(ccJson); bccText = header(bccJson) }
+            catch (err) { ec.message.addError(err && err.message ? err.message : String(err)); return }
+            const fullBody = String(body || '') + (quoteHtml ? String(quoteHtml) : '')
+            const parameters = {emailMessageId: emailMessageId || null, emailAccountId: identity.emailAccountId, emailIdentityId: identity.emailIdentityId,
+                toAddresses: toText, ccAddresses: ccText, bccAddresses: bccText, subject: subject ?? '', body: fullBody, bodyText: bodyText || null}
+            if (!emailMessageId && parentEmailMessageId) { parameters.parentEmailMessageId = parentEmailMessageId; parameters.isForward = isForward }
+            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters(parameters).call()
+            if (ec.message.hasError()) return
+            emailMessageId = out.emailMessageId
+            rootEmailMessageId = out.rootEmailMessageId
+        ]]></script></actions>
+    </service>
+
+    <service verb="check" noun="DraftAccess" allow-remote="false">
+        <description>A draft (ES_DRAFT, or a failed send) of an account the user may send from; an error otherwise.</description>
+        <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="emailAccountId"/></out-parameters>
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
+            if (ec.message.hasError()) return
+            const draft = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).one()
+            if (draft == null || !access.accessMap[draft.emailAccountId]) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
+            if (access.accessMap[draft.emailAccountId] < 2) { ec.message.addError(`You may not send from email account ${draft.emailAccountId}`); return }
+            if (!(draft.statusId === 'ES_DRAFT' || (draft.statusId === 'ES_READY' && draft.sendError))) { ec.message.addError(`Email message ${emailMessageId} is not a draft`); return }
+            emailAccountId = draft.emailAccountId
+        ]]></script></actions>
+    </service>
+
+    <service verb="upload" noun="ComposeAttachment">
+        <description>Files for the composer. For an email draft (emailMessageId) each file is stored as the mail client
+            stores a message's files (dbresource://email/account/message/), and the draft's attachments become its own plus
+            these. Without a draft (an internal message) each file is stored under the user's own folder
+            (dbresource://comms/compose/user/) for send#Compose to put on the message. Files over 25 MB are refused.</description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="contentFile" type="Object"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="attachmentList" type="List"/>
+            <parameter name="uploadList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const files = (Array.isArray(contentFile) ? contentFile : [contentFile]).filter((file) => file != null && typeof file === 'object')
+            if (files.length === 0) { ec.message.addError(ec.l10n.localize('Choose one or more files to attach')); return }
+            const nameOf = (file) => String(typeof file.getName === 'function' ? file.getName() : (file.name || 'attachment')).split(/[\\/]/).pop()
+            const sizeOf = (file) => Number(typeof file.getSize === 'function' ? file.getSize() : (file.size || 0))
+            const typeOf = (file) => String(file.contentType || (typeof file.getContentType === 'function' ? file.getContentType() : '') || '') || null
+            const safe = (name) => String(name || 'attachment').replace(/[\/\\?#%:*"<>|]/g, '_').substring(0, 120)
+            const token = () => Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
+            for (const file of files) if (sizeOf(file) > 25 * 1024 * 1024) { ec.message.addError(ec.resource.expand('${name} is over 25 MB', '', {name: nameOf(file)})); return }
+            const store = (location, file) => {
+                const stream = file.getInputStream()
+                try { ec.resource.getLocationReference(location).putStream(stream) } finally { if (stream && stream.close) stream.close() }
+            }
+            uploadList = []
+            if (emailMessageId) {
+                const draft = ec.service.sync().name('org.moqui.comms.ComposeServices.check#DraftAccess').parameter('emailMessageId', emailMessageId).call()
+                if (ec.message.hasError()) return
+                const existing = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId).list())
+                        .map((row) => ({attachmentLocation: row.attachmentLocation, fileName: row.fileName, fileSize: row.fileSize, contentType: row.contentType,
+                            contentId: row.contentId, isInline: row.isInline}))
+                for (const file of files) {
+                    const location = `dbresource://email/${draft.emailAccountId}/${emailMessageId}/${token()}-${safe(nameOf(file))}`
+                    store(location, file)
+                    existing.push({attachmentLocation: location, fileName: nameOf(file), fileSize: sizeOf(file), contentType: typeOf(file)})
+                }
+                ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
+                if (ec.message.hasError()) return
+                attachmentList = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId)
+                        .orderBy('emailMessageAttachmentId').list()).map((row) => ({id: row.emailMessageAttachmentId, name: row.fileName, size: row.fileSize ?? null,
+                            contentType: row.contentType ?? null}))
+                return
+            }
+            if (!ec.user.userId) { ec.message.addError('No user'); return }
+            attachmentList = []
+            for (const file of files) {
+                const location = `dbresource://comms/compose/${ec.user.userId}/${token()}/${safe(nameOf(file))}`
+                store(location, file)
+                uploadList.push({location: location, name: nameOf(file), size: sizeOf(file), contentType: typeOf(file)})
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="attach" noun="DriveFiles">
+        <description>Attach from Files (design-drawers-commons.md §12 AttachFromFiles): the drive files the user picked (itemList of
+            {driveId, path}), each read through FileServices.get#ResourceInfo as the user (records too), so only a file the
+            user may open is used. For an email draft (emailMessageId) each is copied where the mail client keeps a message's
+            files (dbresource://email/account/message/, the only place save#Draft takes a file from) and added to the draft's
+            attachments; without a draft (an internal message) each is copied under the user's compose folder for send#Compose.
+            A file over maxAttachBytes (25 MB by default) or a folder is not copied: a view link is made for it
+            (FileServices.share#Resource, which needs the user to be allowed to share it) and linkList gives its name and
+            linkPath to put in the message. Each item stands alone: one that fails is named in failedList.</description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="itemList" type="List" required="true"/>
+            <parameter name="maxAttachBytes" type="Long" default="26214400"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="attachmentList" type="List"/>
+            <parameter name="uploadList" type="List"/>
+            <parameter name="linkList" type="List"/>
+            <parameter name="failedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            uploadList = []; linkList = []; failedList = []; attachmentList = null
+            const safe = (name) => String(name || 'attachment').replace(/[\/\\?#%:*"<>|]/g, '_').substring(0, 120)
+            const token = () => Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
+            let draft = null
+            let existing = null
+            if (emailMessageId) {
+                draft = ec.service.sync().name('org.moqui.comms.ComposeServices.check#DraftAccess').parameter('emailMessageId', emailMessageId).call()
+                if (ec.message.hasError()) return
+                existing = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId).list())
+                        .map((row) => ({attachmentLocation: row.attachmentLocation, fileName: row.fileName, fileSize: row.fileSize, contentType: row.contentType,
+                            contentId: row.contentId, isInline: row.isInline}))
+            } else if (!ec.user.userId) { ec.message.addError('No user'); return }
+            const before = existing ? existing.length : 0
+            // each picked item in a transaction of its own for what may be refused (a file the user may not open or share),
+            // so one refused does not stop the others
+            const own = (name, parameters) => {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name(name).parameters(parameters).requireNewTransaction(true).call()
+                    return ec.message.hasError() ? {why: ec.message.getErrorsString()} : {out: out}
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            for (const item of Array.from(itemList || [])) {
+                const label = item && item.path ? String(item.path).split('/').pop() : '?'
+                ec.message.pushErrors()
+                try {
+                    if (!item || !item.driveId || !item.path) throw new Error(L('No file chosen'))
+                    const found = own('org.moqui.impl.FileServices.get#ResourceInfo', {driveId: item.driveId, path: item.path, opened: true})
+                    if (!found.out || !found.out.resource) throw new Error(found.why || L('File not found'))
+                    const resource = found.out.resource
+                    if (resource.isDirectory || (resource.size != null && Number(resource.size) > Number(maxAttachBytes || 26214400))) {
+                        const made = own('org.moqui.impl.FileServices.share#Resource', {driveId: item.driveId, path: item.path,
+                            isLink: 'Y', permissionEnumId: 'RspView', linkLabel: L('Sent by email')})
+                        if (!made.out) throw new Error(resource.isDirectory ? L('A folder is sent as a link, and you may not share this one')
+                                : L('Too large to attach, and you may not share it by link'))
+                        const link = made.out
+                        linkList.push({name: resource.name, linkPath: link.linkPath, size: resource.size ?? null, isDirectory: resource.isDirectory === true})
+                        continue
+                    }
+                    const location = draft ? `dbresource://email/${draft.emailAccountId}/${emailMessageId}/${token()}-${safe(resource.name)}`
+                            : `dbresource://comms/compose/${ec.user.userId}/${token()}/${safe(resource.name)}`
+                    const stream = ec.resource.getLocationReference(resource.location).openStream()
+                    try { ec.resource.getLocationReference(location).putStream(stream) } finally { if (stream && stream.close) stream.close() }
+                    const entry = {name: resource.name, size: resource.size ?? null, contentType: resource.contentType ?? null}
+                    if (draft) existing.push({attachmentLocation: location, fileName: resource.name, fileSize: resource.size ?? null, contentType: resource.contentType ?? null})
+                    else uploadList.push(Object.assign({location: location}, entry))
+                } catch (err) {
+                    const why = err && err.message ? err.message : String(err)
+                    ec.logger.warn(`Attach from Files: ${label} not attached: ${why}`)
+                    failedList.push({name: label, error: why})
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            if (draft) {
+                if (existing.length > before) {
+                    ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
+                    if (ec.message.hasError()) return
+                }
+                attachmentList = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId)
+                        .orderBy('emailMessageAttachmentId').list()).map((row) => ({id: row.emailMessageAttachmentId, name: row.fileName, size: row.fileSize ?? null,
+                            contentType: row.contentType ?? null}))
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="remove" noun="ComposeAttachment">
+        <description>Take a file off an email draft (emailMessageAttachmentId of a draft the user may send from); its file
+            is deleted when the draft keeps it under dbresource://email/.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="emailMessageAttachmentId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="attachmentList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.comms.ComposeServices.check#DraftAccess').parameter('emailMessageId', emailMessageId).call()
+            if (ec.message.hasError()) return
+            const rows = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId).list())
+            const gone = rows.find((row) => row.emailMessageAttachmentId === emailMessageAttachmentId)
+            if (!gone) { ec.message.addError(ec.l10n.localize('Attachment not found') + ': ' + emailMessageAttachmentId); return }
+            const kept = rows.filter((row) => row !== gone).map((row) => ({attachmentLocation: row.attachmentLocation, fileName: row.fileName, fileSize: row.fileSize,
+                contentType: row.contentType, contentId: row.contentId, isInline: row.isInline}))
+            ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: kept}).call()
+            if (ec.message.hasError()) return
+            if (String(gone.attachmentLocation || '').startsWith(`dbresource://email/`)) {
+                try { ec.resource.getLocationReference(gone.attachmentLocation).delete() }
+                catch (err) { ec.logger.warn(`The file ${gone.attachmentLocation} was not deleted: ${err}`) }
+            }
+            attachmentList = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId)
+                    .orderBy('emailMessageAttachmentId').list()).map((row) => ({id: row.emailMessageAttachmentId, name: row.fileName, size: row.fileSize ?? null,
+                        contentType: row.contentType ?? null}))
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="Compose">
+        <description>
+            Send what the composer has: the draft is saved (strict about recipients), then sent through
+            org.moqui.impl.EmailClientServices.send#Draft: at scheduledSendDate, or now after the undo hold of holdSeconds (0
+            to 300). archiveThread archives the thread answered (Send and archive). An internal message, and filing the mail
+            on a record, are an app's (its inbox-source answers this operation).
+        </description>
+        <in-parameters>
+            <parameter name="fromValue" required="true"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="toJson" allow-html="any"/>
+            <parameter name="ccJson" allow-html="any"/>
+            <parameter name="bccJson" allow-html="any"/>
+            <parameter name="subject" allow-html="any"/>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="bodyText" allow-html="any"/>
+            <parameter name="quoteHtml" allow-html="any"/>
+            <parameter name="parentEmailMessageId"/>
+            <parameter name="isForward" type="Boolean" default="false"/>
+            <parameter name="parentCommEventId"/>
+            <parameter name="replyToSenderOnly" type="Boolean" default="false"/>
+            <parameter name="uploadsJson" allow-html="any"/>
+            <parameter name="recordEntity"/>
+            <parameter name="recordId"/>
+            <parameter name="scheduledSendDate" type="Timestamp"/>
+            <parameter name="holdSeconds" type="Integer"/>
+            <parameter name="archiveThread" type="Boolean" default="false"/>
+            <parameter name="threadStore"/>
+            <parameter name="threadId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mode"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="statusId"/>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="sendError"/>
+            <parameter name="scheduledSendDate" type="Long"/>
+            <parameter name="communicationEventIdList" type="List"/>
+            <parameter name="message"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            communicationEventIdList = []
+            sent = false
+            const partyId = ec.user.userAccount?.partyId || null
+            if (recordEntity && recordId) { ec.message.addError(L('Filing mail on a record is not available here')); return }
+            if (fromValue === 'internal') { ec.message.addError(L('Internal messages are not available here')); return }
+            if (fromValue !== 'internal') {
+                mode = 'email'
+                const saved = ec.service.sync().name('org.moqui.comms.ComposeServices.save#ComposeDraft').parameters({emailMessageId: emailMessageId, fromValue: fromValue,
+                    toJson: toJson, ccJson: ccJson, bccJson: bccJson, subject: subject, body: body, bodyText: bodyText, quoteHtml: quoteHtml,
+                    parentEmailMessageId: parentEmailMessageId, isForward: isForward, strict: true}).call()
+                if (ec.message.hasError()) return
+                emailMessageId = saved.emailMessageId
+                const hold = scheduledSendDate != null ? null : Math.max(0, Math.min(Number(holdSeconds || 0), 300))
+                const parameters = {emailMessageId: emailMessageId, scheduledSendDate: scheduledSendDate, holdSeconds: hold}
+                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.send#Draft').parameters(parameters).call()
+                if (ec.message.hasError()) return
+                statusId = out.statusId
+                sent = out.sent === true
+                sendError = out.sendError ?? null
+                scheduledSendDate = out.scheduledSendDate ?? null
+                message = statusId === 'ES_SCHEDULED' ? (hold ? L('Sending…') : L('Scheduled')) : (sent ? L('Sent') : (sendError ? L('Not sent yet: it waits in the Outbox') + ' (' + sendError + ')' : L('Sent')))
+            }
+            // Send and archive: the thread answered leaves the Inbox
+            if (archiveThread && threadStore && threadId) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.comms.InboxServices.set#ThreadState').parameters({targetList: [{store: threadStore, threadId: threadId}], action: 'archive'}).call()
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="cancel" noun="ComposeSend">
+        <description>Undo send. An email waiting in the Outbox (the undo hold or a scheduled send) goes back to Drafts
+            (org.moqui.impl.EmailClientServices.cancel#ScheduledSend); one sent already cannot come back.</description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="communicationEventIdList" type="List"/>
+            <parameter name="communicationEventIdsJson"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+        <actions><script><![CDATA[
+            if (emailMessageId) {
+                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.cancel#ScheduledSend').parameter('emailMessageId', emailMessageId).call()
+                if (ec.message.hasError()) return
+                statusId = out.statusId
+                return
+            }
+            ec.message.addError(ec.l10n.localize('Nothing to undo'))
+        ]]></script></actions>
+    </service>
+
+    <service verb="discard" noun="ComposeDraft">
+        <description>Discard an email draft of the user's (org.moqui.impl.EmailClientServices.trash#Messages deletes a draft, its
+            files and its copy on an IMAP server). An internal message has no draft on the server.</description>
+        <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.comms.ComposeServices.check#DraftAccess').parameter('emailMessageId', emailMessageId).call()
+            if (ec.message.hasError()) return
+            ec.service.sync().name('org.moqui.impl.EmailClientServices.trash#Messages').parameter('emailMessageId', emailMessageId).call()
+        ]]></script></actions>
+    </service>
+</services>

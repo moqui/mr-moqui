@@ -534,6 +534,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="receiveNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.receiveNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.emailNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailTemplateId" type="id"><description>If is specified use this template to send a notification email to each user with emailNotifications=Y</description></field>
+        <field name="pushNotifications" type="text-indicator"><description>For each User if there is no
+            NotificationTopicUser.pushNotifications value then use this as the default. Empty: Y for a topic in the
+            NinNotifications inbox (or with no inbox), N for NinUpdates. A notification goes out by Web Push only when it is
+            persisted (so it is in the user's notification list) and the user has a WebPushSubscription.</description></field>
         <field name="emailMessageSave" type="text-indicator"/>
         <field name="approveServiceName" type="text-medium"><description>A notification on this topic asks its recipients for a
             decision: org.moqui.impl.NotificationServices.approve#NotificationMessage calls this service with recordEntityName,
@@ -565,6 +569,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="receiveNotifications" type="text-indicator"><description>If notification sent to user only actually notify if this is Y</description></field>
         <field name="allNotifications" type="text-indicator"><description>If Y user receives all notifications on topic even if not sent directly</description></field>
         <field name="emailNotifications" type="text-indicator"><description>If Y sends an email to user using UserAccount.emailAddress</description></field>
+        <field name="pushNotifications" type="text-indicator"><description>If Y sends a Web Push notification to each of the
+            user's subscribed browsers, if N not; empty uses NotificationTopic.pushNotifications</description></field>
         <field name="digest" type="text-indicator"><description>If Y the user's unviewed notifications on this topic go out in one
             daily email (send#NotificationDigests); if empty the topic's digestDefault applies</description></field>
         <relationship type="one-nofk" related="moqui.security.user.NotificationTopic" short-alias="notificationTopic"/>
@@ -635,6 +641,30 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="NMU" name="emailMessageId"/>
         <alias entity-alias="NMU" name="digestDate"/>
     </view-entity>
+    <entity entity-name="WebPushSubscription" package="moqui.security.user" cache="never">
+        <description>A browser's Web Push subscription (the Push API's PushSubscription) for a signed-in user. A browser
+            has one endpoint; storing it for another user moves it, so pushes never cross an account switch. Logout
+            deletes it. An endpoint the push service answers 404 or 410 for, or one that fails repeatedly, gets a
+            disabledDate and is not sent to again.</description>
+        <field name="subscriptionId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="endpoint" type="text-long"><description>The push service URL, a capability: whoever has it may push
+            to the browser, so it is only read by the framework.</description></field>
+        <field name="endpointHash" type="text-medium"><description>SHA-256 of the endpoint, hex: the unique key, as the
+            endpoint is too long to index.</description></field>
+        <field name="p256dhKey" type="text-medium"><description>The browser's P-256 public key (base64url)</description></field>
+        <field name="authSecret" type="text-medium" encrypt="true"><description>The browser's 16-byte auth secret (base64url)</description></field>
+        <field name="userAgent" type="text-medium"/>
+        <field name="visitId" type="id"><description>The visit that stored it, for logout</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSuccessDate" type="date-time"/>
+        <field name="lastFailureDate" type="date-time"/>
+        <field name="failureCount" type="number-integer"/>
+        <field name="disabledDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="WEBPUSH_ENDPOINT" unique="true"><index-field name="endpointHash"/></index>
+        <index name="WEBPUSH_USER" unique="false"><index-field name="userId"/></index>
+    </entity>
     <!-- ========== SSO (the moqui-sso component, in the framework; plans/archive/Sso.md) ========== -->
     <!-- OIDC and OAuth 2 flows run; a SAML flow reports that SAML is not available. -->
     <entity entity-name="AuthFlow" package="moqui.security.sso">
@@ -715,7 +745,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
         <field name="clientId" type="text-medium"/>
-        <field name="secret" type="text-medium"/>
+        <field name="secret" type="text-medium" encrypt="true"/>
         <field name="authorizeUrl" type="text-medium"><description>The authorization endpoint. Empty takes the endpoint of
             the named client type (GitHub, Google, ...); OctOauth20 needs it set.</description></field>
         <field name="tokenUrl" type="text-medium"/>
@@ -750,7 +780,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
         <field name="clientId" type="text-medium"/>
-        <field name="secret" type="text-medium"/>
+        <field name="secret" type="text-medium" encrypt="true"/>
         <field name="realm" type="text-medium">
             <description>Specific to Keycloak.</description>
         </field>
@@ -806,8 +836,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="SamlFlow" package="moqui.security.sso">
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="keystoreLocation" type="text-medium"/>
-        <field name="keystorePassword" type="text-medium"/>
-        <field name="privateKeyPassword" type="text-medium"/>
+        <field name="keystorePassword" type="text-medium" encrypt="true"/>
+        <field name="privateKeyPassword" type="text-medium" encrypt="true"/>
         <field name="serviceProviderEntityId" type="text-medium"/>
         <field name="identityProviderMetadataLocation" type="text-medium"/>
         <field name="forceAuth" type="text-indicator"/>

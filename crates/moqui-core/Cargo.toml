@@ -55,6 +55,11 @@ pulldown-cmark = { workspace = true }
 # gzip of outgoing OTLP; already linked through zip's deflate.
 flate2 = { workspace = true }
 tar = { workspace = true }
+# Web Push (the web-push feature).
+p256 = { workspace = true, optional = true, features = ["ecdh"] }
+hkdf = { workspace = true, optional = true }
+aes-gcm = { workspace = true, optional = true }
+sha2_11 = { workspace = true, optional = true }
 
 # No prebuilt QuickJS bindings ship for this target. bindgen needs libclang and the emsdk sysroot;
 # scripts/wasm-env.sh sets both.
@@ -68,9 +73,11 @@ rquickjs = { workspace = true, features = ["bindgen"] }
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-proto", "dep:prost"]
 # The generated OTLP gRPC services, for the host's receiver.
 grpc = ["telemetry", "opentelemetry-proto/gen-tonic"]
-default = ["http", "cluster-tls", "image", "xlsx"]
+default = ["http", "cluster-tls", "image", "xlsx", "web-push"]
 # remote-rest services, http resource locations, and the OpenSearch backend (blocking reqwest).
 http = ["moqui-lib/http"]
+# Web Push to subscribed browsers (org.moqui.impl.NotificationServices.send#WebPush), over blocking HTTP.
+web-push = ["http", "dep:p256", "dep:hkdf", "dep:aes-gcm", "dep:sha2_11"]
 # Generated self-signed cluster certificate.
 cluster-tls = ["dep:rcgen"]
 # org.moqui.impl.ImageServices (convert#Image) and elFinder thumbnails.
