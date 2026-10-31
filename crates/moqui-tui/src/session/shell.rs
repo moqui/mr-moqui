@@ -972,7 +972,7 @@ impl Session {
 
     // ---- exports ----
 
-    /// An export of a list: a file the loop saves (csv, xlsx, pdf), or the text render shown in a dialog.
+    /// An export of a list: a file the loop saves (csv, xlsx, pdf), the text render shown in a dialog, or the md render copied.
     pub(super) fn export(&mut self, list_id: &str, at: usize) {
         let Some(export) = self.list(list_id).and_then(|list| list.exports.get(at)).cloned() else {
             return;
@@ -996,6 +996,11 @@ impl Session {
                 return;
             }
         };
+        // the md render (show-md-button) goes to the clipboard as a Markdown table
+        if body.content_type.starts_with("text/markdown") {
+            self.copy_text(String::from_utf8_lossy(&body.bytes).trim_end().to_string());
+            return;
+        }
         if body.content_type.starts_with("text/plain") {
             let text = String::from_utf8_lossy(&body.bytes).into_owned();
             let node = Node::Text {

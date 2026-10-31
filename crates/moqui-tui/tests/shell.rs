@@ -39,6 +39,7 @@ const MAIN_JSON: &str = r#"{
         "shown": [[{ "name": "name", "title": "Name" }], [{ "name": "status", "title": "Status" }]],
         "hidden": [{ "name": "notes", "title": "Notes" }] },
       "exports": [ { "kind": "csv", "label": "CSV", "url": "/apps/app/Main?renderMode=csv" },
+                   { "kind": "md", "label": "Markdown", "url": "/apps/app/Main?renderMode=md" },
                    { "kind": "text", "label": "Text", "url": "/apps/app/Main?renderMode=text" } ] }
   ]
 }"#;
@@ -312,7 +313,14 @@ fn saved_finds_apply_save_and_delete() {
     let labels: Vec<&str> = menu.items.iter().map(|item| item.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["Find…", "Saved finds…", "Columns…", "Export CSV", "Export Text"]
+        [
+            "Find…",
+            "Saved finds…",
+            "Columns…",
+            "Export CSV",
+            "Export Markdown",
+            "Export Text"
+        ]
     );
     let at = labels.iter().position(|label| *label == "Saved finds…").unwrap();
     for _ in 0..at {
@@ -416,4 +424,28 @@ fn an_export_is_a_file_to_save_or_text_to_read() {
     )));
     session.saved(Ok("/tmp/Things.csv".to_string()));
     assert!(session.message().contains("Things.csv"));
+}
+
+#[test]
+fn a_markdown_export_is_copied() {
+    let (mut session, link) = started();
+    link.answer_raw(
+        "/apps/app/Main",
+        RawBody {
+            content_type: "text/markdown;charset=UTF-8".to_string(),
+            file_name: String::new(),
+            bytes: b"| Name |\n| --- |\n| Anvil |\n\n".to_vec(),
+        },
+    );
+    while session.focus_id() != "Things" {
+        press(&mut session, &link, Key::Tab);
+    }
+    press(&mut session, &link, Key::F(10));
+    while !matches!(session.top_overlay(), Some(Overlay::Menu(m)) if m.items[m.at].label == "Export Markdown") {
+        press(&mut session, &link, Key::Down);
+    }
+    press(&mut session, &link, Key::Enter);
+    assert!(session.take_downloads().is_empty());
+    assert_eq!(session.take_copy().as_deref(), Some("| Name |\n| --- |\n| Anvil |"));
+    assert!(session.message().starts_with("Copied"), "{}", session.message());
 }

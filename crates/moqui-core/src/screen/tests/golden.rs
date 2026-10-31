@@ -91,6 +91,13 @@ fn golden_csv() {
 }
 
 #[test]
+fn golden_md() {
+    for name in FIXTURES {
+        check("md", name, false);
+    }
+}
+
+#[test]
 fn golden_xml() {
     for name in FIXTURES {
         check("xml", name, false);

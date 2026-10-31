@@ -1284,16 +1284,22 @@
                 savedFindsDialogBody(n, cfg);
                 w("</m-container-dialog>");
             }
-            // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
+            // the exports in one menu: csv, copy as Markdown, xlsx, the text dialog (its button is the item), and print
             const exportUrl = (mode, filename) => sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", mode).addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").addParameter("saveFilename", filename).getUrlWithParams();
             const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ href, target: target || null }) + "><q-item-section>" + t(text) + "</q-item-section></q-item>";
             const csv = at(n, "show-csv-button") === "true";
+            const md = at(n, "show-md-button") === "true";
             const xlsx = at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx");
             const text = at(n, "show-text-button") === "true";
             const pdf = at(n, "show-pdf-button") === "true";
-            if (csv || xlsx || text || pdf) {
+            if (csv || md || xlsx || text || pdf) {
                 out += '<q-btn-dropdown dense flat no-caps icon="download" label="' + e(L("Export")) + '"><q-list dense>';
                 if (csv) out += exportItem(exportUrl("csv", at(n, "name") + ".csv"), L("CSV"));
+                if (md) {
+                    // moqui.copyUrl (WebrootVue.qvt.js) copies the list as a Markdown table, every page
+                    const mdUrl = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "md").addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").getUrlWithParams();
+                    out += '<q-item clickable v-close-popup' + A({ "@click": "moqui.copyUrl(" + JSON.stringify(mdUrl) + ")" }) + "><q-item-section>" + t(L("Copy as Markdown")) + "</q-item-section></q-item>";
+                }
                 if (xlsx) out += exportItem(exportUrl("xlsx", at(n, "name") + ".xlsx"), L("XLS"));
                 if (text) {
                     flush();

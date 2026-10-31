@@ -164,6 +164,7 @@ fn make_render_without_a_socket_sends_status_content_type_and_an_empty_body() {
 
     for (mode, content_type, body) in [
         ("csv", "text/csv;charset=UTF-8", ""),
+        ("md", "text/markdown;charset=UTF-8", ""),
         ("text", "text/plain;charset=UTF-8", ""),
         ("xml", "text/xml;charset=UTF-8", "<PickerA>\n</PickerA>\n"),
         ("qjs", "application/javascript;charset=UTF-8", ""),
@@ -1572,5 +1573,78 @@ fn a_timestamp_from_a_path_or_formatted_without_a_pattern_shows_formatted() {
     assert_eq!(text.matches(&shown("A[")).count(), 3, "{text}");
     // Other digits are not a timestamp.
     assert!(text.contains("N[1234567890]"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn md_writes_a_form_list_as_a_markdown_table() {
+    let context = ExecutionContextFactory::test_context();
+    let dir = std::env::temp_dir().join(format!("moqui-md-list-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("List.xml");
+    // a pipe, a backslash and a line break in a cell; a right-aligned and a centered field; a submit and a hidden field
+    // that have no column; a conditional-field that writes nothing leaves its cell empty
+    std::fs::write(
+        &path,
+        r#"<screen require-authentication="false"><actions><script>
+            rows = [{name: "a|b", qty: 2, note: "one\ntwo", code: "x\\y"}, {name: "plain", qty: 10, note: "", code: "skip"}]
+        </script></actions><widgets>
+        <label text="not in the table"/>
+        <form-list name="Rows" list="rows">
+            <field name="name"><default-field title="Name"><display/></default-field></field>
+            <field name="qty" align="right"><default-field><display/></default-field></field>
+            <field name="note" align="center"><default-field><display/></default-field></field>
+            <field name="code"><conditional-field condition="code == 'skip'"><hidden/></conditional-field>
+                <default-field><display/></default-field></field>
+            <field name="id"><default-field><hidden/></default-field></field>
+            <field name="go"><default-field><submit/></default-field></field>
+        </form-list></widgets></screen>"#,
+    )
+    .unwrap();
+    let output = make_render(context.factory())
+        .root_screen(path.to_string_lossy().into_owned())
+        .render_mode("md")
+        .render()
+        .unwrap();
+    assert_eq!(output.content_type(), Some("text/markdown;charset=UTF-8"));
+    let as_mode = |mode: &str| {
+        make_render(context.factory())
+            .root_screen(path.to_string_lossy().into_owned())
+            .render_mode(mode)
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    // The show-md-button copies that render: a button in html, an Export menu item in qvt, an export in tui (in the nav
+    // that select-columns shows).
+    std::fs::write(
+        dir.join("Button.xml"),
+        r#"<screen require-authentication="false"><widgets><form-list name="Rows" list="rows" show-md-button="true" select-columns="true">
+            <field name="name"><default-field><display/></default-field></field></form-list></widgets></screen>"#,
+    )
+    .unwrap();
+    let button = |mode: &str| {
+        make_render(context.factory())
+            .root_screen(dir.join("Button.xml").to_string_lossy().into_owned())
+            .render_mode(mode)
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    let html = button("html");
+    assert!(
+        html.contains("data-copy-url=\"") && html.contains("renderMode=md"),
+        "{html}"
+    );
+    assert!(html.contains(">Markdown</button>"), "{html}");
+    let qvt = button("qvt");
+    assert!(qvt.contains("moqui.copyUrl(") && qvt.contains("renderMode=md"), "{qvt}");
+    assert!(qvt.contains("Copy as Markdown"), "{qvt}");
+    assert!(button("tui").contains("\"kind\":\"md\""), "{}", button("tui"));
+    assert_eq!(as_mode("md"), output.body_text());
+    assert_eq!(
+        output.body_text(),
+        "| Name | Qty | Note | Code |\n| --- | ---: | :---: | --- |\n| a\\|b | 2 | one<br>two | x\\\\y |\n| plain | 10 |  |  |\n\n"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

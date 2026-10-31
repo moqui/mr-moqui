@@ -1585,7 +1585,7 @@
         // and the csv, xlsx, text and print exports. The component gives nv: the finds, the current parameters, and the URLs.
         const loc = (text) => "ec.l10n.localize(" + sq(text) + ")";
         const navSlot = (n, cols, headerFields, flags) => {
-            if (!(flags.headerDialog || flags.savedFinds || flags.csv || flags.xlsx || flags.text || flags.pdf || flags.columns)) return;
+            if (!(flags.headerDialog || flags.savedFinds || flags.csv || flags.md || flags.xlsx || flags.text || flags.pdf || flags.columns)) return;
             const name = at(n, "name");
             // The slot template is a direct child of the component. v-if wraps its contents, and the component also skips the whole nav row when hideNav is true.
             w('<template v-slot:nav="nv">');
@@ -1606,11 +1606,12 @@
                 savedFindsBody(name);
                 w("</m-container-dialog>");
             }
-            // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
+            // the exports in one menu: csv, copy as Markdown, xlsx, the text dialog (its button is the item), and print
             const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ ":href": href, ":disable": disable, target: target || null }) + '><q-item-section><span v-text="' + e(loc(text)) + '"></span></q-item-section></q-item>';
-            if (flags.csv || flags.xlsx || flags.text || flags.pdf) {
+            if (flags.csv || flags.md || flags.xlsx || flags.text || flags.pdf) {
                 w('<q-btn-dropdown dense flat no-caps icon="download"' + A({ ":label": loc("Export") }) + "><q-list dense>");
                 if (flags.csv) w(exportItem("nv.exportUrl('csv')", "CSV"));
+                if (flags.md) w('<q-item clickable v-close-popup @click="moqui.copyUrl(nv.mdUrl())"' + A({ ":disable": disable }) + '><q-item-section><span v-text="' + e(loc("Copy as Markdown")) + '"></span></q-item-section></q-item>');
                 if (flags.xlsx) w(exportItem("nv.exportUrl('xlsx')", "XLS"));
                 if (flags.text) textExportDialog(name);
                 if (flags.pdf) w(exportItem("nv.printUrl()", "Print", "_blank"));
@@ -1984,7 +1985,7 @@
                 condition: at(selection, "condition") } : null;
             const flags = {
                 headerDialog: at(n, "header-dialog") === "true", savedFinds: at(n, "saved-finds") === "true",
-                csv: at(n, "show-csv-button") === "true", xlsx: at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx"),
+                csv: at(n, "show-csv-button") === "true", md: at(n, "show-md-button") === "true", xlsx: at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx"),
                 text: at(n, "show-text-button") === "true", pdf: at(n, "show-pdf-button") === "true", columns: at(n, "select-columns") === "true"
             };
             cfg.headerDialog = flags.headerDialog;

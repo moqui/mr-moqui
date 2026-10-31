@@ -95,35 +95,35 @@ const TEMPLATES: &[(&str, &[&str])] = &[
     (r#"<label text="{}"/>"#, &["text", "html-print"]),
     (r#"<container-dialog button-text="{}"/>"#, &["text"]),
     (r#"<image alt="{}"/>"#, &["text", "html-print"]),
-    (r#"<section name="{}"/>"#, &["text", "csv", "xml", "html-print"]),
+    (r#"<section name="{}"/>"#, &["text", "csv", "md", "xml", "html-print"]),
     (
         r#"<section-iterate name="{}" list="rows" entry="row"/>"#,
-        &["text", "csv", "xml", "html-print"],
+        &["text", "csv", "md", "xml", "html-print"],
     ),
     (
         r#"<section-include name="{}" location="{}"/>"#,
-        &["text", "csv", "html-print"],
+        &["text", "csv", "md", "html-print"],
     ),
     (
         r#"<include-screen location="{}" share-scope="{}"/>"#,
-        &["text", "csv", "xml", "html-print"],
+        &["text", "csv", "md", "xml", "html-print"],
     ),
     (
         r#"<text location="{}" template="{}"/>"#,
-        &["text", "csv", "xml", "html-print"],
+        &["text", "csv", "md", "xml", "html-print"],
     ),
-    ("<text>{}</text>", &["text", "csv", "xml", "html-print"]),
+    ("<text>{}</text>", &["text", "csv", "md", "xml", "html-print"]),
     (
         r#"<form-single name="F"><field name="f"><default-field title="{}"><text-line/></default-field></field></form-single>"#,
         &["text", "html-print"],
     ),
     (
         r#"<form-list name="{}" list="rows"><field name="f"><default-field title="{}"><display text="{}"/></default-field></field></form-list>"#,
-        &["text", "csv", "xml", "html-print"],
+        &["text", "csv", "md", "xml", "html-print"],
     ),
     (
         r#"<form-list name="L" list="rows"><field name="f"><default-field><link link-type="anchor" text="{}" url="u"/></default-field></field></form-list>"#,
-        &["text", "csv", "xml"],
+        &["text", "csv", "md", "xml"],
     ),
     (
         r#"<form-single name="F"><field name="f"><default-field><drop-down no-current-selected-key="{}"><option key="{}" text="{}"/></drop-down></default-field></field></form-single>"#,
@@ -137,7 +137,7 @@ const TEMPLATES: &[(&str, &[&str])] = &[
 
 #[test]
 fn text_with_quotes_backslashes_newlines_and_dollar_braces_survives_every_macro() {
-    for mode in ["text", "csv", "xml", "html-print"] {
+    for mode in ["text", "csv", "md", "xml", "html-print"] {
         for (template, shown_in) in TEMPLATES {
             for nasty in NASTY {
                 let element = template.replace("{}", &xml_text(nasty));
@@ -410,12 +410,13 @@ fn every_base_component_screen_generates_in_all_three_modes() {
         };
         let mut names = vec![String::new()];
         names.extend(def.sections.keys().filter(|name| !name.contains("${")).cloned());
-        for mode in ["text", "csv", "xml", "html-print", "html"] {
+        for mode in ["text", "csv", "md", "xml", "html-print", "html"] {
             let macro_location = format!(
                 "framework/template/screen/{}",
                 match mode {
                     "text" => "ScreenText.js",
                     "csv" => "ScreenCsv.js",
+                    "md" => "ScreenMd.js",
                     "html-print" => "ScreenHtmlPrint.js",
                     "html" => "ScreenHtml.js",
                     _ => "ScreenXml.js",

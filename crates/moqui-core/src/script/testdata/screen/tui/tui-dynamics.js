@@ -153,7 +153,7 @@ $closeChildren();
                 $listForm = true;
                 $transitionUrl = $made.url || "";
                 $listWrites = $writes($made);
-                const $hiddenMap = Object.assign({}, $made.getParameterMap() || {}, sri.getFormHiddenParameters({"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"}}) || {});
+                const $hiddenMap = Object.assign({}, $made.getParameterMap() || {}, sri.getFormHiddenParameters({"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"}}) || {});
                 $hiddenMap.moquiFormName = "Rows";
                 $hiddenMap._isMulti = "true";
                 $hiddenMap.pageIndex = String(ec.context.get("pageIndex") || "0");
@@ -190,22 +190,22 @@ $start = $parts.length;
 $addPart($parts, $start, ($listForm ? (() => {
             let $required = false;
             const $max = 0;
-            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
+            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
             if ($hint && String($hint.classes || "").split(/\s+/).indexOf("required") >= 0) $required = true;
             const $rules = [];
-            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
+            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
             for (let $ri = 0; $ri < $found.length; $ri++) {
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
             }
-            const $field = {t:"field",id:$uid("Rows.name." + $rowKey),name:"name_" + $index,title:String(ec.l10n.localize("Name") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")}};
+            const $field = {t:"field",id:$uid("Rows.name." + $rowKey),name:"name_" + $index,title:String(ec.l10n.localize("Name") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")}};
             if ($required) $field.required = true;
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;
             
             
             return $field;
-        })() : String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")));
+        })() : String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")));
 $cells.push($cellOf($parts));
 } else {
 let $parts = [];
@@ -215,24 +215,24 @@ $start = $parts.length;
 $addPart($parts, $start, ($listForm ? (() => {
             let $required = false;
             const $max = 0;
-            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
+            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
             if ($hint && String($hint.classes || "").split(/\s+/).indexOf("required") >= 0) $required = true;
             const $rules = [];
-            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
+            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
             for (let $ri = 0; $ri < $found.length; $ri++) {
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
             }
-            const $field = {t:"field",id:$uid("Rows.name." + $rowKey),name:"name_" + $index,title:String(ec.l10n.localize("Name") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")}};
+            const $field = {t:"field",id:$uid("Rows.name." + $rowKey),name:"name_" + $index,title:String(ec.l10n.localize("Name") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")}};
             if ($required) $field.required = true;
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;
             
             
             return $field;
-        })() : String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")));
+        })() : String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"name"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || "" || "")));
 $start = $parts.length;
-$addPart($parts, $start, String(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"qty"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || ""));
+$addPart($parts, $start, String(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"qty"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || ""));
 $cells.push($cellOf($parts));
 $parts = [];
 $start = $parts.length;
@@ -246,8 +246,8 @@ $cells.push($cellOf($parts));
 const $row = {id:$rowKey,cells:$cells};
                 if ($listForm) {
                     const $rowHidden = [];
-                    $rowHidden.push({name:"id_" + $index,value:String(sri.getFieldValuePlainString({"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "") || "")});
-$rowHidden.push({name:"qty_" + $index,value:String(sri.getFieldValuePlainString({"name":"field","attrs":{"name":"qty"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "") || "")});
+                    $rowHidden.push({name:"id_" + $index,value:String(sri.getFieldValuePlainString({"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "") || "")});
+$rowHidden.push({name:"qty_" + $index,value:String(sri.getFieldValuePlainString({"name":"field","attrs":{"name":"qty"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "") || "")});
 if ($rowHidden.length) $row.hidden = $rowHidden;
                 }
                 const $selectId = ec.context.get("id");
@@ -281,10 +281,10 @@ if ($rowHidden.length) $row.hidden = $rowHidden;
                 $buttons.push((() => {
             let $required = false;
             const $max = 0;
-            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"go"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
+            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"go"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}});
             if ($hint && String($hint.classes || "").split(/\s+/).indexOf("required") >= 0) $required = true;
             const $rules = [];
-            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"go"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
+            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"go"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}) || [];
             for (let $ri = 0; $ri < $found.length; $ri++) {
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
@@ -328,6 +328,7 @@ if ($buttons.length) $list.buttons = $buttons;
         try {
             const $exports = [];
             $exports.push({kind:"csv",label:String(ec.l10n.localize("CSV")),url:$screenUrlWith([["renderMode","csv"],["pageNoLimit","true"],["lastStandalone","true"],["saveFilename","Rows.csv"]])});
+$exports.push({kind:"md",label:String(ec.l10n.localize("Markdown")),url:$screenUrlWith([["renderMode","md"],["pageNoLimit","true"],["lastStandalone","true"]])});
 {
     const $noLimit = ec.context.get("pageNoLimit");
     const $all = $noLimit != null && $noLimit !== "" && String($noLimit) !== "false";
@@ -343,7 +344,7 @@ if ($exports.length) $list.exports = $exports;
         sri.pushSingleFormMapContext(fieldValues);
 try {
     const $hidden = [];
-    const $hiddenMap = sri.getFormHiddenParameters({"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"children":[{"name":"field","attrs":{"name":"status"},"children":[{"name":"default-field","attrs":{},"children":[{"name":"text-line","attrs":{}}]}]}],"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || {};
+    const $hiddenMap = sri.getFormHiddenParameters({"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"children":[{"name":"field","attrs":{"name":"status"},"children":[{"name":"default-field","attrs":{},"children":[{"name":"text-line","attrs":{}}]}]}],"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}) || {};
     const $hiddenKeys = Object.keys($hiddenMap);
     for (let $hi = 0; $hi < $hiddenKeys.length; $hi++) {
         const $key = $hiddenKeys[$hi];
@@ -354,7 +355,7 @@ try {
     }
     let $transitionUrl = "";
     let $formWrites = false;
-    const $made = sri.makeUrlByType("bulk", "transition", {"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}, "true");
+    const $made = sri.makeUrlByType("bulk", "transition", {"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}, "true");
 $transitionUrl = $made ? ($made.url || "") : "";
 $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$made.isReadOnly();
 {
@@ -375,15 +376,15 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
     $emit((() => {
             let $required = false;
             const $max = 0;
-            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}});
+            const $hint = sri.getFieldValidation({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}});
             if ($hint && String($hint.classes || "").split(/\s+/).indexOf("required") >= 0) $required = true;
             const $rules = [];
-            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}}) || [];
+            const $found = sri.getFieldValidationRules({"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}}) || [];
             for (let $ri = 0; $ri < $found.length; $ri++) {
                 if ($found[$ri].kind === "required") $required = true;
                 else $rules.push($found[$ri]);
             }
-            const $field = {t:"field",id:$uid("Bulk.status"),name:"status",title:String(ec.l10n.localize("Status") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}}}) || "" || "")}};
+            const $field = {t:"field",id:$uid("Bulk.status"),name:"status",title:String(ec.l10n.localize("Status") || ""),w:{kind:"textLine",value:String(sri.getFieldValueString({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-single","attrs":{"name":"Bulk","transition":"bulk"},"parent":{"name":"action","attrs":{},"parent":{"name":"row-selection","attrs":{"id-field":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rows","transition":"saveRows","multi":"true","saved-finds":"true","select-columns":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}}}}}}) || "" || "")}};
             if ($required) $field.required = true;
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;

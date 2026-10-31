@@ -247,6 +247,18 @@
         root.setTimeout(() => toast.remove(), type === "danger" ? 12000 : 6000);
     };
 
+    // Copy the text at a URL (a form-list's md render) to the clipboard. A ClipboardItem takes the pending text, so the copy keeps
+    // the click's user activation while the request runs; without one the text is written when it arrives.
+    const copyUrl = (button) => {
+        const text = () => request(button.dataset.copyUrl).then((response) => (response.ok ? response.text() : Promise.reject(new Error(response.status + " " + response.statusText))));
+        const clipboard = root.navigator.clipboard;
+        if (!clipboard) { notify(button.dataset.copyFailed || "Copy failed", "danger"); return; }
+        const copied = root.ClipboardItem && clipboard.write
+            ? clipboard.write([new root.ClipboardItem({ "text/plain": text().then((body) => new Blob([body], { type: "text/plain" })) })])
+            : text().then((body) => clipboard.writeText(body));
+        copied.then(() => notify(button.dataset.copied || "Copied", "success"), (err) => notify((button.dataset.copyFailed || "Copy failed") + ": " + err.message, "danger"));
+    };
+
     // The messages in a fetched page become toasts, since the page itself is not shown.
     const notifyFromHtml = (html) => {
         const found = new DOMParser().parseFromString(html, "text/html");
@@ -836,6 +848,8 @@
             if (confirmed && !root.confirm(confirmed.dataset.confirm)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
             const opener = target.closest("[data-dialog]");
             if (opener) { const dialog = doc.getElementById(opener.dataset.dialog); if (dialog) openDialog(dialog); return; }
+            const copier = target.closest("[data-copy-url]");
+            if (copier) { event.preventDefault(); copyUrl(copier); return; }
             const closer = target.closest("[data-close]");
             if (closer) { closer.closest("dialog").close(); return; }
             const dismiss = target.closest("[data-dismiss]");

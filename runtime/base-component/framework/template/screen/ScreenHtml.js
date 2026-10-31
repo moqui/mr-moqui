@@ -1055,6 +1055,11 @@
                 const csv = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "csv").addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").addParameter("saveFilename", at(n, "name") + ".csv");
                 out += '<a data-btn="default" href="' + e(csv.getUrlWithParams()) + '">' + e(L("CSV")) + "</a>";
             }
+            if (at(n, "show-md-button") === "true") {
+                // copied by moqui-html.js: the list as a Markdown table, every page
+                const md = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "md").addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true");
+                out += "<button" + A({ type: "button", "data-copy-url": md.getUrlWithParams(), "data-copied": L("Copied as Markdown"), "data-copy-failed": L("Copy failed"), title: L("Copy as Markdown") }) + ">" + e(L("Markdown")) + "</button>";
+            }
             if (at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx")) {
                 const xlsx = sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", "xlsx").addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").addParameter("saveFilename", at(n, "name") + ".xlsx");
                 out += '<a data-btn="default" href="' + e(xlsx.getUrlWithParams()) + '">' + e(L("XLS")) + "</a>";

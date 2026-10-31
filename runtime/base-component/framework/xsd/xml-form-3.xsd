@@ -462,6 +462,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="show-csv-button" type="boolean" default="false">
             <xs:annotation><xs:documentation>Show a button to export as CSV (renderMode=csv), if the pagination header is displayed</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="show-md-button" type="boolean" default="false">
+            <xs:annotation><xs:documentation>Show a button to copy the list to the clipboard as a Markdown table (renderMode=md,
+                all pages), if the pagination header is displayed. Not in Java.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="show-xlsx-button" type="boolean" default="false">
             <xs:annotation><xs:documentation>Show a button to export as XLS (renderMode=xlsx), if the pagination header is displayed</xs:documentation></xs:annotation>
         </xs:attribute>

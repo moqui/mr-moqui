@@ -251,6 +251,7 @@ fn the_default_conf_parses_into_the_factory_conf() {
             "csv",
             "html",
             "html-print",
+            "md",
             "qjs",
             "qvt",
             "qvue",

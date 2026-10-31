@@ -77,7 +77,7 @@ pub fn get_field_value(field: &NodeLit, default_value: &str) -> Result<Value, Er
 
 fn format_for_mode<'a>(state: &RenderState, widget: &'a NodeLit) -> Option<&'a str> {
     let mut format = widget.attr("format");
-    if state.render_mode == "text" || state.render_mode == "csv" {
+    if matches!(state.render_mode.as_str(), "text" | "csv" | "md") {
         let text_format = widget.attr("text-format");
         if !text_format.is_empty() {
             format = text_format;

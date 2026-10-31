@@ -6,7 +6,7 @@
         <field name="note"><default-field><editable text="${note}" transition="saveNote" widget-type="select"><option key="a"/></editable></default-field></field>
         <field name="upload"><default-field><file/></default-field></field>
     </form-single>
-    <form-list name="Rows" list="rows" transition="saveRows" multi="true" saved-finds="true" select-columns="true" show-csv-button="true" show-all-button="true">
+    <form-list name="Rows" list="rows" transition="saveRows" multi="true" saved-finds="true" select-columns="true" show-csv-button="true" show-md-button="true" show-all-button="true">
         <row-selection id-field="id"><action><dialog button-text="Bulk"/><form-single name="Bulk" transition="bulk">
             <field name="status"><default-field><text-line/></default-field></field></form-single></action></row-selection>
         <field name="id"><default-field><hidden/></default-field></field>

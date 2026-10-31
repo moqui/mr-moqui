@@ -901,6 +901,7 @@ try {
         if (flag(node, "show-csv-button")) {
             code += push("csv", "CSV", [["renderMode", "csv"], ["pageNoLimit", "true"], ["lastStandalone", "true"], ["saveFilename", formName + ".csv"]]);
         }
+        if (flag(node, "show-md-button")) code += push("md", "Markdown", [["renderMode", "md"], ["pageNoLimit", "true"], ["lastStandalone", "true"]]);
         if (flag(node, "show-xlsx-button")) {
             code += `if (ec.screen.isRenderModeValid("xlsx")) ${push("xlsx", "XLS", [["renderMode", "xlsx"], ["pageNoLimit", "true"], ["lastStandalone", "true"], ["saveFilename", formName + ".xlsx"]])}`;
         }

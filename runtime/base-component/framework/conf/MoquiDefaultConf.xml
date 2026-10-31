@@ -590,6 +590,9 @@
             without it the mime type decides: application/json is json, text/html is html, anything else text. -->
         <screen-text-output type="csv" mime-type="text/csv" always-standalone="true"
                 macro-template-location="framework/template/screen/ScreenCsv.js"/>
+        <!-- md is a Markdown table for each form-list, which the form-list show-md-button copies -->
+        <screen-text-output type="md" mime-type="text/markdown" always-standalone="true"
+                macro-template-location="framework/template/screen/ScreenMd.js"/>
         <screen-text-output type="html" mime-type="text/html"
                 macro-template-location="framework/template/screen/ScreenHtml.js"/>
         <screen-text-output type="text" mime-type="text/plain"

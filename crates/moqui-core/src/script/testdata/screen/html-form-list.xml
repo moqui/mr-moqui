@@ -1,5 +1,5 @@
 <widgets>
-    <form-list name="Rich" list="rowList" paginate="true" show-csv-button="true" show-all-button="true" header-dialog="true" saved-finds="true" select-columns="true" show-text-button="true" show-pdf-button="true" style="wide" focus-field="id">
+    <form-list name="Rich" list="rowList" paginate="true" show-csv-button="true" show-md-button="true" show-all-button="true" header-dialog="true" saved-finds="true" select-columns="true" show-text-button="true" show-pdf-button="true" style="wide" focus-field="id">
         <row-actions><set field="extra" value="x"/></row-actions>
         <field name="id"><header-field show-order-by="case-insensitive"><text-find/></header-field><default-field><display/></default-field></field>
         <field name="title" align="center"><header-field container-style="head"><drop-down><option key="A"/></drop-down></header-field>

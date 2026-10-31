@@ -1158,8 +1158,8 @@ fn a_list_gives_its_exports_and_columns() {
         "exports",
         &format!(
             r#"<screen require-authentication="false"><actions><script>{ROWS}</script></actions><widgets>
-            <form-list name="Exp" list="rows" show-csv-button="true" show-xlsx-button="true" show-text-button="true"
-                    show-pdf-button="true" show-all-button="true" select-columns="true">
+            <form-list name="Exp" list="rows" show-csv-button="true" show-md-button="true" show-xlsx-button="true"
+                    show-text-button="true" show-pdf-button="true" show-all-button="true" select-columns="true">
                 <field name="name"><header-field title="Name"/><default-field><display/></default-field></field>
                 <field name="qty"><default-field><display/></default-field></field>
                 <field name="extra"><default-field title="More"><display/></default-field></field>
@@ -1177,7 +1177,7 @@ fn a_list_gives_its_exports_and_columns() {
     let list = list_named(&doc, "Exp");
     let exports = list["exports"].as_array().unwrap();
     let kinds: Vec<&str> = exports.iter().map(|item| item["kind"].as_str().unwrap()).collect();
-    for kind in ["csv", "text", "pdf", "all"] {
+    for kind in ["csv", "md", "text", "pdf", "all"] {
         assert!(kinds.contains(&kind), "{kind} in {exports:?}");
     }
     let url = |kind: &str| {
@@ -1197,6 +1197,11 @@ fn a_list_gives_its_exports_and_columns() {
         assert!(url("csv").contains(part), "{part} in {}", url("csv"));
     }
     assert!(url("csv").starts_with('/'), "{}", url("csv"));
+    // md is copied, not saved: it has no file name
+    for part in ["renderMode=md", "pageNoLimit=true", "lastStandalone=true"] {
+        assert!(url("md").contains(part), "{part} in {}", url("md"));
+    }
+    assert!(!url("md").contains("saveFilename"), "{}", url("md"));
     for part in ["renderMode=text", "lineCharacters=132", "saveFilename=Exp.txt"] {
         assert!(url("text").contains(part), "{part} in {}", url("text"));
     }

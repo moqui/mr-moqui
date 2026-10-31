@@ -2,7 +2,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN screen[@location=" + sri.get
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n");
 {
     const $info = sri.openFormList("Rich");
-    $v.formList($info, {"name":"form-list","attrs":{"name":"Rich","list":"rowList","paginate":"true","show-csv-button":"true","show-all-button":"true","header-dialog":"true","saved-finds":"true","select-columns":"true","show-text-button":"true","show-pdf-button":"true","style":"wide","focus-field":"id"}}, [
+    $v.formList($info, {"name":"form-list","attrs":{"name":"Rich","list":"rowList","paginate":"true","show-csv-button":"true","show-md-button":"true","show-all-button":"true","header-dialog":"true","saved-finds":"true","select-columns":"true","show-text-button":"true","show-pdf-button":"true","style":"wide","focus-field":"id"}}, [
         [{
             "name": "id",
             "align": "",

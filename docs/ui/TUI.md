@@ -252,7 +252,8 @@ A list row with fields (a list with a `transition`) opens in the row editor with
 column titles; Enter or Ctrl+S saves the row, or every row of a `multi` list. A row action (`row-selection` `action`)
 is on F10, and its form posts the rows selected with Space. In the Columns dialog Space shows or hides a field,
 Alt+Up and Alt+Down move it, Enter saves and `r` puts back the list's own columns. An export saves a file to
-`XDG_DOWNLOAD_DIR` (else `~/Downloads`), with its path on the message line; the text export shows in a dialog.
+`XDG_DOWNLOAD_DIR` (else `~/Downloads`), with its path on the message line; the text export shows in a dialog, and the
+Markdown export (`show-md-button`) goes to the clipboard through OSC 52.
 
 The title line shows the counters (`Today 3  Chat 1  Notif 2`) when the server has a count service. They change when a
 notification comes for the user (in process, and over `--server` through `/notws`), with its title on the message

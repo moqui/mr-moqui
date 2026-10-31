@@ -274,6 +274,24 @@
         addNotify(jsonObj.title, jsonObj.type, jsonObj.link, jsonObj.icon);
     };
 
+    // Copy the text at a URL (a form-list's md render, for the Copy as Markdown item) to the clipboard. A ClipboardItem takes the
+    // pending text, so the copy keeps the click's user activation while the request runs; without one the text is written when
+    // it arrives.
+    moqui.copyUrl = (url) => {
+        const clipboard = root.navigator.clipboard;
+        const L = (text) => (moqui.l10n ? moqui.l10n.localize(text) : text);
+        const failed = (err) => {
+            const message = L("Copy failed") + (err && (err.statusText || err.message) ? ": " + (err.statusText || err.message) : "");
+            notify(Object.assign({}, moqui.notifyOptsError, { message }));
+        };
+        if (!clipboard) { failed(null); return; }
+        const text = () => moqui.request(url, { accept: "text/markdown,text/plain" }).then((result) => result.text);
+        const copied = root.ClipboardItem && clipboard.write
+            ? clipboard.write([new root.ClipboardItem({ "text/plain": text().then((body) => new Blob([body], { type: "text/plain" })) })])
+            : text().then((body) => clipboard.writeText(body));
+        copied.then(() => notify(Object.assign({}, moqui.notifyOpts, { message: L("Copied as Markdown") })), failed);
+    };
+
     /* ========== component loading ========== */
 
     moqui.componentCache = new moqui.LruMap(50);
@@ -940,6 +958,8 @@
                     findFields: (id) => Object.assign({ formLocation: this.formLocation, formListFindId: id }, params),
                     newFindFields: () => Object.assign({ formLocation: this.formLocation, _findDescription: "" }, params),
                     exportUrl: (mode) => screen.path + "?" + query({ renderMode: mode, pageNoLimit: "true", lastStandalone: "true", saveFilename: this.name + "." + mode }),
+                    // the list as a Markdown table, every page, for the Copy as Markdown item
+                    mdUrl: () => screen.path + "?" + query({ renderMode: "md", pageNoLimit: "true", lastStandalone: "true" }),
                     // the page as a PDF, under /fop as Java's MoquiFopServlet
                     printUrl: () => "/fop" + screen.path + "?" + query({ pageNoLimit: "true" }),
                     columnsAction: this.columnsAction || "", columnsTree: this.columnsTree()
