@@ -97,7 +97,7 @@ example = { path = "runtime/dev-component/example" }
 moqui-tui = { path = "crates/moqui-tui", default-features = false }
 # Exact pin. default-features off so `async` (tokio) and `config` stay out.
 # moqui-tui turns on `markdown` only. Rust 1.95. Not a dependency of `moqui`.
-revue = { version = "=3.10.1", default-features = false }
+revue = { version = "=3.12.0", default-features = false }
 
 # --- moqui-lib ---
 # QR Model 2 and Data Matrix ECC 200, emitted as inline SVG by the print helpers.
@@ -213,7 +213,7 @@ ammonia = "4"
 html5ever = "0.40"
 # The xlsx render mode (the moqui-poi port). Defaults are empty; dates are written as Excel serial numbers, so the
 # chrono and jiff features stay off. Its zip dependency is `deflate` (zopfli and flate2 on zlib-rs).
-rust_xlsxwriter = { version = "0.101", default-features = false }
+rust_xlsxwriter = { version = "0.102", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
 # Excel serial numbers. Shares zip with rust_xlsxwriter.
 calamine = { version = "0.37", default-features = false }
