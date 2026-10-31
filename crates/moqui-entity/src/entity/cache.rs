@@ -145,7 +145,8 @@ struct SimSession {
     tables: HashSet<String>,
     tombstones: HashMap<String, HashSet<String>>,
     written: HashSet<String>,
-    /// Java's `TransactionCacheDb.seqBanks`: the sim's own sequenced ids, so a sim uses no production ids.
+    /// Java's `TransactionCacheDb.seqBanks`: the sim's own sequenced ids, so a sim uses no production ids. Each is the
+    /// last id given out for its name, counting down from [`SIM_SEQ_START`].
     seq_banks: HashMap<String, i64>,
     /// Rows copied unchanged from production so a view read can join them with the sim's own rows, by row key. Neither
     /// written nor deleted in the sim. See [`super::sim_view`].
@@ -257,8 +258,11 @@ fn end_sim_tracking(schema: &str, token: u64, poison: Option<&str>) {
 /// Java's `TransactionCacheDb.TOTAL_COPY_CAP`: rows copied from production over one sim, which bounds its size.
 const SIM_TOTAL_COPY_CAP: usize = 200_000;
 
-/// Java's `TransactionCacheDb.SEQ_START`: where the ids of a sim's sequences start.
-const SIM_SEQ_START: i64 = 900_000_000;
+/// Where the ids of a sim's sequences start: each name counts down from here (-1, -2, ...). Java's
+/// `TransactionCacheDb.SEQ_START` counts up from 900,000,000, which a production sequence can reach; then a sim's
+/// create gets the id of a production row, its row shadows that one, and a preview shows an update of the real record
+/// instead of a create. A production sequence never hands out an id below 1.
+const SIM_SEQ_START: i64 = 0;
 
 /// Java's `TransactionCacheDb.PRODUCTION_ENTITIES`: written to the real database during a sim. The agent's bookkeeping
 /// (a preview runs inside a run: its conversation, run, steps, events, messages, tool calls and approvals, and the
@@ -277,13 +281,14 @@ const SIM_PRODUCTION_ENTITIES: &[&str] = &[
     "moqui.entity.SequenceValueItem",
 ];
 
-/// The next id of `seq_name` from the sim's own bank, when a sim session is open on this thread.
+/// The next id of `seq_name` from the sim's own bank, when a sim session is open on this thread: -1, then -2, and so
+/// on, below every production id. See [`SIM_SEQ_START`].
 pub(crate) fn sim_next_seq(seq_name: &str) -> Option<i64> {
     SIM.with(|slot| {
         let mut sessions = slot.borrow_mut();
         let session = sessions.last_mut()?;
         let next = session.seq_banks.entry(seq_name.to_string()).or_insert(SIM_SEQ_START);
-        *next += 1;
+        *next -= 1;
         Some(*next)
     })
 }

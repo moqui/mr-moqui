@@ -201,7 +201,8 @@ pub(crate) fn assign_primary(
     if spec.use_uuid {
         return Ok((spec.pk_field, apply_prefix(prefix.as_deref(), &uuid_v4()?)));
     }
-    // A sim takes its ids from its own bank, as Java's `TransactionCacheDb.nextSeq`.
+    // A sim takes its ids from its own bank, as Java's `TransactionCacheDb.nextSeq`, but negative (-1, -2, ...) so
+    // none is the id of a production row.
     if let Some(id) = super::cache::sim_next_seq(&spec.seq_name) {
         return Ok((spec.pk_field, apply_prefix(prefix.as_deref(), &id.to_string())));
     }
