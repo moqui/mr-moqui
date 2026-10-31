@@ -47,6 +47,8 @@ along with this software (see the LICENSE.md file). If not, see
         // Assist: the drawer, its store, transport and follow (moqui.assist), before the client, which registers its components
         footer_scripts.add('/js/WebrootAssist.js')
         footer_scripts.add('/js/WebrootReport.js')
+        // the PWA's service worker and Web Push (moqui.push, the account menu's Notifications on this device)
+        if (ec.user.userId) footer_scripts.add('/js/WebrootPush.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')
@@ -186,6 +188,12 @@ along with this software (see the LICENSE.md file). If not, see
                 linksUnderline: ec.l10n.localize('Underline links'), corners: ec.l10n.localize('Corners'), cornersDefault: ec.l10n.localize('Rounded'),
                 cornersSquare: ec.l10n.localize('Square'), cornersRound: ec.l10n.localize('More rounded'), resetDefaults: ec.l10n.localize('Reset to defaults'),
                 done: ec.l10n.localize('Done'),
+                // the account menu's Notifications on this device (js/WebrootPush.js)
+                pushNotifications: ec.l10n.localize('Notifications on this device'), pushBlocked: ec.l10n.localize("Blocked in the browser's site settings"),
+                pushBlockedHelp: ec.l10n.localize("Notifications are blocked for this site; allow them in the browser's site settings"),
+                pushInstall: ec.l10n.localize('Add to Home Screen to get notifications when closed'), pushPageOpen: ec.l10n.localize('While a page is open'),
+                pushServerOff: ec.l10n.localize('While a page is open; this server does not send push'), pushClosed: ec.l10n.localize('Also when the app is closed'),
+                pushFailed: ec.l10n.localize('Could not turn on notifications on this device'),
                 // the drawer's rail toggle
                 expandMenu: ec.l10n.localize('Expand the menu'), collapseMenu: ec.l10n.localize('Collapse the menu'),
                 // Assist (js/WebrootAssist.js; its other texts are moqui.assist.labels)

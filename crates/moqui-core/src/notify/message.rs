@@ -384,6 +384,26 @@ impl NotificationMessage {
             &wrapped,
             self.notification_message_id.as_deref(),
         );
+        // A persisted message is in its users' lists; those who want it pushed get a Web Push to each browser they
+        // subscribed. A socket-only message (a chat event, a signal) never is.
+        if persist {
+            let push_users: Vec<String> = self
+                .notify_user_ids
+                .iter()
+                .filter(|user_id| wants_push(user_id, &resolved.topic_users, topic.as_ref()))
+                .cloned()
+                .collect();
+            crate::service::web_push::queue(
+                &facade,
+                &push_users,
+                &crate::service::web_push::PushNotice {
+                    title: self.title_text.as_deref().unwrap_or(""),
+                    link: self.link_text.as_deref().unwrap_or(""),
+                    topic: &self.topic,
+                    tag: self.notification_message_id.as_deref().unwrap_or(""),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -798,6 +818,17 @@ fn wants_email(user_id: &str, topic_users: &[EntityValue], topic: Option<&Entity
         }
     }
     topic.and_then(|row| yn(row, "emailNotifications")) == Some(true)
+}
+
+/// The user's `pushNotifications` on the topic, else the topic's, else Y but for a topic of the NinUpdates inbox.
+fn wants_push(user_id: &str, topic_users: &[EntityValue], topic: Option<&EntityValue>) -> bool {
+    if let Some(flag) = topic_user(topic_users, user_id).and_then(|row| yn(row, "pushNotifications")) {
+        return flag;
+    }
+    if let Some(flag) = topic.and_then(|row| yn(row, "pushNotifications")) {
+        return flag;
+    }
+    topic.and_then(|row| field_str(row, "inboxEnumId")).as_deref() != Some("NinUpdates")
 }
 
 struct SavedMessages {

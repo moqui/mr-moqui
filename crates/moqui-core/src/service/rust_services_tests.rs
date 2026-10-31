@@ -69,6 +69,10 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::user_keys::get_app_passwords",
         "moqui_core::service::user_keys::revoke_access_token",
         "moqui_core::service::user_keys::revoke_app_password",
+        "moqui_core::service::web_push::delete_subscription",
+        "moqui_core::service::web_push::get_status",
+        "moqui_core::service::web_push::send_web_push",
+        "moqui_core::service::web_push::store_subscription",
     ];
     expected.sort_unstable();
     // A feature this build leaves out registers nothing; its locations resolve through missing_feature.

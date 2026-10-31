@@ -300,6 +300,12 @@ p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8
 # OIDC and OAuth 2 client. Default feature is the native JWS verifier.
 # Loopback, metrics, and the experimental key-binding feature stay off.
 huskarl = "0.11"
+# Web Push (RFC 8291 payload encryption, RFC 8292 VAPID) in moqui-core's web-push feature: P-256 ECDH and ES256 from the
+# p256 above, HKDF-SHA-256 and AES-128-GCM. The same RustCrypto generation as p256 0.14; web-push-native was set aside
+# as it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple.
+hkdf = "0.13"
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+sha2_11 = { package = "sha2", version = "0.11", default-features = false }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
 ipp = { version = "7", default-features = false }

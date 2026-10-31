@@ -15,6 +15,9 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 | `js/*.js` (`MoquiLib.js`, `WebrootVue.qvt.js` and the rest) | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35); `js/README.md` lists the files, [docs/ui/Qvt-Client.md](../../../../../docs/ui/Qvt-Client.md) is the reference |
 | `css/WebrootVue.qvt.css` | style sheet of the `qvt` shell and widgets: only what Quasar 2.35 has no prop for (tonal buttons, the div-table rules, the container-box accents, print) |
 | `images/`, `MoquiLogo100.png`, `favicon.ico` | logo and icon |
+| `manifest.webmanifest`, `images/pwa-icon-*` | the `/qapps` web app's manifest and icons (the Moqui logo drawn at 192 and 512, a maskable 512 and an SVG) |
+| `sw.js` | the PWA's service worker: caches only versioned shell assets, shows Web Push notifications; served uncached with `Service-Worker-Allowed: /` ([Qvt-Client](../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
+| `WebPush.xml` | not a file but the `/WebPush` transitions: status, store and delete of the browser's push subscription |
 
 ## Vendored browser libraries (`libs/`)
 

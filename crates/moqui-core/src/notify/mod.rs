@@ -16,6 +16,11 @@
 
 pub mod capture;
 mod message;
+#[cfg(feature = "web-push")]
+pub(crate) mod push_crypto;
+#[cfg(not(feature = "web-push"))]
+#[path = "push_crypto_off.rs"]
+pub(crate) mod push_crypto;
 mod topic;
 
 pub(crate) use message::service_job_error;

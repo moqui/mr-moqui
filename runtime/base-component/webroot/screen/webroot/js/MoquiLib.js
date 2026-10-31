@@ -459,21 +459,22 @@
 
         // ---- notifications ----
 
-        // A desktop notification when the browser allows it, else the fallback (the page toast).
+        // A desktop notification when the user allowed them (from the account menu's Notifications, js/WebrootPush.js), else the
+        // fallback (the page toast). Permission is only asked from a user's click. A stored notification is tagged with its id,
+        // as its Web Push is, so the browser shows it once when both arrive.
         notifyNotification: (jsonObj, fallback) => {
             if (!jsonObj) return;
             const Notification = root.Notification;
             const options = {};
-            if (jsonObj.topic && jsonObj.topic.length) options.tag = jsonObj.topic;
+            if (jsonObj.notificationMessageId) options.tag = jsonObj.notificationMessageId;
+            else if (jsonObj.topic && jsonObj.topic.length) options.tag = jsonObj.topic;
             const show = () => {
                 const notif = new Notification(jsonObj.title, options);
                 if (jsonObj.link && jsonObj.link.length) notif.onclick = () => root.open(jsonObj.link);
                 if (moqui.webrootVue) moqui.webrootVue.addNotify(jsonObj.title, jsonObj.type);
             };
             if (Notification && Notification.permission === "granted") show();
-            else if (Notification && Notification.permission !== "denied") {
-                Notification.requestPermission().then((status) => { if (status === "granted") show(); else fallback(jsonObj); });
-            } else fallback(jsonObj);
+            else fallback(jsonObj);
         },
 
         // Overridden by WebrootVue.qvt.js with a Quasar notify.

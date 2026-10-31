@@ -5608,7 +5608,70 @@
               }, 8, ["href", "class"]))
             }
         } },
-        "m-qapps-root": { hash: "69507fbd", make: function (Vue) {
+        "m-push-item": { hash: "599d267d", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_q_item = _resolveComponent("q-item")
+
+              return (_ctx.push.permission !== '')
+                ? (_openBlock(), _createBlock(_component_q_item, {
+                    key: 0,
+                    id: "m-account-push",
+                    tag: "label",
+                    clickable: ""
+                  }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_icon, { name: "notifications_active" })
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_item_section, null, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_item_label, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.title), 1)
+                            ]),
+                            _: 1
+                          }),
+                          (_ctx.caption)
+                            ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                key: 0,
+                                caption: ""
+                              }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.caption), 1)
+                                ]),
+                                _: 1
+                              }))
+                            : _createCommentVNode("", true)
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_item_section, { side: "" }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_toggle, {
+                            dense: "",
+                            "model-value": _ctx.on,
+                            disable: _ctx.push.busy || _ctx.push.permission === 'denied',
+                            "onUpdate:modelValue": _ctx.toggle
+                          }, null, 8, ["model-value", "disable", "onUpdate:modelValue"])
+                        ]),
+                        _: 1
+                      })
+                    ]),
+                    _: 1
+                  }))
+                : _createCommentVNode("", true)
+            }
+        } },
+        "m-qapps-root": { hash: "d0ce06c5", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
@@ -5630,6 +5693,7 @@
               const _component_m_avatar = _resolveComponent("m-avatar")
               const _component_q_separator = _resolveComponent("q-separator")
               const _component_m_user_status_menu = _resolveComponent("m-user-status-menu")
+              const _component_m_push_item = _resolveComponent("m-push-item")
               const _component_q_toggle = _resolveComponent("q-toggle")
               const _component_m_assist_button = _resolveComponent("m-assist-button")
               const _component_q_toolbar = _resolveComponent("q-toolbar")
@@ -6306,6 +6370,9 @@
                                               [_directive_close_popup]
                                             ])
                                           : _createCommentVNode("", true),
+                                        (_ctx.pushOn)
+                                          ? (_openBlock(), _createBlock(_component_m_push_item, { key: 6 }))
+                                          : _createCommentVNode("", true),
                                         _createVNode(_component_q_item, {
                                           tag: "label",
                                           clickable: ""
@@ -6386,7 +6453,8 @@
                                           clickable: "",
                                           tag: "a",
                                           href: _ctx.shell.logoutUrl,
-                                          "data-confirm": _ctx.labels.logout + ' ' + _ctx.userFullName + '?'
+                                          "data-confirm": _ctx.labels.logout + ' ' + _ctx.userFullName + '?',
+                                          onClick: _ctx.logoutClick
                                         }, {
                                           default: _withCtx(() => [
                                             _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -6406,7 +6474,7 @@
                                             })
                                           ]),
                                           _: 1
-                                        }, 8, ["href", "data-confirm"])
+                                        }, 8, ["href", "data-confirm", "onClick"])
                                       ]),
                                       _: 1
                                     })

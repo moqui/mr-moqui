@@ -15,7 +15,7 @@ pub(super) struct PublicSiteRoute {
 }
 
 /// First path segments that always belong to the framework, never to a public site.
-const FRAMEWORK_ROUTES: [&str; 26] = [
+const FRAMEWORK_ROUTES: [&str; 29] = [
     "apps",
     "qapps",
     "rest",
@@ -42,6 +42,10 @@ const FRAMEWORK_ROUTES: [&str; 26] = [
     "u",
     "cal",
     "r",
+    // the PWA: its service worker, manifest and the push transitions
+    "sw.js",
+    "manifest.webmanifest",
+    "WebPush",
 ];
 
 fn normalize_host(host: &str) -> String {

@@ -8402,6 +8402,8 @@
         "                    <q-item-section avatar><q-icon name=\"terminal\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.terminal}}</q-item-section>\n" +
         "                </q-item>\n" +
+        // notifications on this device: desktop notifications and Web Push (js/WebrootPush.js), turned on by this click only
+        "                <m-push-item v-if=\"pushOn\"></m-push-item>\n" +
         "                <q-item tag=\"label\" clickable>\n" +
         "                    <q-item-section avatar><q-icon name=\"dark_mode\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.switchDarkLight}}</q-item-section>\n" +
@@ -8417,7 +8419,7 @@
         "                    <q-item-section>{{labels.reLogin}}</q-item-section>\n" +
         "                </q-item>\n" +
         "                <q-separator></q-separator>\n" +
-        "                <q-item clickable tag=\"a\" :href=\"shell.logoutUrl\" :data-confirm=\"labels.logout + ' ' + userFullName + '?'\">\n" +
+        "                <q-item clickable tag=\"a\" :href=\"shell.logoutUrl\" :data-confirm=\"labels.logout + ' ' + userFullName + '?'\" @click=\"logoutClick\">\n" +
         "                    <q-item-section avatar><q-icon name=\"logout\" color=\"negative\"></q-icon></q-item-section>\n" +
         "                    <q-item-section class=\"text-negative\">{{labels.logout}}</q-item-section>\n" +
         "                </q-item>\n" +
@@ -8506,7 +8508,7 @@
                 lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, activeContainers: {}, urlListeners: [],
                 moquiSessionToken: config.sessionToken || "", appHost: config.appHost || "", appRootPath: config.appRootPath || "", userId: config.userId || "",
                 username: config.username || "", locale: config.locale || "en", userFullName: config.userFullName || "",
-                terminalUrl: config.terminalUrl || "",
+                terminalUrl: config.terminalUrl || "", pushOn: !!(config.userId && moqui.push),
                 reLoginShow: false, reLoginPassword: null, reLoginMfaData: null, reLoginOtp: null,
                 notificationClient: null, sessionTokenBc: null, qzVue: null, leftOpen: !!config.leftOpen, leftMini: !!config.leftMini,
                 // the m-screen-context registrations, oldest first; formsVersion changes as the forms of the screens come and go
@@ -8818,6 +8820,14 @@
             setPreference(key, value) {
                 moqui.request(this.appRootPath + "/apps/setPreference", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, preferenceKey: key, preferenceValue: value } })
                     .catch(moqui.handleAjaxError);
+            },
+            // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
+            // user's pushes; bounded by moqui.push.beforeLogout.
+            logoutClick(event) {
+                if (!moqui.push || event.defaultPrevented) return;
+                event.preventDefault();
+                const href = this.shell.logoutUrl;
+                moqui.push.beforeLogout().then(() => { root.location.href = href; });
             },
             switchDarkLight() {
                 this.$q.dark.toggle();
@@ -9203,13 +9213,9 @@
             this.shellKeysOff = keymap.registerScope("global", this.shellKeyBindings());
             root.document.addEventListener("keydown", this.onShellKeydown);
             this.shellPollTimer = setInterval(() => this.pollShellCounts(), 5 * 60 * 1000);
-            // desktop notifications: ask once, if the browser has not been told yet
-            if (root.Notification && root.Notification.permission === "default") {
-                root.Notification.requestPermission().then((status) => {
-                    if (status === "granted") moqui.notifyMessages("Browser notifications enabled, if you don't want them use browser notification settings to block");
-                    else if (status === "denied") moqui.notifyMessages("Browser notifications disabled, if you want them use browser notification settings to allow");
-                });
-            }
+            // the PWA's service worker and Web Push (js/WebrootPush.js); notification permission is asked only from the
+            // account menu's toggle, a user's click
+            if (this.pushOn) moqui.push.start().catch((err) => console.info("Web Push not started", err));
             if (config.qz && config.qz.enabled) this.loadQz();
         },
         unmounted() {

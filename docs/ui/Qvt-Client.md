@@ -801,6 +801,57 @@ with its six tries again.
 
 A listener may unregister itself, or another, while it is called: the other listeners of that message still get it.
 
+## Install and Web Push
+
+`/qapps` is an installable web app (a PWA): `Header.html.fancy` links `/manifest.webmanifest` (start `/qapps`, scope `/`,
+the icons under `/images/pwa-icon-*`), and `js/WebrootPush.js` registers the service worker `/sw.js` (served uncached,
+with `Service-Worker-Allowed: /`, by `screen/static_files.rs`).
+
+**What the worker caches.** Only versioned shell assets: a URL with a `v` parameter, or under `/libs/`. Never a screen
+render, a transition, `/rest`, the sockets, or any answer marked `private` or `no-store`, so a shared device keeps no
+page of the last user's. Offline, the shell does not open.
+
+**Notifications on this device.** The account menu's toggle (`m-push-item`) is the only place the page asks for the
+browser's notification permission, so the browser's prompt follows a click. Turned on, it:
+
+1. asks for permission;
+2. subscribes with the server's VAPID public key (`/WebPush/status`, `get#WebPushStatus`);
+3. stores the subscription for the signed-in user (`/WebPush/store`, `store#WebPushSubscription`).
+
+From then on each **persisted** notification the user wants pushed (`pushNotifications` on `NotificationTopicUser`, else
+`NotificationTopic`, else yes but for the `NinUpdates` inbox) also goes to that browser, through
+`send#WebPush` on a service worker (`service/web_push.rs`: RFC 8291 encryption, RFC 8292 VAPID). The payload is the
+title, link and topic, and the message id as the tag, never the message body. A click on the notification focuses an
+open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed.
+
+The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
+
+**Account switch and logout.** A browser's subscription is one user's:
+
+- On each page load the client checks it against the server (`moqui.push.start`). A subscription the server does not
+  hold for the signed-in user, and that this user did not turn on in this browser, is ended in the browser.
+- Storing an endpoint another user had moves it to the new user.
+- The logout link ends the subscription first (bounded at 1.5 seconds).
+- The server's logout deletes the subscriptions the visit stored.
+
+A push service answering 404 or 410 disables the subscription; so do 5 failures in a row. The next page load of a user
+who turned notifications on subscribes again.
+
+**Push is a hint.** The notification list and counts are the server's: a page that comes back, or gets a push while
+open, reads them again. Push carries no phone ring and no background media: a call invitation reaches a closed app only
+as a notification.
+
+| Browser | Push |
+|---|---|
+| Chrome, Edge (desktop, Android) | Yes, through FCM, with the browser running |
+| Firefox (desktop, Android) | Yes, through Mozilla's push service |
+| Safari 16+ (macOS 13+) | Yes, through Apple's push service |
+| Safari on iOS and iPadOS 16.4+ | Only for the web app added to the Home Screen; a Safari tab has none, and the toggle says so |
+| Any browser without the Push API, or a server built without `web-push` | Desktop notifications only while a page is open |
+
+The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
+names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
+
 ## Collaborative editing
 
 `m-coedit` is `m-rich-text` (its toolbar, keys, links, images, tables and image upload) with the `collab` prop: the document is

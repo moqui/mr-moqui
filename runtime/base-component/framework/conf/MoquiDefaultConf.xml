@@ -150,6 +150,12 @@
     <default-property name="entity_ds_crypt_pass_old" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
     <!-- Phase 7 signs the session cookie with this key. Phase 2 generates it. -->
     <default-property name="session_cookie_key" value="CHANGEME" is-secret="true"/>
+    <!-- Web Push (VAPID, RFC 8292): the server's P-256 private key, 32 random bytes in base64, generated when unset and
+        shared by the cluster's members (a new key makes every browser subscribe again). The public key is derived from it
+        and given to the browser. web_push_subject is the contact the push services see: a mailto: or https: URL, which a
+        production instance should set to its operator's address. -->
+    <default-property name="web_push_vapid_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="web_push_subject" value="mailto:admin@localhost"/>
     <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from session_cookie_key. -->
     <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
     <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>

@@ -34,6 +34,7 @@ pub fn core_features() -> Vec<&'static str> {
         ("xlsx", cfg!(feature = "xlsx")),
         ("llm", crate::llm_hooks::linked()),
         ("telemetry", cfg!(feature = "telemetry")),
+        ("web-push", cfg!(feature = "web-push")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

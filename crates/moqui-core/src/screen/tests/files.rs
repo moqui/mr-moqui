@@ -40,6 +40,8 @@ impl Site {
         std::fs::write(dir.join("Site/css/app.css"), "body { color: red }").unwrap();
         std::fs::write(dir.join("Site/js/app.min.js"), "var a = 1;").unwrap();
         std::fs::write(dir.join("Site/js/app.js"), "var b = 2;").unwrap();
+        std::fs::write(dir.join("Site/sw.js"), "self.addEventListener('push', () => {});").unwrap();
+        std::fs::write(dir.join("Site/manifest.webmanifest"), "{\"name\": \"Moqui\"}").unwrap();
         std::fs::write(dir.join("Site/.secret"), "hidden").unwrap();
         std::fs::write(dir.join("Site/.git/config"), "hidden").unwrap();
         std::fs::write(dir.join("Site/Other.xml"), "<screen/>").unwrap();
@@ -89,6 +91,27 @@ fn a_file_under_the_screen_is_served_with_a_type_a_validator_and_a_cache_rule() 
     assert_eq!(
         versioned.header("Cache-Control"),
         Some("public, max-age=31536000, immutable")
+    );
+}
+
+/// The PWA's service worker is never cached (a browser would keep an old one in charge) and may take the whole site as
+/// its scope; the manifest has its own media type.
+#[test]
+fn the_service_worker_is_uncached_with_the_root_scope_and_the_manifest_is_typed() {
+    let site = Site::new("pwa");
+    let world = World::open("");
+    let worker = serve_at(&world.factory, request("GET", "/sw.js"), &site.root);
+    assert_eq!(worker.status, 200, "{}", worker.body_text());
+    assert_eq!(worker.header("Cache-Control"), Some("no-cache"));
+    assert_eq!(worker.header("Service-Worker-Allowed"), Some("/"));
+    let mut versioned = request("GET", "/sw.js");
+    versioned.query = vec![("v".to_string(), "abc".to_string())];
+    let versioned = serve_at(&world.factory, versioned, &site.root);
+    assert_eq!(versioned.header("Cache-Control"), Some("no-cache"));
+    let manifest = serve_at(&world.factory, request("GET", "/manifest.webmanifest"), &site.root);
+    assert_eq!(
+        manifest.header("Content-Type"),
+        Some("application/manifest+json; charset=UTF-8")
     );
 }
 

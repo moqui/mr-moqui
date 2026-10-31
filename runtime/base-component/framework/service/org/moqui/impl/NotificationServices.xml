@@ -23,7 +23,14 @@ along with this software (see the LICENSE.md file). If not, see
     An approval is decided, not read: marking all of an inbox viewed leaves it waiting (only its id marks it), and the
     first recipient's approve or refuse decides it for every recipient of the message (each one's row is marked viewed),
     so the others no longer see it waiting. An approval that needs each of several users to decide is one notification
-    message per user. -->
+    message per user.
+
+    Web Push (the PWA; plans/Comms-Framework.md §7.2): a browser the user turns notifications on in subscribes with the
+    server's VAPID public key (get#WebPushStatus) and stores its subscription (store#WebPushSubscription). Each persisted
+    notification then also goes to the subscribed browsers of the recipients who want it pushed (pushNotifications on
+    NotificationTopicUser, else NotificationTopic, else yes for the NinNotifications inbox), through send#WebPush on a
+    service worker. A push carries the title, link and topic, never the message body. Push is a hint: the notification
+    list is the server's, and works with no push at all. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="UserNotifications">
         <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
@@ -457,5 +464,60 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!wasDisabled) ec.artifactExecution.enableAuthz()
             }
         ]]></script></actions>
+    </service>
+
+    <!-- ========== Web Push ========== -->
+
+    <service verb="get" noun="WebPushStatus" type="rust" location="moqui_core::service::web_push::get_status">
+        <description>Whether this host can send Web Push (supported: built with the web-push feature), has its VAPID key
+            (configured, with the publicKey a browser subscribes with, or unavailableReason), how many browsers the current
+            user has subscribed (subscriptionCount), and whether the browser with endpoint is one of them (subscribed).
+            Adds no error: a host without push answers supported false.</description>
+        <in-parameters><parameter name="endpoint"/></in-parameters>
+        <out-parameters>
+            <parameter name="supported" type="Boolean"/>
+            <parameter name="configured" type="Boolean"/>
+            <parameter name="publicKey"/>
+            <parameter name="unavailableReason"/>
+            <parameter name="subscribed" type="Boolean"/>
+            <parameter name="subscriptionCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="WebPushSubscription" type="rust" location="moqui_core::service::web_push::store_subscription">
+        <description>Store the current user's browser subscription (the PushSubscription's endpoint and its p256dh and
+            auth keys, base64url). The endpoint must be https and the keys a P-256 point and 16 bytes. An endpoint stored
+            before, for this user or another, becomes this user's and is enabled again, so a browser never gets another
+            account's pushes after a sign-in. Refuses with an error when no user is signed in or push is not built.</description>
+        <in-parameters>
+            <parameter name="endpoint" required="true"/>
+            <parameter name="p256dhKey" required="true"/>
+            <parameter name="authSecret" required="true"/>
+            <parameter name="userAgent"/>
+        </in-parameters>
+        <out-parameters><parameter name="subscriptionId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="WebPushSubscription" type="rust" location="moqui_core::service::web_push::delete_subscription">
+        <description>Forget the current user's subscription with endpoint (the browser turned notifications off, or is
+            signing out). Another user's endpoint is left as it is, with no error. Logout also deletes the subscriptions
+            the visit stored.</description>
+        <in-parameters><parameter name="endpoint" required="true"/></in-parameters>
+    </service>
+    <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
+            authenticate="false" allow-remote="false">
+        <description>Internal: run on a service worker when a persisted notification is sent. Pushes title, link, topic
+            and tag (the notification message id) to each active subscription of userIdList, encrypted (RFC 8291) with a
+            VAPID token (RFC 8292). A push service answering 404 or 410 disables the subscription; 5 failures in a row
+            do too. Each subscription fails on its own, logged by its id.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="title"/>
+            <parameter name="link"/>
+            <parameter name="topic"/>
+            <parameter name="tag"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sentCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+        </out-parameters>
     </service>
 </services>

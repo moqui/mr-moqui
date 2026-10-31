@@ -4164,6 +4164,7 @@ dependencies = [
 name = "moqui-core"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "ammonia",
  "argon2",
  "base64 0.22.1",
@@ -4173,6 +4174,7 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "getrandom 0.3.4",
+ "hkdf",
  "hmac 0.12.1",
  "html5ever",
  "image",
@@ -4191,6 +4193,7 @@ dependencies = [
  "oxc_ast",
  "oxc_parser",
  "oxc_span",
+ "p256",
  "prost",
  "pulldown-cmark",
  "rcgen",
@@ -4201,6 +4204,7 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "sha2 0.11.0",
  "tar",
  "totp-rs",
  "tracing",

@@ -1,0 +1,17 @@
+{
+    "name": "Moqui",
+    "short_name": "Moqui",
+    "description": "Moqui apps",
+    "id": "/qapps",
+    "start_url": "/qapps",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#1976d2",
+    "icons": [
+        {"src": "/images/pwa-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+        {"src": "/images/pwa-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+        {"src": "/images/pwa-icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        {"src": "/images/pwa-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}
+    ]
+}

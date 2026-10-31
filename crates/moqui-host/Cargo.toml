@@ -17,9 +17,9 @@ default = ["maximal", "devtools"]
 # Dev package (`./moq build`, the default): Lite with git hosting, the SSH server and the dev tools.
 dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
-lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry"]
+lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -50,6 +50,8 @@ imap = ["smtp", "moqui-mail/imap"]
 git = ["dep:moqui-git"]
 # Framework features, forwarded to moqui-core.
 image = ["moqui-core/image"]
+# Web Push to subscribed browsers (the PWA), in every package.
+web-push = ["moqui-core/web-push"]
 xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]

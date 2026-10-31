@@ -1,6 +1,6 @@
 # Comms Framework
 
-Status 2026-10-30: plan, no code. The decisions are in [§8](#8-decisions). The libraries, reference applications and
+Status 2026-10-31: P0 (PWA and Web Push) built; A0–A4 under way. The decisions are in [§8](#8-decisions). The libraries, reference applications and
 review findings are in [§10](#10-libraries-and-sources).
 
 Comms moves from mr-boss into a framework component, `runtime/base-component/basic-comms`, beside `tools`. It gains
@@ -1218,7 +1218,7 @@ Observed on 2026-10-30 on crates.io, docs.rs and the upstream repositories. Each
 | G.711, G.722 | `ezk-g711`, `ezk-g722`, or in house | MIT | — | Pure Rust. Not `audio-codec` defaults |
 | Resampling | `rubato` | 5.0.1, MIT/Apache-2.0 | — | 8 and 16 kHz to and from 48 kHz |
 | Recording files | `ogg`; `webm-iterable` or `mkv-element` | BSD-3-Clause; MIT | ffmpeg, composited export | No transcoding. Not the `webm` crate |
-| Web Push | `web-push-native` | 0.5.0, MIT/Apache-2.0 | — | RustCrypto; the host's HTTP client sends. Not `web-push` |
+| Web Push | in house on `p256` 0.14, `hkdf` 0.13, `aes-gcm` 0.11 (P0) | MIT/Apache-2.0 | — | RFC 8291 and 8292 in `moqui-core` `notify/push_crypto.rs`, checked against RFC 8291's example. `web-push-native` 0.5.0 was set aside: it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple. Not `web-push` |
 | XMPP | `xmpp-parsers`, `minidom`, `tokio-xmpp`, `jid`, `sasl`; `rxml` | MPL-2.0 (D-C3); rxml MIT | Prosody (MIT), ejabberd (GPL), with an XEP-0114 component | tokio-xmpp 6 `xmlstream::accept_stream`; no dialback module |
 | Matrix | [ruma][ruma] | 0.17.2, MIT | Tuwunel, Continuwuity (Apache-2.0); Synapse (AGPL) | `client-api`, `federation-api`, `appservice-api`, `state-res`, `signatures`, `unstable-msc4186` |
 | Chat E2EE | [matrix-sdk-crypto][matrix-crypto], as `@matrix-org/matrix-sdk-crypto-wasm` | 0.19.1, 18.9.0, Apache-2.0 | — | On vodozemac; about 9 MB, loaded for encrypted rooms |

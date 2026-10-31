@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Web Push for the signed-in browser (the PWA; js/WebrootPush.js): /WebPush/status gives the VAPID public key and
+    whether this browser is subscribed, /WebPush/store and /WebPush/delete keep or forget its subscription. Each works on
+    the session's user only (org.moqui.impl.NotificationServices), so authorization is not asked; the session and its
+    CSRF token are checked as for any post. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
+    <transition name="status" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.NotificationServices.get#WebPushStatus')
+                    .parameters({endpoint: ec.web.parameters.endpoint || null}).disableAuthz().call() || {}
+            ec.web.sendJsonResponse({supported: !!out.supported, configured: !!out.configured, publicKey: out.publicKey || '',
+                subscribed: !!out.subscribed, signedIn: !!ec.user.userId})
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="store" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const parameters = ec.web.parameters
+                const out = ec.service.sync().name('org.moqui.impl.NotificationServices.store#WebPushSubscription')
+                        .parameters({endpoint: parameters.endpoint, p256dhKey: parameters.p256dhKey,
+                            authSecret: parameters.authSecret, userAgent: ec.web.request?.getHeader?.('User-Agent') || null})
+                        .disableAuthz().call()
+                if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+                else ec.web.sendJsonResponse({subscribed: true})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="delete" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (ec.user.userId && ec.web.parameters.endpoint) {
+                ec.service.sync().name('org.moqui.impl.NotificationServices.delete#WebPushSubscription')
+                        .parameters({endpoint: ec.web.parameters.endpoint}).disableAuthz().call()
+            }
+            if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+            else ec.web.sendJsonResponse({subscribed: false})
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

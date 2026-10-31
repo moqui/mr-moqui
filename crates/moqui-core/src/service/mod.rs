@@ -61,6 +61,7 @@ mod tools;
 mod user_keys;
 pub mod util;
 mod validate;
+pub(crate) mod web_push;
 
 pub use call::is_service_defined;
 pub use call::{
