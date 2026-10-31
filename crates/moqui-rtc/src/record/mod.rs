@@ -309,6 +309,9 @@ pub struct Recorder<S: Spool> {
     closed: Vec<ClosedSegment>,
     stored_bytes: u64,
     next_serial: u32,
+    /// A video track waits for a keyframe (to start a file, switch layers or cut a segment): see
+    /// [`Recorder::take_keyframe_wanted`].
+    keyframe_wanted: bool,
 }
 
 impl<S: Spool> Recorder<S> {
@@ -333,6 +336,7 @@ impl<S: Spool> Recorder<S> {
             closed: Vec::new(),
             stored_bytes: 0,
             next_serial: 1,
+            keyframe_wanted: false,
         })
     }
 
@@ -347,6 +351,12 @@ impl<S: Spool> Recorder<S> {
     /// The bytes of the closed segments and the open ones.
     pub fn total_bytes(&self) -> u64 {
         self.stored_bytes + self.open.values().map(|o| o.writer.bytes()).sum::<u64>()
+    }
+
+    /// Whether a video track has waited for a keyframe since the last call. Browsers send one only now and then, or
+    /// when asked, so the caller asks the room's publishers for one (moqui-host `Command::Keyframes`), not too often.
+    pub fn take_keyframe_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.keyframe_wanted)
     }
 
     /// The segments closed since the last call, for the caller to store.
@@ -507,15 +517,18 @@ impl<S: Spool> Recorder<S> {
         let rid = frame.rid.clone();
         let state = self.states.entry(id.clone()).or_default();
         // which layer: the one recorded, or a better one (or any, when it went silent) at its keyframe
-        let switch = match &state.layer {
-            None => frame.keyframe,
-            Some(current) if *current == rid => false,
+        let (wanted, switch) = match &state.layer {
+            None => (true, frame.keyframe),
+            Some(current) if *current == rid => (false, false),
             Some(current) => {
-                frame.keyframe
-                    && (layer_rank(rid.as_deref()) > layer_rank(current.as_deref())
-                        || now_ms.saturating_sub(state.last_wall_ms) > LAYER_SILENT_MS)
+                let wanted = layer_rank(rid.as_deref()) > layer_rank(current.as_deref())
+                    || now_ms.saturating_sub(state.last_wall_ms) > LAYER_SILENT_MS;
+                (wanted, frame.keyframe && wanted)
             }
         };
+        if wanted && !frame.keyframe {
+            self.keyframe_wanted = true;
+        }
         if switch {
             state.layer = Some(rid.clone());
         } else if state.layer.as_ref() != Some(&rid) {
@@ -530,6 +543,9 @@ impl<S: Spool> Recorder<S> {
         // a segment past its cap is cut at a keyframe, so the next one starts with one
         if frame.keyframe && self.open.get(id).is_some_and(|o| o.cut) {
             self.close(id, now_ms, false)?;
+        }
+        if !frame.keyframe && self.open.get(id).is_none_or(|o| o.cut) {
+            self.keyframe_wanted = true;
         }
         if !self.open.contains_key(id) {
             if !frame.keyframe {

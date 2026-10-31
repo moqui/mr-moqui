@@ -491,7 +491,8 @@ function segmentName(segment, track, names) {
 function find_(p) {
   const me = ec.user.userId
   if (!me) return { recordingList: [], recordingListCount: 0 }
-  const hosted = Array.from(find(PARTICIPANT).condition({ userId: me, roleEnumId: 'CprHost' }).selectField('callSessionId')
+  // the calls the user hosts, by the rule of isHost: an admitted host, or the owner of the call's link
+  const hosted = Array.from(find(PARTICIPANT).condition({ userId: me, roleEnumId: 'CprHost', admissionStatusId: 'CasAdmitted' }).selectField('callSessionId')
     .orderBy('-callParticipantId').limit(500).list()).map((x) => x.callSessionId)
   const linked = Array.from(find(LINK).condition('ownerUserId', me).selectField('callLinkId').limit(200).list()).map((l) => l.callLinkId)
   if (linked.length) {
@@ -611,12 +612,14 @@ function expire() {
   const retention = Array.from(find(RECORDING).condition('retentionUntilDate', '<', new Date(now))
     .condition('statusId', 'not-in', ACTIVE).selectField('callRecordingId').limit(500).list())
     .map((r) => ({ callRecordingId: r.callRecordingId }))
-  const live = new Set(Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', new Date(now - MEDIA_NODE_STALE_MS)).list())
-    .map((n) => n.instanceId))
+  // a node that started after the recording did has no recorder for it (a restart clears the spool too)
+  const live = new Map(Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', new Date(now - MEDIA_NODE_STALE_MS)).list())
+    .map((n) => [n.instanceId, ms(n.startedDate) || 0]))
   const stale = []
   for (const r of find(RECORDING).condition('statusId', 'in', ACTIVE).limit(1000).list()) {
     const session = one(SESSION, { callSessionId: r.callSessionId })
-    if (!session || session.statusId === 'CssEnded' || !live.has(r.mediaNodeId)) stale.push({ callRecordingId: r.callRecordingId })
+    const restarted = (live.get(r.mediaNodeId) || 0) > (ms(r.startedDate) || 0)
+    if (!session || session.statusId === 'CssEnded' || !live.has(r.mediaNodeId) || restarted) stale.push({ callRecordingId: r.callRecordingId })
   }
   const failed = Array.from(find(SEGMENT).condition('processingStatusId', 'CrgFailed').selectField('callRecordingSegmentId')
     .limit(500).list()).map((s) => ({ callRecordingSegmentId: s.callRecordingSegmentId }))
@@ -641,7 +644,7 @@ function expireItem(p) {
   if (p.itemKind === 'stale') {
     const recording = find(RECORDING).condition('callRecordingId', p.callRecordingId).forUpdate(true).one()
     if (!recording || !ACTIVE.includes(recording.statusId)) return { done: false }
-    stopRecording(recording, ec.l10n.localize('The recorder stopped: the call ended or its media server stopped'), true)
+    stopRecording(recording, ec.l10n.localize('The recorder stopped: the call ended or its media server stopped or restarted'), true)
     return { done: true }
   }
   if (p.itemKind === 'failedSegment') {

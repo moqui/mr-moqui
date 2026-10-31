@@ -300,7 +300,7 @@ struct BlockResult {
 pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&CaseResult)) -> SpecResult {
     let host = options.host.clone();
     let _host = HostGuard::set(host.clone());
-    let finish = || match &host {
+    let finish_host = || match &host {
         Some(host) => {
             host.after_spec();
             moqui_core::script::clear_context_stack();
@@ -310,6 +310,11 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             let _ = moqui_core::script::eval_named_value("__moquiTest.restoreDatabase()", PRELUDE_NAME);
             reset_context();
         }
+    };
+    let finish = || {
+        // the process properties the spec's setProperty changed, if cleanupSpec did not put them back
+        let _ = moqui_core::script::eval_named_value("__moquiTest.restoreProperties()", PRELUDE_NAME);
+        finish_host();
     };
     let started = Instant::now();
     let mut result = SpecResult {

@@ -21,6 +21,8 @@ use std::io::{self, Write};
 
 /// The most lacing values in a page.
 const MAX_SEGMENTS: usize = 255;
+/// The biggest packet one page holds: 254 lacing values of 255 and a last one of 254.
+pub const MAX_PACKET: usize = 255 * MAX_SEGMENTS - 1;
 /// A page is written once it holds this much audio: one second.
 const PAGE_SAMPLES: u64 = 48_000;
 
@@ -122,10 +124,12 @@ impl<W: Write> OggOpusWriter<W> {
 
     /// Takes one packet that starts at granule position `start` (in samples from the stream's start, without the
     /// pre-skip) and lasts `samples`. A start past the end of the last packet is a gap: the page so far is written
-    /// first, so the jump falls between pages. A start before it (a late or repeated packet) is dropped: false.
+    /// first, so the jump falls between pages. A start before it (a late or repeated packet) is dropped: false. So is
+    /// a packet too big for one page (more than [`MAX_PACKET`] bytes; no Opus packet over RTP is), as packets are
+    /// never continued on the next page.
     pub fn write(&mut self, start: u64, samples: u32, packet: &[u8]) -> io::Result<bool> {
         let start = start + u64::from(self.pre_skip);
-        if start < self.granule {
+        if start < self.granule || packet.len() > MAX_PACKET {
             return Ok(false);
         }
         if start > self.granule && !self.lacing.is_empty() {

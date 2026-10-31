@@ -66,6 +66,8 @@ pub struct Client {
     pub last_video_len: HashMap<String, usize>,
     pub last_audio: HashMap<String, Vec<u8>>,
     pub keyframe_asked: bool,
+    /// The keyframe requests (PLI or FIR) this client got.
+    pub keyframe_requests: usize,
     frame: u64,
     /// The audio level each audio frame carries, in negative dBov (0 loudest).
     pub audio_level: i8,
@@ -180,6 +182,7 @@ impl Net {
             last_video_len: HashMap::new(),
             last_audio: HashMap::new(),
             keyframe_asked: true,
+            keyframe_requests: 0,
             frame: 0,
             audio_level: -30,
             screen_mid: None,
@@ -449,7 +452,10 @@ impl Net {
                                 c.last_audio.insert(from, d.data.to_vec());
                             }
                         }
-                        Event::KeyframeRequest(_) => c.keyframe_asked = true,
+                        Event::KeyframeRequest(_) => {
+                            c.keyframe_asked = true;
+                            c.keyframe_requests += 1;
+                        }
                         _ => {}
                     }
                 }

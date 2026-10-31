@@ -26,6 +26,13 @@
         T.properties = new Map();
     };
     T.reset(null);
+    // the properties setProperty changed, put back: after cleanupSpec, and again by run.rs once the spec is done
+    // whatever happened (a spec that never reached cleanupSpec)
+    T.restoreProperties = () => {
+        const properties = T.properties;
+        T.properties = new Map();
+        for (const [name, before] of properties) __moquiTestHost.setProperty(name, before);
+    };
     T.setConditions = (conditions) => { T.conditions = conditions; };
 
     class ConditionNotSatisfied extends Error {
@@ -165,8 +172,7 @@
                 } finally {
                     for (const name of T.tempSequences) ec.entity.tempResetSequencedIdPrimary(name);
                     T.tempSequences = [];
-                    for (const [name, before] of T.properties) __moquiTestHost.setProperty(name, before);
-                    T.properties = new Map();
+                    T.restoreProperties();
                 }
             }
         } catch (e) {

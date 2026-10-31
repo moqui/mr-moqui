@@ -48,7 +48,7 @@ const RECORDING_ROOT: &str = "dbresource://moqui/call/recording/";
 
 /// `store#RecordingFile`: a spooled segment file (`tempPath`, under the runtime's [`RECORDING_SPOOL`]) to
 /// `contentLocation` (under [`RECORDING_ROOT`]); the spooled file is deleted once stored. Anything else is refused, so
-/// the service reads no other local file and writes no other place.
+/// the service reads no other local file and writes no other place. The file is streamed to storage.
 fn store_recording_file(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -80,18 +80,25 @@ fn store_recording_file(
     if !inside {
         return Err(LibError::new(format!("{temp_path} is not a call recording spool file")));
     }
-    let bytes = std::fs::read(path).map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?;
+    // streamed: a segment is up to call_recording_segment_mb, never read into memory whole
+    let mut file =
+        std::fs::File::open(path).map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?;
+    let size = file
+        .metadata()
+        .map_err(|e| LibError::new(format!("the spooled recording {temp_path}: {e}")))?
+        .len();
     factory
         .resource()
-        .write_bytes(&location, &bytes)
+        .write_from(&location, &mut file, Some(size))
         .map_err(|e| LibError::new(format!("the recording file {location} was not stored: {}", e.message())))?;
+    drop(file);
     if let Err(err) = std::fs::remove_file(path) {
         tracing::warn!("the spooled recording {temp_path} was not removed: {err}");
     }
     let mut out = BTreeMap::new();
     out.insert(
         "byteSize".to_string(),
-        Value::I64(i64::try_from(bytes.len()).unwrap_or(i64::MAX)),
+        Value::I64(i64::try_from(size).unwrap_or(i64::MAX)),
     );
     Ok(out)
 }

@@ -69,6 +69,11 @@ pub(crate) enum Command {
     CloseRoom {
         room: String,
     },
+    /// A keyframe of every video track published in the room, asked of the browsers: the recorder waits for one to
+    /// start a file (`recorder.rs`).
+    Keyframes {
+        room: String,
+    },
     /// The recording notice (an rtc `recording` frame) for every leg of the room, kept for the legs that join later
     /// until the recording stops (`recorder.rs`).
     Notice {

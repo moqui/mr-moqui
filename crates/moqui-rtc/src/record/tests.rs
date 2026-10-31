@@ -290,8 +290,11 @@ fn ogg_opus_pages_carry_the_headers_checksums_and_granule_positions() {
     for n in 0..60u64 {
         assert!(writer.write(n * 960, 960, &packet).unwrap());
     }
-    // a late one is dropped
+    // a late one is dropped, and so is one too big for a page (packets are never continued)
     assert!(!writer.write(10 * 960, 960, &packet).unwrap());
+    assert!(!writer
+        .write(60 * 960, 960, &vec![0xF8u8; super::ogg::MAX_PACKET + 1])
+        .unwrap());
     let (out, bytes) = writer.finish().unwrap();
     let data = out.into_inner();
     assert_eq!(bytes, data.len() as u64);
@@ -562,13 +565,20 @@ fn a_video_cut_waits_for_a_keyframe_and_layers_switch_at_keyframes() {
         ..RecordConfig::default()
     };
     let mut r = recorder(config, &spool);
+    // a delta frame with no file yet waits for a keyframe, which the caller asks the browsers for
+    r.event(0, &video("v", Some("l"), 7_030, false, vp8_delta(100)))
+        .unwrap();
+    assert!(r.take_keyframe_wanted());
+    assert!(!r.take_keyframe_wanted(), "taken once");
     // the low layer first; the high one's keyframe takes over; its delta frames only
     r.event(0, &video("v", Some("l"), 10_000, true, vp8_keyframe(160, 90, 100)))
         .unwrap();
     r.event(33, &video("v", Some("l"), 12_970, false, vp8_delta(100)))
         .unwrap();
+    assert!(!r.take_keyframe_wanted(), "the layer recorded needs none");
     r.event(40, &video("v", Some("h"), 900_000, false, vp8_delta(500)))
         .unwrap();
+    assert!(r.take_keyframe_wanted(), "a better layer waits for its keyframe");
     r.event(66, &video("v", Some("h"), 902_970, true, vp8_keyframe(640, 360, 500)))
         .unwrap();
     r.event(70, &video("v", Some("l"), 15_940, false, vp8_delta(100)))
@@ -581,6 +591,7 @@ fn a_video_cut_waits_for_a_keyframe_and_layers_switch_at_keyframes() {
         .unwrap();
     }
     assert!(r.take_closed().is_empty(), "past the cap, but no keyframe yet");
+    assert!(r.take_keyframe_wanted(), "the cut waits for a keyframe");
     r.event(500, &video("v", Some("h"), 940_000, true, vp8_keyframe(640, 360, 500)))
         .unwrap();
     let closed = r.take_closed();

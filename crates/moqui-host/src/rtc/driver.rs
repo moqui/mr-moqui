@@ -204,6 +204,7 @@ impl Driver<'_> {
                     json!({"rtc": "participant", "callLegId": leg, "connected": false}),
                 );
             }
+            Command::Keyframes { room } => self.sfu.request_keyframes(Instant::now(), &room),
             Command::Notice { room, frame } => {
                 let over = matches!(frame.get("state").and_then(Json::as_str), Some("stopped" | "failed"));
                 self.to_room(&room, None, frame.clone());

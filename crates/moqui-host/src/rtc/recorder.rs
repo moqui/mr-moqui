@@ -61,6 +61,8 @@ const STORE_DRAIN: Duration = Duration::from_secs(60);
 const TICK_MS: u64 = 20;
 /// Events taken in one turn before the tick is looked at again.
 const BATCH: usize = 256;
+/// How often the recorder asks the room's browsers for keyframes while a video track waits for one.
+const KEYFRAME_ASK: Duration = Duration::from_secs(1);
 
 /// The recorder's limits, from the properties.
 #[derive(Debug, Clone, Copy)]
@@ -296,6 +298,11 @@ impl<S: Store> Session<S> {
         self.flush().map(|()| true)
     }
 
+    /// Whether a video track waited for a keyframe since the last call ([`Recorder::take_keyframe_wanted`]).
+    pub(crate) fn take_keyframe_wanted(&mut self) -> bool {
+        self.recorder.take_keyframe_wanted()
+    }
+
     /// Hands the closed segments to the store; a store that failed or fell behind ends the recording.
     fn flush(&mut self) -> Result<(), Ended> {
         if let Some(failure) = self.store.failure() {
@@ -380,6 +387,7 @@ fn run(
     };
     let clock = Instant::now();
     let now_ms = || clock.elapsed().as_millis() as u64;
+    let mut keyframes_asked: Option<Instant> = None;
     let how = loop {
         let mut stop = None;
         loop {
@@ -425,6 +433,13 @@ fn run(
         let result = result.and_then(|()| session.tick_to(now_ms()));
         if let Err(how) = result {
             break how;
+        }
+        // a browser sends a keyframe only now and then unless asked: a file starts at one (a start, a resume, a cut)
+        if session.take_keyframe_wanted() && keyframes_asked.is_none_or(|at| at.elapsed() >= KEYFRAME_ASK) {
+            keyframes_asked = Some(Instant::now());
+            if let Err(code) = command(Command::Keyframes { room: room.to_string() }) {
+                tracing::debug!("call recording {id}: keyframes not asked for: {code}");
+            }
         }
         if consumer.dropped() > MAX_DROPPED {
             break Ended::Failed(format!(

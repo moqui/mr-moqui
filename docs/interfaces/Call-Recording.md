@@ -32,7 +32,9 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
 - **Each track**, as it was sent, with no transcoding: a leg's microphone and screen audio as Opus in Ogg, and its
   camera and screen share as VP8 in WebM. A simulcast track is recorded at its best layer that sent a keyframe: it
   moves up at a better layer's keyframe, and down when its layer is silent for a second. One file per track and
-  segment. A WebM file starts at a keyframe, has a cluster at each keyframe, and Cues for seeking.
+  segment. A WebM file starts at a keyframe, has a cluster at each keyframe, and Cues for seeking. Browsers send a
+  keyframe only now and then unless asked, so while a video track waits for one (a start, a resume, a layer switch,
+  a cut) the recorder asks the room's publishers for one, at most once a second.
 - **The mixed audio** of the whole call: the mix-minus mixer's `all()` (the M0 `AudioRoom`, on a 20 ms tick), coded
   with `OpusEncoder`, as Opus in Ogg. A recording of kind `mixed` has only this; `perTrack` (the default) has both.
 - **Timing** comes from each frame's RTP time. A gap (lost packets, a muted or stopped track) is a jump in the Ogg
@@ -51,7 +53,7 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
 2. The media node starts a recorder thread. It takes every frame of the room through a bounded queue
    (`call_recording_queue_frames`) and decodes the audio for the mix on its own thread, never on the media thread. It
    writes each file to a spool under `runtime/tmp/call-recording/`.
-3. Each closed segment goes back through `store#RecordingSegment`, which moves the file with `store#RecordingFile` to
+3. Each closed segment goes back through `store#RecordingSegment`, which streams the file with `store#RecordingFile` to
    `dbresource://moqui/call/recording/<callRecordingId>/<segment id>.ogg` (or `.webm`) and writes its track and segment
    rows. A leg that leaves (`TapEvent::Left`) closes its tracks.
 4. `pause#`, `resume#` and `stop#Recording` send the same control (`op: pause | resume | stop`). The call's end stops
@@ -100,8 +102,8 @@ call goes on.
 ## Retention and recovery
 
 The job `expire_Recordings_hourly` (`expire#Recordings`) deletes recordings past `retentionUntilDate`, files and rows.
-It also recovers: a recording still marked going whose call ended or whose media node stopped fails ("the recorder
-stopped"), a segment that was not stored is removed with any partial file, and files under the recordings' root that no
+It also recovers: a recording still marked going whose call ended or whose media node stopped or restarted since it
+began fails ("the recorder stopped"), a segment that was not stored is removed with any partial file, and files under the recordings' root that no
 recording row names (an upload whose rows rolled back) are deleted. Each item runs on its own, and one that fails is
 logged.
 
@@ -113,5 +115,5 @@ logged.
 - `cargo test -p moqui-host --test it rtc::`: a short recorded call on a real server, with its tracks, segments, files
   and the mixed audio.
 - `./moq test framework --spec CallRecording`: the policy, the notice per leg (a late joiner too), the acknowledgement
-  and withdrawal pauses, access, retention and a recorder failure.
+  and withdrawal pauses, access, retention, a recorder failure, and recovery after a media node restart.
 - `./moq test basic-comms --spec BasicCommsCalls`: the Recordings screen and its file transition.

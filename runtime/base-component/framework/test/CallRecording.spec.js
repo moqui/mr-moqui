@@ -3,7 +3,7 @@
 // joiner too; under the acknowledgement policy the recording pauses until every current leg acknowledged, and a resume
 // starts the next period of segments; a withdrawal pauses; only the owner and the hosts read a recording (another user
 // with the same segment id gets "not found"); a recorder failure ends the recording and not the call; retention deletes
-// the files and rows. The media node is simulated: its segments come in through store#RecordingSegment, as the recorder
+// the files and rows; the job fails a recording whose media node restarted since it began. The media node is simulated: its segments come in through store#RecordingSegment, as the recorder
 // hands them, and its failure through note#RecorderEnd. The recorder itself is moqui-host's (it rtc::).
 // Run: ./moq test framework --spec CallRecording
 const A = "REC_SPEC_A"
@@ -302,5 +302,32 @@ feature("the call's end stops its recording, and retention deletes the files and
         rows == 0
         segments == 0
         consentRows == 0
+    }
+})
+
+feature("a recording whose media node restarted since it began has no recorder: the job fails it, and the call goes on", {
+    when() {
+        const started = as(A, calls("start#Call"), {calleeUserIdList: [B]})
+        as(B, calls("answer#Call"), {callSessionId: started.callSessionId})
+        const rec = as(A, "start#Recording", {callSessionId: started.callSessionId})
+        const node = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", started.callSessionId).one()).mediaNodeId
+        // the node started again a minute later, and has beaten since
+        sys(() => {
+            const row = ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", node).one()
+            row.setFields({startedDate: new Date(Date.now() + 60000), heartbeatDate: new Date()}, true, null, null)
+            row.update()
+        })
+        sys(() => call("org.moqui.impl.CallRecordingServices.expire#Recordings", {}))
+        const row = recording(rec.callRecordingId)
+        const callNow = as(A, calls("get#Call"), {callSessionId: started.callSessionId})
+        as(A, calls("end#Call"), {callSessionId: started.callSessionId})
+        return {rec, node, row, callNow}
+    },
+    then({rec, node, row, callNow}) {
+        rec.recording.state == "recording"
+        node == NODE
+        row.statusId == "CrsFailed"
+        row.lastErrorText.includes("restarted")
+        callNow.call.status == "active"
     }
 })
