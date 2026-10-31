@@ -78,6 +78,41 @@ pub enum DatasourceKind {
     Mysql,
 }
 
+/// A transaction isolation level, as an `inline-jdbc` `isolation-level` or a database's `default-isolation-level` names
+/// it (`ReadCommitted`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IsolationLevel {
+    ReadUncommitted,
+    ReadCommitted,
+    RepeatableRead,
+    Serializable,
+}
+
+impl IsolationLevel {
+    /// The conf's name of a level; `None` for `None` and for an empty or unknown name.
+    #[must_use]
+    pub fn from_conf(name: &str) -> Option<Self> {
+        match name.trim() {
+            "ReadUncommitted" => Some(Self::ReadUncommitted),
+            "ReadCommitted" => Some(Self::ReadCommitted),
+            "RepeatableRead" => Some(Self::RepeatableRead),
+            "Serializable" => Some(Self::Serializable),
+            _ => None,
+        }
+    }
+
+    /// The level as SQL writes it: `READ COMMITTED`.
+    #[must_use]
+    pub fn sql(self) -> &'static str {
+        match self {
+            Self::ReadUncommitted => "READ UNCOMMITTED",
+            Self::ReadCommitted => "READ COMMITTED",
+            Self::RepeatableRead => "REPEATABLE READ",
+            Self::Serializable => "SERIALIZABLE",
+        }
+    }
+}
+
 /// One datasource, with `${}` expanded.
 #[derive(Clone)]
 pub struct DatasourceConf {
@@ -100,6 +135,9 @@ pub struct DatasourceConf {
     /// public ones.
     pub tls_root_cert: String,
     pub pool: PoolConfig,
+    /// The `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, which each connection sets
+    /// for its session, as Java's pool sets it on each connection; `None` leaves the server's default.
+    pub isolation_level: Option<IsolationLevel>,
     /// `startup-add-missing`, else the database's `default-startup-add-missing`: check every table at startup.
     pub startup_add_missing: bool,
     /// `runtime-add-missing`, else the database's `default-runtime-add-missing`, true when neither is `false`.
@@ -125,6 +163,7 @@ impl std::fmt::Debug for DatasourceConf {
             .field("tls_verify", &self.tls_verify)
             .field("tls_root_cert", &self.tls_root_cert)
             .field("pool", &self.pool)
+            .field("isolation_level", &self.isolation_level)
             .field("startup_add_missing", &self.startup_add_missing)
             .field("runtime_add_missing", &self.runtime_add_missing)
             .field("runtime_add_fks", &self.runtime_add_fks)
@@ -175,6 +214,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         .first_named("inline-jdbc")
         .or_else(|| database_node.first_named("inline-jdbc"));
     let pool = pool_config(inline.as_ref(), &database_node)?;
+    let isolation_level = isolation_level(group, inline.as_ref(), &database_node);
     // As Java's `EntityInfo`: `use-schemas="false"` puts no schema in front of the tables, so they are wherever the
     // connection puts them.
     let schema = if expanded(&database_node, "use-schemas") == "false" {
@@ -196,6 +236,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         tls_verify: TlsVerify::Full,
         tls_root_cert: String::new(),
         pool,
+        isolation_level,
         // As Java's `EntityFacadeImpl` and `EntityDbMeta`.
         startup_add_missing: match expanded(&datasource, "startup-add-missing").as_str() {
             "" => expanded(&database_node, "default-startup-add-missing") == "true",
@@ -230,6 +271,21 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         );
     }
     Ok(conf)
+}
+
+/// The `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, as Java's
+/// `EntityDatasourceFactory` reads them. `None` (or neither set) leaves the server's default; a name that is no level
+/// is logged and does the same.
+fn isolation_level(group: &str, inline: Option<&MNode>, database: &MNode) -> Option<IsolationLevel> {
+    let name = inline
+        .map(|node| expanded(node, "isolation-level"))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| expanded(database, "default-isolation-level"));
+    let level = IsolationLevel::from_conf(&name);
+    if level.is_none() && !name.is_empty() && name != "None" {
+        tracing::warn!("Datasource {group} isolation level {name} is not a level, leaving the server's default");
+    }
+    level
 }
 
 /// `inline-jdbc` pool attributes, with Java's fallbacks: min 5, max 50, wait 30 seconds, idle 60

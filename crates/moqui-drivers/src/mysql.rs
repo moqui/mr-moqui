@@ -43,6 +43,9 @@ mod driver {
         password: String,
         database: String,
         tls: bool,
+        /// The session's isolation level as SQL writes it (`READ COMMITTED`); `None` leaves the server's default
+        /// (InnoDB's is `REPEATABLE READ`).
+        isolation: Option<&'static str>,
     }
 
     impl Endpoint {
@@ -61,7 +64,16 @@ mod driver {
                 .prefer_socket(false)
                 .stmt_cache_size(0usize)
                 .ssl_opts(self.tls.then(mysql::SslOpts::default))
-                .init(vec!["SET NAMES utf8mb4"])
+                .init(self.init())
+        }
+
+        /// What each new connection runs first.
+        fn init(&self) -> Vec<String> {
+            let mut init = vec!["SET NAMES utf8mb4".to_string()];
+            if let Some(level) = self.isolation {
+                init.push(format!("SET SESSION TRANSACTION ISOLATION LEVEL {level}"));
+            }
+            init
         }
     }
 
@@ -131,8 +143,17 @@ mod driver {
                     password: password.into(),
                     database: database.into(),
                     tls,
+                    isolation: None,
                 },
             }
+        }
+
+        /// Each connection sets its session's isolation level to `level`, as SQL writes it (`READ COMMITTED`), as
+        /// Java's pool sets the datasource's `isolation-level` on each connection.
+        #[must_use]
+        pub fn isolation(mut self, level: Option<&'static str>) -> Self {
+            self.endpoint.isolation = level;
+            self
         }
 
         /// Opens one [`mysql::Conn`]. The crate pool is not used.

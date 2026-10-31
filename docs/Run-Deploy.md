@@ -351,6 +351,13 @@ are examples in `runtime/conf/MoquiDevConf.xml`.
 | `entity_ds_sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 | `entity_ds_crypt_pass` | generated | The key of encrypted fields; it must move with the database |
 
+Each connection to an external database sets the datasource's transaction isolation level for its session: the
+`inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, `ReadCommitted` for Postgres and MySQL
+in `MoquiDefaultConf.xml`, as Moqui Java does. `None` leaves the server's default (InnoDB's is `REPEATABLE READ`). The
+code assumes READ COMMITTED: at REPEATABLE READ or SERIALIZABLE, Postgres fails an `ON CONFLICT` insert whose
+conflicting row the transaction's snapshot does not see, and MySQL takes gap locks that two creates of one missing row
+can deadlock on.
+
 ### Search
 
 Search runs on Postgres by default: tables in the `search` schema of the entity database, or a dedicated embedded

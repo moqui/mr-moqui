@@ -75,6 +75,37 @@ fn postgres_reads_the_database_xa_properties() {
     assert_eq!((ds.tls_verify, ds.tls_root_cert.as_str()), (TlsVerify::Full, ""));
 }
 
+/// As Java's pool: the `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`; `None`, none set
+/// and a name that is no level leave the server's default.
+#[test]
+fn the_isolation_level_is_the_inline_jdbc_one_else_the_database_default() {
+    let level = |database: &str, inline: &str| {
+        let text = format!(
+            r#"<moqui-conf>
+                <entity-facade><datasource group-name="transactional" database-conf-name="mysql8"/></entity-facade>
+                <database-list>
+                    <database name="mysql8" {database}>
+                        <inline-jdbc {inline}><xa-properties serverName="my.example" databaseName="moqui"/></inline-jdbc>
+                    </database>
+                </database-list>
+            </moqui-conf>"#
+        );
+        datasource_conf(&MNode::parse_text("test", &text).unwrap(), "transactional")
+            .unwrap()
+            .isolation_level
+    };
+    let read_committed = r#"default-isolation-level="ReadCommitted""#;
+    assert_eq!(level(read_committed, ""), Some(IsolationLevel::ReadCommitted));
+    assert_eq!(
+        level(read_committed, r#"isolation-level="Serializable""#),
+        Some(IsolationLevel::Serializable)
+    );
+    assert_eq!(level("", ""), None);
+    assert_eq!(level(r#"default-isolation-level="None""#, ""), None);
+    assert_eq!(level(r#"default-isolation-level="Snapshot""#, ""), None);
+    assert_eq!(IsolationLevel::RepeatableRead.sql(), "REPEATABLE READ");
+}
+
 #[test]
 fn sslmode_names_what_tls_checks() {
     assert_eq!(tls_verify(""), TlsVerify::Full);
