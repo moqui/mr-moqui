@@ -147,6 +147,8 @@ workspace = true
 [dev-dependencies]
 # A browser stand-in for the call tests (tests/it/rtc.rs): a str0m client peer.
 str0m = { workspace = true }
+# A relayed browser stand-in for the TURN test (tests/it/rtc.rs).
+turn-client-proto = { workspace = true }
 # the dev-aide component's services, for the tests of tests/it/devaide.rs
 dev-aide = { workspace = true }
 indexmap = { workspace = true }

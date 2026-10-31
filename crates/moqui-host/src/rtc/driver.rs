@@ -31,7 +31,11 @@ use moqui_lib::object::Value;
 use moqui_rtc::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
 use serde_json::{json, Value as Json};
 
+use super::tcp::{self, Streams};
 use super::Command;
+
+/// Revokes a leg's TURN credential (the embedded TURN server, when there is one).
+pub(super) type Revoke = Box<dyn Fn(&str) + Send>;
 
 /// The longest the driver waits on the socket before it looks at its commands again.
 const MAX_WAIT: Duration = Duration::from_millis(5);
@@ -57,18 +61,25 @@ struct Driver<'a> {
     own: String,
     sfu: Sfu,
     routes: HashMap<LegKey, LegRoute>,
+    /// The ICE-TCP address browsers are told, and the connections' streams.
+    tcp: Option<(SocketAddr, Streams)>,
+    revoke: Option<Revoke>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     factory: &Arc<ExecutionContextFactory>,
     socket: UdpSocket,
     public: SocketAddr,
     own: String,
     commands: Receiver<Command>,
+    tcp: Option<(SocketAddr, Streams)>,
+    revoke: Option<Revoke>,
     stop: &AtomicBool,
 ) {
     let config = SfuConfig {
         udp_candidates: vec![public],
+        tcp_candidates: tcp.as_ref().map(|(addr, _)| vec![*addr]).unwrap_or_default(),
         ..SfuConfig::default()
     };
     let mut driver = Driver {
@@ -76,6 +87,8 @@ pub(super) fn run(
         own,
         sfu: Sfu::new(config),
         routes: HashMap::new(),
+        tcp,
+        revoke,
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -127,7 +140,11 @@ impl Driver<'_> {
         loop {
             match self.sfu.poll_output() {
                 SfuOutput::Transmit(t) => {
-                    if let Err(e) = socket.send_to(&t.contents, t.destination) {
+                    if t.proto == Proto::Tcp {
+                        if let Some((_, streams)) = &self.tcp {
+                            tcp::send(streams, t.destination, &t.contents);
+                        }
+                    } else if let Err(e) = socket.send_to(&t.contents, t.destination) {
                         tracing::debug!("call media send to {} failed: {e}", t.destination);
                     }
                 }
@@ -146,7 +163,16 @@ impl Driver<'_> {
                 generation,
                 frame,
             } => self.frame(route, &room, &leg, generation, &frame),
+            Command::TcpIn { from, data } => {
+                if let Some((addr, _)) = &self.tcp {
+                    let addr = *addr;
+                    self.sfu.handle_receive(Instant::now(), Proto::Tcp, from, addr, &data);
+                }
+            }
             Command::CloseLeg { room, leg } => {
+                if let Some(revoke) = &self.revoke {
+                    revoke(&leg);
+                }
                 let key = LegKey::new(&room, &leg);
                 if let Some(generation) = self.sfu.generation(&key) {
                     let _ = self.sfu.leave(Instant::now(), &key, generation);
@@ -173,6 +199,9 @@ impl Driver<'_> {
                     .cloned()
                     .collect();
                 for key in legs {
+                    if let Some(revoke) = &self.revoke {
+                        revoke(&key.leg);
+                    }
                     if let Some(r) = self.routes.remove(&key) {
                         self.reply(
                             &r.route,

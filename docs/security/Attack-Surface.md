@@ -413,6 +413,27 @@ Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It nee
 
 Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream (encrypted calls are W8). The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
+ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
+RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
+
+### TURN
+
+The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off
+unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_tls443_host`. TLS uses the
+`runtime/cert` certificates. Relays are UDP sockets in `turn_relay_ports`. Its rules:
+
+- **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
+  when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
+  is refused, and so is one of a leg that left (revoked by the media node).
+- **Relay peers** are only the media nodes (and `turn_allowed_peers`). A permission or channel to any other address
+  is dropped before the server sees it, and nothing is relayed to or from one.
+- **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
+  allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
+  peers are offered.
+
+coturn can take its place ([TURN](../interfaces/TURN.md)), with the same secret and a deny-all, allow-media-node
+peer rule.
+
 ### Database
 
 `entity_ds_db_conf` default `h2` (and an empty name) selects the embedded Postgres cluster. There is no H2 driver and no H2 TCP server.

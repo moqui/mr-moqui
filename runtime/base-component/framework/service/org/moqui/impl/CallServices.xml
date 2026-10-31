@@ -452,9 +452,38 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instanceId" required="true"/>
             <parameter name="mediaAddress"/>
             <parameter name="draining" type="Boolean" default="false"/>
+            <parameter name="turnUrls"><description>The node's TURN URLs, comma separated, for get#IceServers</description></parameter>
             <parameter name="stopping" type="Boolean" default="false"/>
         </in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('registerNode', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="IceServers">
+        <description>The ICE servers for the current user's leg in the call, for its RTCPeerConnection: the TURN servers of
+            the call's media node and any external ones (turn_external_urls), with a short-lived credential for this leg
+            (turn_credential_hours, 4). Only for a leg that is admitted and in the call; empty when no TURN is set up.</description>
+        <in-parameters><parameter name="callSessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('iceServers', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="GuestIceServers" authenticate="anonymous-all">
+        <description>A guest's ICE servers, by their credential, as get#IceServers gives a user's: only once admitted.</description>
+        <in-parameters><parameter name="credential" required="true"/></in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestIceServers', context))</script></actions>
+    </service>
+
+    <service verb="make" noun="IceServers" type="rust" location="moqui_core::service::call_media::make_ice_servers"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: the ICE servers of a leg: the TURN URLs (turnUrls, the media node's, and turn_external_urls)
+            with a credential in the TURN REST form coturn's use-auth-secret takes: username &lt;expiry&gt;:&lt;callLegId&gt;,
+            password base64 of HMAC-SHA1 of it with turn_auth_secret. Empty without URLs or a secret.</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="turnUrls"/>
+        </in-parameters>
+        <out-parameters><parameter name="iceServers" type="List"/></out-parameters>
     </service>
 
     <service verb="send" noun="MediaControl" type="rust" location="moqui_core::service::call_media::send_media_control"

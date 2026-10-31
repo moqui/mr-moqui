@@ -25,6 +25,8 @@
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 
 mod driver;
+mod tcp;
+mod turn;
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,6 +66,11 @@ pub(crate) enum Command {
     CloseRoom {
         room: String,
     },
+    /// A datagram from a browser's ICE-TCP connection.
+    TcpIn {
+        from: SocketAddr,
+        data: Vec<u8>,
+    },
     Stop,
 }
 
@@ -97,6 +104,8 @@ pub(crate) struct RtcNode {
     stop: Arc<AtomicBool>,
     driver: Option<JoinHandle<()>>,
     register: Option<JoinHandle<()>>,
+    tcp: Option<JoinHandle<()>>,
+    turn: Option<Arc<turn::TurnNode>>,
 }
 
 impl Drop for RtcNode {
@@ -109,6 +118,10 @@ impl Drop for RtcNode {
         if let Some(t) = self.driver.take() {
             let _ = t.join();
         }
+        if let Some(t) = self.tcp.take() {
+            let _ = t.join();
+        }
+        self.turn.take();
         *lock(media()) = None;
     }
 }
@@ -118,6 +131,8 @@ impl Drop for RtcNode {
 pub(crate) struct MediaConfig {
     pub bind: SocketAddr,
     pub public: SocketAddr,
+    /// The ICE-TCP port (`rtc_media_tcp_port`), on the same addresses.
+    pub tcp_port: Option<u16>,
 }
 
 /// The media settings from the properties, `None` while `rtc_media_port` is empty.
@@ -157,9 +172,20 @@ fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaCo
             .map_err(|_| format!("rtc_public_address {public} is not an address"))?;
         Some(SocketAddr::new(ip, port))
     };
+    let tcp = property("rtc_media_tcp_port");
+    let tcp = tcp.trim();
+    let tcp_port = if tcp.is_empty() {
+        None
+    } else {
+        Some(
+            tcp.parse::<u16>()
+                .map_err(|_| format!("rtc_media_tcp_port {tcp} is not a port"))?,
+        )
+    };
     Ok(Some(MediaConfig {
         bind,
         public: public.unwrap_or(bind),
+        tcp_port,
     }))
 }
 
@@ -201,16 +227,64 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         config.public
     };
     let (tx, rx) = sync_channel(COMMAND_QUEUE);
-    *lock(media()) = Some(tx);
+    *lock(media()) = Some(tx.clone());
     let stop = Arc::new(AtomicBool::new(false));
     let own = own_node(factory);
+    // ICE-TCP, when its port is set: a listener that does not bind is logged, and the UDP media goes on
+    let streams: tcp::Streams = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let mut tcp_public = None;
+    let mut tcp_thread = None;
+    if let Some(port) = config.tcp_port {
+        match std::net::TcpListener::bind((config.bind.ip(), port)) {
+            Ok(listener) => {
+                let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+                match tcp::start(listener, Arc::clone(&streams), tx.clone(), Arc::clone(&stop)) {
+                    Ok(handle) => {
+                        tcp_public = Some(SocketAddr::new(public.ip(), local));
+                        tcp_thread = Some(handle);
+                    }
+                    Err(err) => tracing::error!("ICE-TCP did not start: {err}"),
+                }
+            }
+            Err(err) => tracing::error!("ICE-TCP did not start, rtc_media_tcp_port {port} did not bind: {err}"),
+        }
+    }
+    // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
+    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, config.bind.ip(), public, &[]) {
+        Ok(Some(settings)) => match turn::start(factory.runtime_dir(), &settings) {
+            Ok(node) => {
+                tracing::info!("TURN started: {}", turn::urls(&settings, &node.bound).join(", "));
+                Some((Arc::new(node), settings))
+            }
+            Err(err) => {
+                tracing::error!("TURN did not start, calls go on without it: {err}");
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(err) => {
+            tracing::error!("TURN did not start, calls go on without it: {err}");
+            None
+        }
+    };
+    let turn_urls = turn_node
+        .as_ref()
+        .map(|(node, settings)| turn::urls(settings, &node.bound))
+        .unwrap_or_default()
+        .join(",");
+    let turn_arc = turn_node.map(|(node, _)| node);
+    let revoke: Option<driver::Revoke> = turn_arc.clone().map(|node| {
+        let revoke: driver::Revoke = Box::new(move |leg: &str| node.revoke(leg));
+        revoke
+    });
     let driver = {
         let factory = Arc::clone(factory);
         let stop = Arc::clone(&stop);
         let own = own.clone();
+        let tcp = tcp_public.map(|addr| (addr, Arc::clone(&streams)));
         std::thread::Builder::new()
             .name("moqui-rtc-media".to_string())
-            .spawn(move || driver::run(&factory, socket, public, own, rx, &stop))
+            .spawn(move || driver::run(&factory, socket, public, own, rx, tcp, revoke, &stop))
     };
     let driver = match driver {
         Ok(handle) => handle,
@@ -225,7 +299,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         let stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name("moqui-rtc-register".to_string())
-            .spawn(move || register_loop(&factory, &own, public, &stop))
+            .spawn(move || register_loop(&factory, &own, public, &turn_urls, &stop))
             .ok()
     };
     *lock(&factory.extension(|_| RtcAddress::default()).0) = Some(bound);
@@ -234,25 +308,34 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         stop,
         driver: Some(driver),
         register,
+        tcp: tcp_thread,
+        turn: turn_arc,
     })
 }
 
-fn register_loop(factory: &Arc<ExecutionContextFactory>, own: &str, public: SocketAddr, stop: &AtomicBool) {
+fn register_loop(
+    factory: &Arc<ExecutionContextFactory>,
+    own: &str,
+    public: SocketAddr,
+    turn_urls: &str,
+    stop: &AtomicBool,
+) {
     let mut next = std::time::Instant::now();
     while !stop.load(Ordering::Acquire) {
         if std::time::Instant::now() >= next {
-            register(factory, own, public, false);
+            register(factory, own, public, turn_urls, false);
             next = std::time::Instant::now() + REGISTER_EVERY;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    register(factory, own, public, true);
+    register(factory, own, public, turn_urls, true);
 }
 
-fn register(factory: &Arc<ExecutionContextFactory>, own: &str, public: SocketAddr, stopping: bool) {
+fn register(factory: &Arc<ExecutionContextFactory>, own: &str, public: SocketAddr, turn_urls: &str, stopping: bool) {
     let parameters = std::collections::BTreeMap::from([
         ("instanceId".to_string(), Value::string(own)),
         ("mediaAddress".to_string(), Value::string(public.to_string())),
+        ("turnUrls".to_string(), Value::string(turn_urls)),
         ("stopping".to_string(), Value::Bool(stopping)),
     ]);
     let ran = factory.service_pools().call(move || {

@@ -139,6 +139,28 @@
     <default-property name="rtc_media_host" value="127.0.0.1"/>
     <default-property name="rtc_public_address" value=""/>
     <default-property name="call_ring_seconds" value="45"/>
+    <!-- ICE-TCP (W4): a TCP port on rtc_media_host for browsers that cannot reach the UDP one; off while empty. -->
+    <default-property name="rtc_media_tcp_port" value=""/>
+    <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
+        block UDP: turn_port (UDP and TCP, 3478 by convention) and turn_tls_port (TLS, 5349), off while empty; turn_tls443_host
+        an address of its own for TLS on 443 (the HTTPS listener does not share it); turn_host the address they bind
+        (rtc_media_host by default) and turn_public_host the name or address in the URLs browsers get (the media node's
+        public address by default); turn_relay_ports the UDP range of the relays. turn_auth_secret signs the short-lived
+        credentials (generated when unset; every media node and any coturn take the same one); turn_credential_hours how
+        long one lasts; turn_external_urls TURN servers elsewhere (coturn with use-auth-secret), comma separated turn: URLs.
+        turn_max_allocations, turn_max_kbps: the quotas; turn_allowed_peers addresses besides the media node a relay may reach. -->
+    <default-property name="turn_port" value=""/>
+    <default-property name="turn_tls_port" value=""/>
+    <default-property name="turn_tls443_host" value=""/>
+    <default-property name="turn_host" value=""/>
+    <default-property name="turn_public_host" value=""/>
+    <default-property name="turn_relay_ports" value="49152-65535"/>
+    <default-property name="turn_auth_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="turn_credential_hours" value="4"/>
+    <default-property name="turn_external_urls" value=""/>
+    <default-property name="turn_max_allocations" value="1000"/>
+    <default-property name="turn_max_kbps" value="4000"/>
+    <default-property name="turn_allowed_peers" value=""/>
 
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>

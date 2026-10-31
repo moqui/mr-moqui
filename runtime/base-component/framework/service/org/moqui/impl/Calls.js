@@ -1162,6 +1162,33 @@ function markMissedSeen() {
   return { markedCount }
 }
 
+/** The ICE servers (TURN, with a credential for the leg) of an admitted leg in the call: its media node's and external. */
+function iceServersOf(session, leg) {
+  const node = session.mediaNodeId ? one(MEDIA_NODE, { instanceId: session.mediaNodeId }) : null
+  const out = ec.service.sync().name('org.moqui.impl.CallServices.make#IceServers').parameters({
+    callLegId: leg.callLegId, turnUrls: node?.turnUrls || '',
+  }).disableAuthz().call() || {}
+  return { iceServers: out.iceServers || [] }
+}
+
+function iceServers(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
+  if (!session || !canSee(session, me) || session.statusId === 'CssEnded') return refuse('notFound', 'Call not found')
+  const mine = legOfMine(session, me, ['ClsAnswered'])
+  if (!mine.leg || mine.participant.admissionStatusId !== 'CasAdmitted') return { iceServers: [], reasonCode: 'notAdmitted' }
+  return iceServersOf(session, mine.leg)
+}
+
+function guestIceServers(p) {
+  const g = guestOf(p.credential)
+  if (!g || g.participant.admissionStatusId !== 'CasAdmitted') return { iceServers: [] }
+  const session = one(SESSION, { callSessionId: g.participant.callSessionId })
+  const leg = rows(LEG, { callParticipantId: g.participant.callParticipantId }).find((l) => l.statusId === 'ClsAnswered')
+  if (!session || session.statusId === 'CssEnded' || !leg) return { iceServers: [] }
+  return iceServersOf(session, leg)
+}
+
 function registerNode(p) {
   const row = find(MEDIA_NODE).condition('instanceId', p.instanceId).one()
   const now = ec.user.nowTimestamp
@@ -1170,13 +1197,13 @@ function registerNode(p) {
     return {}
   }
   if (row) {
-    row.setFields({ mediaAddress: p.mediaAddress || row.mediaAddress, heartbeatDate: now,
+    row.setFields({ mediaAddress: p.mediaAddress || row.mediaAddress, turnUrls: p.turnUrls || null, heartbeatDate: now,
       draining: p.draining ? 'Y' : 'N' }, true, null, null)
     row.update()
   } else {
     const created = ec.entity.makeValue(MEDIA_NODE)
-    created.setFields({ instanceId: p.instanceId, mediaAddress: p.mediaAddress || null, startedDate: now,
-      heartbeatDate: now, draining: p.draining ? 'Y' : 'N' }, true, null, null)
+    created.setFields({ instanceId: p.instanceId, mediaAddress: p.mediaAddress || null, turnUrls: p.turnUrls || null,
+      startedDate: now, heartbeatDate: now, draining: p.draining ? 'Y' : 'N' }, true, null, null)
     created.create()
   }
   return {}
@@ -1194,7 +1221,7 @@ const operations = {
   start, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
-  removeParticipant,
+  removeParticipant, iceServers, guestIceServers,
 }
 
 function execute(op, parameters) {

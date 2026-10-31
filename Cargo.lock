@@ -4520,6 +4520,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tungstenite",
+ "turn-client-proto",
  "webpki-roots",
  "yrs",
 ]
@@ -4619,11 +4620,16 @@ dependencies = [
 name = "moqui-rtc"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "hmac 0.12.1",
  "moqui-lib",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "str0m",
  "tracing",
+ "turn-client-proto",
+ "turn-server-proto",
 ]
 
 [[package]]
@@ -4757,6 +4763,12 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "no-std-net"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
 name = "nom"
@@ -5478,6 +5490,48 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "pnet_base"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc190d4067df16af3aba49b3b74c469e611cad6314676eaf1157f31aa0fb2f7"
+dependencies = [
+ "no-std-net",
+]
+
+[[package]]
+name = "pnet_macros"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13325ac86ee1a80a480b0bc8e3d30c25d133616112bb16e86f712dcf8a71c863"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "pnet_macros_support"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eed67a952585d509dd0003049b1fc56b982ac665c8299b124b90ea2bdb3134ab"
+dependencies = [
+ "pnet_base",
+]
+
+[[package]]
+name = "pnet_packet"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c96ebadfab635fcc23036ba30a7d33a80c39e8461b8bd7dc7bb186acb96560f"
+dependencies = [
+ "glob",
+ "pnet_base",
+ "pnet_macros",
+ "pnet_macros_support",
+]
 
 [[package]]
 name = "png"
@@ -6617,6 +6671,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sans-io-time"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e1c4baf93f2fbecd194191bdb8b911b14f37ae35f0d1e1cbfb4cb6e067e8c52"
+
+[[package]]
 name = "saturating"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7403,6 +7463,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "stun-proto"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea57539b68056cbbc51197de7284fbf57315957448bf80283ba8e1e5b55167ee"
+dependencies = [
+ "base64 0.22.1",
+ "byteorder",
+ "hashbrown 0.16.1",
+ "rand 0.9.5",
+ "sans-io-time",
+ "siphasher",
+ "smallvec",
+ "stun-types",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "stun-types"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "034e7be5ad5d62256b8df9b7344ef58b1cfee797cc7dabfacdc28efb3d3a192d"
+dependencies = [
+ "byteorder",
+ "crc",
+ "hmac 0.12.1",
+ "md-5 0.10.6",
+ "rand 0.9.5",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+ "smallvec",
+ "subtle",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7877,6 +7974,48 @@ dependencies = [
  "rand 0.9.5",
  "sha1 0.10.7",
  "thiserror",
+]
+
+[[package]]
+name = "turn-client-proto"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d50c9efb8e337f0660b8dd8413ae5d1c3cdac2a80dad4440376082f3a65846e9"
+dependencies = [
+ "byteorder",
+ "smallvec",
+ "stun-proto",
+ "thiserror",
+ "tracing",
+ "turn-types",
+]
+
+[[package]]
+name = "turn-server-proto"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c4912c728d580ff5476baaa49f95575d911cf9c3cce355da557c389ef7ec56"
+dependencies = [
+ "byteorder",
+ "pnet_packet",
+ "rand 0.9.5",
+ "smallvec",
+ "stun-proto",
+ "thiserror",
+ "tracing",
+ "turn-types",
+]
+
+[[package]]
+name = "turn-types"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c2a60694c39c98c5ddf7a894dfbe464531376ac664d4b6e26494caa26c955bc"
+dependencies = [
+ "byteorder",
+ "stun-proto",
+ "stun-types",
+ "tracing",
 ]
 
 [[package]]

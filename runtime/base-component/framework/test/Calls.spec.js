@@ -459,3 +459,30 @@ feature("a link that lets guests straight in, guests who leave, and a meeting no
         emptied.endReasonEnumId == "CerEmpty"
     }
 })
+
+feature("a leg in the call gets its TURN servers with a credential of its own; nobody else does", {
+    when() {
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000",
+            turnUrls: "turn:127.0.0.1:3478?transport=udp,turns:127.0.0.1:5349?transport=tcp"}))
+        const started = as(A, "start#Call", {calleeUserIdList: [B]})
+        sys(() => {
+            const s = ec.entity.find(SESSION).condition("callSessionId", started.callSessionId).one()
+            s.set("mediaNodeId", NODE)
+            s.update()
+        })
+        const mine = as(A, "get#IceServers", {callSessionId: started.callSessionId})
+        const ringing = as(B, "get#IceServers", {callSessionId: started.callSessionId})
+        const stranger = as(D, "get#IceServers", {callSessionId: started.callSessionId})
+        as(A, "end#Call", {callSessionId: started.callSessionId})
+        return {started, mine, ringing, stranger}
+    },
+    then({started, mine, ringing, stranger}) {
+        mine.iceServers.length == 1
+        mine.iceServers[0].urls.length == 2
+        mine.iceServers[0].username.endsWith(":" + started.callLegId)
+        mine.iceServers[0].credential.length > 20
+        ringing.iceServers.length == 0
+        ringing.reasonCode == "notAdmitted"
+        stranger.reasonCode == "notFound"
+    }
+})

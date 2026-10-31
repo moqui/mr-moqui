@@ -26,7 +26,8 @@ port:
 On a single server reachable at its own address, `rtc_media_port=10000` with `rtc_media_host` set to that address is
 enough. Behind 1:1 NAT, bind the private address and set `rtc_public_address` to the public one, then forward UDP 10000.
 The advertised address must be reachable from the browsers. A configured address does not prove it: test a call from
-outside the network. Until the embedded TURN server (W4), a browser that cannot reach the UDP port cannot make a call.
+outside the network. For browsers that cannot reach the UDP port, add ICE-TCP (`rtc_media_tcp_port`) and the embedded
+TURN server, or coturn ([TURN](TURN.md)).
 
 The Calls screen says when calls are unavailable (`get#Capabilities`): supported (the binary has `rtc`), configured
 (this server's port is set) and active (a media server is up in the cluster).

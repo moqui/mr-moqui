@@ -32,7 +32,70 @@ pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, send_media_control)?;
+    rust_service!(map, make_ice_servers)?;
     Ok(())
+}
+
+/// The secret TURN credentials are signed with, shared by every media node and any coturn (`turn_auth_secret`).
+const SECRET_PROPERTY: &str = "turn_auth_secret";
+/// How long a leg's TURN credential lasts, in hours.
+const HOURS_PROPERTY: &str = "turn_credential_hours";
+/// TURN servers outside this one (coturn with use-auth-secret and the same secret), comma separated `turn:` URLs.
+const EXTERNAL_PROPERTY: &str = "turn_external_urls";
+
+/// `make#IceServers`: the ICE servers of a leg for its RTCPeerConnection: the TURN URLs of its call's media node
+/// (`turnUrls`, which the node registered) and any external ones, with a credential for this leg in the TURN REST form
+/// (`<expiry>:<legId>`, base64 HMAC-SHA1). Nothing when there are no URLs or no secret.
+fn make_ice_servers(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    use base64::Engine;
+    use hmac::Mac;
+    let leg = parameters
+        .get("callLegId")
+        .filter(|v| !is_empty(v))
+        .map(to_plain_string)
+        .unwrap_or_default();
+    let mut urls: Vec<String> = match parameters.get("turnUrls") {
+        Some(Value::List(list)) => list.iter().map(to_plain_string).collect(),
+        Some(v) if !is_empty(v) => to_plain_string(v).split(',').map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
+    urls.extend(
+        moqui_lib::env::get_prop_or_env(EXTERNAL_PROPERTY)
+            .split(',')
+            .map(str::to_string),
+    );
+    let urls: Vec<String> = urls
+        .into_iter()
+        .map(|u| u.trim().to_string())
+        .filter(|u| u.starts_with("turn:") || u.starts_with("turns:"))
+        .collect();
+    let secret = moqui_lib::env::get_prop_or_env(SECRET_PROPERTY);
+    let mut out = BTreeMap::new();
+    if leg.is_empty() || urls.is_empty() || secret.is_empty() || secret.ends_with("CHANGEME") {
+        out.insert("iceServers".to_string(), Value::List(Vec::new()));
+        return Ok(out);
+    }
+    let hours: u64 = moqui_lib::env::get_prop_or_env(HOURS_PROPERTY)
+        .trim()
+        .parse()
+        .unwrap_or(4)
+        .clamp(1, 24);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let username = format!("{}:{leg}", now + hours * 3600);
+    let mut mac = hmac::Hmac::<sha1::Sha1>::new_from_slice(secret.as_bytes())
+        .map_err(|e| LibError::new(format!("the TURN secret does not work: {e}")))?;
+    mac.update(username.as_bytes());
+    let credential = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let server =
+        moqui_lib::json::from_json(&serde_json::json!({"urls": urls, "username": username, "credential": credential}));
+    out.insert("iceServers".to_string(), Value::List(vec![server]));
+    Ok(out)
 }
 
 fn send_media_control(

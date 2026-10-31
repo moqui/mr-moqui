@@ -73,6 +73,8 @@ struct Peer {
     rtc: Rtc,
     udp: UdpSocket,
     ws: Ws,
+    /// How the peer's datagrams go: straight over UDP, framed over ICE-TCP, or relayed by TURN.
+    via: Via,
     call: String,
     leg: String,
     pending: Option<SdpPendingOffer>,
@@ -96,6 +98,7 @@ impl Peer {
             rtc,
             udp,
             ws,
+            via: Via::Udp,
             call: call.into(),
             leg: leg.into(),
             pending: None,
@@ -141,13 +144,12 @@ impl Peer {
             }
             self.frames.push(frame);
         }
-        let mut buf = [0u8; 2048];
-        while let Ok((n, source)) = self.udp.recv_from(&mut buf) {
+        for (proto, source, destination, data) in self.via.receive(&self.udp) {
             let receive = Receive {
-                proto: Protocol::Udp,
+                proto,
                 source,
-                destination: self.udp.local_addr().unwrap(),
-                contents: (&buf[..n]).try_into().unwrap(),
+                destination,
+                contents: (&data[..]).try_into().unwrap(),
             };
             let _ = self.rtc.handle_input(Input::Receive(Instant::now(), receive));
         }
@@ -175,9 +177,7 @@ impl Peer {
         loop {
             match self.rtc.poll_output() {
                 Ok(Output::Timeout(_)) | Err(_) => break,
-                Ok(Output::Transmit(t)) => {
-                    let _ = self.udp.send_to(&t.contents, t.destination);
-                }
+                Ok(Output::Transmit(t)) => self.via.send(&self.udp, t.proto, t.destination, &t.contents),
                 Ok(Output::Event(Event::MediaData(d)))
                     if self.rtc.media(d.mid).map(|m| m.kind()) == Some(MediaKind::Audio) =>
                 {
@@ -536,4 +536,366 @@ fn a_guest_by_link_joins_over_its_own_socket_and_revoking_the_link_ends_it() {
         p[1].frame("ended").is_some()
     });
     assert!(ended, "guest frames {:?}", guest.frames);
+}
+
+/// A peer's transport for the W4 tests.
+enum Via {
+    Udp,
+    /// ICE-TCP to the media node's TCP port: RFC 4571 frames on one stream.
+    Tcp {
+        stream: TcpStream,
+        local: SocketAddr,
+        remote: SocketAddr,
+        buf: Vec<u8>,
+    },
+    /// Every datagram through a TURN allocation (the UDP socket talks only to the TURN server).
+    Turn {
+        client: Box<turn_client_proto::udp::TurnClientUdp>,
+        relayed: SocketAddr,
+        start: Instant,
+    },
+}
+
+impl Via {
+    fn turn_now(start: Instant) -> turn_client_proto::types::Instant {
+        turn_client_proto::types::Instant::from_nanos(i64::try_from(start.elapsed().as_nanos()).unwrap())
+    }
+
+    fn send(&mut self, udp: &UdpSocket, proto: Protocol, to: SocketAddr, data: &[u8]) {
+        use turn_client_proto::api::TurnClientApi;
+        match self {
+            Via::Udp => {
+                let _ = udp.send_to(data, to);
+            }
+            Via::Tcp { stream, remote, .. } => {
+                if proto == Protocol::Tcp && to == *remote {
+                    let mut frame = (u16::try_from(data.len()).unwrap()).to_be_bytes().to_vec();
+                    frame.extend_from_slice(data);
+                    let _ = std::io::Write::write_all(stream, &frame);
+                }
+            }
+            Via::Turn { client, start, .. } => {
+                let now = Self::turn_now(*start);
+                if !client.have_permission(turn_client_proto::types::TransportType::Udp, to.ip()) {
+                    let _ = client.create_permission(turn_client_proto::types::TransportType::Udp, to.ip(), now);
+                }
+                if let Ok(Some(t)) = client.send_to(turn_client_proto::types::TransportType::Udp, to, data, now) {
+                    let t = t.build();
+                    let _ = udp.send_to(&t.data, t.to);
+                }
+                while let Some(t) = client.poll_transmit(now) {
+                    let _ = udp.send_to(t.data.as_ref(), t.to);
+                }
+            }
+        }
+    }
+
+    /// What arrived: (proto, source, destination, data).
+    fn receive(&mut self, udp: &UdpSocket) -> Vec<(Protocol, SocketAddr, SocketAddr, Vec<u8>)> {
+        use turn_client_proto::api::{TurnClientApi, TurnRecvRet};
+        let mut out = Vec::new();
+        let mut buf = [0u8; 2048];
+        match self {
+            Via::Udp => {
+                while let Ok((n, source)) = udp.recv_from(&mut buf) {
+                    out.push((Protocol::Udp, source, udp.local_addr().unwrap(), buf[..n].to_vec()));
+                }
+            }
+            Via::Tcp {
+                stream,
+                local,
+                remote,
+                buf: pending,
+            } => {
+                while let Ok(n) = std::io::Read::read(stream, &mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    pending.extend_from_slice(&buf[..n]);
+                }
+                while pending.len() >= 2 {
+                    let len = usize::from(u16::from_be_bytes([pending[0], pending[1]]));
+                    if pending.len() < 2 + len {
+                        break;
+                    }
+                    out.push((Protocol::Tcp, *remote, *local, pending[2..2 + len].to_vec()));
+                    pending.drain(..2 + len);
+                }
+            }
+            Via::Turn { client, relayed, start } => {
+                let now = Self::turn_now(*start);
+                while let Ok((n, from)) = udp.recv_from(&mut buf) {
+                    let transmit = turn_client_proto::api::Transmit {
+                        data: &buf[..n],
+                        transport: turn_client_proto::types::TransportType::Udp,
+                        from,
+                        to: udp.local_addr().unwrap(),
+                    };
+                    if let TurnRecvRet::PeerData(peer) = client.recv(transmit, now) {
+                        out.push((Protocol::Udp, peer.peer, *relayed, peer.data().to_vec()));
+                    }
+                }
+                let _ = client.poll(now);
+                while let Some(t) = client.poll_transmit(now) {
+                    let _ = udp.send_to(t.data.as_ref(), t.to);
+                }
+                while let Some(data) = client.poll_recv(now) {
+                    out.push((Protocol::Udp, data.peer, *relayed, data.data().to_vec()));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// A peer that reaches the media node only over ICE-TCP: its one candidate is TCP, and its UDP socket is never used.
+fn tcp_peer(ws: Ws, call: &str, leg: &str, media_tcp: SocketAddr) -> Peer {
+    let stream = TcpStream::connect(media_tcp).unwrap();
+    stream.set_nonblocking(true).unwrap();
+    stream.set_nodelay(true).unwrap();
+    let local = stream.local_addr().unwrap();
+    let mut peer = Peer::new(ws, call, leg);
+    let mut rtc = Rtc::builder()
+        .clear_codecs()
+        .enable_opus(true, false)
+        .enable_vp8(true)
+        .build(Instant::now());
+    rtc.add_local_candidate(
+        Candidate::builder()
+            .tcp()
+            .host(local)
+            .tcptype(str0m::net::TcpType::Active)
+            .build()
+            .unwrap(),
+    );
+    peer.rtc = rtc;
+    peer.via = Via::Tcp {
+        stream,
+        local,
+        remote: media_tcp,
+        buf: Vec::new(),
+    };
+    peer
+}
+
+/// A peer whose datagrams all go through a TURN allocation: its one candidate is the relayed address.
+fn relayed_peer(ws: Ws, call: &str, leg: &str, turn_server: SocketAddr, username: &str, password: &str) -> Peer {
+    use turn_client_proto::api::{TurnClientApi, TurnEvent};
+    let mut peer = Peer::new(ws, call, leg);
+    let start = Instant::now();
+    let mut config =
+        turn_client_proto::api::TurnConfig::new(turn_client_proto::types::TurnCredentials::new(username, password));
+    config.set_anonymous_username(turn_client_proto::stun::auth::Feature::Disabled);
+    let local = peer.udp.local_addr().unwrap();
+    let mut client = turn_client_proto::udp::TurnClientUdp::allocate(local, turn_server, config);
+    let mut buf = [0u8; 2048];
+    let until = Instant::now() + Duration::from_secs(10);
+    let relayed = loop {
+        assert!(Instant::now() < until, "no TURN allocation");
+        let now = Via::turn_now(start);
+        let _ = client.poll(now);
+        while let Some(t) = client.poll_transmit(now) {
+            let _ = peer.udp.send_to(t.data.as_ref(), t.to);
+        }
+        while let Ok((n, from)) = peer.udp.recv_from(&mut buf) {
+            let transmit = turn_client_proto::api::Transmit {
+                data: &buf[..n],
+                transport: turn_client_proto::types::TransportType::Udp,
+                from,
+                to: local,
+            };
+            let _ = client.recv(transmit, now);
+        }
+        let mut got = None;
+        while let Some(e) = client.poll_event() {
+            match e {
+                TurnEvent::AllocationCreated(_, relayed) => got = Some(relayed),
+                TurnEvent::AllocationCreateFailed(_) => panic!("the TURN allocation failed"),
+                _ => {}
+            }
+        }
+        if let Some(relayed) = got {
+            break relayed;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let mut rtc = Rtc::builder()
+        .clear_codecs()
+        .enable_opus(true, false)
+        .enable_vp8(true)
+        .build(Instant::now());
+    rtc.add_local_candidate(Candidate::relayed(relayed, local, "udp").unwrap());
+    peer.rtc = rtc;
+    peer.via = Via::Turn { client: Box::new(client), relayed, start };
+    peer
+}
+
+fn ice_servers(out: &std::collections::BTreeMap<String, Value>) -> (Vec<String>, String, String) {
+    let Some(Value::List(list)) = out.get("iceServers") else {
+        return (Vec::new(), String::new(), String::new());
+    };
+    let Some(Value::Map(server)) = list.first() else {
+        return (Vec::new(), String::new(), String::new());
+    };
+    let urls = match server.get("urls") {
+        Some(Value::List(urls)) => urls.iter().map(to_plain_string).collect(),
+        _ => Vec::new(),
+    };
+    let field = |k: &str| server.get(k).map(to_plain_string).unwrap_or_default();
+    (urls, field("username"), field("credential"))
+}
+
+#[test]
+fn ice_tcp_and_a_turn_relay_carry_a_call_when_udp_does_not() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_properties(
+        "rtc-turn",
+        None,
+        &[
+            ("rtc_media_port", "0"),
+            ("rtc_media_tcp_port", "0"),
+            ("turn_port", "0"),
+            ("turn_auth_secret", "rtc-turn-test-secret"),
+            ("turn_relay_ports", "51000-51100"),
+        ],
+    );
+    let http = gate.server.address();
+    let factory = std::sync::Arc::clone(gate.server.factory());
+
+    let (call_id, caller_leg, callee_leg, ice, node_urls) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let created = call(
+            "org.moqui.impl.UserServices.create#UserAccount",
+            &[
+                ("username", Value::string(CALLEE)),
+                ("newPassword", Value::string(PASSWORD)),
+                ("newPasswordVerify", Value::string(PASSWORD)),
+                ("userFullName", Value::string("Rtc Callee")),
+            ],
+        );
+        let callee = text(&created, "userId");
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            if call("org.moqui.impl.CallServices.get#Capabilities", &[]).get("active") == Some(&Value::Bool(true)) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let node_urls = {
+            let _authz = moqui_core::context::ExecutionContext::with_current(
+                moqui_core::context::ExecutionContext::disable_authz,
+            );
+            let rows = factory
+                .entity()
+                .unwrap()
+                .find("moqui.call.CallMediaNode")
+                .unwrap()
+                .list()
+                .unwrap();
+            let urls = rows
+                .iter()
+                .next()
+                .and_then(|r| r.get("turnUrls").map(to_plain_string))
+                .unwrap_or_default();
+            urls
+        };
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let started = call(
+            "org.moqui.impl.CallServices.start#Call",
+            &[("calleeUserIdList", Value::List(vec![Value::string(&callee)]))],
+        );
+        let call_id = text(&started, "callSessionId");
+        moqui_core::user::internal_login_user(CALLEE).unwrap();
+        let answered = call(
+            "org.moqui.impl.CallServices.answer#Call",
+            &[("callSessionId", Value::string(&call_id))],
+        );
+        let ice = ice_servers(&call(
+            "org.moqui.impl.CallServices.get#IceServers",
+            &[("callSessionId", Value::string(&call_id))],
+        ));
+        (
+            call_id,
+            text(&started, "callLegId"),
+            text(&answered, "callLegId"),
+            ice,
+            node_urls,
+        )
+    };
+    // the media node registered its TURN listeners, and the admitted leg got them with its own credential
+    assert!(
+        node_urls.contains("turn:") && node_urls.contains("transport=udp"),
+        "{node_urls}"
+    );
+    let (urls, username, credential) = ice;
+    assert!(
+        urls.iter()
+            .any(|u| u.starts_with("turn:") && u.ends_with("transport=udp")),
+        "{urls:?}"
+    );
+    assert!(username.ends_with(&format!(":{callee_leg}")), "{username}");
+    assert!(!credential.is_empty());
+
+    let turn_udp: SocketAddr = urls
+        .iter()
+        .find(|u| u.ends_with("transport=udp"))
+        .and_then(|u| u.strip_prefix("turn:"))
+        .and_then(|u| u.split('?').next())
+        .and_then(|a| a.parse().ok())
+        .expect("the TURN UDP address");
+
+    let john_cookie = crate::common::sign_in(http, "john.doe", "moqui");
+    let callee_cookie = crate::common::sign_in(http, CALLEE, PASSWORD);
+    factory.flush_sessions().unwrap();
+    // john is relayed by TURN; the callee joins over UDP first to learn the TCP candidate, then the test checks ICE-TCP
+    let mut john = relayed_peer(
+        open_socket(http, &john_cookie),
+        &call_id,
+        &caller_leg,
+        turn_udp,
+        &username,
+        &credential,
+    );
+    let mut callee = Peer::new(open_socket(http, &callee_cookie), &call_id, &callee_leg);
+    john.join();
+    callee.join();
+    let flowed = run_until(&mut [&mut john, &mut callee], Duration::from_secs(10), |p| {
+        p.iter().all(|p| p.received >= 20)
+    });
+    assert!(
+        flowed,
+        "relayed audio both ways: john {} callee {}; frames {:?}",
+        john.received, callee.received, john.frames
+    );
+
+    // the callee again, over ICE-TCP only: the TCP candidate of the media node's answer
+    let answer = callee
+        .frame("joined")
+        .and_then(|f| f["sdp"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    let tcp_addr: SocketAddr = answer
+        .lines()
+        .find(|l| l.contains(" tcp ") && l.contains("typ host"))
+        .and_then(|l| {
+            let parts: Vec<&str> = l.split_whitespace().collect();
+            Some(SocketAddr::new(
+                parts.get(4)?.parse().ok()?,
+                parts.get(5)?.parse().ok()?,
+            ))
+        })
+        .expect("a TCP candidate in the answer");
+    let mut again = tcp_peer(open_socket(http, &callee_cookie), &call_id, &callee_leg, tcp_addr);
+    again.join();
+    john.received = 0;
+    let flowed = run_until(&mut [&mut john, &mut again], Duration::from_secs(10), |p| {
+        p.iter().all(|p| p.received >= 20)
+    });
+    assert!(
+        flowed,
+        "ICE-TCP audio both ways: john {} callee {}; frames {:?}",
+        john.received, again.received, again.frames
+    );
 }

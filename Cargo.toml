@@ -317,6 +317,10 @@ ipp = { version = "7", default-features = false }
 # WebRTC for calls (moqui-rtc, plans/Comms-Framework.md §6.2, D-W1): sans-IO ICE-lite, DTLS-SRTP, simulcast, TWCC.
 # default-features off leaves out its examples (rouille); aws-lc-rs is the crypto rustls already links.
 str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"] }
+# The embedded TURN server (moqui-rtc turn/, plans/Comms-Framework.md §6.5, D-W4): sans-IO, std only (no openssl); the
+# host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
+turn-server-proto = { version = "0.7.3", default-features = false, features = ["std"] }
+turn-client-proto = { version = "0.7.3", default-features = false, features = ["std"] }
 
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the

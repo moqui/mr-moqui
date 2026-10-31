@@ -287,9 +287,19 @@
             });
         },
 
+        // the ICE servers of this page's leg (the embedded TURN, or coturn), with a short-lived credential; none is no TURN
+        fetchIceServers(callSessionId) {
+            const asked = call.guest && call.guest.iceServers ? call.guest.iceServers()
+                : call.request("iceServers", { callSessionId }, "GET");
+            return Promise.resolve(asked).then((json) => (json && Array.isArray(json.iceServers) ? json.iceServers : []), () => []);
+        },
         connect(stream) {
+            return call.fetchIceServers(state.current).then((iceServers) => call.connectWith(stream, iceServers));
+        },
+        connectWith(stream, iceServers) {
             const id = state.current;
             const legId = state.legId;
+            if (!id) return Promise.resolve();
             if (call.unsubscribe) call.unsubscribe();
             const client = call.vm && call.vm.notificationClient;
             if (call.guest) call.unsubscribe = null;
@@ -297,7 +307,7 @@
             if (call.pc) {
                 try { call.pc.close(); } catch (e) { /* closed */ }
             }
-            const pc = new root.RTCPeerConnection({ bundlePolicy: "max-bundle", iceServers: [] });
+            const pc = new root.RTCPeerConnection({ bundlePolicy: "max-bundle", iceServers: iceServers || [] });
             call.pc = pc;
             call.chain = Promise.resolve();
             call.sentLayers = {};
@@ -598,6 +608,7 @@
         joinAsGuest(options) {
             if (call.guest) call.guest.close();
             const guest = call.openGuestSocket(options.credential);
+            guest.iceServers = options.iceServers || null;
             call.guest = guest;
             return guest.ready.then(() => call.join(options.callSessionId, options.callLegId, { video: options.video, stream: options.stream }));
         },
@@ -1084,7 +1095,8 @@
             enter() {
                 this.phase = "in";
                 const stream = this.preview;
-                call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream })
+                call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream,
+                    iceServers: () => this.post("iceServers", { credential: this.credential }) })
                     .catch(() => { this.phase = "ended"; });
                 // the names in the call, now and then (a guest hears of no one by push)
                 this.poll = setInterval(() => this.checkState(), 5000);

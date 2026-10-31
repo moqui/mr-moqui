@@ -46,7 +46,8 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Sync.md](interfaces/Sync.md) | CalDAV, CardDAV, WebDAV and SFTP for phones and desktop apps, with app passwords |
 | [Mail-Inbound.md](interfaces/Mail-Inbound.md) | Hosted and shared mail accounts through the SMTP listener behind an edge gateway |
 | [Mail-OAuth.md](interfaces/Mail-OAuth.md) | Mail accounts that sign in to Google and Microsoft with OAuth |
-| [WebRTC.md](interfaces/WebRTC.md) | Calls: the media port and the SFU, signaling on the notification socket, NAT and the cluster |
+| [WebRTC.md](interfaces/WebRTC.md) | Calls: the media port and the SFU, signaling on the notification socket, guests by link, the cluster |
+| [TURN.md](interfaces/TURN.md) | ICE-TCP and the embedded TURN server for browsers behind NAT and firewalls; coturn instead |
 
 ## ai: Agents and Models
 

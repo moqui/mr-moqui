@@ -12,11 +12,18 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
+hmac = { workspace = true }
 moqui-lib = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
 str0m = { workspace = true }
 tracing = { workspace = true }
+turn-server-proto = { workspace = true }
+
+[dev-dependencies]
+turn-client-proto = { workspace = true }
 
 [lints]
 workspace = true

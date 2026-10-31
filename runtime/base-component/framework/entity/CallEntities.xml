@@ -311,6 +311,8 @@ along with this software (see the LICENSE.md file). If not, see
             whose heartbeat is older than the grace period is lost: its calls end with CerMediaNodeLost.</description>
         <field name="instanceId" type="text-medium" is-pk="true"/>
         <field name="mediaAddress" type="text-medium"/>
+        <field name="turnUrls" type="text-long"><description>The node's embedded TURN listeners as turn: and turns: URLs,
+            comma separated (empty without TURN)</description></field>
         <field name="startedDate" type="date-time"/>
         <field name="heartbeatDate" type="date-time"/>
         <field name="draining" type="text-indicator"><description>Y: takes no new calls, its calls finish</description></field>
