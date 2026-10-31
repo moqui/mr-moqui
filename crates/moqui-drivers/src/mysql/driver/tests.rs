@@ -50,6 +50,18 @@ fn a_connection_sets_the_isolation_level_it_is_given() {
     );
 }
 
+/// On a server, whose default is InnoDB's REPEATABLE READ, the session runs at the level the driver was given.
+#[test]
+fn a_session_on_the_server_runs_at_the_level_given() {
+    let Some(driver) = test_driver() else {
+        tracing::debug!("MySQL was not reachable");
+        return;
+    };
+    let mut conn = must(driver.isolation(Some("READ COMMITTED")).connect_mysql());
+    let rows = must(conn.query("SELECT @@SESSION.transaction_isolation AS level", &[]));
+    assert_eq!(rows[0].get("level"), Some(&Value::string("READ-COMMITTED")));
+}
+
 #[test]
 fn maps_mysql_values() {
     assert_eq!(
