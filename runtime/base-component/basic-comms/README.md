@@ -1,13 +1,13 @@
 # basic-comms
 
-BasicComms, the framework's Comms app at `/qapps/BasicComms`: chat and the mail settings now, then the Inbox, calls and voice,
+BasicComms, the framework's Comms app at `/qapps/BasicComms`: the Inbox, Compose, Home, chat and the mail settings now, then calls and voice,
 usable with only the framework ([plans/Comms-Framework.md](../../../plans/Comms-Framework.md)). The data model is in
 `framework/entity`; this component has the screens and their services.
 
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
-| `service/org/moqui/comms/` | Screen services (`ChatScreenServices`, `MailSettingsServices`, `CommsServices`) and the provider interfaces (`ProviderInterfaces`) |
+| `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`) and the provider interfaces (`ProviderInterfaces`) |
 | `data/` | The `BASIC_COMMS` artifact group and the do-not-disturb job |
 | `test/` | Server specs |
 

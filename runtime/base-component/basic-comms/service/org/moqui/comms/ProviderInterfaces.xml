@@ -23,11 +23,14 @@ along with this software (see the LICENSE.md file). If not, see
     or fails, which call#Providers reports in failedParts; a mutation answers an error. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="inbox" noun="Source" type="interface">
-        <description>inbox-source: operation accounts (the accounts and mailboxes it adds to the Inbox's list, as accountList),
-            settings (what it adds to the mail settings, as settingsList) or threads (a page of threads of its sourceId in a
-            folder, with filters, as threadList and the page fields).</description>
+        <description>inbox-source: an app that keeps the user's messages beyond mail answers the Inbox's operations
+            (org.moqui.comms.InboxServices.run#Operation names them: get#InboxData, find#InboxRows, get#ThreadView,
+            send#Compose, get#CommsHome and the others) with handled true and result, the operation's out-parameters, for
+            parameters, its in-parameters; its answer is the whole answer, its page the list. handled false leaves an
+            operation to the framework. operation accounts answers the app's own accounts (accountList, the Internal account).</description>
         <in-parameters>
-            <parameter name="operation" required="true"><description>accounts, settings or threads</description></parameter>
+            <parameter name="operation" required="true"><description>An Inbox operation, or accounts</description></parameter>
+            <parameter name="parameters" type="Map"><description>The operation's parameters</description></parameter>
             <parameter name="sourceId"/>
             <parameter name="folder"/>
             <parameter name="filters" type="Map"/>

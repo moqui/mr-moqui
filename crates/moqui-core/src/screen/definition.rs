@@ -1166,8 +1166,22 @@ fn apply_screen_extends(
 }
 
 fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut Extended) {
+    // The sections and forms that extend the screen's own by name: those outside a widgets-extend, whose widgets are new
+    // ones inserted into the screen (a form there is a form of its own, read with the merged screen).
     let mut found = Vec::new();
-    descendants(extend, &mut found);
+    for child in extend.children() {
+        if child.name() == "widgets-extend" {
+            continue;
+        }
+        let wanted = matches!(
+            child.name().as_str(),
+            "section" | "section-iterate" | "form-single" | "form-list"
+        );
+        if wanted {
+            found.push(child.clone());
+        }
+        descendants(&child, &mut found);
+    }
     for item in found {
         match &*item.name_rc() {
             "section" | "section-iterate" => extended.sections.push(item),

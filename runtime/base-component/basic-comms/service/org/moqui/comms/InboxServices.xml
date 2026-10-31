@@ -1,0 +1,713 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Inbox of BasicComms over the user's mail (plans/Comms-Framework.md §3.2, A3; first built as IronStone Comms' InboxServices,
+    mr-boss design-drawers-commons.md §12): the rail's accounts, folders, labels and saved searches, a page of threads of a
+    view, the reading pane's thread, its files, actions on threads, the palette's search and one message's details, each over
+    org.moqui.impl.EmailClientServices, which checks the user's access to every account and message.
+
+    The screens call run#Operation, which hands an operation to an app's inbox-source provider when there is one (its page is
+    the list: IronStone's merges its internal messages and mailboxes with the mail) and else to these services. Links go
+    under the comms_app_root property. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== The operations of the Inbox screens ========== -->
+
+    <service verb="run" noun="Operation">
+        <description>What the Inbox, MessageDetail, Compose and Home screens call for each of their operations
+            (plans/Comms-Framework.md §3.3, A3). An app that keeps the user's messages beyond mail (IronStone's Internal account
+            and mailboxes) answers the operations through its inbox-source provider, and its answer is the whole answer: its
+            page is the list, nothing is joined to it. Otherwise the framework answers the operations it has, over the user's
+            mail alone (this file, ComposeServices, CommsHomeServices); an operation only an app has (a mailbox, filing on a
+            record, an invitation) is refused as not available here.
+
+            The provider is called as the app that declares it (org.moqui.impl.ShellServices.call#Providers, hook
+            inbox-source) with operation and parameters, and answers handled and result (the operation's out-parameters). A
+            read runs in its own transaction; a provider that fails is an error, so a page never comes back without the
+            app's messages it should have.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"/>
+            <parameter name="parameters" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="result" type="Map"/>
+            <parameter name="source"><description>The provider that answered (its sourceId), or empty for the framework</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            result = {}
+            source = null
+            // the operations and their framework service (null: an app's alone); mutation: runs in the caller's transaction
+            const OPERATIONS = {
+                'get#InboxData': ['org.moqui.comms.InboxServices.get#InboxData', false],
+                'find#InboxRows': ['org.moqui.comms.InboxServices.find#InboxRows', false],
+                'get#ThreadView': ['org.moqui.comms.InboxServices.get#ThreadView', false],
+                'get#MessageAttachment': ['org.moqui.comms.InboxServices.get#MessageAttachment', false],
+                'set#ThreadState': ['org.moqui.comms.InboxServices.set#ThreadState', true],
+                'apply#ViewAction': ['org.moqui.comms.InboxServices.apply#ViewAction', true],
+                'get#MessageDetail': ['org.moqui.comms.InboxServices.get#MessageDetail', false],
+                'search#Messages': ['org.moqui.comms.InboxServices.search#Messages', false],
+                'get#ContactCard': [null, false],
+                'search#LinkRecords': [null, false],
+                'link#ThreadRecord': [null, true],
+                'unlink#ThreadRecord': [null, true],
+                'prepare#CreateFromMessage': [null, false],
+                'respond#Invitation': [null, true],
+                'get#MailboxHeader': [null, false],
+                'save#MessageFiles': [null, true],
+                'get#ComposeData': ['org.moqui.comms.ComposeServices.get#ComposeData', false],
+                'search#Recipients': ['org.moqui.comms.ComposeServices.search#Recipients', false],
+                'send#Compose': ['org.moqui.comms.ComposeServices.send#Compose', true],
+                'cancel#ComposeSend': ['org.moqui.comms.ComposeServices.cancel#ComposeSend', true],
+                'save#ComposeDraft': ['org.moqui.comms.ComposeServices.save#ComposeDraft', true],
+                'attach#DriveFiles': ['org.moqui.comms.ComposeServices.attach#DriveFiles', true],
+                'remove#ComposeAttachment': ['org.moqui.comms.ComposeServices.remove#ComposeAttachment', true],
+                'discard#ComposeDraft': ['org.moqui.comms.ComposeServices.discard#ComposeDraft', true],
+                'get#CommsHome': ['org.moqui.comms.CommsHomeServices.get#CommsHome', false]
+            }
+            const known = OPERATIONS[operation]
+            if (!known) { ec.message.addError(`Unknown Comms operation ${operation}`); return }
+            const [service, mutation] = known
+            const input = parameters ? Object.assign({}, parameters) : {}
+            const sources = ec.service.sync().name('org.moqui.impl.ShellServices.get#Providers').parameter('hook', 'inbox-source').call()
+            const provider = Array.from(sources?.providerList || [])[0]
+            if (provider) {
+                const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'inbox-source',
+                    sourceId: provider.sourceId, mutation: mutation, parameters: {operation: operation, parameters: input}}).call()
+                if (ec.message.hasError()) return
+                const failed = Array.from(out?.failedParts || [])
+                if (failed.length) { ec.message.addError(failed.map((part) => part.error).join('; ')); return }
+                const answer = Array.from(out?.results || [])[0]
+                if (answer && answer.handled) { result = answer.result || {}; source = provider.sourceId; return }
+            }
+            if (!service) { ec.message.addError(ec.l10n.localize('This is not available here')); return }
+            result = ec.service.sync().name(service).parameters(input).call() || {}
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="InboxData">
+        <description>
+            The rail and the user's settings, of the user's mail accounts alone: the accounts
+            (org.moqui.impl.EmailClientServices.get#UserEmailAccounts: each mail account with its folders by kind and path,
+            labels, identities, unread, draft and Outbox counts, and its sync state: syncing while its sync lock holds, a
+            warning when its sign-in or its last sync failed), no mailboxes (an app's), the saved searches, the
+            Unified, Drafts and Outbox totals, me (the user, party and own addresses) and the Inbox preferences (reading pane,
+            pane sizes, the rail collapsed, archive opens next, mark read after seconds, the undo-send seconds, threads or
+            messages, the default account, signature placement, the two phone swipe actions, the trusted
+            senders, and remoteImages: always shows the pictures of every sender; MailSettingsServices.set#MailDefaults). Each mail
+            account has usedBytes and storageText: the bytes its files use under dbresource://email/, sized the way
+            FileServices sizes a drive (ec.resource.getTreeSize). Mail has no quota of its own, so the line is the size
+            only. A part that fails is named in failedParts and logged; the rest is answered. A size that cannot be read
+            is logged and that account's line is left out.
+        </description>
+        <out-parameters>
+            <parameter name="accountList" type="List"/>
+            <parameter name="internalEmailAccountId"/>
+            <parameter name="mailboxList" type="List"/>
+            <parameter name="searchList" type="List"/>
+            <parameter name="totals" type="Map"/>
+            <parameter name="me" type="Map"/>
+            <parameter name="prefs" type="Map"/>
+            <parameter name="failedParts" type="List"/>
+            <parameter name="outOfOfficeList" type="List"><description>The accounts whose automatic reply is on now
+                ({emailAccountId, accountName}), for the Inbox's out-of-office banner</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                if (value instanceof Date) return value.getTime()
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            accountList = []
+            mailboxList = []
+            searchList = []
+            failedParts = []
+            const nowMillis = toMillis(ec.user.nowTimestamp)
+            const users = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#UserEmailAccounts').call()
+            if (ec.message.hasError()) return
+            // mail accounts only: the Internal account is an app's (its inbox-source answers this operation)
+            const mailAccounts = Array.from(users.accountList || []).filter((account) => !account.isInternal)
+            const emailUnread = mailAccounts.reduce((sum, account) => sum + (Number(account.unreadCount) || 0), 0)
+            const counts = {accountList: mailAccounts, mailboxList: [], emailUnreadCount: emailUnread, internalUnreadCount: null,
+                unifiedUnreadCount: emailUnread}
+            internalEmailAccountId = null
+            // the sync state is on the account rows, which the access service does not answer
+            const mailIds = Array.from(counts.accountList || []).filter((account) => !account.isInternal).map((account) => account.emailAccountId)
+            const rowsById = {}
+            if (mailIds.length) for (const row of ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', 'in', mailIds)
+                    .selectField('emailAccountId').selectField('syncLockedUntil').list()) rowsById[row.emailAccountId] = row
+            const myAddresses = new Set()
+            if (ec.user.userAccount?.emailAddress) myAddresses.add(String(ec.user.userAccount.emailAddress).toLowerCase())
+            const fmtSize = (bytes) => {
+                const n = Number(bytes)
+                if (!Number.isFinite(n) || n < 0) return null
+                if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB'
+                if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB'
+                if (n >= 1024) return Math.round(n / 1024) + ' KB'
+                return Math.round(n) + ' B'
+            }
+            const KIND_LABELS = {EfkInbox: 'Inbox', EfkDrafts: 'Drafts', EfkSent: 'Sent', EfkArchive: 'Archive', EfkJunk: 'Spam', EfkTrash: 'Trash'}
+            const KIND_ICONS = {EfkInbox: 'sym_o_inbox', EfkDrafts: 'sym_o_draft', EfkSent: 'sym_o_send', EfkArchive: 'sym_o_archive',
+                EfkJunk: 'sym_o_report', EfkTrash: 'sym_o_delete', EfkOther: 'sym_o_folder'}
+            const totalsMap = {draftCount: 0, outboxCount: 0, outboxErrorCount: 0, emailUnreadCount: counts.emailUnreadCount ?? null,
+                internalUnreadCount: counts.internalUnreadCount ?? null, unifiedUnreadCount: counts.unifiedUnreadCount ?? null}
+            for (const account of Array.from(counts.accountList || [])) {
+                if (account.emailAddress && !account.isInternal) myAddresses.add(String(account.emailAddress).toLowerCase())
+                for (const identity of Array.from(account.identityList || [])) if (identity.emailAddress) myAddresses.add(String(identity.emailAddress).toLowerCase())
+                const folders = Array.from(account.folderList || []).filter((folder) => !folder.removed)
+                // the depth of each folder under its parents, for the indent of the rail
+                const byId = {}
+                for (const folder of folders) byId[folder.emailFolderId] = folder
+                const depthOf = (folder) => { let depth = 0, at = folder; while (at && at.parentFolderId && byId[at.parentFolderId] && depth < 6) { depth++; at = byId[at.parentFolderId] } return depth }
+                const lockedUntil = toMillis(rowsById[account.emailAccountId]?.syncLockedUntil)
+                const status = account.statusId || 'EasActive'
+                let usedBytes = null
+                let storageText = null
+                if (!account.isInternal) {
+                    try { usedBytes = ec.resource.getTreeSize('dbresource://email/' + account.emailAccountId) }
+                    catch (err) {
+                        ec.logger.warn(`Inbox of user ${ec.user.userId}: the storage of mail account ${account.emailAccountId} could not be sized: ${err && err.message ? err.message : err}`)
+                    }
+                    if (usedBytes != null) storageText = fmtSize(usedBytes)
+                }
+                accountList.push({emailAccountId: account.emailAccountId, accountName: account.accountName || account.emailAddress ||
+                        (account.isInternal ? ec.l10n.localize('Internal') : account.emailAccountId),
+                    emailAddress: account.emailAddress ?? null, color: account.color ?? null, accountKindEnumId: account.accountKindEnumId ?? null,
+                    isInternal: account.isInternal === true, canSend: account.canSend === true, canManage: account.canManage === true,
+                    hasServer: !!account.emailServerId, statusId: status, lastSyncError: account.lastSyncError ?? null,
+                    lastSyncDate: account.lastSyncDate ?? null, syncing: lockedUntil != null && lockedUntil > nowMillis,
+                    warning: status === 'EasAuthFailed' ? 'authFailed' : (status === 'EasError' ? 'error' : (status === 'EasPaused' ? 'paused' : null)),
+                    unreadCount: account.unreadCount ?? null, draftCount: account.draftCount || 0, outboxCount: account.outboxCount || 0,
+                    outboxErrorCount: account.outboxErrorCount || 0, usedBytes: usedBytes, storageText: storageText,
+                    folderList: folders.filter((folder) => folder.subscribed !== false || folder.folderKindEnumId !== 'EfkOther').map((folder) => ({
+                        emailFolderId: folder.emailFolderId, folderName: folder.folderKindEnumId !== 'EfkOther' && KIND_LABELS[folder.folderKindEnumId]
+                            ? ec.l10n.localize(KIND_LABELS[folder.folderKindEnumId]) : (folder.folderName || folder.folderPath || folder.emailFolderId),
+                        folderKindEnumId: folder.folderKindEnumId, icon: KIND_ICONS[folder.folderKindEnumId] || 'sym_o_folder',
+                        unreadCount: folder.unreadCount || 0, totalCount: folder.totalCount ?? null, depth: depthOf(folder)})),
+                    labelList: Array.from(account.labelList || []), identityList: Array.from(account.identityList || [])})
+                totalsMap.draftCount += account.draftCount || 0
+                totalsMap.outboxCount += account.outboxCount || 0
+                totalsMap.outboxErrorCount += account.outboxErrorCount || 0
+            }
+            mailboxList = Array.from(counts.mailboxList || [])
+            // the automatic replies on now: a part of its own
+            outOfOfficeList = []
+            if (mailIds.length) {
+                ec.message.pushErrors()
+                try {
+                    for (const row of ec.entity.find('moqui.basic.email.EmailOutOfOffice').condition('emailAccountId', 'in', mailIds).condition('enabled', 'Y').list()) {
+                        const from = toMillis(row.fromDate), thru = toMillis(row.thruDate)
+                        if ((from != null && from > nowMillis) || (thru != null && thru <= nowMillis)) continue
+                        const account = accountList.find((item) => item.emailAccountId === row.emailAccountId)
+                        outOfOfficeList.push({emailAccountId: row.emailAccountId, accountName: account ? account.accountName : row.emailAccountId})
+                    }
+                } catch (err) {
+                    failedParts.push('outOfOffice')
+                    ec.logger.error(`Inbox of user ${ec.user.userId}: the out-of-office state failed and is left out: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            // saved searches: a part of its own
+            ec.message.pushErrors()
+            try {
+                const saved = ec.service.sync().name('org.moqui.impl.EmailClientServices.find#EmailSearches').requireNewTransaction(true).call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                searchList = Array.from(saved.searchList || [])
+            } catch (err) {
+                failedParts.push('searches')
+                ec.logger.error(`Inbox of user ${ec.user.userId}: the saved searches failed and are left out: ${err && err.message ? err.message : err}`)
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            totals = totalsMap
+            const partyId = ec.user.userAccount?.partyId || null
+            const name = ec.user.userAccount?.userFullName || ec.user.username
+            me = {userId: ec.user.userId, username: ec.user.username, partyId: partyId, name: name, addressList: Array.from(myAddresses)}
+            const pref = (key) => ec.user.getPreference(key)
+            let trusted = []
+            try { trusted = JSON.parse(pref('MAIL_TRUSTED_SENDERS') || '[]') } catch (err) { trusted = [] }
+            const pane = pref('MAIL_READING_PANE')
+            const swipe = (key, fallback) => ['archive', 'trash', 'read', 'unread', 'flag', 'spam'].includes(pref(key)) ? pref(key) : fallback
+            prefs = {readingPane: ['right', 'bottom', 'off'].includes(pane) ? pane : 'right', splitRight: Number(pref('MAIL_SPLIT_RIGHT')) || null,
+                splitBottom: Number(pref('MAIL_SPLIT_BOTTOM')) || null, railCollapsed: pref('MAIL_RAIL_COLLAPSED') === 'Y',
+                archiveOpensNext: pref('MAIL_ARCHIVE_NEXT') !== 'N', markReadSeconds: Number(pref('MAIL_MARK_READ_SECONDS') || 0),
+                undoSeconds: pref('MAIL_UNDO_SECONDS') != null && pref('MAIL_UNDO_SECONDS') !== '' ? Number(pref('MAIL_UNDO_SECONDS')) : 10,
+                remoteImages: pref('MAIL_REMOTE_IMAGES') === 'always' ? 'always' : 'ask',
+                conversationView: pref('MAIL_CONVERSATION') === 'messages' ? 'messages' : 'threads',
+                defaultAccountId: pref('MAIL_DEFAULT_ACCOUNT') || null,
+                signaturePlacement: pref('MAIL_SIGNATURE_PLACEMENT') === 'below' ? 'below' : 'above',
+                swipeLeft: swipe('MAIL_SWIPE_LEFT', 'archive'), swipeRight: swipe('MAIL_SWIPE_RIGHT', 'read'),
+                trustedSenders: Array.isArray(trusted) ? trusted.map((address) => String(address).toLowerCase()) : []}
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="TrustedSender">
+        <description>Remote images of a sender shown at once from now on (or not, with remove): the user preference
+            MAIL_TRUSTED_SENDERS, a JSON list of addresses in lower case.</description>
+        <in-parameters>
+            <parameter name="emailAddress" required="true" allow-html="any"/>
+            <parameter name="remove" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="trustedSenders" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            let list = []
+            try { list = JSON.parse(ec.user.getPreference('MAIL_TRUSTED_SENDERS') || '[]') } catch (err) { list = [] }
+            if (!Array.isArray(list)) list = []
+            const angle = /<([^>]+)>/.exec(String(emailAddress))
+            const address = (angle ? angle[1] : String(emailAddress)).trim().toLowerCase()
+            if (!address.includes('@')) { ec.message.addError(ec.l10n.localize('Not an email address') + ': ' + emailAddress); return }
+            list = list.map((item) => String(item).toLowerCase()).filter((item) => item !== address)
+            if (!remove) list.push(address)
+            // the newest 500
+            if (list.length > 500) list = list.slice(list.length - 500)
+            ec.user.setPreference('MAIL_TRUSTED_SENDERS', JSON.stringify(list))
+            trustedSenders = list
+        ]]></script></actions>
+    </service>
+
+    <service verb="find" noun="InboxRows">
+        <description>
+            A page of the thread list of the user's mail (org.moqui.impl.EmailClientServices.find#Messages) for a view of the
+            rail: inbox (every account's Inbox), flagged, snoozed, scheduled, drafts, sent, archive, junk, trash, outbox and
+            all, with emailAccountId one account's (and emailFolderId one folder, emailLabelId one label). A search
+            (searchText, with Gmail's operators) is a view of all mail, or of the account open, unless it names an in:.
+            MAIL_CONVERSATION messages lists the mail one message at a time (threadMode false); threads, the default, keeps a
+            thread as one row. The cursor is email:millis of the last row's sortDate. termList is the search's operators for
+            the query chips. conversationView is the mode this page used.
+        </description>
+        <in-parameters>
+            <parameter name="view"/>
+            <parameter name="emailAccountId"/>
+            <parameter name="emailFolderId"/>
+            <parameter name="emailLabelId"/>
+            <parameter name="contactListId"/>
+            <parameter name="searchText" allow-html="any"/>
+            <parameter name="unreadOnly" type="Boolean" default="false"/>
+            <parameter name="cursor"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="threadList" type="List"/>
+            <parameter name="hasMore" type="Boolean"/>
+            <parameter name="nextCursor"/>
+            <parameter name="storeList" type="List"/>
+            <parameter name="failedStores" type="List"/>
+            <parameter name="termList" type="List"/>
+            <parameter name="findView"><description>The view find#InboxThreads was asked for</description></parameter>
+            <parameter name="conversationView"><description>threads or messages, from MAIL_CONVERSATION</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            threadList = []
+            hasMore = false
+            nextCursor = null
+            storeList = ['email']
+            failedStores = []
+            termList = []
+            const size = Math.min(Math.max(pageSize || 50, 1), 200)
+            const text = searchText && String(searchText).trim() ? String(searchText).trim() : null
+            if (contactListId) { ec.message.addError(ec.l10n.localize('Mailboxes are not available here')); return }
+            const params = {unreadOnly: unreadOnly, pageSize: size, emailAccountId: emailAccountId || null}
+            if (text) { params.view = 'all'; params.searchText = text }
+            else if (emailFolderId) { params.view = 'folder'; params.emailFolderId = emailFolderId }
+            else if (emailLabelId) { params.view = 'label'; params.emailLabelId = emailLabelId }
+            else params.view = view || 'inbox'
+            const before = /^email:(\d+)$/.exec(String(cursor || ''))
+            if (cursor === 'email:end') return
+            if (before) params.beforeDate = new Date(Number(before[1]))
+            conversationView = ec.user.getPreference('MAIL_CONVERSATION') === 'messages' ? 'messages' : 'threads'
+            params.threadMode = conversationView !== 'messages'
+            findView = params.view
+            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.find#Messages').parameters(params).call()
+            if (ec.message.hasError()) return
+            threadList = Array.from(out.threadList || []).map((row) => Object.assign({}, row, {store: 'email',
+                rowKey: 'email:' + (params.threadMode ? row.threadId : row.emailMessageId)}))
+            hasMore = out.hasMore === true
+            nextCursor = hasMore && out.nextBeforeDate != null ? 'email:' + out.nextBeforeDate : null
+            termList = Array.from(out.termList || [])
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="ThreadView">
+        <description>
+            The thread of the reading pane, oldest message first, through org.moqui.impl.EmailClientServices.get#Thread
+            ("not found" for a thread the user may not see). Each message has its sender and recipients, date, HTML or text
+            body, attachments (inline ones in cidMap by Content-ID), its flags and how it may be unsubscribed. The thread has
+            its labels and what the user may do: reply (canReply), send from its account (canSend). The records a message is
+            filed on, its contacts and the invitation it carries are an app's (its inbox-source answers this operation).
+        </description>
+        <in-parameters>
+            <parameter name="store" required="true"/>
+            <parameter name="threadId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="thread" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                if (value instanceof Date) return value.getTime()
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const splitAddresses = (text) => {
+                const out = []
+                if (!text) return out
+                let current = '', quote = false, angle = 0
+                for (const ch of String(text)) {
+                    if (ch === '"') quote = !quote
+                    else if (ch === '<' && !quote) angle++
+                    else if (ch === '>' && !quote && angle > 0) angle--
+                    else if (ch === ',' && !quote && angle === 0) { if (current.trim()) out.push(current.trim()); current = ''; continue }
+                    current += ch
+                }
+                if (current.trim()) out.push(current.trim())
+                return out.map((entry) => {
+                    const match = /^(.*)<([^>]+)>\s*$/.exec(entry)
+                    if (!match) return {address: entry.replace(/^"|"$/g, ''), name: null}
+                    const name = match[1].trim().replace(/^"(.*)"$/, '$1').trim()
+                    return {address: match[2].trim(), name: name || null}
+                })
+            }
+            const isHtml = (contentType, body) => /html/i.test(contentType || '') || /<(p|div|br|table|html|body|span|a)\b/i.test(String(body || ''))
+            thread = null
+            const partyId = ec.user.userAccount?.partyId || null
+            if (store === 'email') {
+                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('rootEmailMessageId', threadId).call()
+                if (ec.message.hasError()) return
+                const messages = Array.from(out.messageList || [])
+                const addresses = []
+                for (const message of messages) {
+                    addresses.push(message.fromAddress)
+                    for (const entry of splitAddresses(message.toAddresses).concat(splitAddresses(message.ccAddresses))) addresses.push(entry.address)
+                }
+                const parties = {}
+                const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
+                const mine = new Set()
+                if (ec.user.userAccount?.emailAddress) mine.add(String(ec.user.userAccount.emailAddress).toLowerCase())
+                for (const account of Array.from(access.accountList || [])) if (account.emailAddress) mine.add(String(account.emailAddress).toLowerCase())
+                const accountIds = Array.from(access.accountList || []).map((account) => account.emailAccountId)
+                if (accountIds.length) for (const identity of ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', 'in', accountIds)
+                        .selectField('emailAddress').list()) if (identity.emailAddress) mine.add(String(identity.emailAddress).toLowerCase())
+                const person = (entry) => {
+                    const address = String(entry.address || '').toLowerCase()
+                    const party = parties[address] || null
+                    return {address: entry.address, name: entry.name || party?.name || null, partyId: party?.partyId ?? null,
+                        isContact: !!party, isMe: mine.has(address)}
+                }
+                const eventOf = {}
+                const links = {}
+                const labels = {}
+                const messageList = messages.map((message) => {
+                    const from = person({address: message.fromAddress, name: message.fromName})
+                    const files = Array.from(message.attachmentList || [])
+                    const cidMap = {}
+                    for (const file of files) if (file.contentId) cidMap[String(file.contentId).replace(/^<|>$/g, '')] = 'attachment?store=email&id=' + encodeURIComponent(file.emailMessageAttachmentId)
+                    for (const label of Array.from(message.labelList || [])) labels[label.emailLabelId] = label
+                    const invitation = null
+                    const html = isHtml(message.contentType, message.body) ? message.body : null
+                    return {key: 'email:' + message.emailMessageId, store: 'email', emailMessageId: message.emailMessageId, communicationEventId: eventOf[message.emailMessageId] || null,
+                        emailAccountId: message.emailAccountId, from: from, toList: splitAddresses(message.toAddresses).map(person),
+                        ccList: splitAddresses(message.ccAddresses).map(person), bccList: from.isMe ? splitAddresses(message.bccAddresses).map(person) : [],
+                        date: message.messageDate || message.sentDate || message.receivedDate, subject: message.subject, html: html,
+                        text: message.bodyText || (html ? null : message.body), snippet: message.snippet, isUnread: message.isUnread === true,
+                        isFlagged: message.isFlagged === 'Y', isAnswered: message.isAnswered === 'Y', statusId: message.statusId,
+                        folderKindEnumId: message.folderKindEnumId, isDraft: message.statusId === 'ES_DRAFT', sendError: message.sendError,
+                        scheduledSendDate: message.scheduledSendDate, snoozedThruDate: message.snoozedThruDate, canSend: message.canSend === true,
+                        unsubscribeMethod: message.unsubscribeMethod, labelList: Array.from(message.labelList || []),
+                        attachmentList: files.filter((file) => !(file.isInline && file.contentId && html && html.includes(String(file.contentId).replace(/^<|>$/g, ''))))
+                            .map((file) => ({id: file.emailMessageAttachmentId, name: file.fileName || 'attachment', size: file.fileSize ?? null,
+                                contentType: file.contentType ?? null})),
+                        cidMap: cidMap, invitation: invitation, linkList: links[eventOf[message.emailMessageId]] || []}
+                })
+                const linkList = []
+                for (const message of messageList) for (const link of message.linkList)
+                    if (!linkList.some((other) => other.recordEntityName === link.recordEntityName && other.recordId === link.recordId)) linkList.push(link)
+                const last = messageList[messageList.length - 1]
+                thread = {store: 'email', threadId: out.rootEmailMessageId, subject: out.subject, emailAccountId: out.emailAccountId, canSend: out.canSend === true,
+                    canReply: out.canSend === true, canModerate: false, isClosed: false, contactListId: null, contactListName: null,
+                    unreadCount: out.unreadCount || 0, isFlagged: messageList.some((message) => message.isFlagged), labelList: Object.values(labels),
+                    folderKindEnumId: last ? last.folderKindEnumId : null, linkList: linkList, messageList: messageList}
+                return
+            }
+            ec.message.addError(`Unknown store ${store}: email`)
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="MessageAttachment">
+        <description>The file of an attachment the user may read: a mail attachment (EmailMessageAttachment) of a message
+            get#Thread shows the user. Anything else is "not found". inlineAllowed is true for an image or a PDF.</description>
+        <in-parameters>
+            <parameter name="store" required="true"/>
+            <parameter name="id" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="inlineAllowed" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            location = null
+            inlineAllowed = false
+            const notFound = () => ec.message.addError(ec.l10n.localize('Attachment not found') + ': ' + id)
+            if (store === 'email') {
+                const file = ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageAttachmentId', id).one()
+                if (file == null) { notFound(); return }
+                // the message must be one the user may read: get#Thread says "not found" otherwise
+                ec.message.pushErrors()
+                let readable = false
+                try {
+                    const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('emailMessageId', file.emailMessageId).requireNewTransaction(true).call()
+                    readable = !ec.message.hasError() && Array.from(out.messageList || []).some((message) => message.emailMessageId === file.emailMessageId)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                if (!readable) { notFound(); return }
+                location = file.attachmentLocation
+                fileName = file.fileName
+                contentType = file.contentType
+            } else { notFound(); return }
+            if (!location) { notFound(); return }
+            inlineAllowed = /^image\/(png|jpe?g|gif|webp)$/i.test(contentType || '') || /\.(png|jpe?g|gif|webp|pdf)$/i.test(fileName || '') || /pdf/i.test(contentType || '')
+        ]]></script></actions>
+    </service>
+
+    <service verb="set" noun="ThreadState">
+        <description>
+            An action on mail threads (a list's selection, a row's hover action, the reading pane's bar), each target
+            {store email, threadId, emailMessageId (one message instead of the thread)}. Actions: read, unread, flag (the
+            thread's newest message, or the message), unflag, archive, unarchive, trash, deleteForever (mail in Trash), spam and
+            notSpam, snooze (snoozedThruDate) and unsnooze, move (emailFolderId), labels (addLabelIdList and removeLabelIdList,
+            through apply#Labels). Mail goes through org.moqui.impl.EmailClientServices (set#MessageFlags, archive#Messages,
+            trash#Messages, report#Spam, snooze#Messages, move#Messages, apply#Labels); each checks the user's access, and
+            a target the user does not reach is "not found". Each target is changed in a transaction of its own: one that is
+            refused or fails is named in failedList with why, and the others are changed.
+        </description>
+        <in-parameters>
+            <parameter name="targetList" type="List"/>
+            <parameter name="targetsJson" allow-html="any"><description>The targets as JSON, from a form</description></parameter>
+            <parameter name="action" required="true"/>
+            <parameter name="snoozedThruDate" type="Timestamp"/>
+            <parameter name="emailFolderId"/>
+            <parameter name="addLabelIdList" type="List"/>
+            <parameter name="removeLabelIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="updatedCount" type="Integer"/>
+            <parameter name="failedList" type="List"/>
+            <parameter name="doneKeys" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            updatedCount = 0
+            failedList = []
+            doneKeys = []
+            const ACTIONS = ['read', 'unread', 'flag', 'unflag', 'archive', 'unarchive', 'trash', 'deleteForever', 'spam', 'notSpam', 'snooze',
+                'unsnooze', 'move', 'labels', 'close', 'reopen']
+            if (!ACTIONS.includes(action)) { ec.message.addError(`Unknown action ${action}: ${ACTIONS.join(', ')}`); return }
+            let targets = targetList ? Array.from(targetList) : []
+            if (!targets.length && targetsJson) {
+                try { targets = JSON.parse(targetsJson) } catch (err) { ec.message.addError('The targets are not JSON'); return }
+            }
+            if (!Array.isArray(targets) || targets.length === 0) { ec.message.addError(ec.l10n.localize('Nothing selected')); return }
+            if (targets.length > 5000) { ec.message.addError('At most 5000 threads at once'); return }
+            if (action === 'snooze' && snoozedThruDate == null) { ec.message.addError(ec.l10n.localize('Snooze until when?')); return }
+            if (action === 'move' && !emailFolderId) { ec.message.addError(ec.l10n.localize('Move to which folder?')); return }
+            const asList = (value) => value == null ? [] : (typeof value === 'string' ? value.split(',') : Array.from(value)).map((id) => String(id).trim()).filter((id) => id)
+            const MAIL = 'org.moqui.impl.EmailClientServices'
+            for (const target of targets) {
+                const store = target?.store
+                const key = `${store}:${target?.emailMessageId || target?.communicationEventId || target?.threadId}`
+                ec.message.pushErrors()
+                try {
+                    let name = null
+                    let parameters = null
+                    if (store === 'email') {
+                        const one = target.emailMessageId ? {emailMessageId: target.emailMessageId} : {rootEmailMessageId: target.threadId}
+                        if (!one.emailMessageId && !one.rootEmailMessageId) throw new Error('no message')
+                        // a flag goes on the newest message of a thread, as Gmail stars one message
+                        let flagOne = one
+                        if (action === 'flag' && !target.emailMessageId) {
+                            const last = target.lastEmailMessageId || target.threadId
+                            flagOne = {emailMessageId: last}
+                        }
+                        switch (action) {
+                            case 'read': case 'unread': name = 'set#MessageFlags'; parameters = Object.assign({read: action === 'read'}, one); break
+                            case 'flag': name = 'set#MessageFlags'; parameters = Object.assign({flagged: true}, flagOne); break
+                            case 'unflag': name = 'set#MessageFlags'; parameters = Object.assign({flagged: false}, one); break
+                            case 'archive': case 'unarchive': name = 'archive#Messages'; parameters = Object.assign({unarchive: action === 'unarchive'}, one); break
+                            case 'trash': name = 'trash#Messages'; parameters = Object.assign({}, one); break
+                            case 'deleteForever': name = 'trash#Messages'; parameters = Object.assign({deleteForever: true}, one); break
+                            case 'spam': case 'notSpam': name = 'report#Spam'; parameters = Object.assign({notSpam: action === 'notSpam'}, one); break
+                            case 'snooze': name = 'snooze#Messages'; parameters = Object.assign({snoozedThruDate: snoozedThruDate}, one); break
+                            case 'unsnooze': name = 'snooze#Messages'; parameters = Object.assign({unsnooze: true}, one); break
+                            case 'move': name = 'move#Messages'; parameters = Object.assign({emailFolderId: emailFolderId}, one); break
+                            case 'labels': name = 'apply#Labels'; parameters = Object.assign({addLabelIdList: asList(addLabelIdList), removeLabelIdList: asList(removeLabelIdList)}, one); break
+                            default: throw new Error(ec.l10n.localize('Mail threads are not closed'))
+                        }
+                        name = MAIL + '.' + name
+                    } else throw new Error(`Unknown store ${store}`)
+                    ec.service.sync().name(name).parameters(parameters).requireNewTransaction(true).call()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    updatedCount++
+                    doneKeys.push(key)
+                } catch (err) {
+                    const message = err && err.message ? err.message : String(err)
+                    failedList.push({key: key, message: message})
+                    ec.logger.warn(`Inbox ${action} of ${key} by user ${ec.user.userId} not done: ${message}`)
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="apply" noun="ViewAction">
+        <description>A bulk action on every thread of a view ("all N in this view"): the view's threads by find#InboxRows (the
+            same parameters as the list, at most 5000), then set#ThreadState on them.</description>
+        <in-parameters>
+            <parameter name="view"/>
+            <parameter name="emailAccountId"/>
+            <parameter name="emailFolderId"/>
+            <parameter name="emailLabelId"/>
+            <parameter name="contactListId"/>
+            <parameter name="searchText" allow-html="any"/>
+            <parameter name="unreadOnly" type="Boolean" default="false"/>
+            <parameter name="action" required="true"/>
+            <parameter name="snoozedThruDate" type="Timestamp"/>
+            <parameter name="targetEmailFolderId"/>
+            <parameter name="addLabelIdList" type="List"/>
+            <parameter name="removeLabelIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="updatedCount" type="Integer"/>
+            <parameter name="failedList" type="List"/>
+            <parameter name="threadCount" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const targets = []
+            let cursor = null
+            for (let page = 0; page < 25; page++) {
+                const out = ec.service.sync().name('org.moqui.comms.InboxServices.find#InboxRows').parameters({view: view, emailAccountId: emailAccountId,
+                    emailFolderId: emailFolderId, emailLabelId: emailLabelId, contactListId: contactListId, searchText: searchText, unreadOnly: unreadOnly,
+                    cursor: cursor, pageSize: 200}).call()
+                if (ec.message.hasError()) return
+                for (const row of Array.from(out.threadList || [])) targets.push({store: row.store, threadId: row.threadId,
+                    lastEmailMessageId: row.lastEmailMessageId ?? null, lastCommEventId: row.lastCommEventId ?? null})
+                cursor = out.nextCursor
+                if (!out.hasMore || !cursor || targets.length >= 5000) break
+            }
+            threadCount = targets.length
+            updatedCount = 0
+            failedList = []
+            if (targets.length === 0) return
+            const out = ec.service.sync().name('org.moqui.comms.InboxServices.set#ThreadState').parameters({targetList: targets.slice(0, 5000), action: action,
+                snoozedThruDate: snoozedThruDate, emailFolderId: targetEmailFolderId, addLabelIdList: addLabelIdList, removeLabelIdList: removeLabelIdList}).call()
+            if (ec.message.hasError()) return
+            updatedCount = out.updatedCount
+            failedList = out.failedList
+        ]]></script></actions>
+    </service>
+
+    <service verb="search" noun="Messages">
+        <description>The palette's Messages group: the user's mail whose text matches (find#InboxRows with the search line, so
+            its operators work), each a row {title, subtitle, icon, url} to the Inbox under comms_app_root. moreUrl is the
+            Inbox's search.</description>
+        <in-parameters>
+            <parameter name="text" required="true"/>
+            <parameter name="limit" type="Integer" default="5"/>
+            <parameter name="docTypes" type="List"/>
+            <parameter name="idMatch" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="rows" type="List"/><parameter name="moreUrl"/></out-parameters>
+        <actions><script><![CDATA[
+            rows = []
+            const term = String(text || '').trim()
+            if (!term) return
+            const max = Math.max(1, Math.min(limit || 5, 20))
+            ec.message.pushErrors()
+            try {
+                const found = ec.service.sync().name('org.moqui.comms.InboxServices.find#InboxRows').parameters({view: 'all', searchText: term, pageSize: max}).requireNewTransaction(true).call()
+                if (!ec.message.hasError()) for (const row of Array.from(found.threadList || [])) {
+                    const who = row.store === 'email' ? (row.fromName || row.fromAddress || '') : Array.from(row.participantList || []).map((item) => item.name).join(', ')
+                    rows.push({title: row.subject || ec.l10n.localize('(no subject)'), subtitle: [row.store === 'email' ? ec.l10n.localize('Mail') : ec.l10n.localize('Message'),
+                        who, row.snippet].filter((part) => part).join(' · ').substring(0, 160), icon: row.store === 'email' ? 'sym_o_mail' : 'sym_o_chat_bubble',
+                        url: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox?view=all&q=' + encodeURIComponent(term) + '&thread=' + encodeURIComponent(row.store + ':' + row.threadId)})
+                }
+            } catch (err) { ec.logger.warn(`Palette messages for ${term} failed: ${err && err.message ? err.message : err}`) }
+            finally { ec.message.clearErrors(); ec.message.popErrors() }
+            rows = rows.slice(0, max)
+            moreUrl = (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Inbox?q=' + encodeURIComponent(term)
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="MessageDetail">
+        <description>
+            One message for MessageDetail: an email of an account the user reaches (get#Thread with its headers), or mail the
+            system sent (no account: notifications and other mail) for a user of the ADMIN group, by emailMessageId. Anything
+            else is "not found" (a message of an app's, by communicationEventId, is answered by its inbox-source). detail has
+            the header fields, the body, the files, the raw headers, and what the user may do: open it in the Inbox
+            (threadKey), resend it (a bounced message of an account the user may send from, or system mail for an
+            administrator).
+        </description>
+        <in-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="communicationEventId"/>
+        </in-parameters>
+        <out-parameters><parameter name="detail" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => value == null || value === '' ? null : (typeof value === 'number' ? value : (value instanceof Date ? value.getTime() : Number(String(value))))
+            const describe = (entityName, field, id) => {
+                if (!id) return null
+                const row = ec.entity.find(entityName).condition(field, id).useCache(true).disableAuthz().one()
+                return row ? (row.description || id) : id
+            }
+            const isHtml = (contentType, body) => /html/i.test(contentType || '') || /<(p|div|br|table|html|body|span|a)\b/i.test(String(body || ''))
+            detail = null
+            if (!emailMessageId) { ec.message.addError('An emailMessageId or communicationEventId is required'); return }
+            const row = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).disableAuthz().one()
+            if (row == null) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
+            let message = null
+            let canSend = false
+            if (row.emailAccountId) {
+                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameters({emailMessageId: emailMessageId, includeHeaders: true}).call()
+                if (ec.message.hasError()) return
+                message = Array.from(out.messageList || []).find((item) => item.emailMessageId === emailMessageId)
+                canSend = message.canSend === true
+            } else {
+                // mail the system sent: for administrators
+                if (!ec.user.isInGroup('ADMIN')) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
+                message = row.getMap()
+                message.attachmentList = []
+            }
+            const account = row.emailAccountId ? ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', row.emailAccountId).one() : null
+            const folder = row.emailFolderId ? ec.entity.find('moqui.basic.email.EmailFolder').condition('emailFolderId', row.emailFolderId).one() : null
+            const template = row.emailTemplateId ? ec.entity.find('moqui.basic.email.EmailTemplate').condition('emailTemplateId', row.emailTemplateId).disableAuthz().one() : null
+            const server = row.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', row.emailServerId).disableAuthz().one() : null
+            const events = []
+            const linkList = []
+            const body = message.body
+            const html = isHtml(message.contentType, body) ? body : null
+            detail = {kind: 'email', emailMessageId: emailMessageId, communicationEventId: events.length ? events[0].communicationEventId : null, subject: message.subject || '',
+                fromText: message.fromName ? `${message.fromName} <${message.fromAddress}>` : (message.fromAddress || ''), toText: message.toAddresses || '',
+                ccText: message.ccAddresses || '', bccText: message.bccAddresses || '', dateMillis: toMillis(message.messageDate || message.sentDate || message.receivedDate),
+                messageId: message.messageId || null, accountText: account ? (account.accountName ? `${account.accountName} <${account.emailAddress}>` : account.emailAddress) : null,
+                folderText: folder ? (folder.folderName || folder.folderPath) : null, statusId: row.statusId, statusText: describe('moqui.basic.StatusItem', 'statusId', row.statusId),
+                typeText: describe('moqui.basic.Enumeration', 'enumId', row.emailTypeEnumId), templateText: template ? (template.description || template.emailTemplateId) : null,
+                serverText: server ? (server.smtpHost || server.emailServerId) : null, html: html, text: message.bodyText || (html ? null : (body || '')),
+                headersText: message.headersString || null, sendError: row.sendError || null,
+                attachmentList: Array.from(message.attachmentList || []).map((file) => ({id: file.emailMessageAttachmentId, store: 'email', name: file.fileName || 'attachment',
+                    size: file.fileSize ?? null})),
+                commEventList: [],
+                linkList: linkList, threadKey: row.emailAccountId ? 'email:' + (row.rootEmailMessageId || emailMessageId) : null,
+                canResend: (!row.emailAccountId && ec.user.isInGroup('ADMIN')) || (row.statusId === 'ES_BOUNCED' && canSend),
+                isSystemMail: !row.emailAccountId}
+        ]]></script></actions>
+    </service>
+</services>
