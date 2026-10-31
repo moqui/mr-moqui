@@ -15,7 +15,7 @@ It needs Rust 1.98 or newer and bash, on Linux or macOS ([Build](docs/Build-Test
 The framework is built and the applications below run on it. Work continues on Moqui Java functionality not yet
 covered, features new to MR Moqui, tests and fixes, and performance. Mantle is converted from Groovy to JavaScript
 (`mr-mantle`); Simple Screens and Marble ERP are being converted (`mr-marble`); IronStone BOSS (`mr-boss`), starting
-with the Commons & Comms groupware and communication apps, and IronStoa PASS (`mr-pass`) are being designed and built.
+with the Commons & Comms groupware and communication apps, and IronStone PASS (`mr-pass`) are being designed and built.
 What is open is in [plans/Remaining-Work.md](plans/Remaining-Work.md).
 
 The `moq` script replaces our old Gradle tasks, and getting components is similar:
@@ -35,7 +35,7 @@ MR Moqui spans five repositories in the [moqui](https://github.com/moqui) organi
 | [mr-mantle](https://github.com/moqui/mr-mantle) | Mantle Business Artifacts: the data model (entities and data) and the services | The Java components [mantle-udm](https://github.com/moqui/mantle-udm) and [mantle-usl](https://github.com/moqui/mantle-usl). They were forked as `mr-mantle-udm` and `mr-mantle-usl` and converted from Groovy to JavaScript. Then `mr-mantle-usl` was renamed and `mr-mantle-udm` was merged into it |
 | [mr-marble](https://github.com/moqui/mr-marble) | Marble ERP and the Simple Screens library it is built from, with My Account | The Java components [SimpleScreens](https://github.com/moqui/SimpleScreens) and [MarbleERP](https://github.com/moqui/MarbleERP). They were forked as `MrSimpleScreens` and `MrMarbleERP` for the port. Then `MrSimpleScreens` was renamed and `MrMarbleERP` was merged into it |
 | [mr-boss](https://github.com/moqui/mr-boss) | IronStone BOSS: Commons & Comms (groupware and communication), Projects, and the other BOSS applications | New for MR Moqui. The repository was named `ironstone-boss` until 2026-10-25 |
-| [mr-pass](https://github.com/moqui/mr-pass) | IronStoa PASS: the public-facing companion suite for Forum, Blog/Publishing and Commerce | New for MR Moqui; design stage |
+| [mr-pass](https://github.com/moqui/mr-pass) | IronStone PASS: the public-facing companion suite for Forum, Shop and Blog/Publishing | New for MR Moqui; Shop is specified in [its design](runtime/component/mr-pass/plan/design-shop.md) |
 
 The merges into `mr-mantle` and `mr-marble` kept the commit history of both repositories. On GitHub the renamed repositories redirect from their old names. A Java component that depends on `mantle-udm`, `mantle-usl`, `SimpleScreens` or `MarbleERP` now depends on `mr-mantle` or `mr-marble`, and its `component://` locations change the same way. See [Moqui Java migration notes](docs/dev/Moqui-Java-Migration.md).
 
