@@ -303,6 +303,43 @@ fn transition_extension_anchor_still_resolves_with_method_ids() {
     );
 }
 
+/// A screen-extend's transition replaces the base screen's of its name or adds one: either resolves while the base
+/// screen is there, the replaced one to its definition.
+#[test]
+fn a_screen_extend_transition_replaces_or_adds_one() {
+    let location = "component://c/screen/A.xml";
+    let screen = read(
+        ArtifactKind::Screen,
+        location,
+        r#"<screen><transition name="save"/></screen>"#,
+    );
+    let mut resolver = Resolver::default();
+    for row in &screen.artifacts {
+        resolver.add(row);
+    }
+    let resolved = |name: &str, scope: &str| {
+        let mut reference = extract::RefRow {
+            from: "extension".into(),
+            to_kind: ToKind::TransitionAnchor,
+            to_name: name.into(),
+            to_scope: scope.into(),
+            ref_type: "anchor".into(),
+            line: 1,
+            column: 1,
+            to_id: None,
+            resolved: false,
+        };
+        resolver.resolve(&mut reference, &|_| false);
+        (reference.resolved, reference.to_id)
+    };
+    assert_eq!(
+        resolved("save", location),
+        (true, Some("transition:component://c/screen/A.xml#save:any".to_string()))
+    );
+    assert_eq!(resolved("added", location), (true, None));
+    assert_eq!(resolved("save", "component://c/screen/Gone.xml"), (false, None));
+}
+
 /// A parameter is named for its owner, so a find of a bare name gives an entity's field first, and the refs of a
 /// service list each caller once, not once more for each of its field-maps.
 #[test]

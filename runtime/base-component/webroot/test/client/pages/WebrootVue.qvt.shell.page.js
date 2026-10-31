@@ -429,7 +429,7 @@ test("a form in the quick-create dialog closes it when it submits without errors
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
     ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
-    // the tray and the call dock (WebrootCall.js) close the canvas
+    // the tray and then the call dock close the page container
     assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {8}<m-call-dock v-if="callsOn"><\/m-call-dock>\n {4}<\/q-page-container>/);
     assert.match(shell, /<m-shell-palette><\/m-shell-palette>/);
     // a handheld screen: no drawer, menu button, launcher or footer; of the header's buttons only the account; the title at every width

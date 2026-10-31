@@ -65,8 +65,11 @@ pub enum ToKind {
     Screen,
     /// A transition of the screen in `scope`.
     Transition,
-    /// A named form, container, section or transition of the base screen in `scope`.
+    /// A named form, container or section of the base screen in `scope`.
     Anchor,
+    /// A transition of a `screen-extend`: the base screen's transition of that name, which it replaces, else none (a
+    /// transition it adds).
+    TransitionAnchor,
     /// An in-parameter of the service in `scope` (a `field-map`'s `field-name`).
     Parameter,
 }
@@ -82,6 +85,7 @@ impl ToKind {
             Self::Screen => "screen",
             Self::Transition => "transition",
             Self::Anchor => "anchor",
+            Self::TransitionAnchor => "transition-anchor",
             Self::Parameter => "parameter",
         }
     }
@@ -96,6 +100,7 @@ impl ToKind {
             "screen" => Self::Screen,
             "transition" => Self::Transition,
             "anchor" => Self::Anchor,
+            "transition-anchor" => Self::TransitionAnchor,
             "parameter" => Self::Parameter,
             _ => return None,
         })
@@ -271,7 +276,13 @@ impl Reader<'_> {
                         continue;
                     }
                     if let Some(name) = node.attribute("name").filter(|name| refs::is_literal(name)) {
-                        self.reference(&id, ToKind::Anchor, &name, &base, "anchor", node.line(), node.column());
+                        // a transition merges by name: it replaces the base screen's transition of its name, else adds one
+                        let kind = if element == "transition" {
+                            ToKind::TransitionAnchor
+                        } else {
+                            ToKind::Anchor
+                        };
+                        self.reference(&id, kind, &name, &base, "anchor", node.line(), node.column());
                     }
                 }
                 id

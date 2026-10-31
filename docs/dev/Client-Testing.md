@@ -107,12 +107,15 @@ suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "Se
 ```
 
 `components` are what the server loads (the suite's own component when empty), `specs` the server specs that run first
-as fixtures (with their `dependsOn`, looked up across the named components), and `conf` the runtime conf, relative to
-the runtime as `MOQUI_CONF` is. The file is read as literals, not run.
+as fixtures (with their `dependsOn`, looked up across the named components), `conf` the runtime conf, relative to
+the runtime as `MOQUI_CONF` is, and `properties` conf properties set in the server's environment (mr-boss's walks
+send invoices and reminders, so its suite has `properties: { mail_capture_sends: "true" }`). The file is read as
+literals, not run.
 
 `moqui test-client --serve` groups the selected components by their declaration; components with the same one share a
 server. For each group it starts this binary as `moqui test <components> --spec <specs> --db snapshot --serve
-127.0.0.1:0 --ready-file <file>`, with `MOQUI_CONF` set to the conf and a pipe on the child's standard input. The
+127.0.0.1:0 --ready-file <file>`, with `MOQUI_CONF` set to the conf, the properties in its environment and a pipe on
+the child's standard input. The
 child's output goes to `server-<n>.log` in the output directory. Once the ready file names the URL, the group's specs
 run against it; then the pipe closes, and the child stops and removes its scratch runtime. The child also stops when
 the client dies without cleaning up, since its standard input closes. A component with no declaration, or a child that

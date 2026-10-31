@@ -185,8 +185,9 @@ fn canonical(path: &Path) -> PathBuf {
 #[must_use]
 pub fn hash_of(text: &str) -> String {
     use sha2::{Digest, Sha256};
-    // Version the extraction rules so persisted files gain parameter artifacts on refresh.
-    let digest = Sha256::digest(format!("2\n{text}").as_bytes());
+    // Version the extraction rules so persisted files are read again when they change: 2 added parameter artifacts,
+    // 3 the transition anchors of a screen-extend.
+    let digest = Sha256::digest(format!("3\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 

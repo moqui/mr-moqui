@@ -148,6 +148,15 @@ impl Resolver {
     /// Set `reference`'s target and whether it resolves. A location that is no indexed artifact resolves when
     /// `exists` says something is there.
     pub fn resolve(&self, reference: &mut RefRow, exists: &dyn Fn(&str) -> bool) {
+        if reference.to_kind == ToKind::TransitionAnchor {
+            // the base screen's transition it replaces, else a transition it adds: resolved while the base is there
+            let base = self.screen(&reference.to_scope);
+            reference.to_id = base
+                .as_deref()
+                .and_then(|base| self.base_transition(base, &reference.to_name));
+            reference.resolved = base.is_some();
+            return;
+        }
         let target = match reference.to_kind {
             ToKind::Entity => self.entity(&reference.to_name).map(|full| format!("entity:{full}")),
             ToKind::Field => self
@@ -188,18 +197,9 @@ impl Resolver {
                     .iter()
                     .map(|kind| format!("{kind}:{base}#{}", reference.to_name))
                     .find(|id| self.has(id))
-                    .or_else(|| {
-                        // Extension anchors identify a named XML element, independent of request dispatch.
-                        // Keep them navigable after transitions acquire method-qualified IDs.
-                        let prefix = format!("transition:{base}#{}:", reference.to_name);
-                        let any = format!("{prefix}any");
-                        if self.has(&any) {
-                            Some(any)
-                        } else {
-                            self.ids.keys().filter(|id| id.starts_with(&prefix)).min().cloned()
-                        }
-                    })
+                    .or_else(|| self.base_transition(&base, &reference.to_name))
             }),
+            ToKind::TransitionAnchor => None,
             ToKind::Parameter => {
                 let id =
                     super::extract::parameter_id(&format!("service:{}", reference.to_scope), "in", &reference.to_name);
@@ -208,6 +208,23 @@ impl Resolver {
         };
         reference.resolved = target.is_some();
         reference.to_id = target;
+    }
+
+    /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one.
+    fn base_transition(&self, base: &str, name: &str) -> Option<String> {
+        let plain = format!("transition:{base}#{name}");
+        if self.has(&plain) {
+            return Some(plain);
+        }
+        // Extension anchors identify a named XML element, independent of request dispatch.
+        // Keep them navigable after transitions acquire method-qualified IDs.
+        let prefix = format!("{plain}:");
+        let any = format!("{prefix}any");
+        if self.has(&any) {
+            Some(any)
+        } else {
+            self.ids.keys().filter(|id| id.starts_with(&prefix)).min().cloned()
+        }
     }
 
     /// The names a reference to one of `ids` would carry, for finding the unresolved references an added artifact may

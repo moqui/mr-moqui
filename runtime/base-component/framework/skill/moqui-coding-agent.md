@@ -85,8 +85,9 @@ edited in place: an edit there is a fork that every upgrade fights. Put the chan
 - No service or entity has this name for the rule to run on.
 
 `moqui check --extensions` checks every site extension against what it extends, which is worth running after pulling
-an upstream component. A `screen-extend` needs a named form, container, section or transition in the base screen to anchor to. When the base
-screen has none where you need it, the anchor is added to the base screen as its own change, never generated.
+an upstream component. A `screen-extend` needs a named form, container or section in the base screen to anchor to; a
+transition replaces the base screen's transition of its name, else it is a new one. When the base screen has no anchor
+where you need it, the anchor is added to the base screen as its own change, never generated.
 
 ## Specs
 `./moq test <component>` runs a component's JavaScript specs (`test/*.spec.js`); `--spec Name` runs one. A spec calls
