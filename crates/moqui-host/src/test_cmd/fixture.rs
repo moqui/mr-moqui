@@ -135,7 +135,8 @@ fn io(context: &str) -> impl Fn(std::io::Error) -> Error + '_ {
 }
 
 /// A scratch runtime under `/tmp` (the Postgres socket path must stay under 108 bytes): `conf` copied, and
-/// `base-component`, `dev-component`, each component, the instance `MoquiConf.xml`, and the shared Postgres install linked.
+/// `base-component`, `dev-component`, each component, the instance `MoquiConf.xml`, the shared Postgres install and the
+/// downloaded Chromium linked.
 fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -166,6 +167,10 @@ fn scratch_runtime(runtime: &Path) -> Result<PathBuf, Error> {
     let instance_conf = runtime.join("MoquiConf.xml");
     if instance_conf.is_file() {
         link(&instance_conf, &scratch.join("MoquiConf.xml"))?;
+    }
+    // the Chromium of ./moq chromium-download, which PDF finds in the runtime it boots on (chromium::downloaded_chromium)
+    if runtime.join("chromium").is_dir() {
+        link(&runtime.join("chromium"), &scratch.join("chromium"))?;
     }
     Ok(scratch)
 }

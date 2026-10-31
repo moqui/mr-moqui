@@ -2,7 +2,7 @@
 spec({timeout:90})
 function monitoringPage() {
     const page=browser.newPage({user:"john.doe"})
-    // Commons returns404 for an absent user photo; the avatar deliberately displays initials (GalleryShots uses this contract too).
+    // Commons returns404 for an absent user photo; the avatar deliberately displays initials (GallerySmoke uses this contract too).
     page.allowProblems(/response: 404 Not Found .*\/apps\/Commons\/Settings\/Account\/userPhoto\?userId=EX_JOHN_DOE$/)
     return page
 }

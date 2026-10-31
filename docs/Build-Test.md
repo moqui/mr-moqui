@@ -283,8 +283,9 @@ when the test is named:
 - an opt-in host test binary that is slow as a whole (`gate3_browser`), run by name.
 
 `./moq test-all --slow` runs all of them. An agent never runs a slow test without the user's permission (AGENTS.md).
-`mr-boss/test/client/ProductsShots.spec.js` keeps, commented out, the screenshot matrix that made this rule: 535
-cases and 9 minutes for checks that did not depend on the width or the theme.
+What made this rule was a screenshot matrix of every Products page at three widths in both themes: 535 cases and 9
+minutes for checks that did not depend on the width or the theme. No spec takes screenshots for review; check at a
+width or in a theme only what changes there.
 
 ## Component specs
 
@@ -419,7 +420,8 @@ A statement at the top level of the file; features run in the order they are wri
 - A case that does not say `requires`, and fails only because the binary reports that a tool is not built in
   (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is
   skipped the same way. A stepwise file that is entirely about that tool says so on `spec()`, so its later features
-  are not started without their setup.
+  are not started without their setup. So is a case that fails only because PDF is not available, on a machine with
+  no Chromium (`./moq chromium-download`, or `pdf_chromium_path`); the skip reason is that message.
 - A feature with `then` and no `when`, or a block name that is not one of these, is an error when the file loads.
 
 ### Conditions

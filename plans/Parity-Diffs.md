@@ -350,6 +350,12 @@ What the framework's client specs (`runtime/base-component/framework/test/client
 | stats skip | `server-stats/@stats-skip-condition` is not read; Java skipped visit and hit records when it was true | Sampling replaces it for telemetry. The XSD marks it deprecated, and a conf that sets it gets a warning at start |
 | cleanup jobs | `clean#ArtifactData` and the `clean_ElasticSearch*Messages_daily` jobs are gone; `clean#TelemetryData` applies per-index retention, and startup pauses the old job registrations | `factory.rs` `retire_legacy_monitoring_jobs` |
 
+## XML Actions authorization (2026-10-30)
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| xml actions | `entity-find`, `entity-find-one`, `entity-find-count` and `entity-delete-by-condition` take `disable-authz="true"` (`EntityFind.disableAuthz()`), and `entity-create`, `entity-update` and `entity-delete` take it to run the write with authorization disabled; Java has the attribute on `service-call` only (`framework/template/XmlActions.js`, `xml-actions-3.xsd`) | A Mantle service that checks its own permission and organization scope reads without the user's record filters, as its scripts did with `.disableAuthz()`, so those scripts convert to inline XML Actions without a change in what they read |
+
 ## Atomic create-or-update (2026-10-30)
 
 | Area | Difference | Rationale / where documented |

@@ -4,5 +4,11 @@
     row.create();
     row.update();
     row.delete();
+    var _xa_was_disabled = ec.artifactExecution.disableAuthz();
+    try {
+        row.update();
+    } finally {
+        if (!_xa_was_disabled) ec.artifactExecution.enableAuthz();
+    }
     return;
 })()

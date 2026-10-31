@@ -6,4 +6,8 @@
     <entity-find-one entity-name="moqui.test.TestEntity" value-field="oneRow">
         <field-map field-name="testId" from="seedId"/>
     </entity-find-one>
+    <entity-find-one entity-name="moqui.test.TestEntity" value-field="anyRow" disable-authz="true">
+        <field-map field-name="testId" from="seedId"/>
+    </entity-find-one>
+    <entity-find-count entity-name="moqui.test.TestEntity" count-field="anyCount" disable-authz="true"/>
 </actions>
