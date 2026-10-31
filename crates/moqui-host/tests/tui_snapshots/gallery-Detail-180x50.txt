@@ -18,8 +18,8 @@
      Editor              │ ┌─ Header ────────────────────────────────────────────────────────────────┐ ▣ chatter has a browser-only part · o=Open in browser
      Message             │ │ ID  . . . . . : STT_ERROR                                               │ ▣ record-files has a browser-only part · o=Open in browser
      Views               │ │ Type  . . . . : Screen Theme Type                                       │
- ▾ Home                  │ │ Description . : Error Screens                                           │
-                         │ │ Code  . . . . : ERROR                                                   │
+     Handheld            │ │ Description . : Error Screens                                           │
+ ▾ Home                  │ │ Code  . . . . : ERROR                                                   │
                          │ │ Sequence  . . :                                                         │
                          │ │ Parent  . . . :                                                         │
                          │ │ Option value  :                                                         │

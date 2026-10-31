@@ -339,6 +339,7 @@ pub fn assemble(
         return Ok(found);
     }
     let node = assemble_node(facade, factory, def, name, 0, false)?;
+    super::scan::check_form(&node, &def.location);
     let instance = Arc::new(FormInstance::of(def, &node)?);
     def.generated.put_form(name, Arc::clone(&instance));
     Ok(instance)

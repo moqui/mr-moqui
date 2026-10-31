@@ -441,6 +441,7 @@ a { color: blue; }
         "submit": stmt((node) => e(localizedTitle(node.parent))),
         "text-area": textWidget,
         "text-line": textWidget,
+        "scan-input": textWidget,
         "text-find": textWidget
     });
 

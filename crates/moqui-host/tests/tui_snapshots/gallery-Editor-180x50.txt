@@ -18,8 +18,8 @@
    ▶ Editor              │ └────────────────────────────────────────────────┘ │ • Older text is stored as a reverse delta.                                                       │
      Message             │                                                    │ • Any version can be viewed, compared, restored or published.                                    │
      Views               │                                                    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Handheld            │
  ▾ Home                  │
-                         │
                          │
                          │
                          │

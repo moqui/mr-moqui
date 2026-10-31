@@ -562,7 +562,7 @@ test("the shell's hooks: the palette's Ask row and record rows, the form answers
         assert.deepEqual(errors, [], name);
     });
     const shell = qvt.components["m-qapps-root"].template;
-    assert.match(shell, /<m-assist-button v-if="assistOn"><\/m-assist-button>\n {4}<\/q-toolbar><\/q-header>/);
+    assert.match(shell, /<m-assist-button v-if="assistOn && !handheld"><\/m-assist-button>\n {4}<\/q-toolbar><\/q-header>/);
     assert.match(shell, /<m-shell-assist v-if="assistOn"><\/m-shell-assist>/);
     // the stable ids and data attributes the browser smoke drives
     const drawer = assist.components["m-shell-assist"].template + assist.components["m-assist-composer"].template + assist.components["m-assist-card"].template;

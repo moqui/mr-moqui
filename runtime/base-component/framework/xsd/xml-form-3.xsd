@@ -1309,6 +1309,72 @@ along with this software (see the LICENSE.md file). If not, see
                 This is named to follow the pattern for parameters used elsewhere.</xs:documentation></xs:annotation>
         </xs:attribute>
     </xs:complexType></xs:element>
+    <xs:element name="scan-input" substitutionGroup="SubFields"><xs:annotation><xs:documentation>
+        A field for a barcode scanner (keyboard wedge: fast keys ending in Enter, or Tab) and for typed codes. The text goes to
+        the resolver service through the scanResolve transition every screen has; the resolver answers the identities the text
+        names. One match fills the field with its id and submits the form (with confirm="true" it waits for Confirm), several
+        open a chooser, and none names the failure and keeps the focus in the field for the next scan.
+
+        The resolver is not protected by the form: it runs for any request that names this form and field, even where a
+        conditional-field or a section's condition leaves the field out of the page, and the parameter and depends-on values
+        it gets are whatever the request sends (the values the screen rendered come back from the client). A resolver checks
+        the user's permission and the facility, task and other context again itself, as any service does.
+
+        The form posts the field's name with the id, name_type with the identityType, name_scanText with the text scanned and
+        the scan-id-field (scanId by default) with a client id made for each scan intent: a transition passes it on as its
+        operation key, so a double scan or a second Confirm answers the first. A repeat of the same text within two seconds of
+        its first scan is the same intent. The scan's fields are emptied after the form's answer, so a later submit carries no
+        scan id. The scan id is chosen by the client: an operation-key lookup on it is scoped to the user (and the operation). A transition reads the GS1 fields again from name_scanText (ec.resource.parseGs1) and does not trust
+        values the client parsed.
+
+        The html mode writes a text input that posts to the same resolver from moqui-html.js (without JavaScript the text posts
+        as name_scanText); the tui mode is a drop-down that searches the resolver (a GET, which scanResolve takes as the read
+        it is; a POST must carry the session token), posting the id and a scanId made when the screen rendered.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:sequence>
+            <xs:element minOccurs="0" maxOccurs="unbounded" ref="parameter">
+                <xs:annotation><xs:documentation>The screen's context passed to the resolver, such as facilityId or the
+                    workEffortId of the task, evaluated when the screen renders and sent back by the client, so client input.
+                    Only the names declared here and in depends-on reach the resolver.</xs:documentation></xs:annotation>
+            </xs:element>
+            <xs:element minOccurs="0" maxOccurs="unbounded" ref="depends-on">
+                <xs:annotation><xs:documentation>A field of the form whose value is passed to the resolver when the scan is
+                    resolved (its parameter name, else the field name).</xs:documentation></xs:annotation>
+            </xs:element>
+        </xs:sequence>
+        <xs:attribute name="resolver" type="xs:string" use="required">
+            <xs:annotation><xs:documentation>The service that resolves a scan. In: scanText, allowedTypes (a List, empty for
+                any), scanId, and the parameter and depends-on names. Out: matches, a List of Maps with identityType, id, label
+                and detail; and parsed, the GS1 fields of the text as ec.resource.parseGs1 answers them (when the resolver
+                answers no parsed, the framework parses the text itself and adds what parses). The service checks the user's
+                permissions and the context itself; the framework keeps only matches of the allowed types.
+            </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="allowed-types" type="xs:string">
+            <xs:annotation><xs:documentation>Comma separated identity types the field takes, such as
+                asset,location,container,lot,product,shipment. Empty for any type the resolver answers.
+            </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="scan-id-field" type="xs:string" default="scanId">
+            <xs:annotation><xs:documentation>The name the scan intent's id posts under. Each scan-input of a form needs its
+                own: the scanResolve transition refuses a form whose scan inputs share one, and assembling it logs an error.
+            </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="auto-submit" type="boolean" default="true">
+            <xs:annotation><xs:documentation>Whether one match (or a choice from the chooser) submits the form. When false the
+                field is filled and the form waits for its own submit.</xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="confirm" type="boolean" default="false">
+            <xs:annotation><xs:documentation>Explicit confirmation: a match is shown with a Confirm button (Enter confirms)
+                and submits only then.</xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="placeholder" type="xs:string">
+            <xs:annotation><xs:documentation>The hint in the empty field, localized; Scan or type by default.
+            </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="size" type="xs:positiveInteger"/>
+        <xs:attribute name="maxlength" type="xs:positiveInteger" default="512"/>
+    </xs:complexType></xs:element>
     <xs:element name="text-area" substitutionGroup="SubFields"><xs:complexType>
         <xs:attribute name="cols" type="xs:positiveInteger" default="60"/>
         <xs:attribute name="rows" type="xs:positiveInteger" default="3"/>

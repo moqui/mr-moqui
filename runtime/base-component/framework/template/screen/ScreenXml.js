@@ -150,6 +150,7 @@
         "submit": stmt((node) => attribute(`ec.l10n.localize(${jsString(S.titleText(node.parent))})`)),
         "text-area": textWidget,
         "text-line": textWidget,
+        "scan-input": textWidget,
         "text-find": textWidget
     });
 

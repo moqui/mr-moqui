@@ -326,6 +326,7 @@ const $formList = (name, cols) => {
         "submit": stmt((node) => pad(localizedTitle(node.parent))),
         "text-area": textWidget,
         "text-line": textWidget,
+        "scan-input": textWidget,
         "text-find": textWidget
     });
 

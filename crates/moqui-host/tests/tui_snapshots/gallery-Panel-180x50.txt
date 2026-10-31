@@ -18,8 +18,8 @@
      Editor              │ call · <today-1> 11:30 · Order SO10023 · Acme Co.
      Message             │ Mark done  Snooze to tomorrow
      Views               │ Due today
- ▾ Home                  │ 4
-                         │ Reply to the RFQ questions
+     Handheld            │ 4
+ ▾ Home                  │ Reply to the RFQ questions
                          │ email · 10:00 · RFQ-2041 · Beta Inc.
                          │ Mark done  Snooze to tomorrow
                          │ Weekly pipeline review

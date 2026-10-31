@@ -74,9 +74,26 @@
     moqui.onPreferences = moqui.applyPreferences;
     // SHELL_DENSITY: compact puts m-density-compact on the body (the style sheet tightens the page, lists, fields and cards);
     // comfortable, empty or anything else is the default.
+    // A screen's density (the density attribute, in the menu data of the path) wins over the preference: on a handheld screen the
+    // body has m-density-handheld and never m-density-compact; leaving it puts the preference back.
     moqui.applyDensity = (value) => {
+        moqui.densityPreference = value || "";
         const body = root.document && root.document.body;
-        if (body && body.classList) body.classList.toggle("m-density-compact", value === "compact");
+        if (body && body.classList) body.classList.toggle("m-density-compact", value === "compact" && moqui.currentScreenDensity !== "handheld");
+    };
+    moqui.densityPreference = "";
+    moqui.currentScreenDensity = "";
+    // The density of the screen shown: that of the deepest screen of the path (the menu data) that sets one, else "".
+    moqui.screenDensity = (navMenuList) => {
+        const list = Array.isArray(navMenuList) ? navMenuList : [];
+        for (let index = list.length - 1; index >= 0; index--) if (list[index] && list[index].density) return String(list[index].density);
+        return "";
+    };
+    moqui.setScreenDensity = (density) => {
+        moqui.currentScreenDensity = density || "";
+        const body = root.document && root.document.body;
+        if (body && body.classList) body.classList.toggle("m-density-handheld", density === "handheld");
+        moqui.applyDensity(moqui.densityPreference);
     };
     // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance has the color schemes of the theme, the fonts and the user's THEME_*
     // values. A scheme is a style sheet (the apps colorSchemeCss transition) linked as m-color-scheme, none for one without colors;
@@ -2780,6 +2797,253 @@
             if (!this.defaultUrl || !this.defaultUrl.length) return;
             if (this.fields) Object.keys(this.dependsOn || {}).forEach((doParm) => { this.$watch(() => this.fields[this.dependsOn[doParm]], () => this.populateFromUrl()); });
             if (this.defaultLoadInit) this.populateFromUrl();
+        }
+    });
+
+    // A scan field (the scan-input element; docs/ui/Qvt-Client.md, Scan input). The rules, tested in the page:
+    //  - scanOutcome: the resolver's answer as none, one (the match) or many; a match with no id is not one;
+    //  - scanIntent: the same text again within 2 s of its first scan is a double scan, the same intent with the same id (the
+    //    window does not slide with each repeat); other text, or the same later, is a new intent with a new id;
+    //  - scanEndsWithTab: a Tab ends a scan when the text came in a burst (a keyboard wedge, under 35 ms a key on average);
+    //  - randomId: a UUID from crypto.randomUUID, else from crypto.getRandomValues (randomUUID needs a secure origin, which a
+    //    handheld on a plain http site is not); moqui-html.js has the same rules for the html mode.
+    qvt.scanOutcome = (answer) => {
+        const matches = answer && Array.isArray(answer.matches) ? answer.matches.filter((item) => item && item.id) : [];
+        if (!matches.length) return { kind: "none", matches };
+        return matches.length === 1 ? { kind: "one", match: matches[0], matches } : { kind: "many", matches };
+    };
+    qvt.scanIntent = (last, text, now, makeId, windowMs) => {
+        if (last && last.text === text && now - last.time < (windowMs || 2000)) return { text, id: last.id, time: last.time, repeat: true };
+        return { text, id: makeId(), time: now, repeat: false };
+    };
+    qvt.scanEndsWithTab = (length, firstKeyTime, now) => length >= 3 && firstKeyTime > 0 && (now - firstKeyTime) / length < 35;
+    moqui.randomId = () => {
+        const crypto = root.crypto;
+        if (crypto && crypto.randomUUID) return crypto.randomUUID();
+        if (!crypto || !crypto.getRandomValues) throw new Error("no crypto.getRandomValues for a random id");
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+    };
+    qvt.scanId = () => moqui.randomId();
+    qvt.scanMatchText = (match) => [match.label || match.id, match.detail].filter(Boolean).join(" · ");
+
+    // Enter, or a scanner's quick Tab, posts the text to resolve-url (the screen's scanResolve transition) with resolve-parameters,
+    // the depends-on fields and the scan intent's id. A new intent first clears what the last one put in the form (the id,
+    // name_type, name_scanText, the scan-id-field and a match waiting for Confirm), and an answer for an intent that is no longer
+    // the current one is dropped. One match fills the field with its id, name_type, name_scanText and the scan-id-field, and
+    // submits the form (auto-submit false: it does not). With confirm the match waits under the field with a Confirm button and
+    // the focus stays in the field: Enter on the same text, or the button, confirms; other text is a new scan. Several open the
+    // chooser (the number keys or a click pick one, Escape goes back); none is named under the field, the text selected for the
+    // next scan. A double scan of the intent filled or in flight says Already scanned. After a submit the text clears and the field
+    // keeps the focus; an answer without errors for the form clears the scan's fields, so a later submit of the form does not
+    // reuse the scan id as its operation key. Outside a form it emits update:modelValue with the id. It emits resolved with
+    // {match, parsed, scanId, scanText} for a .qvue host.
+    component("m-scan-input", {
+        name: "mScanInput",
+        mixins: [fieldMixin],
+        props: { modelValue: [String, Number], name: String, id: String, label: String, form: String, tooltip: String, disable: Boolean,
+            resolveUrl: String, resolveParameters: Object, dependsOn: Object, allowedTypes: String, scanIdField: { type: String, default: "scanId" },
+            autoSubmit: { type: Boolean, default: true }, confirm: Boolean, placeholder: String, size: String, maxlength: String, fields: Object },
+        emits: ["update:modelValue", "resolved"],
+        data() {
+            return { text: "", loading: false, message: "", messageType: "", matches: [], chooser: false, pending: null, done: null, last: null,
+                firstKey: 0, parsed: null };
+        },
+        template:
+            '<div class="m-scan-input">' +
+                '<q-input ref="input" dense outlined stack-label hide-bottom-space :label="label || undefined" :model-value="text" @update:model-value="onInput"' +
+                        ' :for="id" :name="name + \'_scanText\'" :form="form" :size="size" :maxlength="maxlength" :disable="disable" :loading="loading"' +
+                        ' :placeholder="placeholder || L(\'Scan or type\')" :bg-color="bg" autocomplete="off" autocapitalize="off" spellcheck="false"' +
+                        ' input-class="m-scan-text" @keydown="onKey" v-bind="errorAttrs">' +
+                    '<template v-slot:prepend><q-icon name="sym_o_barcode_scanner" size="xs"></q-icon></template>' +
+                    '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip>' +
+                '</q-input>' +
+                '<div v-if="message" class="m-scan-message text-caption" :class="messageType ? \'text-\' + messageType : \'m-muted\'" role="status">{{message}}</div>' +
+                '<div v-if="pending" class="m-scan-confirm row items-center q-gutter-sm q-mt-xs">' +
+                    '<div class="col text-body2">{{matchText(pending.match)}}</div>' +
+                    '<q-btn unelevated no-caps color="primary" icon="check" :label="L(\'Confirm\')" @click="confirmPending"></q-btn>' +
+                    '<q-btn flat no-caps :label="L(\'Cancel\')" @click="cancel"></q-btn>' +
+                '</div>' +
+                '<q-dialog v-model="chooser" @hide="onChooserHide"><q-card class="m-scan-chooser" style="min-width:300px;max-width:520px;">' +
+                    '<q-card-section class="text-subtitle1">{{L(\'Which one?\')}} <span class="text-mono">{{last ? last.text : \'\'}}</span></q-card-section>' +
+                    '<q-list separator>' +
+                        '<q-item v-for="(match, index) in matches" :key="match.identityType + \':\' + match.id" clickable @click="choose(match)" class="m-scan-choice">' +
+                            '<q-item-section avatar v-if="index < 9"><q-badge outline color="primary">{{index + 1}}</q-badge></q-item-section>' +
+                            '<q-item-section><q-item-label>{{match.label || match.id}}</q-item-label>' +
+                                '<q-item-label v-if="match.detail" caption>{{match.detail}}</q-item-label></q-item-section>' +
+                            '<q-item-section side v-if="match.identityType"><q-chip dense square class="m-tonal">{{match.identityType}}</q-chip></q-item-section>' +
+                        '</q-item>' +
+                    '</q-list>' +
+                    '<q-card-actions align="right"><q-btn flat no-caps :label="L(\'Cancel\')" v-close-popup></q-btn></q-card-actions>' +
+                '</q-card></q-dialog>' +
+            '</div>',
+        watch: {
+            chooser(open) {
+                if (open) root.document.addEventListener("keydown", this.onChooserKey, true);
+                else root.document.removeEventListener("keydown", this.onChooserKey, true);
+            }
+        },
+        methods: {
+            L(text) { return moqui.l10n ? moqui.l10n.localize(text) : text; },
+            matchText(match) { return qvt.scanMatchText(match); },
+            onInput(value) {
+                this.text = value === null || value === undefined ? "" : String(value);
+                if (!this.text) this.firstKey = 0;
+                else if (!this.firstKey) this.firstKey = Date.now();
+            },
+            focus() {
+                this.$nextTick(() => {
+                    const input = this.$refs.input;
+                    if (input && input.focus) input.focus();
+                    if (input && input.select) input.select();
+                });
+            },
+            onKey(event) {
+                if (this.chooser) return;
+                const tabEnds = event.key === "Tab" && !event.shiftKey && qvt.scanEndsWithTab(this.text.length, this.firstKey, Date.now());
+                if (event.key === "Escape" && this.pending) { event.preventDefault(); this.cancel(); return; }
+                if (event.key !== "Enter" && !tabEnds) return;
+                event.preventDefault();
+                event.stopPropagation();
+                this.firstKey = 0;
+                const text = this.text.trim();
+                // a match waiting for Confirm: Enter on its text (or on nothing) confirms it, other text is a new scan
+                if (this.pending && (!text || text === this.pending.intent.text)) { this.confirmPending(); return; }
+                this.resolve(text);
+            },
+            // the scan's fields in the form, empty: before a new intent, and after the form's answer took the scan
+            clearScan() {
+                const form = this.mForm;
+                if (form && form.fields) {
+                    form.fields[this.name] = "";
+                    form.fields[this.name + "_type"] = "";
+                    form.fields[this.name + "_scanText"] = "";
+                    form.fields[this.scanIdField || "scanId"] = "";
+                }
+            },
+            resolve(text) {
+                if (!text || this.disable) return;
+                const intent = qvt.scanIntent(this.last, text, Date.now(), qvt.scanId);
+                if (intent.repeat && (this.loading || this.done === intent.id || this.pending)) {
+                    // the code was taken: the field is ready for the next one
+                    this.say(this.L("Already scanned") + " " + text, "warning");
+                    this.text = "";
+                    this.focus();
+                    return;
+                }
+                this.last = intent;
+                this.pending = null;
+                this.done = null;
+                this.chooser = false;
+                this.clearScan();
+                if (!this.mForm) this.$emit("update:modelValue", "");
+                const { reqData } = dependsValues({ fields: this.fields || (this.mForm && this.mForm.fields) }, this.dependsOn, this.resolveParameters);
+                Object.assign(reqData, { scanText: text, scanId: intent.id });
+                this.loading = true;
+                this.message = "";
+                moqui.request(this.resolveUrl, { method: "POST", params: reqData }).then((result) => {
+                    if (!this.isCurrent(intent)) return;
+                    this.loading = false;
+                    this.answered(result.json || {}, intent);
+                }, (err) => {
+                    if (!this.isCurrent(intent)) return;
+                    this.loading = false;
+                    const errors = err && err.json && err.json.errors;
+                    this.say(errors ? String(errors) : this.L("The scan could not be resolved"), "negative");
+                    this.focus();
+                });
+            },
+            // a late answer, for an intent a newer scan replaced, is dropped
+            isCurrent(intent) { return !!this.last && this.last.id === intent.id; },
+            answered(answer, intent) {
+                const outcome = qvt.scanOutcome(answer);
+                this.parsed = answer.parsed || null;
+                if (outcome.kind === "none") {
+                    const types = this.allowedTypes ? " (" + this.allowedTypes.split(",").join(", ") + ")" : "";
+                    this.say(this.L("No match for") + " " + intent.text + types, "negative");
+                    this.focus();
+                } else if (outcome.kind === "one") this.accept(outcome.match, intent);
+                else {
+                    this.matches = outcome.matches;
+                    this.chooser = true;
+                    this.say(outcome.matches.length + " " + this.L("matches"), "warning");
+                }
+            },
+            choose(match) {
+                this.chooser = false;
+                if (this.last) this.accept(match, this.last);
+            },
+            // the chooser closed without a choice: back to the field, unless the current intent was filled or waits for Confirm
+            onChooserHide() { if (!this.pending && !(this.last && this.done === this.last.id)) this.focus(); },
+            // the number keys pick in the chooser, 1 for the first
+            onChooserKey(event) {
+                if (!this.chooser || !/^[1-9]$/.test(event.key)) return;
+                const match = this.matches[Number(event.key) - 1];
+                if (!match) return;
+                event.preventDefault();
+                this.choose(match);
+            },
+            say(text, type) { this.message = text; this.messageType = type || ""; },
+            accept(match, intent) {
+                if (this.confirm) {
+                    // the match waits; the focus stays in the field, so a next scan is a scan and not a Confirm
+                    this.pending = { match, intent };
+                    this.say(this.L("Enter or Confirm to take it"), "");
+                    this.focus();
+                    return;
+                }
+                this.fill(match, intent);
+            },
+            confirmPending() {
+                const pending = this.pending;
+                if (!pending || !this.isCurrent(pending.intent)) return;
+                this.pending = null;
+                this.fill(pending.match, pending.intent);
+            },
+            cancel() {
+                this.pending = null;
+                this.say("");
+                this.focus();
+            },
+            fill(match, intent) {
+                this.done = intent.id;
+                const form = this.mForm;
+                if (form && form.fields) {
+                    form.fields[this.name] = match.id;
+                    form.fields[this.name + "_type"] = match.identityType || "";
+                    form.fields[this.name + "_scanText"] = intent.text;
+                    form.fields[this.scanIdField || "scanId"] = intent.id;
+                }
+                this.$emit("update:modelValue", match.id);
+                this.$emit("resolved", { match, parsed: this.parsed || null, scanId: intent.id, scanText: intent.text });
+                this.say(qvt.scanMatchText(match), "positive");
+                if (this.autoSubmit && form && form.submitForm) {
+                    this.$nextTick(() => {
+                        form.submitForm();
+                        this.text = "";
+                        this.focus();
+                    });
+                } else this.focus();
+            },
+            // the form's answer: one without errors took the scan, so its fields go and a later submit carries no scan id
+            onFormAnswer(answer) {
+                if (answer && answer.ok && answer.form === this.mForm && this.done) this.clearScan();
+            }
+        },
+        created() { this.offFormAnswer = moqui.onFormAnswer((answer) => this.onFormAnswer(answer)); },
+        beforeUnmount() {
+            root.document.removeEventListener("keydown", this.onChooserKey, true);
+            if (this.offFormAnswer) this.offFormAnswer();
+        },
+        mounted() {
+            // a scan field takes the focus when nothing else on the page has it (a handheld task keeps scan focus)
+            // (at once, not on the next tick, so a second scan field mounted after it sees the focus taken)
+            const active = root.document.activeElement;
+            const input = this.$refs.input;
+            if ((!active || active === root.document.body) && input && input.focus) input.focus();
         }
     });
 
@@ -8282,17 +8546,18 @@
         "<q-layout view=\"hHh LpR fFf\">\n" +
         // the header's colors are the --m-header-bg and --m-header-fg tokens of the style sheet (a color scheme sets them)
         "    <q-header bordered id=\"top\"><q-toolbar dense>\n" +
-        "        <q-btn flat round dense icon=\"menu\" :aria-label=\"labels.menu\" @click=\"toggleLeftOpen()\"></q-btn>\n" +
+        // a handheld screen (density="handheld") has no drawer: no menu button, and the header is the title and the account alone
+        "        <q-btn v-if=\"!handheld\" flat round dense icon=\"menu\" :aria-label=\"labels.menu\" @click=\"toggleLeftOpen()\"></q-btn>\n" +
         // the launcher: the theme's logo, a link to the all-applications screen (the AppList) — the app grid it chose from before was a
         // second left menu, and the page carries the same choice with more
-        "        <q-btn flat dense no-caps id=\"m-launcher\" class=\"q-mx-xs\" :aria-label=\"labels.allApplications\" @click=\"setUrl(linkBasePath + '/AppList')\">\n" +
+        "        <q-btn v-if=\"!handheld\" flat dense no-caps id=\"m-launcher\" class=\"q-mx-xs\" :aria-label=\"labels.allApplications\" @click=\"setUrl(linkBasePath + '/AppList')\">\n" +
         "            <img v-if=\"shell.logoUrl\" :src=\"shell.logoUrl\" alt=\"\" height=\"28\"><q-icon v-else name=\"sym_o_apps\"></q-icon>\n" +
         "            <q-tooltip>{{labels.allApplications}}</q-tooltip>\n" +
         "        </q-btn>\n" +
         // the current app's title; the theme's title outside an app (the AppList). In an app the title opens the menu of the
         // app root's subscreens (the top-level screens): the menu the app-root breadcrumb had before the trail started below it.
         // (below 600 px the launcher stands for it: the title is hidden, style-guide §2.2 and §7)
-        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"gt-xs m-app-screens text-subtitle1 text-weight-medium\">\n" +
+        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-subtitle1 text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
         "            {{headerTitle}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "            <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
         "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\">\n" +
@@ -8305,9 +8570,9 @@
         "                </q-item>\n" +
         "            </q-list></q-menu>\n" +
         "        </q-btn>\n" +
-        "        <q-toolbar-title v-else-if=\"headerTitle\" shrink class=\"gt-xs text-subtitle1 text-weight-medium q-pr-sm\">{{headerTitle}}</q-toolbar-title>\n" +
+        "        <q-toolbar-title v-else-if=\"headerTitle\" shrink class=\"text-subtitle1 text-weight-medium q-pr-sm\" :class=\"handheld ? '' : 'gt-xs'\">{{headerTitle}}</q-toolbar-title>\n" +
         // the screen path from the app root: not the apps root, nor the app root whose title the header shows (style-guide §2.2)
-        "        <q-breadcrumbs id=\"m-breadcrumbs\" class=\"gt-xs\" gutter=\"xs\" separator-color=\"grey-5\" active-color=\"grey-8\">\n" +
+        "        <q-breadcrumbs v-if=\"!handheld\" id=\"m-breadcrumbs\" class=\"gt-xs\" gutter=\"xs\" separator-color=\"grey-5\" active-color=\"grey-8\">\n" +
         "            <template v-for=\"(navMenuItem, menuIndex) in navMenuList\" :key=\"navMenuItem.path || menuIndex\"><template v-if=\"menuIndex >= breadcrumbStart && (menuIndex === navMenuList.length - 1 || navMenuList[menuIndex + 1].title !== navMenuItem.title)\">\n" +
         "                <q-breadcrumbs-el v-if=\"menuIndex === navMenuList.length - 1\" :label=\"navMenuItem.title\" class=\"text-weight-medium\"></q-breadcrumbs-el>\n" +
         "                <q-breadcrumbs-el v-else-if=\"navMenuItem.subscreens && navMenuItem.subscreens.length && !navMenuItem.hasTabMenu\" class=\"cursor-pointer\">\n" +
@@ -8330,6 +8595,7 @@
         "        <q-space></q-space>\n" +
         "\n" +
         // Search opens the palette (Ctrl+K or Cmd+K anywhere); a label and the key from 1024 px, the icon alone below
+        "        <template v-if=\"!handheld\">\n" +
         "        <q-btn flat dense no-caps id=\"m-search\" icon=\"sym_o_search\" :aria-label=\"labels.search\" :round=\"!$q.screen.gt.sm\" :label=\"$q.screen.gt.sm ? labels.search : undefined\" @click=\"openPalette()\">\n" +
         "            <span v-if=\"$q.screen.gt.sm\" class=\"m-kbd q-ml-sm\">{{paletteKeyHint}}</span>\n" +
         "            <q-tooltip>{{labels.search}} ({{paletteKeyHint}})</q-tooltip>\n" +
@@ -8377,6 +8643,7 @@
         "            </q-list></q-menu>\n" +
         "        </q-btn>\n" +
         "\n" +
+        "        </template>\n" +
         // (the screen history is the palette's Recent group)
         "        <q-btn flat round dense id=\"m-account\" :aria-label=\"userFullName || labels.account\">\n" +
         // the user's avatar with their presence dot (the chat store's, design §1.2)
@@ -8427,12 +8694,12 @@
         "        </q-btn>\n" +
         // the Assist toggle, rightmost (WebrootAssist.js, for a user who may use it); its right q-drawer (view LpR) below, the
         // screen context and assistReach its inputs (IronStone impl-drawers-commons R1)
-        "        <m-assist-button v-if=\"assistOn\"></m-assist-button>\n" +
+        "        <m-assist-button v-if=\"assistOn && !handheld\"></m-assist-button>\n" +
         "    </q-toolbar></q-header>\n" +
         "\n" +
         // the screen menu (m-menu-drawer); mini (QUASAR_LEFT_MINI) is a rail of the app icons, its toggle at the foot; below the
         // breakpoint the drawer is an overlay, never a rail, and has no toggle
-        "    <q-drawer v-model=\"leftOpen\" side=\"left\" bordered :width=\"260\" :mini=\"leftMiniShown\" :mini-width=\"56\" :breakpoint=\"1023\">\n" +
+        "    <q-drawer v-if=\"!handheld\" v-model=\"leftOpen\" side=\"left\" bordered :width=\"260\" :mini=\"leftMiniShown\" :mini-width=\"56\" :breakpoint=\"1023\">\n" +
         "        <div class=\"column fit no-wrap\">\n" +
         "            <q-scroll-area class=\"col\"><m-menu-drawer :mini=\"leftMiniShown\"></m-menu-drawer></q-scroll-area>\n" +
         "            <div v-if=\"$q.screen.width > 1023\" class=\"m-drawer-foot\" :class=\"leftMini ? 'flex-center' : 'justify-end'\"><q-btn flat round dense size=\"sm\" color=\"grey-7\"\n" +
@@ -8451,7 +8718,7 @@
         "        <m-call-dock v-if=\"callsOn\"></m-call-dock>\n" +
         "    </q-page-container>\n" +
         "\n" +
-        "    <q-footer bordered id=\"footer\" class=\"text-caption q-pa-xs\" :class=\"$q.dark.isActive ? 'bg-dark text-grey-5' : 'bg-grey-2 text-grey-8'\">\n" +
+        "    <q-footer v-if=\"!handheld\" bordered id=\"footer\" class=\"text-caption q-pa-xs\" :class=\"$q.dark.isActive ? 'bg-dark text-grey-5' : 'bg-grey-2 text-grey-8'\">\n" +
         "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +
         "    </q-footer>\n" +
         "</q-layout>\n" +
@@ -8929,6 +9196,7 @@
                 if (count > 0 && !(before > 0)) this.$q.loadingBar.start();
                 else if (count <= 0 && before > 0) this.$q.loadingBar.stop();
             },
+            screenDensity: { immediate: true, handler(density) { moqui.setScreenDensity(density); } },
             navMenuList(newList) {
                 if (newList.length === 0) return;
                 const cur = newList[newList.length - 1];
@@ -9016,6 +9284,9 @@
                 return item;
             },
             ScreenTitle() { return this.navMenuList.length > 0 ? this.navMenuList[this.navMenuList.length - 1].title : ""; },
+            // the density of the screen shown (handheld, from the density attribute of a screen on the path), over the preference
+            screenDensity() { return moqui.screenDensity(this.navMenuList); },
+            handheld() { return this.screenDensity === "handheld"; },
             // The record of the latest m-screen-context (a record needs an entity and an id), apart from the rest of the screen
             // context so the + menu does not follow every field of every form.
             screenRecord() {

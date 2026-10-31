@@ -166,6 +166,7 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
         "submit": stmt((node) => csv(headerTitle(node.parent))),
         "text-area": textWidget,
         "text-line": textWidget,
+        "scan-input": textWidget,
         "text-find": textWidget
     });
 

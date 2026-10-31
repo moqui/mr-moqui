@@ -1,0 +1,25 @@
+<screen require-authentication="false" density="handheld">
+    <transition name="move"><default-response type="none"/></transition>
+    <actions>
+        <set field="facilityId" value="WH1"/>
+    </actions>
+    <widgets>
+        <!-- a scan that fills assetId and submits, with the facility of the screen and the location field as its context -->
+        <form-single name="Move" transition="move">
+            <field name="locationId"><default-field title="Location"><text-line/></default-field></field>
+            <field name="assetId"><default-field title="Asset">
+                <scan-input resolver="test.ScanServices.resolve#Scan" allowed-types="asset,lot" placeholder="Scan an asset">
+                    <parameter name="facilityId" from="facilityId"/>
+                    <depends-on field="locationId"/>
+                </scan-input>
+            </default-field></field>
+        </form-single>
+        <!-- explicit confirmation, its own scan id name, and no submit of its own -->
+        <form-single name="Count" transition="move">
+            <field name="binId"><default-field title="Bin">
+                <scan-input resolver="test.ScanServices.resolve#Scan" allowed-types="location" confirm="true" auto-submit="false"
+                        scan-id-field="countScanId"/>
+            </default-field></field>
+        </form-single>
+    </widgets>
+</screen>

@@ -19,8 +19,8 @@
      Editor              │
      Message             │
      Views               │
+     Handheld            │
  ▾ Home                  │
-                         │
                          │
                          │
                          │

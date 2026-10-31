@@ -138,6 +138,7 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-text-line`, `m-text-area` | text input. `m-text-line` takes `autocomplete` (`off` by default; the `password` widget writes its `autocomplete` attribute, `new-password` unless it says `current-password`, so the browser does not fill the user's sign-in password into an app password or another user's new one). `m-text-area` with `editor-type` `html` is `QEditor`, `md` is a text area with a Marked preview, and `rich` and `rich-light` are `m-rich-text` (with `mention-url` and `mention-parameters` from `mention-transition`, and `record-url` and `record-parameters` from `record-transition`) |
 | `m-rich-text` | the Tiptap editor (see Rich text below): the `m-*` model contract (`v-model` or `model-value`, `name`, the change tint and field errors in an `m-form`, a hidden input), `light`, `placeholder`, `rows`, `enter` (`newline`, or `submit`: Enter submits the form and emits `submit`, Shift+Enter is a line break; Ctrl+Enter always submits), `mention-url`, `mention-parameters`, `record-url`, `record-parameters`, `plain` (`v-model:plain`, the plain-text toggle), `plain-toggle`, `autofocus`, `disable`, `readonly`; emits `mention` with the `{id, label}` picked |
 | `m-coedit` | `m-rich-text` on a shared Yjs document (see Collaborative editing below): `doc-key` (required, `WikiPage:100023`), `placeholder`, `rows`, `light`, `readonly`, `user-name` (the page's `userFullName`), `user-color` (`#rrggbb`, else one of the user id); other attributes go to the editor. Emits `status`, `saved` and `fallback`; `html()` is the editor's HTML |
+| `m-scan-input` | the `scan-input` element (see Scan input below): `resolve-url` (the screen's `scanResolve`), `resolve-parameters`, `depends-on`, `allowed-types`, `scan-id-field`, `auto-submit`, `confirm`, `placeholder`; in an `m-form` it fills `name`, `name_type`, `name_scanText` and the scan id field; emits `update:modelValue` and `resolved` (`{match, parsed, scanId, scanText}`) |
 | `m-drop-down` | `options`, `options-url`, `options-parameters`, `depends-on`, `server-search`, `multiple`, `allow-empty`, `combo`, `submit-on-select`, `options-load-init` |
 | `m-date-time`, `m-date-period` | `QDate` and `QTime` in a popup; period and from-thru. In period mode the field is the base date (`_pdate`) and the period and offset selects (`_period`, `_poffset`) are in the menu of the `event_repeat` button in its append slot, which reads the choice ("Last Month") once made; the `date_range` button switches to from-thru (`_from`, `_thru`) |
 | `m-display` | text or a read-only field (`label-wrapper`), `display`, `value-url` |
@@ -404,6 +405,14 @@ the shell reads: `QUASAR_DARK` (`$q.dark`; `auto` follows the system), `QUASAR_L
 `SHELL_DENSITY` (`moqui.applyDensity`: `compact` puts `m-density-compact` on the body, whose rules in `../css/WebrootVue.qvt.css`
 tighten the page, boxes, list rows, fields and menu items; anything else is the comfortable default) and the `THEME_*` keys of the
 Appearance below. Another key is only kept.
+
+**A screen's density wins over the preference.** `density="handheld"` on a screen (an app root or any screen; the screens below it
+inherit it) is in that screen's entry of the menu data (`density`), and the root's `screenDensity` is that of the deepest screen of
+the path that sets one (`moqui.screenDensity(navMenuList)`). While it is `handheld`, `moqui.setScreenDensity` puts
+`m-density-handheld` on the body (48 px fields, buttons and list rows, 18 px text) and keeps `m-density-compact` off whatever the
+preference says, and the shell draws no drawer, no footer and a header of the title (at every width) and the account menu alone.
+Leaving the screen puts the preference back. The html mode puts `density-handheld` on its body (`sri.getScreenUrlInfo().density`)
+with the same sizes in `moqui-html.css`; the text and tui modes keep the same fields in the same order.
 `moqui.applyPreferences(map)` applies a map. **The server tells the page**: a response to a request that set preferences
 (`ec.user.setPreference`, `set#Preference`) has the header `X-Moqui-Preferences`, the JSON map of what it set (null for a removed
 key) percent-encoded as `encodeURIComponent` encodes; `moqui.request` decodes it and calls `moqui.onPreferences`, which is
@@ -658,6 +667,56 @@ what leaves the views 480 px; kept for the tab): a click on a list row (`data-ro
 `url` with the row's `keyField` and `peek=true` there (`m-dynamic-container`), Up and Down (not in a field) open the previous and next row
 of the view, Escape closes it; Open full goes to the detail. The key is in the URL as `peekId` (`replaceState`, the screen not loaded
 again), so a peeked row is a link; the peeked row is the list's selected row.
+
+## Scan input
+
+The `scan-input` form field (`xml-form-3.xsd`; IronStone style-guide §8.1, Warehouse WH-SCAN) is a field for a keyboard-wedge
+barcode scanner and for typed codes. Its `resolver` names a service; the client never names it. Every screen has the implicit
+transition **`scanResolve`** (`crates/moqui-core/src/screen/scan.rs`, the screen's view authorization). It is a read, so it takes
+any method, as a `dynamic-options` transition does: the browser clients POST, which must carry the session token, and the
+terminal client searches it with a GET. It takes `scanForm` and `scanField`, finds that `scan-input` in the assembled form, and
+calls its resolver with:
+
+| In | What |
+|---|---|
+| `scanText` | the text scanned or typed, its trailing line ends cut (`term`, a drop-down client's search, stands for it) |
+| `allowedTypes` | the field's `allowed-types` as a List, empty for any |
+| `scanId` | the client's id of the scan intent |
+| the `parameter` and `depends-on` names | the screen's context (facility, task) and the form fields the field names; no other request value |
+
+**The resolver must check everything again.** The form does not protect it: it runs for any request that names the form and
+field, also where a `conditional-field` or a section's condition leaves the field out of the page, and the `parameter` values it
+gets are client input (the values the screen rendered, sent back by the page). A resolver checks the user's permission and the
+facility, task and other context itself.
+
+The resolver answers `matches`, a List of `{identityType, id, label, detail}`, and `parsed`, the GS1 fields of the text as
+`ec.resource.parseGs1` answers them ([Barcodes](../data/Barcodes.md); `moqui_lib::barcode::Gs1Data::to_value`). The transition
+answers JSON `{scanId, scanText, matches, parsed, options}`: the matches of the allowed types with an id (at most 50, a label
+defaulting to the id), `parsed` from the resolver or, when it answered none and the text parses, from the framework's GS1 parse,
+and the matches again as drop-down `options` (`value`, `label`). The resolver's own errors are a 400 with them; no such field is a
+404. The scan inputs of one form need distinct `scan-id-field` names: assembling a form whose scans share one logs an error, and
+`scanResolve` refuses it with a 400.
+
+`m-scan-input`: Enter, or a Tab that ends a burst of keys (a scanner, under 35 ms a key on average: `qvt.scanEndsWithTab`), posts
+the text. **Scan intent:** each scan gets an id (`moqui.randomId`: `crypto.randomUUID`, else a version 4 UUID from
+`crypto.getRandomValues`, since `randomUUID` needs a secure origin); the same text again within 2 s of its first scan is a double
+scan, the same intent with the same id (`qvt.scanIntent`), and while that intent is in flight or filled the field says Already
+scanned. A new intent first clears what the last one put in the form (the id, `name_type`, `name_scanText`, the scan id and a match
+waiting for Confirm), and an answer for an intent that is no longer the current one is dropped. One match fills `name` with its id,
+`name_type` with its identityType, `name_scanText` with the text and the `scan-id-field` (`scanId`) with the intent's id, and
+submits the form; with `auto-submit="false"` the form's own submit does. With `confirm` the match waits under the field with a
+Confirm button while the focus stays in the field: Enter on the same text, or the button, confirms; other text is a new scan.
+Several matches open a chooser (a click or the number keys); none is named under the field, the text selected for the next scan.
+After a submit the field clears and keeps the focus, and an answer without errors for the form empties the scan's fields, so a
+later submit of the form (another quantity, say) carries no scan id and is not answered as the scan's operation. The field takes
+the focus on mount when nothing else has it.
+
+A transition passes the scan id on as its operation key, so a double scan or a second Confirm that does reach it answers the first;
+the key is chosen by the client, so its lookup is scoped to the user. It reads the GS1 fields again from `name_scanText` rather than
+trusting values the page parsed. The html mode writes a text input (`name_scanText`) with hidden id, type and scan id inputs that
+`moqui-html.js` posts to the same transition with the same rules (the hidden inputs filled only when a match is taken; without
+JavaScript the text posts alone); the tui mode a drop-down searching `scanResolve` with a hidden scan id made when the screen
+rendered. The gallery's Handheld screen shows both forms of it.
 
 ## Layout panels: split, wizard and stack
 

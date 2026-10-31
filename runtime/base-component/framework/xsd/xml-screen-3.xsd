@@ -112,6 +112,16 @@ along with this software (see the LICENSE.md file). If not, see
                 modes include: text, html, html-print (alias xsl-fo), xml, csv, qvt, qjs, qvue and tui. Values can be comma separated to apply to multiple render modes.
             </xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="density">
+            <xs:annotation><xs:documentation>
+                The density of the screen and the screens below it in the qvt shell. handheld is for a warehouse or plant
+                handheld or a phone held in one hand (IronStone style guide 8.2): 48 px controls, 18 px text, no app drawer,
+                and a header reduced to the title and the account menu. It wins over the user's comfortable or compact density
+                preference, which applies everywhere else. The html mode puts the same class on its body; the text and tui
+                modes keep the same fields in the same order.
+            </xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="handheld"/></xs:restriction></xs:simpleType>
+        </xs:attribute>
         <xs:attribute name="server-static" type="xs:string">
             <xs:annotation><xs:documentation>
                 The render modes where the results of this screen are always the same and the screen render results may be cached (on server and/or client).

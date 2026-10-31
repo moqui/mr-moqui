@@ -9,7 +9,7 @@ const password = params.password ?? "moqui"
 const screens = [
     "Landing", "List", "Detail", "Record360", "Task", "Board", "Calendar", "Split", "Settings", "Wizard",
     "Dialog", "Report", "Panel", "Widgets", "Editor", "QuickNote", "QuickTask", "Chatter", "RecordFiles",
-    "Message", "Views", "Search",
+    "Message", "Views", "Search", "Handheld",
 ]
 
 let page

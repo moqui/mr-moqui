@@ -271,6 +271,32 @@
             w("<input" + A(attrs) + ">");
         };
 
+        // A scan field (scan-input): a text input that moqui-html.js posts to the scanResolve transition of this screen on Enter
+        // (or a scanner's quick Tab). One match fills the hidden id, type and scan id inputs and submits the form; several are
+        // offered as buttons in the result line; none is named there and the input keeps the focus. Without JavaScript the
+        // text posts as name_scanText.
+        const scanInput = (n) => {
+            const id = fid(n);
+            const name = fnm(n);
+            const remoteAttrs = remote(n, "scanResolve");
+            const params = Object.assign({ scanForm: at(fieldOf(n).parent, "name"), scanField: fname(n) }, JSON.parse(remoteAttrs["data-params"] || "{}"));
+            const scanIdField = at(n, "scan-id-field") || "scanId";
+            w("<span" + A({
+                class: "scan-input", "data-scan-url": remoteAttrs["data-url"], "data-params": json(params), "data-depends": remoteAttrs["data-depends"],
+                "data-allowed": at(n, "allowed-types") || null, "data-scan-id-field": scanIdField,
+                "data-no-submit": at(n, "auto-submit") === "false" ? true : null, "data-confirm-scan": at(n, "confirm") === "true" ? true : null
+            }) + ">");
+            w("<input" + A({
+                type: "text", id, name: name + "_scanText", value: "", size: at(n, "size") || null, maxlength: at(n, "maxlength") || null,
+                "data-wide": at(n, "size") ? null : true, placeholder: at(n, "placeholder") ? L(x(at(n, "placeholder"))) : L("Scan or type"),
+                autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-scan": true, title: tip(n), form: owner()
+            }) + ">");
+            w("<input" + A({ type: "hidden", name, value: sri.getFieldValueString(n), form: owner() }) + ">");
+            w("<input" + A({ type: "hidden", name: name + "_type", value: "", form: owner() }) + ">");
+            w("<input" + A({ type: "hidden", name: scanIdField, value: "", form: owner() }) + ">");
+            w('<span class="scan-result" aria-live="polite"></span></span>');
+        };
+
         const textArea = (n) => {
             const editor = at(n, "editor-type");
             // rich and rich-light have no Tiptap here: the note is the cleaned HTML, edited in the div. moqui-html.js copies
@@ -1669,7 +1695,7 @@
 
         const h = {
             reset, enter, leave, e, lib, fid, fnm,
-            textLine, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
+            textLine, scanInput, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
             dropDown, check: (n) => checkOrRadio(n, "checkbox"), radio: (n) => checkOrRadio(n, "radio"), display, displayEntity,
             image, label, link, editable, containerDialog, dynamicDialog, dynamicContainer, tree,
             subscreensMenu, subscreensPanel, formOpen, formClose, fieldOpen, fieldClose, rowOpen, colOpen, fieldGroup, fieldGroupClose,
@@ -2238,7 +2264,8 @@
         "submit": submitMacro,
         "text-area": widget("textArea", false),
         "text-find": widget("textFind", false),
-        "text-line": widget("textLine", true)
+        "text-line": widget("textLine", true),
+        "scan-input": widget("scanInput", true)
     });
 
     // button-menu hands the macros of its items to its own macro, which writes them in list items.

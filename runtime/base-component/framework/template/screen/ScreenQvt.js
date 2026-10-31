@@ -360,6 +360,12 @@
                 if (xn(at(widget, "show-not")) === "true") out[name + "_not"] = ctx(name + "_not") || "N";
             } else if (kind === "text-line" || kind === "text-area" || kind === "lookup") {
                 out[name] = sri.getFieldValueString(widget);
+            } else if (kind === "scan-input") {
+                // the id a scan resolves to and its companions, which m-scan-input fills for each scan
+                out[name] = sri.getFieldValueString(widget);
+                out[name + "_type"] = "";
+                out[name + "_scanText"] = "";
+                out[at(widget, "scan-id-field") || "scanId"] = "";
             } else if (kind === "check") {
                 if (xn(at(widget, "all-checked")) === "true") out[name] = Array.from(sri.getFieldOptions(widget).keys());
                 else out[name] = current || [];
@@ -518,6 +524,24 @@
                 });
             }
             w("<m-text-line" + A(Object.assign(attrs, bind(name, value))) + "></m-text-line>");
+        };
+
+        // A scan field (scan-input): m-scan-input posts the text to the scanResolve transition of this screen, which runs the
+        // resolver the screen names for this form and field, with the parameter children (the screen's context) and the
+        // depends-on fields. It fills the field with the id of one match and its companions (name_type, name_scanText and the
+        // scan-id-field), and submits the form; several matches open its chooser.
+        const scanInput = (n) => {
+            const name = fnm(n);
+            const remoteInfo = remote(n, "scanResolve");
+            const params = Object.assign({ scanForm: at(fieldOf(n).parent, "name"), scanField: fname(n) }, remoteInfo.params);
+            const placeholder = at(n, "placeholder") ? L(x(at(n, "placeholder"))) : null;
+            w("<m-scan-input" + A(Object.assign({
+                name, id: fid(n), label: label(n), form: owner(), disable: st.disabled || null, tooltip: tip(n),
+                "resolve-url": remoteInfo.url, ":resolve-parameters": js_(params), ":depends-on": remoteInfo.hasDepends ? js_(remoteInfo.dependsOn) : null,
+                "allowed-types": at(n, "allowed-types") || null, "scan-id-field": at(n, "scan-id-field") || null,
+                ":auto-submit": at(n, "auto-submit") === "false" ? "false" : null, confirm: at(n, "confirm") === "true" ? true : null,
+                placeholder, size: at(n, "size") || null, maxlength: at(n, "maxlength") || null
+            }, bindOnly(name, sri.getFieldValueString(n)))) + "></m-scan-input>");
         };
 
         // A text area; editor-type rich or rich-light is the Tiptap editor of m-rich-text (inside m-text-area), whose mentions
@@ -2182,7 +2206,7 @@
 
         const h = {
             reset, enter, leave, push, pop, e, t, A, cls, at, x, xn, nodeId, cond, fid, fnm, fieldRef, st,
-            textLine, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
+            textLine, scanInput, textArea, password, file, hidden, reset_, submit, dateTime, dateFind, datePeriod, rangeFind, textFind,
             dropDown, check: (n) => checkOrRadio(n, "checkbox"), radio: (n) => checkOrRadio(n, "radio"), display: displayWidget, displayEntity,
             image, label: labelWidget, link, editable, containerDialog, dynamicDialog, dynamicContainer, tree,
             subscreensTabs, subscreensPanel, formOpen, formClose, fieldBox, rowOpen, colOpen, fieldGroup, fieldGroupClose,
@@ -2853,7 +2877,8 @@
         "submit": submitMacro,
         "text-area": widget("textArea", false),
         "text-find": widget("textFind", false),
-        "text-line": widget("textLine", true)
+        "text-line": widget("textLine", true),
+        "scan-input": widget("scanInput", true)
     });
 
     // button-menu hands the macros of its items to its own macro. The row-selection actions are forms whose code

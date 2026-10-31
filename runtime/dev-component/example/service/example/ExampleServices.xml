@@ -139,4 +139,44 @@
             for (const match of found) if (!mentionIds.includes(match[1])) mentionIds.push(match[1])
         ]]></script></actions>
     </service>
+
+    <!-- The scan resolver of the gallery's Handheld screen (screen/Gallery/Handheld.xml, scan-input resolver; the contract is in
+        docs/ui/Qvt-Client.md, Scan input): an inline list of assets, locations, lots and products, since the gallery has no
+        warehouse entities. A code matches an id exactly (case aside); DUP-1 is both an asset and a lot, so it opens the
+        chooser; a GS1 code reads its GTIN (01) as a product and its batch (10) as a lot through ec.resource.parseGs1, which
+        is also the parsed answer. A real resolver checks the user's facility and permissions here. Nothing is written. -->
+    <service verb="resolve" noun="GalleryScan">
+        <in-parameters>
+            <parameter name="scanText" required="true"/>
+            <parameter name="allowedTypes" type="List"/>
+            <parameter name="scanId"/>
+            <parameter name="facilityId"/>
+        </in-parameters>
+        <out-parameters><parameter name="matches" type="List"/><parameter name="parsed" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const where = facilityId || 'any facility'
+            const known = [
+                { identityType: 'asset', id: 'A-100', label: 'Red widget, large', detail: 'A-03-12 · 4 on hand' },
+                { identityType: 'asset', id: 'A-101', label: 'Blue widget, large', detail: 'A-03-14 · 2 on hand' },
+                { identityType: 'asset', id: 'DUP-1', label: 'Gadget, standard', detail: 'A-04-01 · 12 on hand' },
+                { identityType: 'lot', id: 'DUP-1', label: 'Lot DUP-1', detail: 'Gadget, standard · expires 2027-03-31' },
+                { identityType: 'lot', id: 'LOT-7', label: 'Lot LOT-7', detail: 'Red widget, large · expires 2026-12-31' },
+                { identityType: 'location', id: 'A-03-12', label: 'Bin A-03-12', detail: 'Pick face · ' + where },
+                { identityType: 'location', id: 'B-01-07', label: 'Bin B-01-07', detail: 'Reserve · ' + where },
+                { identityType: 'product', id: 'WIDGET-RED-L', label: 'Red widget, large', detail: 'GTIN 04006381333931' }
+            ]
+            const text = String(scanText || '').trim()
+            let wanted = [text.toUpperCase()]
+            parsed = null
+            try {
+                parsed = ec.resource.parseGs1(text)
+                const ais = parsed.applicationIdentifiers || {}
+                wanted = []
+                if (ais['01'] === '04006381333931') wanted.push('WIDGET-RED-L')
+                if (ais['10']) wanted.push(String(ais['10']).toUpperCase())
+            } catch (err) { /* not a GS1 code: the text is an id */ }
+            const types = allowedTypes && allowedTypes.length ? allowedTypes : null
+            matches = known.filter((item) => wanted.includes(item.id) && (!types || types.includes(item.identityType)))
+        ]]></script></actions>
+    </service>
 </services>

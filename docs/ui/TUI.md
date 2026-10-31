@@ -245,7 +245,9 @@ tmux, screen, job control and ssh escapes are left alone. F1 lists the keys in u
 | Ctrl+Q | Quit, after asking if a form changed |
 
 In a drop-down list, typing narrows it, Up and Down move, Enter picks and Esc closes; a search drop-down (an
-`ac-transition` text line, or `server-search`) asks the server for what is typed once the typing stops. In the date
+`ac-transition` text line, or `server-search`) asks the server for what is typed once the typing stops. A `scan-input` is a
+search drop-down over its screen's `scanResolve` transition: the code typed or scanned is the search, its matches the choices,
+and the form posts the id with a scan id the screen made when it rendered ([Qvt-Client](Qvt-Client.md#scan-input)). In the date
 picker the arrows move a day or a week, PgUp and PgDn a month, Home is today and Enter picks.
 
 A list row with fields (a list with a `transition`) opens in the row editor with Enter or `e`: its fields under their

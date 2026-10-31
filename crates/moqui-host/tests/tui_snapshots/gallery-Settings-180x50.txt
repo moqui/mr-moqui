@@ -18,8 +18,8 @@
      Editor              │ │ Enumerations  Types                                                                                                                                  │
      Message             │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Views               │ ┌─ Status flows ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
- ▾ Home                  │ │ The statuses a record moves through and the transitions between them.                                                                                │
-                         │ │ Status flows  Status items                                                                                                                           │
+     Handheld            │ │ The statuses a record moves through and the transitions between them.                                                                                │
+ ▾ Home                  │ │ Status flows  Status items                                                                                                                           │
                          │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
                          │ General
                          │ ┌─ Organization and defaults ─────────────────────────────────────────────┐ ┌─ Geo types (an enumeration, auto-fields-entity) ─────────────────────────┐

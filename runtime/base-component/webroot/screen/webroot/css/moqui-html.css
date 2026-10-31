@@ -485,3 +485,22 @@ a[data-app-tile] > img { width: 32px; height: 32px; object-fit: contain; }
 /* Report frames and telemetry preserve full export text while folding long visible log lines. */
 .m-report-log-message { display: block; max-width: 40rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-report-export-only { display: none; }
+
+/* scan-input: the text field and the line under it that names the match, the choices or the failure (moqui-html.js) */
+.scan-input { display: inline-flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.scan-input input[data-scan] { font-family: ui-monospace, "Courier New", monospace; }
+.scan-result:empty { display: none; }
+.scan-result[data-type="danger"] { color: var(--danger); }
+.scan-result[data-type="success"] { color: var(--success); }
+.scan-result .scan-choice, .scan-result .scan-confirm { margin: 2px 4px 2px 0; }
+
+/* density="handheld" on a screen of the path (the body class density-handheld): 48 px controls and 18 px text, the header
+   reduced to the title and the account, no menus beside the page */
+body.density-handheld { font-size: 18px; }
+html:has(body.density-handheld) { font-size: 18px; }
+.density-handheld input, .density-handheld select, .density-handheld textarea, .density-handheld button,
+    .density-handheld [data-btn]:not([data-btn="plain"]) { min-height: 48px; font-size: 18px; }
+.density-handheld [data-btn]:not([data-btn="plain"]):not([data-size]) { padding: 10px 16px; font-size: 18px; }
+.density-handheld .navbar #header-menus, .density-handheld .navbar #navbar-menu-crumbs, .density-handheld #history-menu,
+    .density-handheld .navbar .nav-toggle, .density-handheld #footer { display: none; }
+.density-handheld .navbar #navbar-buttons { display: flex; flex-wrap: nowrap; }

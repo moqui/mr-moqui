@@ -9,7 +9,7 @@ const galleryScreens = [
     ["Landing", "qvt"], ["List", "qvt"], ["Detail", "qvt"], ["Record360", "qvt"], ["Task", "qvt"],
     ["Board", "qvue"], ["Calendar", "qvue"], ["Split", "qvt"], ["Settings", "qvt"], ["Wizard", "qvt"],
     ["Dialog", "qvt"], ["Report", "qvt"], ["Panel", "qvt"], ["Widgets", "qvt"], ["Editor", "qvt"], ["QuickNote", "qvt"], ["QuickTask", "qvue"],
-    ["Chatter", "qvt"], ["RecordFiles", "qvt"], ["Message", "qvt"], ["Views", "qvt"], ["Search", "qvt"],
+    ["Chatter", "qvt"], ["RecordFiles", "qvt"], ["Message", "qvt"], ["Views", "qvt"], ["Search", "qvt"], ["Handheld", "qvt"],
 ]
 
 spec({
@@ -76,6 +76,40 @@ feature("gallery screen #name renders in tui as one document without errors", {
         doc.v == 1
         errors.length == 0
         str.errorMessages.length == 0
+    },
+})
+
+// The Handheld screen (density="handheld", scan-input): the scan fields over the screen's scanResolve transition, which runs
+// the gallery resolver with the field's allowed types: one match, two (the chooser), none, a GS1 code read into its product and
+// lot with the parsed fields, and the put-away field that takes bins only.
+feature("the Handheld screen's scan fields resolve through its scanResolve transition", {
+    expect() {
+        const gallery = () => ec.screen.makeTest().rootScreen("component://example/screen/Gallery.xml").renderMode("qvt")
+        const page = gallery().render("Handheld", { lastStandalone: "-2" }, null)
+        const scan = (form, field, text) => {
+            const str = gallery().render("Handheld/scanResolve", { scanForm: form, scanField: field, scanText: text, scanId: "G-1",
+                facilityId: "ZIRET_WH" }, "post")
+            return JSON.parse(str.output)
+        }
+        const one = scan("ScanAnything", "itemId", "a-100")
+        const two = scan("ScanAnything", "itemId", "DUP-1")
+        const none = scan("ScanAnything", "itemId", "NOPE")
+        const gs1 = scan("ScanAnything", "itemId", "(01)04006381333931(10)LOT-7")
+        const bin = scan("PutAway", "binId", "DUP-1")
+        const binOk = scan("PutAway", "binId", "B-01-07")
+        page.status == 200
+        page.output.includes('<m-scan-input name="itemId" id="ScanAnything_itemId"')
+        page.output.includes("'scanForm':'ScanAnything','scanField':'itemId','facilityId':'ZIRET_WH'")
+        page.output.includes('scan-id-field="binScanId"')
+        one.matches.length == 1
+        one.matches[0].id == "A-100"
+        one.scanId == "G-1"
+        two.matches.map((item) => item.identityType).join(",") == "asset,lot"
+        none.matches.length == 0
+        gs1.matches.map((item) => item.id).join(",") == "LOT-7,WIDGET-RED-L"
+        gs1.parsed.applicationIdentifiers["10"] == "LOT-7"
+        bin.matches.length == 0
+        binOk.matches[0].detail == "Reserve · ZIRET_WH"
     },
 })
 

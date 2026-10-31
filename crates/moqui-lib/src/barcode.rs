@@ -566,6 +566,35 @@ pub struct Gs1Data {
     pub human_readable: String,
 }
 
+impl Gs1Data {
+    /// The parse as scripts see it (`ec.resource.parseGs1`, the `parsed` of a scan): `elements` in order as
+    /// `{applicationIdentifier, value}`, `applicationIdentifiers` by AI, `elementString` and `humanReadable`.
+    pub fn to_value(&self) -> crate::object::Value {
+        use crate::object::Value;
+        let mut identifiers = indexmap::IndexMap::new();
+        let elements = self
+            .elements
+            .iter()
+            .map(|e| {
+                identifiers.insert(e.application_identifier.clone(), Value::String(e.value.clone()));
+                Value::Map(indexmap::IndexMap::from([
+                    (
+                        "applicationIdentifier".to_string(),
+                        Value::String(e.application_identifier.clone()),
+                    ),
+                    ("value".to_string(), Value::String(e.value.clone())),
+                ]))
+            })
+            .collect();
+        Value::Map(indexmap::IndexMap::from([
+            ("elements".to_string(), Value::List(elements)),
+            ("applicationIdentifiers".to_string(), Value::Map(identifiers)),
+            ("elementString".to_string(), Value::String(self.element_string.clone())),
+            ("humanReadable".to_string(), Value::String(self.human_readable.clone())),
+        ]))
+    }
+}
+
 /// GS1 inventory element strings, with an optional AIM prefix (`]C1`, `]d2`, `]Q3`), ASCII GS, or parenthesized HRI.
 /// The supported AIs are listed in `ai_shape`. AI 00/01/02/410–417 checksums and YYMMDD calendar dates are checked.
 pub fn parse_gs1(input: &str) -> Result<Gs1Data, Error> {

@@ -34,6 +34,7 @@ mod pdf;
 mod public_site;
 mod render;
 pub(crate) mod saved_finds;
+pub(crate) mod scan;
 mod schema;
 mod screen_test;
 pub mod shell;

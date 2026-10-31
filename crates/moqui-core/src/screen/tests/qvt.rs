@@ -91,7 +91,7 @@ fn containers_links_and_labels() {
     // background-* attributes are the m-form's submit-* properties, as a form-single's
     for expected in [
         r#"<m-container-dialog id="TipDlg" color="primary" button-text="" button-icon="sym_o_add" title="" tooltip="Add for Ada">"#,
-        r#"<m-form action="/save" read-only submit-message="Saved Ada" submit-reload-id="Dyn" submit-hide-id="Dlg"><q-btn dense no-caps type="submit" flat class="m-link m-link-left text-primary">Mark done</q-btn></m-form>"#,
+        r#"<m-form action="/save" class="m-link-form" read-only submit-message="Saved Ada" submit-reload-id="Dyn" submit-hide-id="Dlg"><q-btn dense no-caps type="submit" flat class="m-link m-link-left text-primary">Mark done</q-btn></m-form>"#,
     ] {
         assert!(out.contains(expected), "{expected} in {out}");
     }
@@ -1320,4 +1320,45 @@ fn a_status_board_has_the_columns_and_flow_of_the_status_type() {
     ] {
         assert!(out.contains(expected), "{expected} in {out}");
     }
+}
+
+/// `scan-input` (style-guide §8.1, WH-SCAN): an m-scan-input over the screen's scanResolve transition with the form and field
+/// names, the parameter children (evaluated) and the depends-on fields; its companions seeded in fields-initial. html is a text
+/// input posting as name_scanText with the hidden id, type and scan id inputs; tui a drop-down searching scanResolve plus a
+/// hidden scan id; text the value.
+#[test]
+fn a_scan_input_resolves_through_the_screen() {
+    let out = check("scan", &[]);
+    for expected in [
+        r#"<m-scan-input name="assetId" id="Move_assetId" label="Asset" resolve-url="/scanResolve" :resolve-parameters="{'scanForm':'Move','scanField':'assetId','facilityId':'WH1'}" :depends-on="{'locationId':'locationId'}" allowed-types="asset,lot" placeholder="Scan an asset" v-model="formProps.fields.assetId"></m-scan-input>"#,
+        r#"allowed-types="location" scan-id-field="countScanId" :auto-submit="false" confirm"#,
+        r#"'assetId_type':'','assetId_scanText':'','scanId':''"#,
+        r#"'binId_type':'','binId_scanText':'','countScanId':''"#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    let html = render_mode("scan", "", "html", &[]);
+    for expected in [
+        r#"<span class="scan-input" data-scan-url="/scanResolve" data-params="{&quot;scanForm&quot;:&quot;Move&quot;,&quot;scanField&quot;:&quot;assetId&quot;,&quot;facilityId&quot;:&quot;WH1&quot;}""#,
+        r#"data-allowed="asset,lot" data-scan-id-field="scanId">"#,
+        r#"name="assetId_scanText""#,
+        r#"placeholder="Scan an asset""#,
+        r#"<input type="hidden" name="assetId" value=""><input type="hidden" name="assetId_type" value=""><input type="hidden" name="scanId" value="">"#,
+        r#"data-no-submit data-confirm-scan"#,
+        r#"<input type="hidden" name="countScanId" value="">"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    let tui = render_mode("scan", "", "tui", &[]);
+    let doc: serde_json::Value = serde_json::from_str(&tui).unwrap_or_else(|err| panic!("{err}: {tui}"));
+    let text = doc.to_string();
+    assert!(text.contains(r#""optionsUrl":"/scanResolve""#), "{text}");
+    assert!(
+        text.contains(r#""scanField":"assetId""#) && text.contains(r#""scanForm":"Move""#),
+        "{text}"
+    );
+    assert!(text.contains(r#""facilityId":"WH1""#), "{text}");
+    assert!(text.contains(r#""name":"countScanId""#), "{text}");
+    let plain = render_mode("scan", "", "text", &[]);
+    assert!(!plain.contains("scan-input"), "{plain}");
 }
