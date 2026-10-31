@@ -1421,8 +1421,16 @@ are independent of P4 and may run beside it.
 - **What is read.** Every component's entity, service, ECA, REST, screen, `screen-extend`, data (XML), script and skill
   files, and as rows service jobs, data documents, email templates and DbForm forms. A script's names come from the
   string literals of its service and entity calls by pattern, not by oxc. A `link` or response URL is a reference when it
-  is a transition of the same screen; relative screen paths, service parameters and artifact group patterns are not
-  indexed yet. Screen anchors are every named widget outside a form, as `check --extensions` read them before.
+  is a transition of the same screen. Parameters have IDs `parameter:<owner>@<in|out|path>.<dotted-name>`;
+  their parent is the owner or enclosing parameter, and their summary records type and requiredness. Service in/out,
+  screen and transition inputs, and REST path parameters are indexed. REST methods are `rest:<path>:<method>` under
+  their resource; path variables appear as `{name}` and are indexed as each method’s `@path` parameters. Transitions are
+  `transition:<screen>#<name>:<method>` (lowercase, default `any`). Unknown-method transition references reach every
+  overload; explicit methods prefer their overload then `any`. Field maps reference the called service's input
+  parameter; missing declarations remain unresolved. Service parameters are not copied to REST methods or transitions;
+  implicit parameter passing (REST to service, transition to service, and `in-map="context"`) is a later gap. Relative
+  screen paths and artifact group patterns are not indexed yet. Screen anchors are every named widget outside a form,
+  as `check --extensions` read them before.
 - **When.** A `moqui run` server builds it in the background at start (`Artifact index built in …` in the log); a test's
   server builds it at first use, or with `rebuild#ArtifactIndex`. Each reload's files are read again through
   `on_reload`; a pull reloads the files it changed at once and answers the site's extensions it broke.
