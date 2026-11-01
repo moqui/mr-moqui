@@ -55,6 +55,8 @@ along with this software (see the LICENSE.md file). If not, see
         if (ec.user.userId) footer_scripts.add('/js/WebrootCall.js')
         // the crypto device (moqui.crypto): small; its WebAssembly module loads only when a device is needed
         if (ec.user.userId) footer_scripts.add('/js/WebrootCrypto.js')
+        // end-to-end encrypted calls (moqui.callKeys): the call-key protocol; its SFrame worker loads only in such a call
+        if (ec.user.userId) footer_scripts.add('/js/WebrootCallKeys.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')

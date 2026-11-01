@@ -396,6 +396,18 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- the room's calls end-to-end encrypted, or not (W8: owners and moderators; org.moqui.impl.CallServices) -->
+    <transition name="setCallEncryption">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.set#RoomCallEncryption').parameters({chatRoomId: chatRoomId || '',
+                required: String(required) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, required: !!out.required})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <widgets>
         <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Chat.qvue" template="false"/>
             <!-- the terminal twin (style-guide 4.8): the rooms of ChatTui, or a room, with chatRoomId -->

@@ -115,6 +115,84 @@ Transcription for other server code is `org.moqui.impl.SpeechServices.transcribe
 a recording's transcript will use the same seam, and `CallTranscript` holds their text too; a recording's transcripts
 are deleted with it.
 
+## Encrypted calls
+
+A call can be end-to-end encrypted (W8; plans/Comms-Framework.md §6.4, D-W3): each browser encrypts the frames it sends
+with SFrame (RFC 9605), with keys the server never has, and the SFU forwards them as they are. The user guide is
+[Comms, End-to-end encrypted calls](../tools/Comms.md#encrypted-calls).
+
+- **Browser:** `js/WebrootSFrame.js` (SFrame on WebCrypto, page and worker), `js/WebrootSFrameWorker.js` (the
+  `RTCRtpScriptTransform` worker), `js/WebrootCallKeys.js` (`moqui.callKeys`, the call-key protocol), used by
+  `WebrootCall.js`. No WebAssembly: HKDF, AES-GCM, AES-CTR and HMAC are WebCrypto's.
+- **Services:** `Calls.js` (the policy and the roster), `register#CallDevice`, `set#RoomCallEncryption`; the keys travel
+  over [Chat keys](Chat-Keys.md) (C7 core).
+
+### The policy
+
+`CallSession.encryptionMode` is one of the enumeration `CallEncryptionMode` (by enumCode): `dtls-srtp`, hop by hop
+through the SFU (every call before W8, and any call not asked to be more), or `e2ee-sframe`. Any other value is treated
+as end to end, never as plain.
+
+- **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); a room whose owner or moderator
+  set `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
+  links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings.
+- **No downgrade.** The mode is set at the start and nothing lowers it. A room's call going on that is not encrypted is
+  refused to a start that asks for encryption (`callNotEncrypted`), never answered in its place. A browser drops a frame
+  that does not decrypt instead of playing it, and sends nothing before it has a key.
+- **Who can take part.** A browser leg answers or joins (`answer#Call`, `join#Call`) only when it says it has
+  `RTCRtpScriptTransform` (`scriptTransform`) and names a crypto device of its user (`cryptoDeviceId`: a `ChatDevice`
+  with its keys uploaded, not revoked); else `unsupportedClient` or `noCryptoDevice`, and the call rings on for the
+  user's other tabs. A call started from a form (Calls, New call) or a link's meeting opened from Calls names the
+  device before its media (`register#CallDevice`, which the page calls). `bind#Connection` refuses a leg of an encrypted
+  call that has no device (`noCryptoDevice`), and any guest or phone leg. The page itself checks first and shows why it
+  cannot join (current Chrome, Edge, Firefox and Safari have `RTCRtpScriptTransform`).
+- **Refused in an encrypted call:** recording (`start#Recording`: `encrypted`, said before the recording policy; Record
+  is not shown), captions (`encrypted`), a phone number (`add#CallParticipant`: `encrypted`, before the number is looked
+  at; `addPhoneLeg`), desk and soft phones (`ring#SipDevices`: `encrypted`, and `start#Call` does not ring them), the
+  numbers of a handling plan or a user's mobile (`ringStep` drops them, logged), guests (`join#AsGuest`:
+  `encryptedNoGuests`; the guest page says so from the token's route context), and merging with any call
+  (`merge#Calls`: `encrypted`, two encrypted calls too, since their keys and rosters are each their own). The terminal
+  twin shows the mode and no Answer.
+
+### The roster and the keys
+
+The call's view (`get#Call` and every push) carries `encryptionMode` and `e2ee`, and for each leg of an encrypted call
+its `deviceId`, `keyIndex` (the leg's number in the call, given when it names its device) and `keyGeneration` (its
+connection generation). A device named, a leg bound again (a reconnect or a reload) or a leg gone pushes the new view
+(`{kind: 'call', action: 'rekey'}`, or the action of the change). The roster is the answered browser legs with a device.
+
+1. **A key per sender.** Each page makes a random 16-byte SFrame base key for its leg, per call and epoch. Its KID is
+   `keyIndex * 65536 + epoch`; the counter is one per sender across its tracks and layers. The cipher suite is
+   AES_128_GCM_SHA256_128 (0x0004): HKDF-SHA-256 for the key and salt, AES-128-GCM with a 16-byte tag.
+2. **Sent over Olm.** The page sends the key to every other device on the roster as the to-device event
+   `io.moqui.call.key` (`{callSessionId, callLegId, kid, epoch, suite, key}`) through `moqui.crypto.sendToDevices`: Olm
+   between devices, never a chat room's Megolm session. The server queues and passes on only the ciphertext
+   ([Chat keys](Chat-Keys.md); reach: users who share a live call).
+3. **Taken only from the right device.** A page installs a key only when it comes from the device the roster names for
+   its leg (`senderUserId` and `senderDeviceId` from Olm, which the server cannot forge) and its KID carries that leg's
+   key index; one that comes before the roster shows the leg waits up to 15 seconds. A track is decrypted only with the
+   keys of the leg it comes from (its stream id), and each leg's last four epochs are kept.
+4. **Rotation.** Any change of the roster (a join, a leave or removal, a revoked device, whose legs leave, or a
+   reconnect, a new `keyGeneration`) makes each sender a new key and epoch, sent to the new roster. A sender moves to
+   the new key a second after sending it, so the others have it first; its first key it uses at once. Who left does not
+   get the new key, so cannot read what is said after; rotation cannot take back a key a leg already had.
+
+**The frame.** Opus is encrypted whole. A VP8 frame keeps its payload header in the clear, 10 bytes of a keyframe (the
+frame tag, the start code and the size) and 3 of others, as other SFrame-over-SFU deployments do, so the SFU's keyframe
+detection, simulcast layers and the W7 relay work unchanged; those bytes are SFrame metadata, authenticated with the
+frame. A frame is `clear bytes || SFrame header || ciphertext || tag`, the layout of the `sframe` crate's frames with
+metadata.
+
+**One tab.** The keys travel over the user's crypto device, whose store one tab of a browser holds at a time
+([Chat keys](Chat-Keys.md#devices), `busy`). The tab that answers or joins takes it; while another tab of the same browser
+and user holds it (My devices, or a call in that tab), this one says so and does not join. Close the other or take the
+call there.
+
+**What the server still sees.** RTP headers and their extensions (the audio level, for the active speaker), frame sizes
+and timing, the clear VP8 bytes, the SFrame header, and who is in the call with which device. The roster is the server's:
+a server that put a device of a user in the call on it would get that leg's keys. Devices are not verified yet (emoji and
+QR verification and cross-signing are a later C7 pass), so the participants list shows each device as unverified.
+
 ## Cluster
 
 A call's media lives on one node, `CallSession.mediaNodeId`, chosen at start among the live `CallMediaNode` rows. A frame
@@ -189,6 +267,21 @@ own multiplexing of rooms; that waits for a measured need.
   hangs while the frames keep flowing. `cargo test -p moqui-llm --lib speech`: the transcription call against a fake
   endpoint. `./moq test framework --spec CallCaptions`: the policy switch, someone not in the call, an encrypted call,
   and turning captions on and off.
-- `./moq test basic-comms --spec BasicCommsCalls`: the screens' transitions through both mounts.
+- `./moq test basic-comms --spec BasicCommsCalls`: the screens' transitions through both mounts, an encrypted call's
+  answer and its terminal twin.
+- `./moq test framework --spec CallEncryption`: encrypted calls' policy: a start, an answer and a join only from a
+  browser that can take part (the same parameters with `scriptTransform` false, another user's or a revoked device), a
+  leg that binds only with its device and a reconnect's new key generation, a room's and a link's policy, a plain call
+  never offered for an encrypted one, a revoked device's leg leaving, and every refusal (recording, captions, a number,
+  desk phones, forwarded numbers, merging, guests) beside a plain call that the same parameters pass.
+- `./moq test-client webroot --offline --spec WebrootSFrame`: the RFC 9605 Appendix C vectors (all 289 headers, the
+  three AES-CTR-HMAC AEADs, each suite's key, salt and frame) and the call's frame layout in the browser's SFrame.
+  `cargo test -p moqui-rtc --test sframe`: the same vectors (`crates/moqui-rtc/testdata/`) against the `sframe` crate, and
+  the call frames the browser makes, made again by the crate.
+- `./moq test-client basic-comms --serve --spec EncryptedCallFlow`: an encrypted video call in three Chromium pages: media
+  both ways, decrypted with the keys each got from the other's device; the third person answering late gets both keys;
+  Record refused; the third leaving makes the others rotate, the new keys going only to the two left. About 6 seconds.
+- **Not checked live:** the key protocol against an independent implementation (there is none for this protocol yet: it
+  is Moqui's own over Olm), and Firefox and Safari (the client spec runs Chromium).
 - `./moq test-client basic-comms --serve`: a call in two Chromium pages with fake media (`CallFlow`), and a guest by
   link let in from the lobby (`CallGuestFlow`). It needs `rtc` in the binary.

@@ -14,6 +14,11 @@
  * layers (rids l, m, h); the SFU sends each subscriber the one that fits. After the socket comes back, or the SFU says the
  * media was lost, the page joins again, which takes the leg's next generation and fences the old connection.
  *
+ * An end-to-end encrypted call (W8, view.e2ee): before its media this page takes its crypto device (moqui.callKeys,
+ * WebrootCallKeys.js), names it on its leg (register#CallDevice, or with the answer or join), and SFrame-encrypts what it
+ * sends and decrypts what it receives in an RTCRtpScriptTransform worker; a browser that cannot is refused, with a notice,
+ * and never joins without encryption.
+ *
  * Loaded after MoquiLib.js and before WebrootVue.qvt.js (qapps.xml): its components are in moqui.qvtComponents, and the shell
  * root calls moqui.call.start(root) once mounted. Device choices are kept in this browser only (Settings, Calls).
  */
@@ -79,7 +84,9 @@
         // kind, ackRequired} or null, myConsent: {acknowledged, withdrawn, ackRequired} or null, failed}
         recordingOf: {},
         // V5: the call-context providers' answer for a phone call, by callSessionId (a screen pop: who it is, open records)
-        contextOf: {}
+        contextOf: {},
+        // W8: why this browser cannot take part in an end-to-end encrypted call: {callSessionId, reasonCode, message}
+        e2eeNotice: null
     });
 
     const call = {
@@ -109,10 +116,10 @@
         callUrl(callSessionId) {
             return call.appRoot() + "/Calls/Call?callSessionId=" + encodeURIComponent(callSessionId);
         },
-        request(name, params, method) {
+        request(name, params, method, quiet) {
             return moqui.request(call.base() + "/" + name, { method: method || "POST", params: params || {} }).then((result) => {
                 const json = result.json || {};
-                if (json.errors) {
+                if (json.errors && !quiet) {
                     if (moqui.notifyMessages) moqui.notifyMessages([], json.errors);
                     else console.warn(json.errors);
                 }
@@ -123,6 +130,8 @@
         remember(view) {
             if (!view || !view.callSessionId) return;
             state.calls[view.callSessionId] = view;
+            // W8: an encrypted call's roster, for its keys
+            if (moqui.callKeys && moqui.callKeys.state.active && moqui.callKeys.state.callSessionId === view.callSessionId) moqui.callKeys.onView(view);
             const ringingForMe = view.status !== "ended" && view.myLegStatus === "offered";
             const at = state.ringing.indexOf(view.callSessionId);
             if (ringingForMe && at < 0) state.ringing.push(view.callSessionId);
@@ -203,8 +212,32 @@
         },
 
         // ---- the call actions ----
+        // ---- W8: a browser in an end-to-end encrypted call: its device, or the notice why it cannot take part ----
+        e2eeRefused(callSessionId, err) {
+            const notice = { callSessionId: callSessionId || null, reasonCode: (err && err.reasonCode) || "unsupportedClient",
+                message: (err && (err.message || err.errors)) || t("This browser cannot take part in an end-to-end encrypted call") };
+            state.e2eeNotice = notice;
+            if (moqui.notifyMessages) moqui.notifyMessages([], notice.message);
+            return { reasonCode: notice.reasonCode, errors: notice.message };
+        },
+        // a request that an encrypted call takes only with the browser's device: with it when the call is known to be one,
+        // and again with it when the server says so (a call this page did not know yet)
+        requestWithDevice(name, params, encrypted, callSessionId) {
+            const withDevice = () => moqui.callKeys ? moqui.callKeys.prepare().then((device) => call.request(name, Object.assign({}, params, device)))
+                : Promise.reject({ reasonCode: "unsupportedClient" });
+            if (encrypted) return withDevice().catch((err) => call.e2eeRefused(callSessionId, err));
+            return call.request(name, params, "POST", true).then((json) => {
+                if (json.reasonCode === "unsupportedClient" || json.reasonCode === "noCryptoDevice") {
+                    return withDevice().catch((err) => call.e2eeRefused(callSessionId, err));
+                }
+                if (json.errors && moqui.notifyMessages) moqui.notifyMessages([], json.errors);
+                return json;
+            });
+        },
         startCall(params) {
-            return call.request("startCall", Object.assign({ idempotencyKey: "c" + Date.now() + Math.random().toString(36).slice(2) }, params)).then((json) => {
+            const encrypted = !!(params && params.requireE2ee);
+            return call.requestWithDevice("startCall", Object.assign({ idempotencyKey: "c" + Date.now() + Math.random().toString(36).slice(2) }, params,
+                encrypted ? { requireE2ee: "true" } : {}), encrypted, null).then((json) => {
                 if (json.callSessionId && json.callLegId) {
                     call.open(json.callSessionId);
                     return call.join(json.callSessionId, json.callLegId, { video: params.video !== false }).then(() => json);
@@ -214,7 +247,8 @@
             });
         },
         answer(callSessionId, video) {
-            return call.request("answerCall", { callSessionId }).then((json) => {
+            const view = state.calls[callSessionId];
+            return call.requestWithDevice("answerCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
                 if (!json.callLegId) return json;
                 call.open(callSessionId);
                 return call.join(callSessionId, json.callLegId, { video: video !== false }).then(() => json);
@@ -224,7 +258,8 @@
             return call.request("declineCall", { callSessionId });
         },
         joinCall(callSessionId, options) {
-            return call.request("joinCall", { callSessionId }).then((json) => {
+            const view = state.calls[callSessionId];
+            return call.requestWithDevice("joinCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
                 if (json.callLegId) return call.join(callSessionId, json.callLegId, options || {}).then(() => json);
                 return json;
             });
@@ -359,17 +394,54 @@
             state.audioOnly = !video;
             state.startedAt = state.startedAt || Date.now();
             const keep = options.stream || state.localStream;
-            const media = keep ? Promise.resolve(keep) : call.getMedia(video);
-            return media.then((stream) => {
-                if (state.current !== callSessionId) return;
-                if (!stream) state.error = t("No microphone or camera: you can hear and see the others, they cannot hear or see you.");
-                state.localStream = stream;
-                if (stream && (state.settings.joinMuted || state.muted)) stream.getAudioTracks().forEach((track) => (track.enabled = false));
-                state.muted = !!(stream && stream.getAudioTracks().some((track) => !track.enabled));
-                return call.connect(stream);
+            return call.prepareKeys(callSessionId, legId).then(() => {
+                const media = keep ? Promise.resolve(keep) : call.getMedia(video);
+                return media.then((stream) => {
+                    if (state.current !== callSessionId) return;
+                    if (!stream) state.error = t("No microphone or camera: you can hear and see the others, they cannot hear or see you.");
+                    state.localStream = stream;
+                    if (stream && (state.settings.joinMuted || state.muted)) stream.getAudioTracks().forEach((track) => (track.enabled = false));
+                    state.muted = !!(stream && stream.getAudioTracks().some((track) => !track.enabled));
+                    return call.connect(stream);
+                });
+            }, (err) => {
+                // W8: this browser cannot take part in the encrypted call: no media at all, never plain media
+                if (keep) keep.getTracks().forEach((track) => track.stop());
+                call.hangUp("refused");
+                call.e2eeRefused(callSessionId, err);
             }).catch((err) => {
                 state.error = String((err && err.message) || err);
                 state.phase = "idle";
+            });
+        },
+        // W8: an encrypted call's keys before its media: this browser's device, named on the leg when it is not yet, and the
+        // key protocol started with the call's roster; nothing for another call
+        prepareKeys(callSessionId, legId) {
+            // a guest's call is never encrypted (the server takes no guest in one); a call whose state cannot be read is not
+            // joined, as it might be an encrypted one this page would otherwise send plain media to
+            if (call.guest) return Promise.resolve(null);
+            const known = state.calls[callSessionId];
+            const viewOf = known ? Promise.resolve(known) : call.request("callState", { callSessionId }, "GET", true)
+                .then((json) => json.call || null, () => { throw { reasonCode: "failed", message: t("The call could not be read: try again") }; });
+            return viewOf.then((view) => {
+                if (!view || !view.e2ee) {
+                    if (moqui.callKeys && moqui.callKeys.state.active) moqui.callKeys.end();
+                    return null;
+                }
+                if (!moqui.callKeys) throw { reasonCode: "unsupportedClient" };
+                return moqui.callKeys.prepare().then((device) => {
+                    const mine = (view.participants || []).flatMap((p) => p.legs || []).find((leg) => leg.callLegId === legId);
+                    const named = mine && mine.deviceId === device.cryptoDeviceId ? Promise.resolve({ call: view })
+                        : call.request("registerCallDevice", Object.assign({ callSessionId, callLegId: legId }, device), "POST", true);
+                    return named.then((json) => {
+                        if (json.reasonCode) throw { reasonCode: json.reasonCode, message: json.errors };
+                        if (state.current !== callSessionId) return null;
+                        state.e2eeNotice = null;
+                        moqui.callKeys.begin(callSessionId, legId);
+                        moqui.callKeys.onView(state.calls[callSessionId] || json.call);
+                        return null;
+                    });
+                });
             });
         },
 
@@ -404,6 +476,11 @@
             const camera = stream && stream.getVideoTracks()[0];
             const audioTx = audio ? pc.addTransceiver(audio, { direction: "sendonly", streams: [stream] }) : null;
             const videoTx = camera ? pc.addTransceiver(camera, { direction: "sendonly", streams: [stream], sendEncodings: LAYERS }) : null;
+            // W8: what an encrypted call's page sends goes through its SFrame worker
+            if (call.keysOn(id)) {
+                if (audioTx) moqui.callKeys.attachSender(audioTx.sender, "audio");
+                if (videoTx) moqui.callKeys.attachSender(videoTx.sender, "video");
+            }
             pc.ontrack = (event) => call.onTrack(event);
             // a candidate before the join is bound waits for it (the socket refuses a frame of a leg it has not joined)
             call.early = [];
@@ -424,6 +501,9 @@
             });
         },
 
+        keysOn(callSessionId) {
+            return !!(moqui.callKeys && moqui.callKeys.state.active && moqui.callKeys.state.callSessionId === callSessionId);
+        },
         rejoin() {
             if (!state.current || state.phase === "reconnecting") return;
             state.phase = "reconnecting";
@@ -555,6 +635,8 @@
             const stream = event.streams && event.streams[0];
             const legId = stream ? stream.id : "";
             if (!legId || legId === state.legId) return;
+            // W8: what an encrypted call's page receives is decrypted with the keys of the leg it comes from
+            if (call.keysOn(state.current) && event.receiver) moqui.callKeys.attachReceiver(event.receiver, event.track.kind, legId);
             call.remote(legId);
             const list = call.tracks[legId];
             if (!list.includes(event.track)) list.push(event.track);
@@ -612,6 +694,7 @@
                     reuse.sender.replaceTrack(track);
                 } else {
                     call.screenTx = call.pc.addTransceiver(track, { direction: "sendonly", streams: [stream] });
+                    if (call.keysOn(state.current)) moqui.callKeys.attachSender(call.screenTx.sender, "video");
                 }
                 track.onended = () => call.stopShare();
                 state.sharing = true;
@@ -675,6 +758,7 @@
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
         hangUp() {
             if (state.current) delete state.recordingOf[state.current];
+            if (moqui.callKeys && moqui.callKeys.state.active) moqui.callKeys.end();
             if (call.guest) {
                 call.guest.close();
                 call.guest = null;
@@ -928,7 +1012,7 @@
             '<q-card v-for="view in ringingCalls" :key="view.callSessionId" class="m-call-ring q-mb-sm" style="min-width:300px">' +
             '<q-card-section class="row items-center no-wrap q-py-sm">' +
             '<q-icon :name="view.video ? \'sym_o_videocam\' : \'sym_o_call\'" size="28px" class="q-mr-sm"></q-icon>' +
-            '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}</div>' +
+            '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}<span v-if="view.e2ee"> · <q-icon name="sym_o_lock" size="14px"></q-icon> {{t(\'End-to-end encrypted\')}}</span></div>' +
             '<m-call-context :call-session-id="view.callSessionId" dense></m-call-context></div>' +
             '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="t(\'Answer\')" @click="answer(view, view.video)"><q-tooltip>{{t(\'Answer\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="t(\'Answer with audio only\')" @click="answer(view, false)"><q-tooltip>{{t(\'Answer with audio only\')}}</q-tooltip></q-btn>' +
@@ -1031,7 +1115,18 @@
                 return new Set(v ? (v.participants || []).filter((p) => p.identity === "phone").flatMap((p) => (p.legs || []).map((leg) => leg.callLegId)) : []);
             },
             hasPhone() { return this.phoneLegs.size > 0; },
-            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; }
+            keys() { return ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]; },
+            // W8: the call's media encryption, apart from the room's message encryption
+            e2ee() { return !!(this.known && this.known.e2ee); },
+            encryptionText() { return this.e2ee ? t("End-to-end encrypted") : t("Encrypted to the server"); },
+            encryptionTip() {
+                return this.e2ee ? t("Only the people in the call can hear and see it: each one's media is encrypted in their browser with keys the server never has. No recording, captions, phones or guests.")
+                    : t("Encrypted between each browser and the server, which forwards it (and can record or caption it). The encryption of the room's messages is separate.");
+            },
+            // a browser that cannot encrypt call media cannot join an encrypted call
+            e2eeUnsupported() { return this.e2ee && !(moqui.callKeys && moqui.callKeys.supported()); },
+            e2eeNotice() { const n = this.call.e2eeNotice; return n && (!n.callSessionId || n.callSessionId === this.callSessionId) ? n.message : ""; },
+            callKeys() { return moqui.callKeys ? moqui.callKeys.state : null; }
         },
         watch: {
             callSessionId() { this.load(); }
@@ -1122,6 +1217,18 @@
                 moqui.call.request("removeParticipant", { callSessionId: this.callSessionId, callParticipantId: p.callParticipantId })
                     .then(() => this.load());
             },
+            // W8: a participant's key state on the roster: this page's own key, or whether their keys came and decrypt
+            keyText(p) {
+                if (!this.e2ee || !p.inCall || !this.inThis || !moqui.callKeys) return "";
+                if (p.userId === moqui.call.me) return this.callKeys.kid != null ? t("your key") + " " + (this.callKeys.epoch || 0) : t("making your key");
+                const leg = (p.legs || []).find((l) => l.status === "answered" && l.type === "web");
+                if (!leg) return "";
+                if (!leg.deviceId) return t("no encryption device");
+                const st = moqui.callKeys.legState(leg.callLegId);
+                const k = this.callKeys.keys[leg.callLegId];
+                const verified = k && k.verified ? t("verified device") : t("unverified device");
+                return st === "keys" ? t("keys received") + " · " + verified : st === "failing" ? t("frames do not decrypt") : t("waiting for keys");
+            },
             handOf(p) {
                 if (p.userId === moqui.call.me) return this.call.hand;
                 return (p.legs || []).some((leg) => this.call.remotes[leg.callLegId] && this.call.remotes[leg.callLegId].hand);
@@ -1132,9 +1239,13 @@
             '<div class="row items-center"><div class="text-h6 q-mr-md">{{known ? (known.participants || []).filter(p => p.userId !== moquiCallMe()).map(p => p.displayName).join(\', \') || t(\'Call\') : t(\'Call\')}}</div>' +
             '<q-chip dense square :color="known && known.status === \'ended\' ? \'grey-6\' : \'positive\'" text-color="white">{{stateText}}</q-chip>' +
             '<q-chip v-if="recording" dense square :color="recording.state === \'recording\' ? \'negative\' : \'warning\'" text-color="white" icon="sym_o_fiber_manual_record" class="m-call-recording">{{recordingText}}</q-chip>' +
+            '<q-chip v-if="known && known.encryptionMode" dense square :class="e2ee ? \'m-call-encryption m-call-e2ee m-tonal text-positive\' : \'m-call-encryption m-tonal\'" :icon="e2ee ? \'sym_o_lock\' : \'sym_o_shield\'">{{encryptionText}}<q-tooltip max-width="320px">{{encryptionTip}}</q-tooltip></q-chip>' +
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
+            '<q-banner v-if="e2eeNotice || (e2eeUnsupported && !inThis && canJoin)" dense rounded class="m-tonal text-negative m-call-e2ee-notice"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>' +
+            '{{e2eeNotice || t(\'This call is end-to-end encrypted, and this browser cannot encrypt call media (it has no RTCRtpScriptTransform). Join it from a current Chrome, Edge, Firefox or Safari.\')}}</q-banner>' +
+            '<q-banner v-if="inThis && e2ee && callKeys && callKeys.error" dense rounded class="m-tonal text-warning">{{callKeys.error}}</q-banner>' +
             '<m-call-context v-if="known && known.kind === \'phone\'" :call-session-id="callSessionId"></m-call-context>' +
             '<q-banner v-if="recording && inThis" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" color="negative"></q-icon></template>' +
             '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
@@ -1156,7 +1267,7 @@
             '<q-select dense outlined emit-value map-options :label="t(\'Microphone\')" :options="audioInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Microphone\')}))" :model-value="call.settings.audioIn" @update:model-value="v => pick({audioIn: v})"></q-select>' +
             '<q-select dense outlined emit-value map-options :label="t(\'Camera\')" :options="videoInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Camera\')}))" :model-value="call.settings.videoIn" @update:model-value="v => pick({videoIn: v})"></q-select>' +
             '<q-toggle v-model="video" :label="t(\'Join with video\')" @update:model-value="pick({})"></q-toggle>' +
-            '<q-btn unelevated color="primary" icon="sym_o_call" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
+            '<q-btn unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
             // the call view: the grid, or the speaker (or a screen share) large over a strip of the rest
             '<div v-if="inThis && mainTile" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
@@ -1203,7 +1314,7 @@
             '<q-list v-if="inThis && call.participantsOpen && known" bordered separator dense class="rounded-borders q-mt-sm">' +
             '<q-item v-for="p in known.participants || []" :key="p.callParticipantId"><q-item-section avatar><m-avatar :name="p.displayName" :user-id="p.userId || undefined" size="28px"></m-avatar></q-item-section>' +
             '<q-item-section><q-item-label>{{p.displayName}}<span v-if="p.role === \'host\'" class="text-caption m-muted"> · {{t(\'host\')}}</span></q-item-label>' +
-            '<q-item-label caption>{{p.inCall ? t(\'In the call\') : p.ringing ? t(\'Ringing\') : t(\'Not in the call\')}}</q-item-label></q-item-section>' +
+            '<q-item-label caption>{{p.inCall ? t(\'In the call\') : p.ringing ? t(\'Ringing\') : t(\'Not in the call\')}}<span v-if="keyText(p)" class="m-call-key-state"> · <q-icon name="sym_o_key" size="14px"></q-icon> {{keyText(p)}}</span></q-item-label></q-item-section>' +
             '<q-item-section side class="row no-wrap items-center"><q-icon v-if="handOf(p)" name="sym_o_back_hand" color="warning"></q-icon>' +
             '<q-btn v-if="isHost && p.userId !== moquiCallMe() && p.admission === \'admitted\'" flat dense round size="sm" icon="sym_o_person_remove" :aria-label="t(\'Remove from the call\')" @click="remove(p)"><q-tooltip>{{t(\'Remove from the call\')}}</q-tooltip></q-btn>' +
             '</q-item-section></q-item></q-list>' +
@@ -1297,7 +1408,7 @@
             '<q-btn round unelevated color="grey-8" icon="sym_o_more_horiz" :aria-label="t(\'More call actions\')" class="q-ml-xs"><q-menu><q-list dense style="min-width:220px">' +
             '<q-item v-if="hasPhone && !view.transfer" clickable v-close-popup @click="open(\'transfer\')"><q-item-section avatar><q-icon name="sym_o_phone_forwarded"></q-icon></q-item-section><q-item-section>{{t(\'Transfer\')}}</q-item-section></q-item>' +
             '<q-item clickable v-close-popup @click="open(\'add\')"><q-item-section avatar><q-icon name="sym_o_person_add"></q-icon></q-item-section><q-item-section>{{t(\'Add a participant\')}}</q-item-section></q-item>' +
-            '<q-item v-if="otherCalls.length" clickable v-close-popup @click="open(\'merge\')"><q-item-section avatar><q-icon name="sym_o_call_merge"></q-icon></q-item-section><q-item-section>{{t(\'Merge another call\')}}</q-item-section></q-item>' +
+            '<q-item v-if="otherCalls.length && !view.e2ee" clickable v-close-popup @click="open(\'merge\')"><q-item-section avatar><q-icon name="sym_o_call_merge"></q-icon></q-item-section><q-item-section>{{t(\'Merge another call\')}}</q-item-section></q-item>' +
             '<q-item v-if="view.kind !== \'meeting\'" clickable v-close-popup @click="meeting"><q-item-section avatar><q-icon name="sym_o_groups"></q-icon></q-item-section><q-item-section>{{t(\'Make it a meeting\')}}</q-item-section></q-item>' +
             '</q-list></q-menu></q-btn>' +
             '<q-banner v-if="myConsult" dense rounded class="m-tonal q-mt-sm"><template v-slot:avatar><q-icon name="sym_o_phone_forwarded"></q-icon></template>' +
@@ -1309,7 +1420,7 @@
             '<q-card-section v-if="dialog === \'merge\'"><q-select dense outlined emit-value map-options v-model="otherId" :options="otherCalls" :label="t(\'Call\')"></q-select>' +
             '<div class="text-caption m-muted q-mt-sm">{{t(\'The calls become one meeting.\')}}</div></q-card-section>' +
             '<q-card-section v-else class="q-gutter-sm">' +
-            '<q-btn-toggle v-model="targetType" no-caps dense unelevated toggle-color="primary" :options="dialog === \'transfer\' ? [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}, {label: t(\'Queue\'), value: \'queue\'}] : [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}]"></q-btn-toggle>' +
+            '<q-btn-toggle v-model="targetType" no-caps dense unelevated toggle-color="primary" :options="dialog === \'transfer\' ? [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}, {label: t(\'Queue\'), value: \'queue\'}] : view.e2ee ? [{label: t(\'Person\'), value: \'user\'}] : [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}]"></q-btn-toggle>' +
             '<q-select v-if="targetType === \'user\'" dense outlined use-input emit-value map-options v-model="userId" :options="userOptions" @filter="searchUsers" :label="t(\'Who\')"></q-select>' +
             '<q-input v-if="targetType === \'number\'" dense outlined v-model="number" :label="t(\'Number\')" type="tel"></q-input>' +
             '<q-select v-if="targetType === \'queue\'" dense outlined emit-value map-options v-model="queueId" :options="queueOptions" :label="t(\'Queue\')"></q-select>' +
@@ -1455,7 +1566,8 @@
             '<div v-else class="fit flex flex-center text-white">{{t(\'No camera or no permission for it\')}}</div></div></div>' +
             '<div class="col-12 col-md-5 column q-gutter-sm">' +
             '<q-input v-model="name" outlined dense maxlength="60" :label="t(\'Your name\')" :disable="phase === \'waiting\'" @keyup.enter="join"></q-input>' +
-            '<q-btn v-if="phase === \'lobby\'" unelevated color="primary" icon="sym_o_call" :loading="busy" :disable="!name.trim()" :label="link.policy === \'link\' ? t(\'Join\') : t(\'Ask to join\')" @click="join"></q-btn>' +
+            '<q-banner v-if="link.encrypted" dense rounded class="m-tonal text-negative"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>{{t(\'This meeting is end-to-end encrypted: only people with an account can join it. Ask its host for another way in.\')}}</q-banner>' +
+            '<q-btn v-if="phase === \'lobby\'" unelevated color="primary" icon="sym_o_call" :loading="busy" :disable="!name.trim() || !!link.encrypted" :label="link.policy === \'link\' ? t(\'Join\') : t(\'Ask to join\')" @click="join"></q-btn>' +
             '<div v-if="phase === \'waiting\'" class="row items-center q-gutter-sm"><q-spinner size="20px"></q-spinner><span>{{t(\'Waiting for someone in the call to let you in\')}}</span></div>' +
             '</div></div>' +
             // the call

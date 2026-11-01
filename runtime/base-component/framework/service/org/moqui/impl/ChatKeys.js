@@ -279,6 +279,8 @@ function revokeDevice(p) {
   find(KEY).condition({ userId: me, deviceId: device.deviceId }).deleteAll()
   find(TO_DEVICE).condition({ userId: me, deviceId: device.deviceId }).deleteAll()
   wake(me, { kind: 'devices', action: 'revoked', deviceId: device.deviceId })
+  // its legs in end-to-end encrypted calls leave them (W8): the others rotate their call keys without it
+  ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('deviceRevoked', { userId: me, deviceId: device.deviceId })
   return { deviceId: device.deviceId }
 }
 

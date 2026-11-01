@@ -997,6 +997,8 @@ const roomTemplate = `
         <template v-if="isOwner">
             <m-drop-down v-model="settings.visibility" :name="'settingsVisibility' + uid" :options="visibilityOptions" :label="t('Who may join')" class="q-mt-xs"></m-drop-down>
         </template>
+        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
+        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
@@ -1998,13 +2000,19 @@ const chatRoom = {
             });
         },
         openSettings() {
-            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '', busy: false };
+            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
+                callE2ee: !!this.room.callE2eeRequired, busy: false };
         },
         saveSettings() {
             const params = { chatRoomId: this.roomId, roomName: this.settings.roomName, topic: this.settings.topic || '' };
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
-            this.post('updateRoom', params).then(() => {
+            // the calls' encryption (W8) is its own setting, saved first
+            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+                ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
+                }) : Promise.resolve();
+            e2ee.then(() => this.post('updateRoom', params)).then(() => {
                 this.settings = Object.assign({}, this.settings, { open: false, busy: false });
                 this.reloadMeta();
                 this.$emit('changed');

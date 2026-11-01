@@ -297,8 +297,10 @@ function expireRegistrations() {
  * linked to the call's node first.
  */
 function ringDevices(p) {
-  if (!registrarOn()) return { ringCount: 0 }
   const session = p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
+  // an end-to-end encrypted call (W8) rings no phone: it could not decrypt the call's media
+  if (session && session.encryptionMode && session.encryptionMode !== 'dtls-srtp') return { ringCount: 0, reasonCode: 'encrypted' }
+  if (!registrarOn()) return { ringCount: 0 }
   if (!session || session.statusId === 'CssEnded' || !session.mediaNodeId) return { ringCount: 0 }
   // the nodes a phone may ring on: the call's, and with cascading media nodes (W7) any live one with a SIP engine and
   // media, whose room relays to the call's node

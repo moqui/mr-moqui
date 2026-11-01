@@ -217,7 +217,8 @@ along with this software (see the LICENSE.md file). If not, see
                 createdByUserId: row.createdByUserId ?? null, createdDate: toMillis(row.createdDate), archivedDate: toMillis(row.archivedDate),
                 lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate),
                 lastMessageSeq: row.lastMessageSeq != null ? Number(row.lastMessageSeq) : null, lastMessageUserId: row.lastMessageUserId ?? null,
-                lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null}
+                lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null,
+                callE2eeRequired: row.callE2eeRequired === 'Y'}
             if (memberRow) member = {chatRoomId: memberRow.chatRoomId, userId: memberRow.userId, chatActorId: memberRow.chatActorId ?? null,
                 roleEnumId: memberRow.roleEnumId ?? null,
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),

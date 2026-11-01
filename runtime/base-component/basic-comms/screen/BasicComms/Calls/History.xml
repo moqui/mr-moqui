@@ -20,7 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
     org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
-    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
+    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; New call and a call link
+    may be end-to-end encrypted (W8); the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
     item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
     find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
     in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
@@ -72,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
-                video: String(video) !== 'N'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'N', requireE2ee: String(encrypted) === 'Y'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -107,7 +108,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createLink">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
-                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24})
+                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24,
+                requireE2ee: String(encrypted) === 'Y'})
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (out.path) ec.message.addMessage(ec.resource.expand('Call link made: ${url} (copy it now: it is shown only this once)', '',
                 {url: ec.web.getWebappRootUrl('webroot', null, true, false) + out.path}), 'success')
@@ -168,10 +170,10 @@ along with this software (see the LICENSE.md file). If not, see
             const others = Array.from(call.participants || []).filter((p) => p.userId !== ec.user.userId).map((p) => p.displayName)
             return {callSessionId: call.callSessionId, who: others.join(', ') || L('Just you'),
                 stateText: call.myLegStatus === 'offered' ? L('Ringing') : L('In the call'),
-                kindText: call.video ? L('Video') : L('Audio'), startedText: when(call.startedDate),
+                kindText: (call.video ? L('Video') : L('Audio')) + (call.e2ee ? ' · ' + L('End-to-end encrypted') : ''), startedText: when(call.startedDate),
                 ringing: call.myLegStatus === 'offered'}
         })
-        newCall = {calleeUserIdList: [], video: 'Y'}
+        newCall = {calleeUserIdList: [], video: 'Y', encrypted: 'N'}
         // Call a number (V1): the user's caller IDs; the full dialer is V3
         const voice = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
         const myIds = ec.service.sync().name('org.moqui.impl.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
@@ -224,10 +226,11 @@ along with this software (see the LICENSE.md file). If not, see
         // the call links that still work, and the meetings of the next week from the apps' providers
         const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
         linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
-            policyText: link.policy === 'link' ? L('Straight in') : L('Lobby'), kindText: link.video ? L('Video') : L('Audio'),
+            policyText: link.e2ee ? L('None (end-to-end encrypted)') : link.policy === 'link' ? L('Straight in') : L('Lobby'),
+            kindText: (link.video ? L('Video') : L('Audio')) + (link.e2ee ? ' · ' + L('End-to-end encrypted') : ''),
             expiryText: when(link.expiryDate), stateText: link.callSessionId ? (link.waitingCount ? ec.resource.expand('In progress, ${n} waiting', '',
                 {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
-        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7'}
+        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7', encrypted: 'N'}
         const nowMillis = Number(ec.user.nowTimestamp)
         const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
             parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
@@ -254,6 +257,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="calleeUserIdList"><default-field title="Call">
                             <drop-down allow-multiple="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Only the people in the call can hear and see it: no recording, captions, phones or guests"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="submitButton"><default-field title="Call"><submit icon="sym_o_call"/></default-field></field>
                     </form-single>
                 </box-body></container-box>
@@ -353,6 +357,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
                         <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Guests cannot join an encrypted meeting"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="expiryDays"><default-field title="Works for"><drop-down><option key="1" text="A day"/><option key="7" text="A week"/>
                             <option key="30" text="A month"/><option key="90" text="90 days"/></drop-down></default-field></field>
                         <field name="submitButton"><default-field title="Make a link"><submit icon="sym_o_add_link"/></default-field></field>

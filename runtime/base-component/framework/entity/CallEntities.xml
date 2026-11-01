@@ -28,7 +28,10 @@ along with this software (see the LICENSE.md file). If not, see
             goes CssRinging to CssActive to CssEnded, or CssRinging to CssEnded; revision counts its changes, so a client
             and a repeated request see which state they act on. mediaNodeId is the instance holding its media;
             mediaGeneration counts the times its media moved (a new node after a loss starts a new call, so it stays 1 for
-            now). encryptionMode is what protects its media: dtls-srtp (hop by hop through the SFU) until W8.</description>
+            now). encryptionMode is what protects its media, fixed at the start and never lowered (the enumeration
+            CallEncryptionMode, by enumCode): dtls-srtp, hop by hop through the SFU, which can hear it; e2ee-sframe, end to end
+            (W8): each sender's frames are SFrame-encrypted in the browser with keys the server never sees, so it takes no
+            recording, captions, phone legs, desk phones or guests.</description>
         <field name="callSessionId" type="id" is-pk="true"/>
         <field name="chatRoomId" type="id"/>
         <field name="callLinkId" type="id"><description>The call link a meeting was opened by (its guests come in through it)</description></field>
@@ -97,6 +100,11 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Everyone left" enumId="CerEmpty" enumCode="empty" enumTypeId="CallEndReason" sequenceNum="7"/>
             <moqui.basic.Enumeration description="Failed" enumId="CerFailed" enumCode="failed" enumTypeId="CallEndReason" sequenceNum="8"/>
             <moqui.basic.Enumeration description="Removed" enumId="CerRemoved" enumCode="removed" enumTypeId="CallEndReason" sequenceNum="9"/>
+
+            <!-- W8: the values of CallSession.encryptionMode are these enumCodes -->
+            <moqui.basic.EnumerationType description="Call Encryption Mode" enumTypeId="CallEncryptionMode"/>
+            <moqui.basic.Enumeration description="DTLS-SRTP to the server (hop by hop)" enumId="CemDtlsSrtp" enumCode="dtls-srtp" enumTypeId="CallEncryptionMode" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="End to end (SFrame)" enumId="CemE2eeSframe" enumCode="e2ee-sframe" enumTypeId="CallEncryptionMode" sequenceNum="2"/>
         </seed-data>
     </entity>
 
@@ -278,6 +286,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="expiryDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
         <field name="lastUsedDate" type="date-time"/>
+        <field name="e2eeRequired" type="text-indicator"><description>Y: the link's meetings are end-to-end encrypted (W8),
+            so guests, who have no crypto device, cannot join them</description></field>
         <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
@@ -549,4 +559,20 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
     <!-- ========== end W6 ========== -->
+
+    <!-- ========== Encrypted calls (W8; plans/Comms-Framework.md §6.4, D-W3; docs/interfaces/WebRTC.md "Encrypted calls") ==========
+        A call whose encryptionMode is e2ee-sframe: each leg in a browser names the crypto device (C7 core, ChatDevice) its
+        page holds, and the server publishes the roster of those legs and devices; each sender sends its own SFrame key to
+        every device on it over Olm to-device messages, which the server only passes on. -->
+    <extend-entity entity-name="CallLeg" package="moqui.call">
+        <field name="cryptoDeviceId" type="id"><description>The ChatDevice of the browser of this leg in an end-to-end
+            encrypted call: the other legs send their keys to it. A leg with none does not bind.</description></field>
+        <field name="keyIndex" type="number-integer"><description>The leg's number in the call's key ids: a sender's SFrame
+            KID is keyIndex * 65536 + its epoch, so a receiver knows whose key a frame names</description></field>
+    </extend-entity>
+    <extend-entity entity-name="ChatRoom" package="moqui.chat">
+        <field name="callE2eeRequired" type="text-indicator"><description>Y: every call of the room is end-to-end encrypted
+            (W8); set by an owner or moderator (CallServices set#RoomCallEncryption)</description></field>
+    </extend-entity>
+    <!-- ========== end W8 ========== -->
 </entities>

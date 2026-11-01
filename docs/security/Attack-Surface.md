@@ -262,6 +262,8 @@ lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 
   call. They never see the room, its members or its history.
 - A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
 - Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
+- A link made end-to-end encrypted (W8) takes no guest (`encryptedNoGuests`): a guest has no crypto device. The page says
+  so from the token's route context (`encrypted`).
 
 Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
 unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
@@ -422,7 +424,7 @@ Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It nee
 
 ### Call media
 
-Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream (encrypted calls are W8). The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
 Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links between the media nodes of a call on the
 same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
@@ -434,6 +436,23 @@ member may open a link for any room id: the cluster's members are trusted alike.
 
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
+
+End-to-end encrypted calls (W8, [WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)) open nothing new.
+Each browser SFrame-encrypts its frames (RFC 9605, AES-128-GCM on WebCrypto, in an `RTCRtpScriptTransform` worker) with
+a key of its own per call and epoch. It sends that key to the other browsers' crypto devices as Olm to-device messages
+over the `/ChatKeys` endpoints (C7 core), so the server holds and relays only Olm ciphertext; no chat Megolm session is
+used. What the server and the media nodes still see: the RTP headers and header extensions (the audio level for the
+active speaker), each frame's size and timing, the first 10 bytes of a VP8 keyframe and the first 3 of other VP8 frames
+(kept in the clear so the SFU finds keyframes and sizes; authenticated as SFrame metadata), the SFrame header (the
+sender's key index and epoch, the counter), and who is in the call with which device. The roster the browsers send keys
+to is the server's (`get#Call`): a server that adds a device of a user in the call gets that leg's keys. A browser takes a
+key only from the device the roster names for its leg (the Olm sender, which the server cannot forge), with that leg's key
+index in its KID, and decrypts a track only with the keys of the leg it comes from; a frame that does not decrypt is
+dropped, never played. Devices are not verified yet (no emoji or QR verification: a later C7 pass), so a page shows each
+device as unverified. The mode is set at the start (`requireE2ee`, a room's or a link's policy) and never lowered, and a
+leg of such a call binds only with a crypto device of its user (`noCryptoDevice`); recording, captions, phone legs, desk
+phones, forwarded numbers, guests and merges are refused. The browser's crypto store is not encrypted at rest (see Chat
+keys).
 
 ### Call recording
 

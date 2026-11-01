@@ -54,6 +54,19 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
   or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
   there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+- <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
+  room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
+  encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a
+  key of its own, which goes only to the others' browsers, and a new key is made whenever someone joins, leaves or comes
+  back, so someone who left does not hear what is said after. The call shows End-to-end encrypted beside its state (other
+  calls show Encrypted to the server, which can record or caption them), and Participants shows each person's key state
+  (keys received, waiting for keys) and that their device is not verified yet. This is apart from the encryption of the
+  room's messages. Such a call cannot be recorded or captioned, takes no phone number, desk phone, forwarded number or
+  guest, and is not merged with another call; once encrypted it stays so. It needs a current Chrome, Edge, Firefox or
+  Safari: a browser that cannot encrypt call media says so and does not join, and the terminal does not answer one. The
+  keys use this browser's encryption device (Settings, My devices), which one tab holds at a time: answer the call in the
+  tab that is not using it for something else, or close the other one. See [WebRTC, Encrypted
+  calls](../interfaces/WebRTC.md#encrypted-calls).
 - **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
   pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
   consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
@@ -218,5 +231,7 @@ after the tabs and phones ring or a phone declines, a phone's own call). `./moq 
 the rules, schedules across a time zone, forward loops and permissions, do not disturb and call waiting, simultaneous ring,
 the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
 their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
-Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
+Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
+policy and every refusal of end-to-end encrypted calls; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
+an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

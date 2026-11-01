@@ -33,7 +33,7 @@ const NUMBER = 'moqui.call.PhoneNumber'
 const ACCOUNT = 'moqui.security.UserAccount'
 
 const OPEN = ['CtsRinging', 'CtsConsulting']
-/** The media encryption of every call but an end-to-end encrypted one (W8), which takes no phone legs. */
+/** The media encryption of every call but an end-to-end encrypted one (W8, e2ee-sframe), which takes no phone legs. */
 const PLAIN_MEDIA = 'dtls-srtp'
 
 const ms = (value) => {
@@ -448,6 +448,10 @@ function addParticipant(p) {
     return { call: view(session.callSessionId) }
   }
   if (blank(p.phoneNumber)) return refuse('badTarget', 'Choose a person or a number')
+  // an end-to-end encrypted call (W8) takes no phone leg, whatever the number: said before the number is looked at
+  if (session.encryptionMode && session.encryptionMode !== PLAIN_MEDIA) {
+    return refuse('encrypted', 'An end-to-end encrypted call cannot add a phone number')
+  }
   const target = resolveTarget('number', p.phoneNumber, me)
   if (target.refusal) return target.refusal
   if (target.type === 'user') return addParticipant(Object.assign({}, p, { phoneNumber: null, userId: target.id }))

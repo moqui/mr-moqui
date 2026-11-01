@@ -343,7 +343,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         const abroad = as(A, "add#CallParticipant", {callSessionId: first.callSessionId, phoneNumber: ABROAD})
         sys(() => {
             const s = ec.entity.find(SESSION).condition("callSessionId", first.callSessionId).one()
-            s.set("encryptionMode", "e2ee")
+            s.set("encryptionMode", "e2ee-sframe")
             s.update()
         })
         const encrypted = as(A, "add#CallParticipant", {callSessionId: first.callSessionId, phoneNumber: "+15550199966"})

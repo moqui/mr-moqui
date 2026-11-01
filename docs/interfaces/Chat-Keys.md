@@ -57,6 +57,11 @@ devices.
 
 **The server keeps** public keys, Olm ciphertext and routing only. Plaintext and private keys never leave the browser.
 
+**Encrypted calls (W8)** use this reach as it is: their browsers send each other their SFrame keys as the to-device event
+`io.moqui.call.key`, to the devices the call's roster names ([WebRTC, Encrypted calls](WebRTC.md#encrypted-calls)).
+Revoking a device also takes its legs out of the encrypted calls it is in, so the others rotate their keys without it.
+Call guests have no device: an encrypted call takes no guest, so the reach rules are unchanged.
+
 ## Endpoints
 
 The services take and answer Matrix's payloads, so the Matrix client API (C6a) can serve the same services at
