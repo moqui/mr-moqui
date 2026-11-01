@@ -18,11 +18,19 @@
 // - **To-device.** A message is queued per device at the device's next stream position and kept until the device
 //   acknowledges it: a sync from a position deletes what is at or before it and answers what comes after. A queued message
 //   wakes the recipient's tabs with a push on chatUser:<userId> ({kind: 'toDevice'}) that carries nothing of the message.
+// - **Trust and backup.** Each device's store key (the passphrase its browser store is encrypted with) is answered only to
+//   its own user. Cross-signing keys and the signatures users upload are stored and merged into key queries; the server
+//   checks who may sign what, not the signatures (the clients do). A key backup holds Megolm sessions the browser
+//   encrypted to the user's backup key (Matrix room_keys), opaque here.
 // - **The server** stores and answers public keys, ciphertext and routing only. It does not read message content.
 
 const DEVICE = 'moqui.chat.ChatDevice'
 const KEY = 'moqui.chat.ChatDeviceKey'
 const TO_DEVICE = 'moqui.chat.ChatToDevice'
+const CROSS = 'moqui.chat.ChatCrossSigningKey'
+const SIGNATURE = 'moqui.chat.ChatKeySignature'
+const BACKUP = 'moqui.chat.ChatKeyBackup'
+const BACKUP_SESSION = 'moqui.chat.ChatKeyBackupSession'
 const MEMBER = 'moqui.chat.ChatRoomMember'
 const PARTICIPANT = 'moqui.call.CallParticipant'
 const SESSION = 'moqui.call.CallSession'
@@ -44,6 +52,18 @@ const MAX_CONTENT = 65536
 const MAX_QUEUED = 5000
 /** A sync answers at most this many messages; has_more says there are more. */
 const MAX_SYNC = 500
+/** Users a sync names in device_lists.left at most, and room memberships it reads to find them. */
+const MAX_LEFT = 1000
+const MAX_LEFT_ROWS = 5000
+/** Signatures in one upload, and the size of one signature. */
+const MAX_SIGNATURES = 1000
+const MAX_SIGNATURE = 1024
+/** Backup versions a user may make; sessions in one put, in one answer, and held by a user; one session's size. */
+const MAX_BACKUP_VERSIONS = 1000
+const MAX_BACKUP_PUT = 1000
+const MAX_BACKUP_GET = 10000
+const MAX_BACKUP_SESSIONS = 100000
+const MAX_BACKUP_SESSION_JSON = 16384
 /** A device-list cursor looks back this far, so a change committed a little late is still seen (repeating one is harmless). */
 const LIST_OVERLAP_MS = 120000
 
@@ -274,14 +294,34 @@ function revokeDevice(p) {
   if (!device) return refuse('notFound', 'Device not found')
   if (device.revokedDate) return { deviceId: device.deviceId, repeated: true }
   device.set('revokedDate', ec.user.nowTimestamp)
+  // its store can no longer be opened with a key from here
+  device.set('storeKey', null)
   listChanged(device)
   device.update()
   find(KEY).condition({ userId: me, deviceId: device.deviceId }).deleteAll()
+  find(SIGNATURE).condition({ targetUserId: me, targetKeyId: device.deviceId }).deleteAll()
+  find(SIGNATURE).condition({ signerUserId: me, signerKeyId: 'ed25519:' + device.deviceId }).deleteAll()
   find(TO_DEVICE).condition({ userId: me, deviceId: device.deviceId }).deleteAll()
   wake(me, { kind: 'devices', action: 'revoked', deviceId: device.deviceId })
   // its legs in end-to-end encrypted calls leave them (W8): the others rotate their call keys without it
   ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('deviceRevoked', { userId: me, deviceId: device.deviceId })
   return { deviceId: device.deviceId }
+}
+
+/**
+ * The passphrase my device's browser store is encrypted with (OlmMachine.initialize store_passphrase): made on the first
+ * ask, 43 characters of URL-safe base64 (258 random bits), and the same at each ask after. Only for my own device that is
+ * not revoked; a revoke clears it. Never logged.
+ */
+function storeKey(p) {
+  const found = ownDevice(p.deviceId, true)
+  if (found.refusal) return found.refusal
+  const { device } = found
+  if (blank(device.storeKey)) {
+    device.set('storeKey', String(ec.user.randomString(43)))
+    device.update()
+  }
+  return { storeKey: String(device.storeKey) }
 }
 
 // ---- keys/upload, keys/query, keys/claim ----
@@ -404,19 +444,32 @@ function queryKeys(p) {
   }
   const allowed = reachable(me, Object.keys(byUser))
   const out = {}
+  const cross = { master_keys: {}, self_signing_keys: {}, user_signing_keys: {} }
   for (const userId of allowed) {
     const id = byUser[userId]
     const wanted = Array.isArray(asked[id]) ? asked[id].map(String) : []
     let query = find(DEVICE).condition('userId', userId).condition('revokedDate', null).condition('deviceKeysJson', '!=', null)
     if (wanted.length) query = query.condition('deviceId', 'in', wanted.slice(0, MAX_TARGETS))
+    const signatures = signaturesOver(me, userId)
     const devices = {}
     for (const device of query.limit(MAX_DEVICES + 10).list()) {
       const keys = publicKeys(device)
-      if (keys) devices[device.deviceId] = keys
+      if (keys) devices[device.deviceId] = withSignatures(keys, signatures.get(device.deviceId))
     }
     out[id] = devices
+    for (const row of rows(CROSS, { userId })) {
+      // the user-signing key only to its own user (Matrix answers it to no one else)
+      if (row.keyUsage === 'user_signing' && userId !== me) continue
+      let key = null
+      try { key = JSON.parse(row.keyJson) } catch (err) {
+        ec.logger.error(`Cross-signing key ${row.keyUsage} of ${userId} is not JSON; left out`)
+        continue
+      }
+      cross[row.keyUsage + '_keys'][id] = withSignatures(key, signatures.get(row.publicKey))
+    }
   }
-  return { device_keys: out, failures: {}, master_keys: {}, self_signing_keys: {}, user_signing_keys: {} }
+  return { device_keys: out, failures: {}, master_keys: cross.master_keys, self_signing_keys: cross.self_signing_keys,
+    user_signing_keys: cross.user_signing_keys }
 }
 
 /** Takes one key of the device (its row locked first): the oldest unclaimed one-time key, else its fallback key. */
@@ -574,12 +627,470 @@ function syncToDevice(p) {
       .selectField('userId').limit(5000).list()).map((row) => row.userId)))
     for (const userId of reachable(me, users)) changed.push(matrixId(userId))
   }
+  const left = listSince == null ? [] : leftUsers(me, listSince)
   return {
     next_batch: String(next), has_more: hasMore, to_device: { events },
-    device_lists: { changed, left: [] }, device_lists_next: now,
+    device_lists: { changed, left }, device_lists_next: now,
     device_one_time_keys_count: unclaimedCounts(me, deviceId),
     device_unused_fallback_key_types: unusedFallbackTypes(me, deviceId),
   }
+}
+
+// ---- cross-signing (keys/device_signing/upload, keys/signatures/upload) ----
+
+const USAGES = ['master', 'self_signing', 'user_signing']
+const PARAMETER_OF = { master: 'master_key', self_signing: 'self_signing_key', user_signing: 'user_signing_key' }
+/** An ed25519 public key as Matrix writes it (unpadded base64), or a device ID. */
+const KEY_TEXT = /^[A-Za-z0-9+/=_-]{1,64}$/
+
+/** The signatures stored over userId's keys that I may see (theirs, and mine), by target key ID. */
+function signaturesOver(me, userId) {
+  const byTarget = new Map()
+  const signers = Array.from(new Set([userId, me]))
+  for (const row of find(SIGNATURE).condition('targetUserId', userId).condition('signerUserId', 'in', signers).limit(5000).list()) {
+    if (!byTarget.has(row.targetKeyId)) byTarget.set(row.targetKeyId, [])
+    byTarget.get(row.targetKeyId).push(row)
+  }
+  return byTarget
+}
+
+/** A signed object with the stored signatures merged into its signatures (signer's Matrix user ID, then key ID). */
+function withSignatures(object, list) {
+  if (!list || !list.length) return object
+  const signatures = isObject(object.signatures) ? object.signatures : {}
+  for (const row of list) {
+    const signer = matrixId(row.signerUserId)
+    signatures[signer] = Object.assign({}, isObject(signatures[signer]) ? signatures[signer] : {}, { [row.signerKeyId]: row.signature })
+  }
+  object.signatures = signatures
+  return object
+}
+
+/** Users' device lists changed (cross-signing keys or signatures): their devices' list revisions go up, so syncs name them. */
+function usersChanged(userIds) {
+  for (const userId of userIds) {
+    for (const device of find(DEVICE).condition('userId', userId).condition('revokedDate', null).limit(MAX_DEVICES + 10).list()) {
+      listChanged(device)
+      device.update()
+    }
+  }
+}
+
+/** An uploaded cross-signing key of usage: {publicKey, keyJson, value}, or {reasonCode, text}. */
+function crossSigningKey(me, usage, value) {
+  if (!isObject(value)) return { reasonCode: 'badKeys', text: 'A cross-signing key is not an object' }
+  const keyJson = JSON.stringify(value)
+  if (keyJson.length > MAX_DEVICE_KEYS_JSON) return { reasonCode: 'tooLarge', text: 'A cross-signing key is too large' }
+  if (value.user_id !== matrixId(me)) return { reasonCode: 'badKeys', text: 'A cross-signing key is not yours' }
+  if (!Array.isArray(value.usage) || !value.usage.includes(usage)) {
+    return { reasonCode: 'badKeys', text: 'A cross-signing key does not have the usage it is uploaded as' }
+  }
+  const ids = isObject(value.keys) ? Object.keys(value.keys) : []
+  const publicKey = ids.length === 1 && ids[0].startsWith('ed25519:') ? ids[0].slice(8) : ''
+  if (!KEY_TEXT.test(publicKey) || value.keys[ids[0]] !== publicKey) {
+    return { reasonCode: 'badKeys', text: 'A cross-signing key must hold one ed25519 key' }
+  }
+  return { publicKey, keyJson, value }
+}
+
+/** Deletes cross-signing keys of mine and every signature by them or over them. */
+function deleteCrossSigning(me, keys) {
+  for (const key of keys) {
+    find(SIGNATURE).condition({ signerUserId: me, signerKeyId: 'ed25519:' + key.publicKey }).deleteAll()
+    find(SIGNATURE).condition({ targetUserId: me, targetKeyId: key.publicKey }).deleteAll()
+    key.delete()
+  }
+}
+
+/**
+ * Matrix keys/device_signing/upload for me. The session stands for Matrix's user-interactive auth: the first upload is
+ * allowed, the same keys again change nothing, and a different master key replaces my identity only with reset (else
+ * keysChanged); a reset deletes the old keys and every signature by or over them. Without a master key in the upload I
+ * must have one; a self-signing or user-signing key must carry a signature by the master key (present; not checked).
+ */
+function uploadCrossSigningKeys(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const uploaded = {}
+  for (const usage of USAGES) {
+    const value = p[PARAMETER_OF[usage]]
+    if (value == null) continue
+    const key = crossSigningKey(me, usage, value)
+    if (key.reasonCode) return refuse(key.reasonCode, key.text)
+    uploaded[usage] = key
+  }
+  if (!Object.keys(uploaded).length) return refuse('badKeys', 'No cross-signing key was given')
+  const current = {}
+  for (const row of find(CROSS).condition('userId', me).forUpdate(true).list()) current[row.keyUsage] = row
+  const reset = p.reset === true || p.reset === 'true' || p.reset === 'Y'
+  const master = uploaded.master
+  const replacesMaster = !!(master && current.master && current.master.publicKey !== master.publicKey)
+  if (replacesMaster && !reset) {
+    return refuse('keysChanged', 'Your identity (master key) cannot change unless you choose to reset it')
+  }
+  if (!master && !current.master) return refuse('noMasterKey', 'Upload the master key first')
+  const masterKey = master ? master.publicKey : current.master.publicKey
+  for (const usage of ['self_signing', 'user_signing']) {
+    const key = uploaded[usage]
+    if (!key) continue
+    const mine = isObject(key.value.signatures) ? key.value.signatures[matrixId(me)] : null
+    const signature = isObject(mine) ? mine['ed25519:' + masterKey] : null
+    if (typeof signature !== 'string' || !signature) return refuse('badKeys', 'A cross-signing key is not signed by the master key')
+  }
+  let changed = false
+  if (replacesMaster) {
+    deleteCrossSigning(me, Object.values(current))
+    for (const usage of USAGES) delete current[usage]
+    changed = true
+  }
+  for (const usage of USAGES) {
+    const key = uploaded[usage]
+    if (!key) continue
+    const old = current[usage]
+    if (old && old.publicKey === key.publicKey) {
+      if (old.keyJson !== key.keyJson) {
+        old.setFields({ keyJson: key.keyJson, uploadedDate: ec.user.nowTimestamp }, true, null, null)
+        old.update()
+        changed = true
+      }
+      continue
+    }
+    if (old) deleteCrossSigning(me, [old])
+    const row = ec.entity.makeValue(CROSS)
+    row.setFields({ userId: me, keyUsage: usage, publicKey: key.publicKey, keyJson: key.keyJson, uploadedDate: ec.user.nowTimestamp },
+      true, null, null)
+    row.create()
+    changed = true
+  }
+  if (changed) usersChanged([me])
+  return { changed }
+}
+
+/**
+ * Which of my keys may sign targetKeyId of userId (Matrix user ID id), as signer key IDs, or {errcode, error}: my own
+ * device by my self-signing key, my master key by my devices, my self-signing and user-signing keys by my master key, and
+ * the master key of another user in reach by my user-signing key. object must be the key it names.
+ */
+function signers(me, mine, userId, id, keyId, object, allowed) {
+  const forbidden = { errcode: 'M_FORBIDDEN', error: 'Not a key you may sign' }
+  if (!userId || !KEY_TEXT.test(keyId)) return forbidden
+  if (!isObject(object) || object.user_id !== matrixId(userId) || !isObject(object.keys)) {
+    return { errcode: 'M_INVALID_PARAM', error: 'The signed object is not the key it names' }
+  }
+  const crossKey = (publicKey) => object.keys['ed25519:' + publicKey] === publicKey
+  const by = (usage) => (mine[usage] ? ['ed25519:' + mine[usage]] : [])
+  if (userId === me) {
+    const usage = USAGES.find((u) => mine[u] === keyId)
+    if (usage) {
+      if (!crossKey(keyId)) return { errcode: 'M_INVALID_PARAM', error: 'The signed object is not the key it names' }
+      if (usage !== 'master') return by('master')
+      return Array.from(find(DEVICE).condition('userId', me).condition('revokedDate', null).condition('ed25519Key', '!=', null)
+        .selectField('deviceId').limit(MAX_DEVICES + 10).list()).map((d) => 'ed25519:' + d.deviceId)
+    }
+    const device = one(DEVICE, { userId: me, deviceId: keyId })
+    if (!device || device.revokedDate || !device.ed25519Key) return { errcode: 'M_NOT_FOUND', error: 'Device not found' }
+    if (object.device_id !== keyId || object.keys['ed25519:' + keyId] !== device.ed25519Key) {
+      return { errcode: 'M_INVALID_PARAM', error: 'The signed object is not the key it names' }
+    }
+    return by('self_signing')
+  }
+  if (!allowed.has(userId)) return forbidden
+  const master = one(CROSS, { userId, keyUsage: 'master' })
+  if (!master || master.publicKey !== keyId) return forbidden
+  if (!crossKey(keyId)) return { errcode: 'M_INVALID_PARAM', error: 'The signed object is not the key it names' }
+  return by('user_signing')
+}
+
+/**
+ * Matrix keys/signatures/upload: signed is the request body, Matrix user ID to key ID (a device ID or a cross-signing
+ * public key) to the signed object. Stores the signatures in it by my keys that may sign that key; the others are
+ * ignored. A key refused is in failures (Matrix user ID to key ID to {errcode, error}).
+ */
+function uploadKeySignatures(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  if (!isObject(p.signed)) return refuse('badRequest', 'The signatures are not an object')
+  const signed = p.signed
+  let total = 0
+  for (const id of Object.keys(signed)) total += isObject(signed[id]) ? Object.keys(signed[id]).length : 1
+  if (total > MAX_SIGNATURES) return refuse('tooMany', 'Too many signatures in one upload')
+  const myId = matrixId(me)
+  const mine = {}
+  for (const row of rows(CROSS, { userId: me })) mine[row.keyUsage] = row.publicKey
+  const targets = Object.keys(signed).map((id) => ({ id, userId: userOf(id) }))
+  const allowed = reachable(me, targets.map((t) => t.userId).filter((u) => u && u !== me))
+  const failures = {}
+  const fail = (id, keyId, failure) => {
+    failures[id] = failures[id] || {}
+    failures[id][keyId] = failure
+  }
+  const changedUsers = new Set()
+  for (const { id, userId } of targets) {
+    const objects = signed[id]
+    if (!isObject(objects)) {
+      fail(id, '', { errcode: 'M_BAD_JSON', error: 'Not an object of keys' })
+      continue
+    }
+    for (const keyId of Object.keys(objects)) {
+      const object = objects[keyId]
+      const may = signers(me, mine, userId, id, keyId, object, allowed)
+      if (!Array.isArray(may)) {
+        fail(id, keyId, may)
+        continue
+      }
+      const theirs = isObject(object.signatures) ? object.signatures[myId] : null
+      const accepted = isObject(theirs) ? Object.keys(theirs).filter((signerKeyId) => may.includes(signerKeyId) &&
+        typeof theirs[signerKeyId] === 'string' && theirs[signerKeyId] && theirs[signerKeyId].length <= MAX_SIGNATURE) : []
+      if (!accepted.length) {
+        fail(id, keyId, { errcode: 'M_INVALID_SIGNATURE', error: 'No signature by a key of yours that may sign this key' })
+        continue
+      }
+      for (const signerKeyId of accepted) {
+        const fields = { targetUserId: userId, targetKeyId: keyId, signerUserId: me, signerKeyId }
+        const existing = one(SIGNATURE, fields)
+        if (existing && existing.signature === theirs[signerKeyId]) continue
+        if (existing) {
+          existing.setFields({ signature: theirs[signerKeyId], uploadedDate: ec.user.nowTimestamp }, true, null, null)
+          existing.update()
+        } else {
+          const row = ec.entity.makeValue(SIGNATURE)
+          row.setFields(Object.assign({ signature: theirs[signerKeyId], uploadedDate: ec.user.nowTimestamp }, fields), true, null, null)
+          row.create()
+        }
+        changedUsers.add(userId)
+      }
+    }
+  }
+  usersChanged(Array.from(changedUsers).sort())
+  return { failures }
+}
+
+// ---- device_lists.left ----
+
+/**
+ * The Matrix user IDs I was in reach of through a room and no longer am (no shared room, no live call), because a
+ * membership ended since listSince: a co-member who left a room I am or was in, or the members of a room I left.
+ */
+function leftUsers(me, listSince) {
+  const since = new Date(listSince - LIST_OVERLAP_MS)
+  const myRooms = Array.from(new Set(Array.from(find(MEMBER).condition('userId', me).selectField('chatRoomId').limit(10000).list())
+    .map((row) => row.chatRoomId)))
+  const candidates = new Set()
+  let read = 0
+  for (const rooms of chunks(myRooms, 500)) {
+    if (read >= MAX_LEFT_ROWS) break
+    const ended = Array.from(find(MEMBER).condition('chatRoomId', 'in', rooms).condition('leftDate', '>', since)
+      .selectField('chatRoomId').selectField('userId').limit(MAX_LEFT_ROWS - read).list())
+    read += ended.length
+    const roomsLeft = []
+    for (const row of ended) {
+      if (row.userId === me) roomsLeft.push(row.chatRoomId)
+      else if (row.userId) candidates.add(row.userId)
+    }
+    // of a room I left: its members then (still there, or gone since)
+    for (const left of chunks(roomsLeft, 500)) {
+      for (const row of find(MEMBER).condition('chatRoomId', 'in', left).selectField('userId').selectField('leftDate')
+        .limit(MAX_LEFT_ROWS).list()) {
+        if (row.userId && (!row.leftDate || ms(row.leftDate) > since.getTime())) candidates.add(row.userId)
+      }
+    }
+  }
+  candidates.delete(me)
+  const users = Array.from(candidates).sort().slice(0, MAX_LEFT)
+  const still = reachable(me, users)
+  return users.filter((u) => !still.has(u)).map(matrixId)
+}
+
+// ---- key backup (room_keys) ----
+
+/** My backup versions not deleted; the current one is the latest. */
+function currentBackup(me, lock) {
+  let latest = null
+  for (const row of find(BACKUP).condition('userId', me).condition('deletedDate', null).selectField('version')
+    .limit(MAX_BACKUP_VERSIONS + 10).list()) {
+    if (!latest || Number(row.version) > Number(latest)) latest = row.version
+  }
+  return latest ? liveBackup(me, latest, lock) : null
+}
+
+/** My backup version, not deleted, or null. */
+function liveBackup(me, version, lock) {
+  if (blank(version)) return null
+  const row = find(BACKUP).condition({ userId: me, version: String(version).trim() }).forUpdate(!!lock).one()
+  return row && !row.deletedDate ? row : null
+}
+
+const backupCount = (me, version) => find(BACKUP_SESSION).condition({ userId: me, version }).count()
+
+function parseJson(text, what) {
+  try { return JSON.parse(text) } catch (err) {
+    ec.logger.error(`${what} is not JSON; answered as null`)
+    return null
+  }
+}
+
+/** The backup's auth_data from the request, as stored JSON, or a refusal. */
+function authData(p) {
+  if (!isObject(p.auth_data)) return { refusal: refuse('badRequest', 'The backup auth_data is not an object') }
+  const json = JSON.stringify(p.auth_data)
+  if (json.length > MAX_DEVICE_KEYS_JSON) return { refusal: refuse('tooLarge', 'The backup auth_data is too large') }
+  return { json }
+}
+
+/** A new backup version of mine (versions "1", "2", ..., never reused); it is the current one. */
+function createBackupVersion(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const algorithm = String(p.algorithm || '').trim()
+  if (!algorithm || algorithm.length > 255) return refuse('badRequest', 'The backup algorithm is required')
+  const auth = authData(p)
+  if (auth.refusal) return auth.refusal
+  const made = find(BACKUP).condition('userId', me).count()
+  if (made >= MAX_BACKUP_VERSIONS) return refuse('tooMany', 'Too many key backup versions')
+  let number = made + 1
+  while (one(BACKUP, { userId: me, version: String(number) })) number++
+  const row = ec.entity.makeValue(BACKUP)
+  row.setFields({ userId: me, version: String(number), algorithm, authDataJson: auth.json, etag: 0, createdDate: ec.user.nowTimestamp },
+    true, null, null)
+  row.create()
+  return { version: String(number) }
+}
+
+function getBackupVersion(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const row = blank(p.version) ? currentBackup(me, false) : liveBackup(me, p.version, false)
+  if (!row) return refuse('notFound', 'No key backup')
+  return {
+    algorithm: row.algorithm, auth_data: parseJson(row.authDataJson, `Key backup ${row.version} auth_data of ${me}`),
+    count: backupCount(me, row.version), etag: String(row.etag || 0), version: row.version,
+  }
+}
+
+function updateBackupVersion(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const row = liveBackup(me, p.version, true)
+  if (!row) return refuse('notFound', 'No key backup')
+  if (String(p.algorithm || '').trim() !== row.algorithm) return refuse('algorithmChanged', 'A key backup\'s algorithm cannot change')
+  const auth = authData(p)
+  if (auth.refusal) return auth.refusal
+  row.set('authDataJson', auth.json)
+  row.update()
+  return { version: row.version }
+}
+
+function deleteBackupVersion(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const row = liveBackup(me, p.version, true)
+  if (!row) return refuse('notFound', 'No key backup')
+  find(BACKUP_SESSION).condition({ userId: me, version: row.version }).deleteAll()
+  row.set('deletedDate', ec.user.nowTimestamp)
+  row.update()
+  return { version: row.version }
+}
+
+const isCount = (value) => Number.isInteger(value) && value >= 0
+
+/** Matrix's rule: a verified copy wins, then the lower first message index, then the lower forwarded count. */
+function better(session, old) {
+  const oldVerified = old.isVerified === 'Y'
+  if (session.is_verified !== oldVerified) return session.is_verified
+  if (session.first_message_index !== Number(old.firstMessageIndex)) return session.first_message_index < Number(old.firstMessageIndex)
+  return session.forwarded_count < Number(old.forwardedCount)
+}
+
+/**
+ * Matrix PUT room_keys/keys into my current backup version (another version: wrongVersion with current_version). Each
+ * session is stored, or replaces the one there only when better. etag goes up when anything changed.
+ */
+function storeBackupKeys(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const current = currentBackup(me, true)
+  if (!current) return refuse('notFound', 'No key backup')
+  if (String(p.version == null ? '' : p.version).trim() !== current.version) {
+    return Object.assign(refuse('wrongVersion', 'That is not the current key backup version'), { current_version: current.version })
+  }
+  if (!isObject(p.rooms)) return refuse('badRequest', 'The rooms are not an object')
+  const sessions = []
+  for (const roomId of Object.keys(p.rooms)) {
+    const room = p.rooms[roomId]
+    if (!roomId || roomId.length > 255 || !isObject(room) || !isObject(room.sessions)) return refuse('badRequest', 'A room is not a room of sessions')
+    for (const sessionId of Object.keys(room.sessions)) {
+      if (sessions.length >= MAX_BACKUP_PUT) return refuse('tooMany', 'Too many sessions in one backup upload')
+      const data = room.sessions[sessionId]
+      if (!sessionId || sessionId.length > 255 || !isObject(data) || !isCount(data.first_message_index) || !isCount(data.forwarded_count) ||
+        typeof data.is_verified !== 'boolean' || !isObject(data.session_data)) {
+        return refuse('badRequest', 'A backed-up session is not KeyBackupData')
+      }
+      const sessionDataJson = JSON.stringify(data.session_data)
+      if (sessionDataJson.length > MAX_BACKUP_SESSION_JSON) return refuse('tooLarge', 'A backed-up session is too large')
+      sessions.push({ roomId, sessionId, first_message_index: data.first_message_index, forwarded_count: data.forwarded_count,
+        is_verified: data.is_verified, sessionDataJson, existing: one(BACKUP_SESSION, { userId: me, version: current.version, roomId, sessionId }) })
+    }
+  }
+  const added = sessions.filter((s) => !s.existing).length
+  if (added && find(BACKUP_SESSION).condition('userId', me).count() + added > MAX_BACKUP_SESSIONS) {
+    return refuse('tooMany', 'The key backup holds as many sessions as it may')
+  }
+  let changed = 0
+  for (const s of sessions) {
+    if (s.existing && !better(s, s.existing)) continue
+    const row = s.existing || ec.entity.makeValue(BACKUP_SESSION)
+    row.setFields({ userId: me, version: current.version, roomId: s.roomId, sessionId: s.sessionId, firstMessageIndex: s.first_message_index,
+      forwardedCount: s.forwarded_count, isVerified: s.is_verified ? 'Y' : 'N', sessionDataJson: s.sessionDataJson,
+      uploadedDate: ec.user.nowTimestamp }, true, null, null)
+    if (s.existing) row.update()
+    else row.create()
+    changed++
+  }
+  if (changed) {
+    current.set('etag', Number(current.etag || 0) + 1)
+    current.update()
+  }
+  return { count: backupCount(me, current.version), etag: String(current.etag || 0) }
+}
+
+/** The sessions of my backup version (all, a room's, or one), at most MAX_BACKUP_GET from offset; has_more when more follow. */
+function getBackupKeys(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const row = liveBackup(me, p.version, false)
+  if (!row) return refuse('notFound', 'No key backup')
+  if (!blank(p.sessionId) && blank(p.roomId)) return refuse('badRequest', 'A session is named with its room')
+  let query = find(BACKUP_SESSION).condition({ userId: me, version: row.version })
+  if (!blank(p.roomId)) query = query.condition('roomId', String(p.roomId))
+  if (!blank(p.sessionId)) query = query.condition('sessionId', String(p.sessionId))
+  const offset = Math.max(0, Math.floor(Number(p.offset) || 0))
+  const list = Array.from(query.orderBy('roomId').orderBy('sessionId').offset(offset).limit(MAX_BACKUP_GET + 1).list())
+  const rooms = {}
+  for (const s of list.slice(0, MAX_BACKUP_GET)) {
+    const room = rooms[s.roomId] || (rooms[s.roomId] = { sessions: {} })
+    room.sessions[s.sessionId] = {
+      first_message_index: Number(s.firstMessageIndex || 0), forwarded_count: Number(s.forwardedCount || 0),
+      is_verified: s.isVerified === 'Y', session_data: parseJson(s.sessionDataJson, `Backed-up session ${s.sessionId} of ${me}`),
+    }
+  }
+  return { rooms, has_more: list.length > MAX_BACKUP_GET }
+}
+
+/** Deletes sessions of my backup version (all, a room's, or one); etag goes up when any was deleted. */
+function deleteBackupKeys(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const row = liveBackup(me, p.version, true)
+  if (!row) return refuse('notFound', 'No key backup')
+  if (!blank(p.sessionId) && blank(p.roomId)) return refuse('badRequest', 'A session is named with its room')
+  let query = find(BACKUP_SESSION).condition({ userId: me, version: row.version })
+  if (!blank(p.roomId)) query = query.condition('roomId', String(p.roomId))
+  if (!blank(p.sessionId)) query = query.condition('sessionId', String(p.sessionId))
+  if (query.deleteAll() > 0) {
+    row.set('etag', Number(row.etag || 0) + 1)
+    row.update()
+  }
+  return { count: backupCount(me, row.version), etag: String(row.etag || 0) }
 }
 
 /** The cleanup job: messages waiting longer than chat_to_device_retention_days (default 30), and claimed one-time keys. */
@@ -637,7 +1148,8 @@ function web(p) {
   if (ec.message.hasError()) {
     const errors = ec.message.errorsString
     ec.message.clearErrors()
-    ec.web.sendJsonResponse({ errors, reasonCode: out.reasonCode || 'failed' })
+    // a refusal's own fields stay (current_version of wrongVersion)
+    ec.web.sendJsonResponse(Object.assign({}, out, { errors, reasonCode: out.reasonCode || 'failed' }))
   } else {
     ec.web.sendJsonResponse(out)
   }
@@ -645,8 +1157,9 @@ function web(p) {
 }
 
 const operations = {
-  createDevice, findDevices, renameDevice, revokeDevice, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
-  clean, whoami, mapIds, web,
+  createDevice, findDevices, renameDevice, revokeDevice, storeKey, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
+  uploadCrossSigningKeys, uploadKeySignatures, createBackupVersion, getBackupVersion, updateBackupVersion,
+  deleteBackupVersion, storeBackupKeys, getBackupKeys, deleteBackupKeys, clean, whoami, mapIds, web,
 }
 
 function execute(op, parameters) {

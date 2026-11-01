@@ -218,7 +218,7 @@ along with this software (see the LICENSE.md file). If not, see
                 lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate),
                 lastMessageSeq: row.lastMessageSeq != null ? Number(row.lastMessageSeq) : null, lastMessageUserId: row.lastMessageUserId ?? null,
                 lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null,
-                callE2eeRequired: row.callE2eeRequired === 'Y'}
+                callE2eeRequired: row.callE2eeRequired === 'Y', encrypted: row.encrypted === 'Y'}
             if (memberRow) member = {chatRoomId: memberRow.chatRoomId, userId: memberRow.userId, chatActorId: memberRow.chatActorId ?? null,
                 roleEnumId: memberRow.roleEnumId ?? null,
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),
@@ -284,7 +284,8 @@ along with this software (see the LICENSE.md file). If not, see
             without the aggregates. memberUserIdList are the users it was pushed to. In a bridged room a message, edit,
             reaction or delete gets a ChatBridgeDelivery for each mapping it goes out on (direction both or out, not
             sourceChatBridgeId's; an edit, reaction or delete only where what it is about reached that network), and the
-            delivery worker is woken after the commit.</description>
+            delivery worker is woken after the commit. encrypted (C7) marks an event whose content.encrypted is Megolm
+            ciphertext: no bodyText and no snippet are kept, and it goes to no bridge.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventTypeEnumId" required="true"/>
@@ -299,6 +300,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="clientRef"/>
             <parameter name="noPush" type="Boolean" default="false"/>
             <parameter name="sourceChatBridgeId"><description>The bridge the event came from: nothing goes back to it</description></parameter>
+            <parameter name="encrypted" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -323,7 +325,7 @@ along with this software (see the LICENSE.md file). If not, see
             const row = ec.entity.makeValue('moqui.chat.ChatEvent')
             row.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, senderUserId: senderUserId || null,
                 senderActorId: senderActorId || null,
-                contentJson: content ? JSON.stringify(content) : null, bodyText: bodyText || null,
+                contentJson: content ? JSON.stringify(content) : null, bodyText: encrypted ? null : bodyText || null, encrypted: encrypted ? 'Y' : null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null, sentDate: now},
                 true, null, null)
@@ -335,7 +337,7 @@ along with this software (see the LICENSE.md file). If not, see
                 room.set('lastMessageUserId', senderUserId || null)
                 room.set('lastMessageActorId', senderActorId || null)
                 room.set('lastMessageDate', now)
-                room.set('lastMessageSnippet', snippetOf(bodyText, content ? content.attachments : null) || null)
+                room.set('lastMessageSnippet', encrypted ? null : snippetOf(bodyText, content ? content.attachments : null) || null)
             }
             room.update()
 
@@ -353,7 +355,8 @@ along with this software (see the LICENSE.md file). If not, see
             event = {chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, type: CODES[eventTypeEnumId] || null,
                 senderUserId: senderUserId || null, senderActorId: senderActorId || null, senderName: senderName, senderExternal: senderExternal,
                 sentDate: Number(now), content: content || {},
-                body: body, bodyText: bodyText || null, mentions: (content && content.mentions) || [],
+                body: encrypted ? null : body, bodyText: encrypted ? null : bodyText || null,
+                encrypted: encrypted && content ? content.encrypted || null : null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
                 forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
@@ -370,7 +373,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             // the bridges it goes out to: a delivery row per mapping, in this transaction (C1)
             const BRIDGED = ['CetMessage', 'CetEdit', 'CetReaction', 'CetRedaction']
-            if (BRIDGED.includes(eventTypeEnumId)) {
+            if (BRIDGED.includes(eventTypeEnumId) && !encrypted && room.encrypted !== 'Y') {
                 const mappings = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
                         .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).disableAuthz().list())
                         .filter((mapping) => !sourceChatBridgeId || mapping.chatBridgeId !== sourceChatBridgeId)
@@ -607,7 +610,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="index" noun="ChatEvent">
         <description>Internal: put a message in the search index (the MoquiChatEvent document), or take it out (remove,
-            or a message that is redacted). Nothing without search. Failure tolerant: an error is logged.</description>
+            or a message that is redacted). Nothing without search, and nothing of an encrypted event (C7: it has no text). Failure tolerant: an error is logged.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
@@ -616,6 +619,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             try {
                 if (!ec.search.isAvailable()) return
+                if (!remove && ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                        .condition('encrypted', 'Y').disableAuthz().count()) return
                 if (remove) ec.search.deleteDocument('MoquiChatEvent', `${chatRoomId}::${eventSeq}`)
                 else ec.search.indexDocuments(ec.entity.getDataDocuments('MoquiChatEvent', {chatRoomId: chatRoomId, eventSeq: eventSeq}))
             } catch (err) {
@@ -631,7 +636,7 @@ along with this software (see the LICENSE.md file). If not, see
             last event. Each: the room's fields, displayName (a direct room's: the other members' names), isMember, my
             roleEnumId, notificationLevelEnumId, isPinned, isMuted, lastReadEventSeq, unreadCount (messages from others after
             my read marker), mentionCount, lastMessage {eventSeq, senderUserId, senderName, sentDate, snippet}, bridged (a
-            connector is mapped to it), notConnected (one of them is not connected) and bridgeNetworkNames, and for a
+            connector is mapped to it), encrypted (C7: lastMessage then has no snippet and encrypted true), notConnected (one of them is not connected) and bridgeNetworkNames, and for a
             direct room otherUserIdList and, with one other member, otherUserId and presence (as get#UserStatuses gives it).
             filter: unread (unread messages or mentions), mentions, direct, rooms (private and public), records; searchText
             matches the name and topic. includeJoinable adds the public rooms the user has not joined (isMember false).
@@ -741,7 +746,8 @@ along with this software (see the LICENSE.md file). If not, see
                     lastMessage: row.lastMessageSeq != null ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
                         senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId
                             : (actorNames[row.lastMessageActorId]?.name ?? null),
-                        sentDate: toMillis(row.lastMessageDate), snippet: row.lastMessageSnippet ?? null, redacted: row.lastMessageSnippet == null} : null,
+                        sentDate: toMillis(row.lastMessageDate), snippet: row.lastMessageSnippet ?? null, redacted: row.encrypted !== 'Y' && row.lastMessageSnippet == null, encrypted: row.encrypted === 'Y'} : null,
+                    encrypted: row.encrypted === 'Y',
                     otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null,
                     bridged: !!bridgeMap[row.chatRoomId], notConnected: (bridgeMap[row.chatRoomId] || []).some((bridge) => !bridge.connected),
                     bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name)))}
@@ -857,7 +863,11 @@ along with this software (see the LICENSE.md file). If not, see
             CrvUsers, record CrvRecord); a record room may be CrvMembers. Each member's notification level starts at the
             member's own default, the preference CHAT_NOTIFY_DEFAULT (all, mentions or none), else CnlAll, CnlMentions in a
             public room; in a direct room it is CnlAll. Each new member's room list hears of it on chatUser:userId. No external
-            user (EXTERNAL_USER) makes or is put in a record room.</description>
+            user (EXTERNAL_USER) makes or is put in a record room.
+
+            encrypted (C7) makes the room end-to-end encrypted, for good: only a direct or private room (reasonCode
+            encryptedRoom for a public or record room). An encrypted direct room is its own room beside the plain one of the
+            same users. Its messages are encrypted in the browsers (send#Message encrypted).</description>
         <in-parameters>
             <parameter name="roomTypeEnumId" default-value="CrtPrivate"/>
             <parameter name="roomName"/>
@@ -868,20 +878,25 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="recordId"/>
             <parameter name="retentionDays" type="Integer"/>
             <parameter name="memberUserIdList" type="List"/>
+            <parameter name="encrypted" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="created" type="Boolean"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const TYPES = {direct: 'CrtDirect', private: 'CrtPrivate', public: 'CrtPublic', record: 'CrtRecord'}
             const VISIBILITIES = {members: 'CrvMembers', users: 'CrvUsers', record: 'CrvRecord'}
             const DEFAULT_VISIBILITY = {CrtDirect: 'CrvMembers', CrtPrivate: 'CrvMembers', CrtPublic: 'CrvUsers', CrtRecord: 'CrvRecord'}
-            chatRoomId = null; created = false
+            chatRoomId = null; created = false; reasonCode = null
             const userId = ec.user.userId
             if (!userId) { ec.message.addError(ec.l10n.localize('No user to make a chat room for')); return }
             const type = TYPES[roomTypeEnumId] || roomTypeEnumId
             if (!Object.values(TYPES).includes(type)) { ec.message.addError(`Unknown chat room type ${roomTypeEnumId}`); return }
+            // an encrypted room (C7) is for its members: direct or private
+            if (encrypted && !['CrtDirect', 'CrtPrivate'].includes(type)) { reasonCode = 'encryptedRoom'
+                ec.message.addError(ec.l10n.localize('An encrypted room is a direct or private room: public and record rooms are not encrypted')); return }
             let visibility = VISIBILITIES[visibilityEnumId] || visibilityEnumId || DEFAULT_VISIBILITY[type]
             if (type === 'CrtDirect' || type === 'CrtPrivate') visibility = 'CrvMembers'
             else if (type === 'CrtPublic') visibility = 'CrvUsers'
@@ -904,7 +919,7 @@ along with this software (see the LICENSE.md file). If not, see
                     .parameters({topic: 'chatUser:' + user, userIdList: [user], message: {kind: 'room', action: action, chatRoomId: chatRoomId}}).call())
             let directKey = null
             if (type === 'CrtDirect') {
-                directKey = [userId].concat(others).sort().join(',')
+                directKey = (encrypted ? 'e2ee:' : '') + [userId].concat(others).sort().join(',')
                 const existing = ec.entity.find('moqui.chat.ChatRoom').condition('roomTypeEnumId', 'CrtDirect').condition('directKey', directKey)
                         .orderBy('createdDate').limit(1).list()
                 if (existing.length) {
@@ -947,7 +962,7 @@ along with this software (see the LICENSE.md file). If not, see
                 topic: topic || null, avatarLocation: avatarLocation || null, visibilityEnumId: visibility,
                 recordEntityName: type === 'CrtRecord' ? recordEntityName : null, recordId: type === 'CrtRecord' ? recordId : null,
                 directKey: directKey, retentionDays: retentionDays ?? null, createdByUserId: userId, createdDate: now,
-                lastEventSeq: 0, lastEventDate: now}, true, null, null)
+                lastEventSeq: 0, lastEventDate: now, encrypted: encrypted ? 'Y' : null}, true, null, null)
             room.create()
             chatRoomId = room.chatRoomId
             created = true
@@ -964,7 +979,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (type !== 'CrtDirect') {
                 const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                     eventTypeEnumId: 'CetSystem', senderUserId: userId, content: {action: 'created', roomName: room.roomName ?? null,
-                    userIds: members}, noPush: true}).call()
+                    userIds: members, encrypted: !!encrypted}, noPush: true}).call()
                 if (ec.message.hasError()) return
                 ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).updateAll({lastReadEventSeq: appended.eventSeq})
             }
@@ -1030,7 +1045,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: the ChatMention notification of a message to the users it mentions (send#Message, edit#Message):
             reason mention, the room as its record, the room's link, and the message's first 120 characters as summary, which a
             user whose CHAT_NOTIFY_PREVIEW is N does not get (their notification's title is who mentioned them where, without
-            the text). Failure tolerant: a notification that cannot be sent is logged.</description>
+            the text). A message of an encrypted room (encrypted, C7) gives nobody a summary. Failure tolerant: a notification that cannot be sent is logged.</description>
         <in-parameters>
             <parameter name="userIdList" type="List" required="true"/>
             <parameter name="chatRoomId" required="true"/>
@@ -1040,6 +1055,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="authorName" allow-html="any"/>
             <parameter name="bodyText" allow-html="any"/>
             <parameter name="roomUrl"/>
+            <parameter name="encrypted" type="Boolean" default="false"/>
         </in-parameters>
         <actions><script><![CDATA[
             const groups = ec.service.sync().name('org.moqui.impl.ChatServices.get#NotifyPreviewUsers').parameter('userIdList', userIdList).call()
@@ -1060,6 +1076,7 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.logger.error(`Could not notify the mentions of chat message ${chatRoomId}::${eventSeq}: ${err && err.message ? err.message : err}`)
                 }
             }
+            if (encrypted) { send(userIdList, false); return }
             send(groups.previewUserIdList, true)
             send(groups.noPreviewUserIdList, false)
         ]]></script></actions>
@@ -1102,6 +1119,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (given(visibilityEnumId)) {
                     const visibility = VISIBILITIES[visibilityEnumId] || visibilityEnumId
                     const allowed = room.roomTypeEnumId === 'CrtRecord' ? ['CrvMembers', 'CrvRecord'] : ['CrvMembers', 'CrvUsers']
+                    if (room.encrypted === 'Y' && visibility !== 'CrvMembers') { ec.message.addError(ec.l10n.localize('An encrypted room is for its members only')); return }
                     if (!allowed.includes(visibility)) { ec.message.addError(`A room of this type may not have visibility ${visibilityEnumId}`); return }
                     room.set('visibilityEnumId', visibility)
                 }
@@ -1178,6 +1196,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (!outside || outside.anyExternal !== false) { ec.message.addError(`User ${(outside?.externalUserIdList || targets).join(', ')} may not be in a record room`); return }
                 }
                 // an agent member is an agent's own service user (AgentDefinition.chatUserId), never a person
+                if (role === 'CmrAgent' && room.encrypted) { ec.message.addError(ec.l10n.localize('An agent cannot read an encrypted room')); return }
                 if (role === 'CmrAgent') {
                     const agents = new Set(Array.from(ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', 'in', targets)
                             .selectField('chatUserId').disableAuthz().list()).map((row) => row.chatUserId))
@@ -1313,6 +1332,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!row || row.leftDate) { ec.message.addError(`User ${userId} is not in the room`); return }
             if (!access.isOwner && (row.roleEnumId === 'CmrOwner' || role === 'CmrOwner' || role === 'CmrAgent')) {
                 ec.message.addError(ec.l10n.localize('Only an owner may change an owner or make an owner or agent')); return }
+            if (role === 'CmrAgent' && access.room.encrypted) { ec.message.addError(ec.l10n.localize('An agent cannot read an encrypted room')); return }
             if (role === 'CmrAgent' && !ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', userId).disableAuthz().count()) {
                 ec.message.addError(`User ${userId} is no agent's chat user`); return }
             if (row.roleEnumId === 'CmrOwner' && role !== 'CmrOwner') {
@@ -1387,7 +1407,13 @@ along with this software (see the LICENSE.md file). If not, see
             siteName}] and, for the user's own message, clientRef. An external actor's event has senderActorId, senderName
             and senderExternal {network, networkName}. In a bridged room a message has delivery (ChatBridgeServices
             get#EventDeliveries: its state and each destination's, with canRetry). Also the room, the user's access and
-            lastReadEventSeq, and memberList (as get#Room: each member's lastReadEventSeq gives the read markers).</description>
+            lastReadEventSeq, and memberList (as get#Room: each member's lastReadEventSeq gives the read markers).
+
+            An encrypted room's message (C7) has no body or bodyText: encrypted is the Megolm ciphertext of its current
+            content (its last edit's, if edited), encryptedEventSeq and encryptedSentDate the event it came in (the browser
+            decrypts it as that event), encryptedReactions [{eventSeq, senderUserId, sentDate, encrypted}] its reactions that
+            stand (the browser decrypts and counts them; reactions is empty), and a reply's replyTo has encrypted, sentDate
+            and no snippet.</description>
         <in-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="recordEntityName"/>
@@ -1470,14 +1496,26 @@ along with this software (see the LICENSE.md file). If not, see
             const editSeqs = rows.filter((row) => row.lastEditEventSeq != null && !row.redactedDate).map((row) => Number(row.lastEditEventSeq))
             const edits = {}
             if (editSeqs.length) for (const edit of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
-                    .condition('eventSeq', 'in', editSeqs).list()) edits[Number(edit.editsEventSeq)] = parse(edit.contentJson)
+                    .condition('eventSeq', 'in', editSeqs).list()) {
+                edits[Number(edit.editsEventSeq)] = parse(edit.contentJson)
+                edits[Number(edit.editsEventSeq)].__seq = Number(edit.eventSeq)
+                edits[Number(edit.editsEventSeq)].__sent = toMillis(edit.sentDate)
+            }
+            const sealedReactions = {}
             // the reactions that stand
             const reactions = {}
             for (const reaction of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
                     .condition('relatesToEventSeq', 'in', seqs).condition('redactedDate', null).orderBy('eventSeq').list()) {
-                const key = parse(reaction.contentJson).key
-                if (!key) continue
+                const reactionContent = parse(reaction.contentJson)
+                const key = reactionContent.key
                 const target = Number(reaction.relatesToEventSeq)
+                // an encrypted reaction (C7): its key is for the browser to read
+                if (reactionContent.encrypted) {
+                    (sealedReactions[target] = sealedReactions[target] || []).push({eventSeq: Number(reaction.eventSeq),
+                        senderUserId: reaction.senderUserId ?? null, sentDate: toMillis(reaction.sentDate), encrypted: reactionContent.encrypted})
+                    continue
+                }
+                if (!key) continue
                 const byKey = reactions[target] = reactions[target] || {}
                 const entry = byKey[key] = byKey[key] || {key: key, count: 0, userIds: [], mine: false}
                 const who = reaction.senderUserId || reaction.senderActorId
@@ -1555,11 +1593,21 @@ along with this software (see the LICENSE.md file). If not, see
                     edited: !!row.editedDate && !redacted, editedDate: redacted ? null : toMillis(row.editedDate),
                     redacted: redacted, redactedDate: toMillis(row.redactedDate), removedLabel: redacted ? removedLabel : null,
                     pinned: !!row.pinnedDate && !redacted, pinnedByUserId: row.pinnedDate ? row.pinnedByUserId ?? null : null,
-                    reactions: redacted ? [] : Object.values(reactions[seq] || {})}
+                    reactions: redacted ? [] : Object.values(reactions[seq] || {}),
+                    encrypted: null, encryptedEventSeq: null, encryptedSentDate: null, encryptedReactions: []}
+                // an encrypted message (C7): its current ciphertext, and the event it came in
+                if (isMessage && !redacted && (content.encrypted || (edit && edit.encrypted))) {
+                    const sealed = edit && edit.encrypted ? edit : null
+                    item.encrypted = sealed ? sealed.encrypted : content.encrypted
+                    item.encryptedEventSeq = sealed ? sealed.__seq : seq
+                    item.encryptedSentDate = sealed ? sealed.__sent : item.sentDate
+                    item.encryptedReactions = sealedReactions[seq] || []
+                }
                 if (item.replyToEventSeq != null) {
                     const target = replied[item.replyToEventSeq]
+                    const targetSealed = target && !target.redactedDate && target.encrypted === 'Y' ? parse(target.contentJson).encrypted || null : null
                     item.replyTo = target ? {eventSeq: item.replyToEventSeq, senderUserId: target.senderUserId ?? null,
-                        senderName: nameOf(target), snippet: snippet(target),
+                        senderName: nameOf(target), snippet: snippet(target), encrypted: targetSealed, sentDate: toMillis(target.sentDate),
                         redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true}
                 }
                 eventList.push(item)
@@ -1665,7 +1713,15 @@ along with this software (see the LICENSE.md file). If not, see
             senderActorId (authorization disabled only) sends as an actor: an external actor of a bridge
             (ChatBridgeServices.ingest#Event) posts as a current member of a room that is not archived, with no files,
             forward, clientRef or mentions, and no link previews; its message reaches the room's agents only when the room's
-            agentsReadExternal is Y. sourceChatBridgeId is the bridge it came from, which it does not go back to.</description>
+            agentsReadExternal is Y. sourceChatBridgeId is the bridge it came from, which it does not go back to.
+
+            In an encrypted room (C7) the browser sends encrypted, the Megolm ciphertext of the message (the m.room.encrypted
+            content: algorithm m.megolm.v1.aes-sha2, ciphertext, session_id, sender_key, device_id), with no body, and
+            mentionUserIdList, the users it mentions, which stay in the clear (as do replyToEventSeq and
+            threadRootEventSeq) so mentions are counted and notified, without a summary. Its files are encrypted blobs
+            (upload#Attachment). The server keeps no bodyText or snippet, indexes nothing, fetches no link preview and hands
+            nothing to agents. Refused there (reasonCode encryptedRoom): a plaintext body, a forward into or out of the room,
+            records, an external actor. encrypted in a room that is not encrypted: reasonCode notEncrypted.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="body" allow-html="safe"/>
@@ -1680,12 +1736,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forwardOfEventSeq" type="Integer"/>
             <parameter name="senderActorId"/>
             <parameter name="sourceChatBridgeId"/>
+            <parameter name="encrypted" type="Map"/>
+            <parameter name="mentionUserIdList" type="List"/>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
             <parameter name="event" type="Map"/>
             <parameter name="clientRef"/>
             <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
@@ -1695,7 +1754,15 @@ along with this software (see the LICENSE.md file). If not, see
             const toText = (html) => decode(String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h[1-6]|blockquote|pre|div)>/gi, '\n')
                     .replace(/<[^>]*>/g, '')).replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
             const LEVEL_ALL = (row) => row.isMuted !== 'Y' && (row.notificationLevelEnumId || 'CnlAll') === 'CnlAll'
-            eventSeq = null; event = null; duplicate = false
+            eventSeq = null; event = null; duplicate = false; reasonCode = null
+            // the ciphertext of an encrypted room's message (C7), as the browser's OlmMachine made it; only its fields are kept
+            const megolm = (value) => {
+                if (!value || typeof value !== 'object' || value.algorithm !== 'm.megolm.v1.aes-sha2' || typeof value.ciphertext !== 'string'
+                        || !value.ciphertext || typeof value.session_id !== 'string' || !value.session_id) return null
+                const kept = {algorithm: value.algorithm, ciphertext: value.ciphertext, session_id: value.session_id,
+                    sender_key: typeof value.sender_key === 'string' ? value.sender_key : null, device_id: typeof value.device_id === 'string' ? value.device_id : null}
+                return JSON.stringify(kept).length > 131072 ? null : kept
+            }
             const ROOM_MENTION = '@room'
             const me = ec.user.userId
             let sender = me
@@ -1740,6 +1807,18 @@ along with this software (see the LICENSE.md file). If not, see
             const senderActor = externalActor ? externalActor.chatActorId : (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors')
                     .parameter('userIdList', [sender]).disableAuthz().call()?.actorMap || {})[sender]
             const room = access.room
+            // an encrypted room (C7): ciphertext only, and nothing that needs the plaintext
+            const roomEncrypted = room.encrypted === true || room.encrypted === 'Y'
+            const refuse = (code, text) => { reasonCode = code; ec.message.addError(ec.l10n.localize(text)) }
+            let ciphertext = null
+            if (roomEncrypted) {
+                if (externalActor) { refuse('encryptedRoom', 'An encrypted room is not bridged'); return }
+                if (body != null && String(body).trim()) { refuse('encryptedRoom', 'This room is end-to-end encrypted: its messages are encrypted in the browser'); return }
+                if (forwardOfChatRoomId || forwardOfEventSeq != null) { refuse('encryptedRoom', 'Messages are not forwarded into or out of an encrypted room'); return }
+                if (recordList && recordList.length) { refuse('encryptedRoom', 'An encrypted message names no records'); return }
+                ciphertext = megolm(encrypted)
+                if (!ciphertext) { refuse('encryptedRoom', 'This room is end-to-end encrypted: its messages are encrypted in the browser'); return }
+            } else if (encrypted != null) { refuse('notEncrypted', 'This room is not encrypted'); return }
             // a send tried again: the room is locked so two tries do not both pass, and the first one's message answers
             if (clientRef != null && clientRef !== '') {
                 clientRef = String(clientRef)
@@ -1771,6 +1850,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const source = sourceAccess.isMember ? ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', forwardOfChatRoomId)
                         .condition('eventSeq', forwardOfEventSeq).one() : null
                 if (!source || source.eventTypeEnumId !== 'CetMessage' || source.redactedDate) { ec.message.addError(`Message ${forwardOfEventSeq} not found`); return }
+                if (sourceAccess.room && sourceAccess.room.encrypted || source.encrypted === 'Y') { refuse('encryptedRoom', 'Messages are not forwarded into or out of an encrypted room'); return }
                 const sourceContent = parse(source.contentJson)
                 let sourceBody = sourceContent.body ?? null
                 if (source.lastEditEventSeq != null) {
@@ -1793,7 +1873,7 @@ along with this software (see the LICENSE.md file). If not, see
                 forwardFiles = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', forwardOfChatRoomId)
                         .condition('eventSeq', forwardOfEventSeq).orderBy('attachmentSeq').list())
             }
-            if (emptyBody && !attachmentIds.length && !forwardOf) { ec.message.addError(ec.l10n.localize('A message needs text or a file')); return }
+            if (emptyBody && !attachmentIds.length && !forwardOf && !ciphertext) { ec.message.addError(ec.l10n.localize('A message needs text or a file')); return }
 
             let replyTo = null, threadRoot = null
             if (replyToEventSeq != null) {
@@ -1843,7 +1923,8 @@ along with this software (see the LICENSE.md file). If not, see
                     .map((record) => ({entity: String(record.entity), id: String(record.id)}))
 
             // the mentions: users, who may read the room
-            const mentionedAll = externalActor ? [] : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
+            const mentionedAll = externalActor ? [] : ciphertext ? Array.from(new Set(Array.from(mentionUserIdList || []).slice(0, 200)
+                    .map((id) => String(id || '').trim()).filter((id) => id && id !== sender))) : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
                     .map((match) => decode(match[1]).trim()).filter((id) => id && id !== sender)))
             const mentioned = mentionedAll.filter((id) => id !== ROOM_MENTION)
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
@@ -1877,15 +1958,19 @@ along with this software (see the LICENSE.md file). If not, see
                 mentionIds = mentionIds.filter((id) => !external.has(id) || (!recordBound && memberOf[id] && (!memberOf[id].leftDate || isDirect)))
             }
 
+            // an encrypted room's files are opaque: their names and types are in the ciphertext
             const attachments = attachmentRows.map((row, index) => ({chatAttachmentId: row.chatAttachmentId, attachmentSeq: index + 1,
-                fileName: row.fileName ?? null, contentType: row.contentType ?? null, fileSize: row.fileSize != null ? Number(row.fileSize) : null}))
-            const content = {body: html || null, mentions: mentionIds, attachments: attachments, records: records}
+                fileName: ciphertext ? null : row.fileName ?? null, contentType: ciphertext ? null : row.contentType ?? null,
+                fileSize: row.fileSize != null ? Number(row.fileSize) : null}))
+            const content = ciphertext ? {encrypted: ciphertext, mentions: mentionIds, attachments: attachments, records: []}
+                    : {body: html || null, mentions: mentionIds, attachments: attachments, records: records}
             if (forwardOf) content.forwardOf = forwardOf
             // a forward is found and shown by its text too
             const storedText = [bodyText, forwardOf ? forwardOf.bodyText : null].filter((part) => part).join('\n') || bodyText
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetMessage', senderUserId: sender, senderActorId: senderActor, content: content, bodyText: storedText,
-                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef, sourceChatBridgeId: sourceChatBridgeId || null}).call()
+                eventTypeEnumId: 'CetMessage', senderUserId: sender, senderActorId: senderActor, content: content, bodyText: ciphertext ? null : storedText,
+                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef, sourceChatBridgeId: sourceChatBridgeId || null,
+                encrypted: !!ciphertext}).call()
             if (ec.message.hasError()) return
             eventSeq = appended.eventSeq
             event = appended.event
@@ -1920,10 +2005,10 @@ along with this software (see the LICENSE.md file). If not, see
                 const notify = mentionIds.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
                 if (notify.length) ec.service.sync().name('org.moqui.impl.ChatServices.notify#Mention').parameters({userIdList: notify,
                     chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: sender,
-                    authorName: event.senderName || sender, bodyText: bodyText, roomUrl: roomUrl || null}).call()
+                    authorName: event.senderName || sender, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             }
-            ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
-            if (html && !externalActor) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
+            if (!ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            if (html && !externalActor && !ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, senderUserId: sender, body: html}).call()
             // the counts of the members whose count it changes
             const counted = new Set([sender].concat(mentionIds).filter((id) => id))
@@ -1934,6 +2019,7 @@ along with this software (see the LICENSE.md file). If not, see
             for (const row of memberRows) {
                 if (row.roleEnumId !== 'CmrAgent' || !row.agentRef || row.leftDate || !row.userId || row.userId === sender) continue
                 if (externalActor && room.agentsReadExternal !== 'Y') continue
+                if (ciphertext) continue
                 try {
                     ec.message.pushErrors()
                     ec.service.async().name('org.moqui.impl.ChatServices.deliver#AgentMessage').parameters({chatRoomId: chatRoomId,
@@ -1958,7 +2044,9 @@ along with this software (see the LICENSE.md file). If not, see
             fetched again unless the sender removed them. A poll is not edited. A message that went to a bridge whose adapter
             cannot carry edits is not edited (reasonCode bridgeUnsupported). senderActorId (authorization disabled only) is an
             external actor editing its own message from its network (no edit window, no mentions), sourceChatBridgeId the
-            bridge it came from.</description>
+            bridge it came from. In an encrypted room (C7) the edit is encrypted, the Megolm ciphertext of the new content, with
+            mentionUserIdList in the clear, as send#Message has them (a plaintext body: reasonCode encryptedRoom; encrypted in
+            a plain room: notEncrypted); nothing is indexed and no link preview is fetched.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
@@ -1966,6 +2054,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="roomUrl"/>
             <parameter name="senderActorId"/>
             <parameter name="sourceChatBridgeId"/>
+            <parameter name="encrypted" type="Map"/>
+            <parameter name="mentionUserIdList" type="List"/>
         </in-parameters>
         <out-parameters>
             <parameter name="editEventSeq" type="Integer"/>
@@ -1980,6 +2070,13 @@ along with this software (see the LICENSE.md file). If not, see
                     .replace(/<[^>]*>/g, '')).replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             editEventSeq = null; event = null; reasonCode = null
+            const megolm = (value) => {
+                if (!value || typeof value !== 'object' || value.algorithm !== 'm.megolm.v1.aes-sha2' || typeof value.ciphertext !== 'string'
+                        || !value.ciphertext || typeof value.session_id !== 'string' || !value.session_id) return null
+                const kept = {algorithm: value.algorithm, ciphertext: value.ciphertext, session_id: value.session_id,
+                    sender_key: typeof value.sender_key === 'string' ? value.sender_key : null, device_id: typeof value.device_id === 'string' ? value.device_id : null}
+                return JSON.stringify(kept).length > 131072 ? null : kept
+            }
             // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
             let externalActor = null
             if (senderActorId) {
@@ -2023,16 +2120,24 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.resource.expand('Edits do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
             }
 
+            // an encrypted room (C7): the new content is ciphertext
+            const roomEncrypted = access.room.encrypted === true || access.room.encrypted === 'Y'
+            let ciphertext = null
+            if (roomEncrypted) {
+                ciphertext = externalActor || (body != null && String(body).trim()) ? null : megolm(encrypted)
+                if (!ciphertext) { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its messages are encrypted in the browser')); return }
+            } else if (encrypted != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
             const html = body ? String(body).trim() : ''
             const bodyText = toText(html)
-            if (!bodyText && !/<img\b/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
+            if (!ciphertext && !bodyText && !/<img\b/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
             if (html.length > 65536) { ec.message.addError(ec.l10n.localize('The message is too long')); return }
             const room = access.room
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
             const memberOf = {}
             memberRows.forEach((row) => { if (row.userId) memberOf[row.userId] = row })
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const mentionedAll = externalActor ? [] : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
+            const mentionedAll = externalActor ? [] : ciphertext ? Array.from(new Set(Array.from(mentionUserIdList || []).slice(0, 200)
+                    .map((id) => String(id || '').trim()).filter((id) => id && id !== me))) : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
                     .map((match) => decode(match[1]).trim()).filter((id) => id && id !== me)))
             const mentioned = mentionedAll.filter((id) => id !== '@room')
             let mentionIds = []
@@ -2064,17 +2169,18 @@ along with this software (see the LICENSE.md file). If not, see
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId))
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                 eventTypeEnumId: 'CetEdit', senderUserId: me, senderActorId: externalActor ? externalActor.chatActorId : null,
-                content: {body: html, mentions: mentionIds}, bodyText: bodyText, editsEventSeq: eventSeq,
+                content: ciphertext ? {encrypted: ciphertext, mentions: mentionIds} : {body: html, mentions: mentionIds},
+                bodyText: ciphertext ? null : bodyText, editsEventSeq: eventSeq, encrypted: !!ciphertext,
                 threadRootEventSeq: original.threadRootEventSeq ?? null, sourceChatBridgeId: sourceChatBridgeId || null}).call()
             if (ec.message.hasError()) return
             editEventSeq = appended.eventSeq
             event = appended.event
-            original.set('bodyText', bodyText)
+            original.set('bodyText', ciphertext ? null : bodyText)
             original.set('editedDate', ec.user.nowTimestamp)
             original.set('lastEditEventSeq', editEventSeq)
             original.update()
             const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
-            if (Number(roomRow.lastMessageSeq) === Number(eventSeq)) {
+            if (!ciphertext && Number(roomRow.lastMessageSeq) === Number(eventSeq)) {
                 const shown = bodyText.replace(/\s+/g, ' ').trim()
                 roomRow.set('lastMessageSnippet', (shown.length > 140 ? shown.slice(0, 139) + '…' : shown) || roomRow.lastMessageSnippet)
                 roomRow.update()
@@ -2093,9 +2199,9 @@ along with this software (see the LICENSE.md file). If not, see
             const notify = added.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
             if (notify.length) ec.service.sync().name('org.moqui.impl.ChatServices.notify#Mention').parameters({userIdList: notify,
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
-                authorName: event.senderName || me, bodyText: bodyText, roomUrl: roomUrl || null}).call()
-            ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
-            if (!externalActor && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
+                authorName: event.senderName || me, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
+            if (!ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            if (!externalActor && !ciphertext && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
                 chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()
             if (added.length || dropped.length) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts')
                     .parameter('userIdList', added.concat(dropped)).call()
@@ -2207,7 +2313,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const row = last.length ? last[0] : null
                 roomRow.setFields({lastMessageSeq: row ? row.eventSeq : null, lastMessageUserId: row ? row.senderUserId : null,
                     lastMessageActorId: row ? row.senderActorId ?? null : null,
-                    lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
+                    lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row && row.encrypted !== 'Y' ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
                 roomRow.update()
             }
             const counted = new Set(mentioned)
@@ -2253,14 +2359,19 @@ along with this software (see the LICENSE.md file). If not, see
             'reaction', messageSeq, key}). A member of a room that is not archived. A message that went to a bridge whose
             adapter cannot carry reactions takes none (reasonCode bridgeUnsupported). senderActorId (authorization disabled
             only) is an external actor reacting from its network, with mode add or remove (not toggle), sourceChatBridgeId the
-            bridge it came from.</description>
+            bridge it came from. In an encrypted room (C7) the key is encrypted: encrypted, the Megolm ciphertext of {key}, adds a
+            reaction (the server cannot tell two keys apart, so the browser toggles), and reactionEventSeq takes back one of the
+            user's own reactions to the message (a redaction event, content {target: 'reaction', messageSeq}); a plain key
+            there is refused (reasonCode encryptedRoom), and encrypted in a plain room (notEncrypted).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
-            <parameter name="key" required="true"/>
+            <parameter name="key"/>
             <parameter name="mode" default-value="toggle"><description>toggle, add or remove</description></parameter>
             <parameter name="senderActorId"/>
             <parameter name="sourceChatBridgeId"/>
+            <parameter name="encrypted" type="Map"/>
+            <parameter name="reactionEventSeq" type="Integer"/>
         </in-parameters>
         <out-parameters>
             <parameter name="added" type="Boolean"/>
@@ -2269,9 +2380,23 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            const takeBack = reactionEventSeq
             added = false; reactionEventSeq = null; reasonCode = null
+            const megolm = (value) => {
+                if (!value || typeof value !== 'object' || value.algorithm !== 'm.megolm.v1.aes-sha2' || typeof value.ciphertext !== 'string'
+                        || !value.ciphertext || typeof value.session_id !== 'string' || !value.session_id) return null
+                const kept = {algorithm: value.algorithm, ciphertext: value.ciphertext, session_id: value.session_id,
+                    sender_key: typeof value.sender_key === 'string' ? value.sender_key : null, device_id: typeof value.device_id === 'string' ? value.device_id : null}
+                return JSON.stringify(kept).length > 131072 ? null : kept
+            }
             const reactionKey = String(key || '').trim()
-            if (!reactionKey || Array.from(reactionKey).length > 32 || /[<>]/.test(reactionKey)) { ec.message.addError(ec.l10n.localize('A reaction is an emoji or a short word')); return }
+            // an encrypted room (C7): its reactions are ciphertext, and checked once the room is known
+            const roomRow0 = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).selectField('encrypted').one()
+            if (roomRow0 && roomRow0.encrypted === 'Y') {
+                if (senderActorId || reactionKey || (encrypted == null && takeBack == null)) { reasonCode = 'encryptedRoom'
+                    ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its reactions are encrypted in the browser')); return }
+            } else if (encrypted != null || takeBack != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
+            else if (!reactionKey || Array.from(reactionKey).length > 32 || /[<>]/.test(reactionKey)) { ec.message.addError(ec.l10n.localize('A reaction is an emoji or a short word')); return }
             // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
             let externalActor = null
             if (senderActorId) {
@@ -2309,6 +2434,29 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.resource.expand('Reactions do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
             }
             const actorId = externalActor ? externalActor.chatActorId : null
+            if (roomRow0 && roomRow0.encrypted === 'Y') {
+                if (takeBack != null) {
+                    const own = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', takeBack).forUpdate(true).one()
+                    if (!own || own.eventTypeEnumId !== 'CetReaction' || own.senderUserId !== me || Number(own.relatesToEventSeq) !== Number(eventSeq)) {
+                        ec.message.addError(`Reaction ${takeBack} not found`); return }
+                    if (own.redactedDate) return
+                    own.set('redactedDate', ec.user.nowTimestamp); own.set('redactedByUserId', me); own.update()
+                    const taken = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
+                        eventTypeEnumId: 'CetRedaction', senderUserId: me, relatesToEventSeq: Number(takeBack),
+                        content: {target: 'reaction', messageSeq: eventSeq}}).call()
+                    if (ec.message.hasError()) return
+                    reactionEventSeq = taken.eventSeq
+                    return
+                }
+                const sealed = megolm(encrypted)
+                if (!sealed) { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its reactions are encrypted in the browser')); return }
+                const made = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
+                    eventTypeEnumId: 'CetReaction', senderUserId: me, relatesToEventSeq: eventSeq, content: {encrypted: sealed}, encrypted: true}).call()
+                if (ec.message.hasError()) return
+                added = true
+                reactionEventSeq = made.eventSeq
+                return
+            }
             const mine = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
                     .condition('relatesToEventSeq', eventSeq).condition(externalActor ? 'senderActorId' : 'senderUserId', externalActor ? actorId : me)
                     .condition('redactedDate', null).list()).filter((row) => parse(row.contentJson).key === reactionKey)
@@ -2530,7 +2678,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Store a file for a message the current user is about to send in a room (a member of a room that is not
             archived), as dbresource://chat/(chatRoomId)/(chatAttachmentId)/(file name) (the property chat_attachment_root
             names another place than dbresource://chat). send#Message takes its
-            chatAttachmentId; a file never sent goes after a day (clean#PendingAttachments).</description>
+            chatAttachmentId; a file never sent goes after a day (clean#PendingAttachments). In an encrypted room (C7) the file
+            is the browser's ciphertext and is kept as an opaque blob: named encrypted, application/octet-stream, whatever
+            was uploaded (its name and type travel in the encrypted message).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="file" type="org.apache.commons.fileupload2.core.FileItem" required="true"/>
@@ -2552,13 +2702,15 @@ along with this software (see the LICENSE.md file). If not, see
             let name = String(file.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
             if (!name || name === '.' || name === '..') name = 'file'
             if (name.length > 200) name = name.slice(-200)
+            const sealed = !!access.room.encrypted
+            if (sealed) name = 'encrypted'
             const row = ec.entity.makeValue('moqui.chat.ChatAttachment')
             row.setSequencedIdPrimary()
             chatAttachmentId = row.chatAttachmentId
             const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '')
             location = `${chatRoot}/${chatRoomId}/${chatAttachmentId}/${name}`
             fileName = name
-            contentType = file.getContentType() || 'application/octet-stream'
+            contentType = sealed ? 'application/octet-stream' : file.getContentType() || 'application/octet-stream'
             fileSize = Number(file.getSize() || 0)
             file.write(location)
             row.setFields({chatRoomId: chatRoomId, location: location, fileName: fileName, contentType: contentType, fileSize: fileSize,
@@ -2747,6 +2899,9 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            // an encrypted room's files (C7) are listed without names or types: the browser has them from the messages
+            const sealed = !!access.room.encrypted
+            if (sealed && (contentTypePrefix || String(searchText || '').trim())) return
             const size = Math.max(1, Math.min(100, Number(limit) || 30))
             const cf = ec.entity.conditionFactory
             let find = ec.entity.find('moqui.chat.ChatAttachment').condition('chatRoomId', chatRoomId).condition('eventSeq', 'not-equals', null)
@@ -2776,7 +2931,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const event = events[Number(row.eventSeq)]
                 if (!event || event.redactedDate) continue
                 fileList.push({chatAttachmentId: row.chatAttachmentId, eventSeq: Number(row.eventSeq), attachmentSeq: Number(row.attachmentSeq || 0),
-                    fileName: row.fileName ?? null, contentType: row.contentType ?? null, fileSize: row.fileSize != null ? Number(row.fileSize) : null,
+                    fileName: sealed ? null : row.fileName ?? null, contentType: sealed ? null : row.contentType ?? null, encrypted: sealed, fileSize: row.fileSize != null ? Number(row.fileSize) : null,
                     senderUserId: event.senderUserId ?? null, senderName: event.senderUserId ? names[event.senderUserId] || event.senderUserId : null,
                     sentDate: toMillis(event.sentDate), threadRootEventSeq: event.threadRootEventSeq != null ? Number(event.threadRootEventSeq) : null})
             }
@@ -2806,11 +2961,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="eventSeq" type="Integer"/>
             <parameter name="event" type="Map"/>
             <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-            eventSeq = null; event = null; duplicate = false
+            eventSeq = null; event = null; duplicate = false; reasonCode = null
             const me = ec.user.userId
+            // a poll's question and votes are read by the server: none in an encrypted room (C7)
+            if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).condition('encrypted', 'Y').count()) {
+                reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('An encrypted room has no polls')); return }
             const asked = String(question || '').replace(/\s+/g, ' ').trim()
             if (!asked) { ec.message.addError(ec.l10n.localize('A poll needs a question')); return }
             if (asked.length > 500) { ec.message.addError(ec.l10n.localize('The question is too long')); return }
@@ -3016,6 +3175,8 @@ along with this software (see the LICENSE.md file). If not, see
             eventSeq = null
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('An agent card is sent by the agent runtime')); return }
             const escape = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).condition('encrypted', 'Y').count()) {
+                ec.message.addError(ec.l10n.localize('An agent cannot post in an encrypted room')); return }
             const kind = String(assist.kind || '')
             if (!['approval', 'question', 'reply'].includes(kind)) { ec.message.addError(`An agent card is an approval, a question or a reply, not ${kind}`); return }
             const html = body ? String(body) : '<p>' + escape(bodyText || assist.summary || assist.title || kind) + '</p>'
@@ -3076,6 +3237,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (String(System.getProperty('chat_link_previews') || '').trim() === 'false') return
             if (!/https?:\/\//i.test(String(body || ''))) return
+            if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).condition('encrypted', 'Y').count()) return
             if (senderUserId) {
                 const pref = ec.entity.find('moqui.security.UserPreference').condition('userId', senderUserId).condition('preferenceKey', 'CHAT_LINK_PREVIEWS')
                         .disableAuthz().one()
@@ -3232,6 +3394,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="eventList" type="List"><parameter name="event" type="Map"/></parameter>
             <parameter name="total" type="Integer"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const toMillis = (value) => {
@@ -3240,7 +3403,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
             const cf = ec.entity.conditionFactory
-            eventList = []; total = 0
+            eventList = []; total = 0; reasonCode = null
             const me = ec.user.userId
             const text = String(searchText || '').trim()
             if (!me || !text) return
@@ -3252,6 +3415,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
                 if (ec.message.hasError()) return
                 if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                // the server has no text of an encrypted room (C7)
+                if (access.room.encrypted) { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('An encrypted room is not searched on the server')); return }
                 myRooms = [chatRoomId]
                 includePublic = false
             } else {
@@ -3271,6 +3436,12 @@ along with this software (see the LICENSE.md file). If not, see
                             .map((row) => row.chatRoomId) : [])
                     myRooms = myRooms.filter((id) => !recordIds.has(id))
                 }
+            }
+            // the encrypted rooms (C7) are left out: the server has no text of them
+            if (myRooms.length) {
+                const sealed = new Set(Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', myRooms).condition('encrypted', 'Y')
+                        .selectField('chatRoomId').list()).map((row) => row.chatRoomId))
+                if (sealed.size) myRooms = myRooms.filter((id) => !sealed.has(id))
             }
             const names = {}
             const roomNames = {}
@@ -3358,6 +3529,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadRootEventSeq" type="Integer"/>
         </in-parameters>
         <actions><script><![CDATA[
+            if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).condition('encrypted', 'Y').disableAuthz().count()) {
+                ec.logger.warn(`Chat message ${chatRoomId}::${eventSeq} of an encrypted room not handed to agent ${agentUserId}`); return }
             if (!agentRef) {
                 const row = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', agentUserId).disableAuthz().one()
                 agentRef = row ? row.agentRef : null

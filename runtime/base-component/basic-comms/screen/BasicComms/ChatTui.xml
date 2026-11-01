@@ -20,7 +20,9 @@ along with this software (see the LICENSE.md file). If not, see
     as the user (a member of the room), Mark read, and Join for a room the user may join. A bridged room (C1) says where else
     its messages go and whether a bridge is not connected; an external member's messages carry their network, and each message
     of a bridged room its delivery, with Send again for one that failed or is uncertain (its sender or a moderator). Threads,
-    reactions, files, polls and the room's settings are the browser's. -->
+    reactions, files, polls and the room's settings are the browser's. An encrypted room (C7) is read and written only in a
+    browser, which holds its keys: the terminal lists its messages as "Encrypted message" and says to open it in a browser,
+    and its send refuses (reasonCode encryptedRoom from send#Message). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-include="false">
 
@@ -33,6 +35,8 @@ along with this software (see the LICENSE.md file). If not, see
             const escape = (line) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
             const text = String(bodyText || '').replace(/\r\n?/g, '\n').trim()
             if (!text) ec.message.addError(ec.l10n.localize('Write a message first'))
+            else if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId || '').condition('encrypted', 'Y').count())
+                ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: open it in a browser to write in it'))
             else ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '',
                 body: text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('')}).call()
         ]]></script></actions>
@@ -77,6 +81,7 @@ along with this software (see the LICENSE.md file). If not, see
             room = null
             canPost = false
             canJoin = false
+            encryptedRoom = false
             unreadTotal = 0
             bridgeText = ''
             notConnected = false
@@ -84,7 +89,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#RoomView').parameters({chatRoomId: chatRoomId, limit: 30}).call()
                 if (!ec.message.hasError() && out.room) {
                     room = out.room
-                    canPost = !!(out.access && out.access.canPost)
+                    encryptedRoom = !!room.encrypted
+                    canPost = !!(out.access && out.access.canPost) && !encryptedRoom
                     canJoin = !!(out.access && out.access.canJoin)
                     const canModerate = !!(out.access && out.access.canModerate)
                     const networks = Array.from(new Set(Array.from(room.bridges || []).map((bridge) => bridge.networkName || bridge.name).filter((name) => name)))
@@ -94,8 +100,9 @@ along with this software (see the LICENSE.md file). If not, see
                     const page = out.timeline || {}
                     const names = page.userNames || {}
                     eventList = Array.from(page.eventList || []).map((event) => {
-                        const files = Array.from(event.attachments || []).map((file) => file.fileName || file.name || '').filter((name) => name)
+                        const files = event.encrypted ? [] : Array.from(event.attachments || []).map((file) => file.fileName || file.name || '').filter((name) => name)
                         let text = event.redacted ? (event.removedLabel || ec.l10n.localize('Message removed'))
+                            : event.encrypted ? ec.l10n.localize('Encrypted message')
                             : (event.bodyText || (event.poll ? ec.l10n.localize('Poll') + ': ' + (event.poll.question || '') : ''))
                         if (files.length) text = (text ? text + ' ' : '') + '[' + files.join(', ') + ']'
                         if (!text && event.type !== 'message') {
@@ -128,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 + (item.notConnected ? ', ' + ec.l10n.localize('not connected') : '') + ']' : ''
                         return {chatRoomId: item.chatRoomId, nameText: (item.isPinned ? '* ' : '') + (item.displayName || item.roomName || item.chatRoomId) + bridged
                                 + (item.isMuted ? ' ' + ec.l10n.localize('(muted)') : ''),
-                            countText: counts, lastText: last ? (last.senderName ? last.senderName + ': ' : '') + (last.snippet || '') : '',
+                            countText: counts, lastText: last ? (last.senderName ? last.senderName + ': ' : '') + (last.encrypted ? ec.l10n.localize('Encrypted message') : last.snippet || '') : '',
                             timeText: last ? when(last.sentDate) : ''}
                     })
                 }
@@ -166,6 +173,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="join" link-type="hidden-form-link" text="Join" condition="canJoin" parameter-map="{chatRoomId:chatRoomId}"/>
             </container>
             <section name="ChatTuiTopic" condition="roomTopic"><widgets><label type="p" text="${roomTopic}" style="text-caption m-muted"/></widgets></section>
+            <section name="ChatTuiEncrypted" condition="encryptedRoom"><widgets>
+                <label type="p" text="This room is end-to-end encrypted: open it in a browser to read and write its messages" style="text-caption text-info"/></widgets></section>
             <section name="ChatTuiBridged" condition="bridgeText"><widgets><label type="p" text="${bridgeText}" style="text-caption text-info"/></widgets></section>
             <section name="ChatTuiNotConnected" condition="notConnected"><widgets>
                 <label type="p" text="Not connected: messages stay here and go out once it is back" style="text-caption text-warning"/></widgets></section>

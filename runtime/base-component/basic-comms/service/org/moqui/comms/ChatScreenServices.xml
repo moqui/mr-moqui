@@ -413,6 +413,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const key of ['userId', 'byUserId']) if (content[key]) ids.add(String(content[key]))
                 for (const id of Array.from(content.userIds || [])) ids.add(String(id))
                 for (const reaction of Array.from(event.reactions || [])) for (const id of Array.from(reaction.userIds || [])) ids.add(String(id))
+                for (const reaction of Array.from(event.encryptedReactions || [])) if (reaction.senderUserId) ids.add(String(reaction.senderUserId))
                 if (event.replyTo && event.replyTo.senderUserId) ids.add(event.replyTo.senderUserId)
                 if (event.threadLastUserId) ids.add(event.threadLastUserId)
                 if (event.forwardOf && event.forwardOf.senderUserId) ids.add(event.forwardOf.senderUserId)
@@ -478,17 +479,20 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A new room (org.moqui.impl.ChatServices.create#Room) from the New room and New direct message dialogs:
             roomTypeEnumId direct (one room per set of users: the existing one is answered), private or public (a name),
             with the members of memberUserIdList or the comma list memberUserIds; each member starts at their own default
-            notification level (CHAT_NOTIFY_DEFAULT, which create#Room reads).</description>
+            notification level (CHAT_NOTIFY_DEFAULT, which create#Room reads). encrypted makes a direct or private room
+            end-to-end encrypted, for good (C7).</description>
         <in-parameters>
             <parameter name="roomTypeEnumId" required="true"/>
             <parameter name="roomName"/>
             <parameter name="topic"/>
             <parameter name="memberUserIdList" type="List"/>
             <parameter name="memberUserIds"/>
+            <parameter name="encrypted" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="created" type="Boolean"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const TYPES = {direct: 'CrtDirect', private: 'CrtPrivate', public: 'CrtPublic'}
@@ -498,7 +502,8 @@ along with this software (see the LICENSE.md file). If not, see
                     .map((id) => String(id || '').trim()).filter((id) => id)
             if (type === 'CrtDirect' && !ids.length) { ec.message.addError(ec.l10n.localize('Choose who to message')); return }
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.create#Room').parameters({roomTypeEnumId: type, roomName: roomName || null,
-                topic: topic || null, memberUserIdList: Array.from(new Set(ids))}).call()
+                topic: topic || null, memberUserIdList: Array.from(new Set(ids)), encrypted: !!encrypted}).call()
+            reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
             chatRoomId = out.chatRoomId
             created = !!out.created
@@ -609,7 +614,8 @@ along with this software (see the LICENSE.md file). If not, see
             comma separated, or chatAttachmentIdList), a reply or a thread, a forward (forwardOfChatRoomId and
             forwardOfEventSeq: the server makes the quote), and as its records the records its /qapps links name
             (lookup#Records links). The mention notifications link to the room (roomUrl). clientRef: a send tried again (the
-            page's outbox) is answered with its first message, duplicate true.</description>
+            page's outbox) is answered with its first message, duplicate true. In an encrypted room (C7) the browser sends
+            encrypted (the Megolm ciphertext) and mentionUserIdList in place of a body, and no records are looked up.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="body" allow-html="safe"/>
@@ -620,21 +626,26 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="clientRef"/>
             <parameter name="forwardOfChatRoomId"/>
             <parameter name="forwardOfEventSeq" type="Integer"/>
+            <parameter name="encrypted" type="Map"/>
+            <parameter name="mentionUserIdList" type="List"/>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
             <parameter name="event" type="Map"/>
             <parameter name="clientRef"/>
             <parameter name="duplicate" type="Boolean"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const ids = Array.from(chatAttachmentIdList || []).concat(chatAttachmentIds ? String(chatAttachmentIds).split(',') : [])
                     .map((id) => String(id || '').trim()).filter((id) => id)
-            const records = ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'links', body: body || ''}).call().recordList
+            const records = encrypted ? [] : ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'links', body: body || ''}).call().recordList
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters({chatRoomId: chatRoomId, body: body || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, chatAttachmentIdList: ids,
                 recordList: records, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
-                forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null}).call()
+                forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null,
+                encrypted: encrypted || null, mentionUserIdList: mentionUserIdList || null}).call()
+            reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
             eventSeq = out.eventSeq; event = out.event; clientRef = out.clientRef; duplicate = !!out.duplicate
         ]]></script></actions>

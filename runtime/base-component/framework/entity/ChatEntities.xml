@@ -568,4 +568,19 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Uncertain" enumId="CdsUncertain" enumCode="uncertain" enumTypeId="ChatDeliveryStatus" sequenceNum="4"/>
         </seed-data>
     </entity>
+
+    <!-- ========== Encrypted rooms (C7; plans/Comms-Framework.md §4.5; docs/interfaces/Chat-Keys.md "Encrypted rooms") ==========
+        A room made encrypted stays encrypted: its messages, edits and reactions are Megolm ciphertext the browsers make
+        (m.room.encrypted content in contentJson.encrypted), with only the relation targets (replyToEventSeq,
+        threadRootEventSeq, editsEventSeq, relatesToEventSeq) and the mentioned users (content.mentions) in the clear.
+        The server writes no bodyText, snippet or notification text for them, and refuses what needs the plaintext. -->
+    <extend-entity entity-name="ChatRoom" package="moqui.chat">
+        <field name="encrypted" type="text-indicator"><description>Y: end-to-end encrypted, set when the room is made
+            (create#Room encrypted) and never turned off</description></field>
+    </extend-entity>
+    <extend-entity entity-name="ChatEvent" package="moqui.chat">
+        <field name="encrypted" type="text-indicator"><description>Y: contentJson.encrypted is the event's Megolm ciphertext
+            (the m.room.encrypted content: algorithm, sender_key, ciphertext, session_id, device_id)</description></field>
+    </extend-entity>
+    <!-- ========== end C7 ========== -->
 </entities>

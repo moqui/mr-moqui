@@ -715,6 +715,7 @@ along with this software (see the LICENSE.md file). If not, see
             const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).disableAuthz().one()
             if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (room.roomTypeEnumId === 'CrtDirect') { ec.message.addError(ec.l10n.localize('A direct conversation is not bridged')); return }
+            if (room.encrypted === 'Y') { reasonCode = 'encryptedRoom'; ec.message.addError(ec.l10n.localize('An encrypted room is not bridged: the server has no text to send')); return }
             if (!ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).disableAuthz().one()) { ec.message.addError(`Chat bridge ${chatBridgeId} not found`); return }
             ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).forUpdate(true).disableAuthz().one()
             if (ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatBridgeId', chatBridgeId).condition('externalRoomId', externalRoomId)

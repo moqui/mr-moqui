@@ -22,7 +22,12 @@ along with this software (see the LICENSE.md file). If not, see
     Access. Each service acts as the signed-in user: the deviceId a request names must be theirs and not revoked
     (reasonCode notFound for another's, with the same parameters, and revoked). query#Keys, claim#Keys and send#ToDevice
     reach only the devices of users who share a room or a live call with the caller, and the caller's own; the others are
-    left out as if they had no devices. The server keeps public keys, ciphertext and routing only. -->
+    left out as if they had no devices. The server keeps public keys, ciphertext and routing only, and each device's store
+    key (answered to its own user only).
+
+    Beside them: the device's store key (get#ChatDeviceStoreKey), cross-signing (upload#CrossSigningKeys,
+    upload#KeySignatures; Matrix keys/device_signing/upload and keys/signatures/upload) and key backup (the
+    *#KeyBackupVersion and *#BackupKeys services; Matrix room_keys/version and room_keys/keys). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== The user's devices ========== -->
@@ -71,9 +76,10 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="revoke" noun="ChatDevice">
-        <description>Remove one of the current user's devices: it gets no new keys or messages, its keys and the messages
-            waiting for it are deleted, it drops out of key queries, and it cannot be used again (the browser makes a new
-            device the next time it needs one). It does not sign that browser out. Again for a revoked one: repeated.
+        <description>Remove one of the current user's devices: it gets no new keys or messages, its keys, its store key,
+            the signatures by it and over it and the messages waiting for it are deleted, it drops out of key queries, and it
+            cannot be used again (the browser makes a new device the next time it needs one). It does not sign that browser
+            out. Again for a revoked one: repeated.
             reasonCode notFound.</description>
         <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
         <out-parameters>
@@ -82,6 +88,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('revokeDevice', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ChatDeviceStoreKey">
+        <description>The passphrase the browser encrypts the crypto store of the current user's device deviceId with
+            (OlmMachine.initialize store_passphrase): made on the first ask (43 characters of URL-safe base64, 258 random
+            bits) and the same at each ask after, so a copied browser profile without a signed-in session cannot open the
+            store. Never logged and in no other answer. reasonCode notFound (another user's device, with the same
+            parameters), revoked (its key was cleared).</description>
+        <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="storeKey"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('storeKey', context))</script></actions>
     </service>
 
     <service verb="get" noun="ChatKeyIdentity">
@@ -134,7 +154,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Matrix keys/query: device_keys is Matrix user ID to a list of device IDs (empty for all). Answers
             device_keys, user to device to the signed keys as uploaded with unsigned.device_display_name, for the users who
             share a room or a live call with the current user, and the user's own; no revoked device and none without keys.
-            failures, master_keys, self_signing_keys and user_signing_keys are empty (no cross-signing yet).</description>
+            master_keys and self_signing_keys of those users, and user_signing_keys of the current user only. Each signed
+            object has the stored signatures merged into its signatures: those by its own user, and those by the current
+            user (another user's signatures over someone else's keys are not shown). failures is empty.</description>
         <in-parameters>
             <parameter name="device_keys" type="Map"/>
             <parameter name="timeout" type="Integer"/>
@@ -196,8 +218,10 @@ along with this software (see the LICENSE.md file). If not, see
             one queued counts as the last, so a message queued later is never acknowledged unread). Answers to_device.events
             after it ({type, sender, content}, oldest first, at most limit, default 100, up to 500; has_more when more wait)
             and next_batch, the position to pass next time; device_lists.changed, the Matrix user IDs (in reach) whose devices
-            changed since deviceListSince (millis; the value of device_lists_next of the last sync), and
-            device_lists_next; device_one_time_keys_count and device_unused_fallback_key_types of the device. A revoked
+            changed since deviceListSince (millis; the value of device_lists_next of the last sync; a change of their
+            cross-signing keys or signatures counts), device_lists.left, the Matrix user IDs the user was in reach of through
+            a room and no longer is (no shared room, no live call) because a membership ended since then (a co-member left a
+            room the user is or was in, or the user left it; at most 1000), and device_lists_next; device_one_time_keys_count and device_unused_fallback_key_types of the device. A revoked
             device is refused (revoked), so its browser drops its store.</description>
         <in-parameters>
             <parameter name="deviceId" required="true"/>
@@ -216,6 +240,168 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('syncToDevice', context))</script></actions>
+    </service>
+
+    <!-- ========== Cross-signing ========== -->
+
+    <service verb="upload" noun="CrossSigningKeys">
+        <description>Matrix keys/device_signing/upload for the current user: master_key, self_signing_key and
+            user_signing_key, each a Matrix CrossSigningKey ({user_id, usage, keys: {"ed25519:&lt;key&gt;": key},
+            signatures}) whose user_id is the user's, usage holds the one it is uploaded as, and keys one ed25519 key
+            (else badKeys; over 16 KB tooLarge). The signed-in session stands for Matrix's user-interactive auth: the first
+            upload is allowed and the same keys again change nothing (changed false). A different master key is refused
+            (keysChanged: never a silent reset) unless reset is true, the user's explicit "reset my identity": then the old
+            keys and every signature by or over them are deleted. Without master_key the user must have one (noMasterKey); a
+            self-signing or user-signing key must carry a signature by the master key (badKeys; the server does not verify
+            it, the clients do). A change bumps the user's device lists, so syncs of users in reach name them.</description>
+        <in-parameters>
+            <parameter name="master_key" type="Map"/>
+            <parameter name="self_signing_key" type="Map"/>
+            <parameter name="user_signing_key" type="Map"/>
+            <parameter name="reset" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('uploadCrossSigningKeys', context))</script></actions>
+    </service>
+
+    <service verb="upload" noun="KeySignatures">
+        <description>Matrix keys/signatures/upload: signed is the request body, Matrix user ID to key ID (a device ID, or a
+            cross-signing public key) to the signed object (the device keys or the cross-signing key, as answered by
+            query#Keys, with the new signatures). Stores the signatures in it by the current user's keys, where that key
+            may sign it: the user's own device by their self-signing key, their master key by their devices, their
+            self-signing and user-signing keys by their master key, and the master key of another user who shares a room or a
+            live call by their user-signing key. Signatures by others in the object are ignored. A key refused is in
+            failures, Matrix user ID to key ID to {errcode, error}: M_FORBIDDEN (another user out of reach, or not their
+            master key), M_NOT_FOUND (no such device of the user's), M_INVALID_PARAM (the object is not the key it names),
+            M_INVALID_SIGNATURE (no signature by a key that may sign it), M_BAD_JSON. The server does not verify the
+            signatures (the clients do). Over 1000 signatures: tooMany. A stored signature bumps its target user's device
+            lists.</description>
+        <in-parameters><parameter name="signed" type="Map"/></in-parameters>
+        <out-parameters>
+            <parameter name="failures" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('uploadKeySignatures', context))</script></actions>
+    </service>
+
+    <!-- ========== Key backup (room_keys) ========== -->
+
+    <service verb="create" noun="KeyBackupVersion">
+        <description>Matrix POST room_keys/version for the current user: a new backup version ("1", "2", ...; never reused)
+            with algorithm (m.megolm_backup.v1.curve25519-aes-sha2; stored as given) and auth_data (an object, at most 16 KB);
+            it becomes the current one. reasonCode badRequest, tooLarge, tooMany (1000 versions).</description>
+        <in-parameters>
+            <parameter name="algorithm"/>
+            <parameter name="auth_data" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="version"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('createBackupVersion', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="KeyBackupVersion">
+        <description>Matrix GET room_keys/version: the current user's backup version, else the current one (the latest not
+            deleted): algorithm, auth_data, count (its sessions), etag (a string that changes with its keys) and version.
+            reasonCode notFound when there is none (or it was deleted).</description>
+        <in-parameters><parameter name="version"/></in-parameters>
+        <out-parameters>
+            <parameter name="algorithm"/>
+            <parameter name="auth_data" type="Map"/>
+            <parameter name="count" type="Integer"/>
+            <parameter name="etag"/>
+            <parameter name="version"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('getBackupVersion', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="KeyBackupVersion">
+        <description>Matrix PUT room_keys/version/{version}: replaces the auth_data of the current user's backup version.
+            reasonCode notFound, algorithmChanged (algorithm must be the version's), badRequest, tooLarge.</description>
+        <in-parameters>
+            <parameter name="version"/>
+            <parameter name="algorithm"/>
+            <parameter name="auth_data" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="version"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('updateBackupVersion', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="KeyBackupVersion">
+        <description>Matrix DELETE room_keys/version/{version}: marks the current user's backup version deleted and deletes
+            its sessions; the version before it, if any is left, becomes the current one. reasonCode notFound.</description>
+        <in-parameters><parameter name="version"/></in-parameters>
+        <out-parameters>
+            <parameter name="version"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('deleteBackupVersion', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="BackupKeys">
+        <description>Matrix PUT room_keys/keys into the current user's current backup version: rooms is room ID (opaque, at
+            most 255 characters) to {sessions: session ID to KeyBackupData {first_message_index, forwarded_count,
+            is_verified, session_data}}; session_data is ciphertext the browser made and is stored as it is (at most 16 KB).
+            A session already there is replaced only by a better one: verified wins, then the lower first_message_index,
+            then the lower forwarded_count. Answers count (sessions in the version) and etag (goes up when anything changed).
+            A version that is not the current one is refused wrongVersion with current_version (Matrix
+            M_WRONG_ROOM_KEYS_VERSION); no backup: notFound; over 1000 sessions in one put or 100000 held by the user:
+            tooMany; badRequest, tooLarge.</description>
+        <in-parameters>
+            <parameter name="version"/>
+            <parameter name="rooms" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="count" type="Integer"/>
+            <parameter name="etag"/>
+            <parameter name="current_version"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('storeBackupKeys', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="BackupKeys">
+        <description>Matrix GET room_keys/keys[/{roomId}[/{sessionId}]] of the current user's backup version: rooms, room ID
+            to {sessions: session ID to KeyBackupData}, of all its sessions, a room's (roomId) or one (roomId and sessionId);
+            empty when none matches. At most 10000 sessions from offset (ordered by room and session); has_more when more
+            follow. reasonCode notFound (no such version, or deleted), badRequest (sessionId without roomId).</description>
+        <in-parameters>
+            <parameter name="version"/>
+            <parameter name="roomId"/>
+            <parameter name="sessionId"/>
+            <parameter name="offset" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rooms" type="Map"/>
+            <parameter name="has_more" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('getBackupKeys', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="BackupKeys">
+        <description>Matrix DELETE room_keys/keys[/{roomId}[/{sessionId}]] of the current user's backup version: all its
+            sessions, a room's or one. Answers count (left in the version) and etag (goes up when any was deleted).
+            reasonCode notFound, badRequest (sessionId without roomId).</description>
+        <in-parameters>
+            <parameter name="version"/>
+            <parameter name="roomId"/>
+            <parameter name="sessionId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="count" type="Integer"/>
+            <parameter name="etag"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('deleteBackupKeys', context))</script></actions>
     </service>
 
     <service verb="clean" noun="ChatToDevice" authenticate="anonymous-all">

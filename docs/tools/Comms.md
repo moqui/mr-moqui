@@ -32,6 +32,15 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
   and status in the account menu. The tray's Chat tab is the same view, smaller.
+- <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
+  room beside the plain one). Its messages, reactions and files are encrypted in your browser and read only on the
+  devices of its members; the room shows a lock, and the room list says "Encrypted message". It cannot be turned off,
+  and it gives up what needs the server to read it: search, link previews, agents, polls, bridges, forwards, filing on
+  records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
+  devices, and keep the recovery key it shows once: a new browser reads older messages only after Restore with it (or
+  when another of your devices shares the keys). My devices also verifies your devices (compare emoji, or scan a QR
+  code). Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
+  keys](../interfaces/Chat-Keys.md#encrypted-rooms).
 - <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
   XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
   header ("Messages here also go to ..."). People from that network are members with the network's badge, and their

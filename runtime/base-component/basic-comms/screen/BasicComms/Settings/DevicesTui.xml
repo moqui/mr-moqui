@@ -13,7 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of Devices (style-guide §4.8): the browsers that hold the user's encryption keys, with Rename and
-    Remove (org.moqui.impl.ChatKeyServices). The terminal has no crypto device of its own. -->
+    Remove (org.moqui.impl.ChatKeyServices). The terminal has no crypto device of its own, so verification and the key
+    backup (C7) are the browser's; it says so. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="My devices" default-menu-include="false">
 
@@ -47,6 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <widgets>
         <label type="p" text="The browsers that hold your encryption keys, for encrypted calls. Remove one you no longer use: it gets no new keys, and others stop encrypting to it." style="m-muted"/>
+        <label type="p" text="Verifying a device, the key backup and its recovery key are done in a browser, which holds the keys." style="m-muted"/>
         <section name="NoDevices" condition="!deviceList.length"><widgets><label type="p" text="No devices yet: a browser gets one the first time it needs encryption."/></widgets></section>
         <form-list name="DeviceList" list="deviceList" skip-form="true">
             <field name="displayName"><default-field title="Device"><display/></default-field></field>

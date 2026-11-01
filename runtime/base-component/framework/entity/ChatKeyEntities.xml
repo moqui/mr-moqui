@@ -18,6 +18,10 @@ along with this software (see the LICENSE.md file). If not, see
     ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are
     org.moqui.impl.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
 
+    Beside them: each device's store key (the passphrase its browser store is encrypted with, a secret answered only to
+    its user), the users' cross-signing keys and the signatures they upload, and key backups (Megolm sessions encrypted
+    in the browser to the user's backup key, opaque here).
+
     These are moqui.* entities, which entity filters never apply to: screens reach them only through ChatKeyServices. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
@@ -45,6 +49,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastSeenDate" type="date-time"/>
         <field name="verifiedDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
+        <field name="storeKey" type="text-medium" encrypt="true"><description>The passphrase the browser encrypts this
+            device's crypto store with (OlmMachine.initialize store_passphrase): made on the first ask
+            (get#ChatDeviceStoreKey) and answered only to the device's own user, so a copied browser profile without a
+            signed-in session cannot open the store; cleared when the device is revoked. Never logged, never in another
+            answer.</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="many" related="moqui.chat.ChatDeviceKey" short-alias="keys">
             <key-map field-name="userId"/><key-map field-name="deviceId"/></relationship>
@@ -90,5 +99,72 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatDevice" short-alias="device"/>
         <index name="CHAT_TODEV_TXN"><index-field name="senderUserId"/><index-field name="senderDeviceId"/><index-field name="txnId"/></index>
         <index name="CHAT_TODEV_QUEUED"><index-field name="queuedDate"/></index>
+    </entity>
+
+    <!-- ========== Cross-signing (Matrix keys/device_signing/upload, keys/signatures/upload) ========== -->
+
+    <entity entity-name="ChatCrossSigningKey" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's cross-signing key of one usage (keyUsage: master, self_signing, user_signing), as uploaded
+            (keyJson, the Matrix CrossSigningKey object) with its single ed25519 public key (publicKey, unpadded base64). The
+            master key is the user's identity: a different one replaces it only on the user's explicit reset
+            (upload#CrossSigningKeys reset), which deletes the old keys and every signature by or over them. The private
+            keys stay in the browser (and its secret storage).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="keyUsage" type="text-short" is-pk="true"/>
+        <field name="publicKey" type="text-medium"/>
+        <field name="keyJson" type="text-very-long"/>
+        <field name="uploadedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="ChatKeySignature" package="moqui.chat" use="transactional" cache="never">
+        <description>A signature a user uploaded (upload#KeySignatures) over a device (targetKeyId a deviceId) or a
+            cross-signing key (targetKeyId its public key) of targetUserId, by the signer's key signerKeyId
+            ("ed25519:&lt;public key or deviceId&gt;"). Merged into the signed objects key queries answer: a user's
+            signatures over their own keys to everyone in reach, another's only to the signer. The server does not check
+            the signature (the clients do).</description>
+        <field name="targetUserId" type="id" is-pk="true"/>
+        <field name="targetKeyId" type="text-medium" is-pk="true"/>
+        <field name="signerUserId" type="id" is-pk="true"/>
+        <field name="signerKeyId" type="text-medium" is-pk="true"/>
+        <field name="signature" type="text-medium"/>
+        <field name="uploadedDate" type="date-time"/>
+        <index name="CHAT_KEYSIG_SIGNER"><index-field name="signerUserId"/><index-field name="signerKeyId"/></index>
+    </entity>
+
+    <!-- ========== Key backup (Matrix room_keys) ========== -->
+
+    <entity entity-name="ChatKeyBackup" package="moqui.chat" use="transactional" cache="never">
+        <description>A version of a user's server-side key backup (Matrix room_keys, m.megolm_backup.v1.curve25519-aes-sha2):
+            versions are "1", "2", ... per user and never reused; the current one is the latest not deleted. algorithm and
+            authDataJson (auth_data: the backup's public key and its signatures) are as the browser gave them. etag goes up
+            at each change of its keys. A deleted version (deletedDate) has no sessions left.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="version" type="id" is-pk="true"/>
+        <field name="algorithm" type="text-medium"/>
+        <field name="authDataJson" type="text-very-long"/>
+        <field name="etag" type="number-integer" default="0"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="deletedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="many" related="moqui.chat.ChatKeyBackupSession" short-alias="sessions">
+            <key-map field-name="userId"/><key-map field-name="version"/></relationship>
+    </entity>
+
+    <entity entity-name="ChatKeyBackupSession" package="moqui.chat" use="transactional" cache="never">
+        <description>One backed-up Megolm session of a backup version: roomId (the Matrix room ID the browser names) and
+            sessionId as given, the KeyBackupData fields (firstMessageIndex, forwardedCount, isVerified) by which a better
+            copy replaces it, and sessionDataJson, the session_data encrypted to the backup's key (opaque to the
+            server).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="version" type="id" is-pk="true"/>
+        <field name="roomId" type="text-medium" is-pk="true"/>
+        <field name="sessionId" type="text-medium" is-pk="true"/>
+        <field name="firstMessageIndex" type="number-integer"/>
+        <field name="forwardedCount" type="number-integer"/>
+        <field name="isVerified" type="text-indicator"/>
+        <field name="sessionDataJson" type="text-very-long"/>
+        <field name="uploadedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatKeyBackup" short-alias="backup"/>
     </entity>
 </entities>
