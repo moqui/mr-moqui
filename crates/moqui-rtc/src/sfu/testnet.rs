@@ -16,9 +16,9 @@
 //! datagrams through queues on a simulated clock, with a latency and, per client, a downlink capacity that queues and
 //! then drops what exceeds it (so TWCC sees congestion). No sockets, no threads, no wall-clock waits.
 //!
-//! With [`Net::with_edge`] a second node's [`Sfu`] (the edge, W7) is on the network too: a client may join there, and the
-//! two SFUs' relay messages go between them with the same latency, as the host's cluster send to one node carries them.
-//! [`Net::link_up`] false cuts the edge off from the origin, datagrams and messages both.
+//! With [`Net::with_leg_node`] a second node's [`Sfu`] (the leg node, W7) is on the network too: a client may join
+//! there, and the two SFUs' relay messages go between them with the same latency, as the host's cluster send to one
+//! node carries them. [`Net::link_up`] false cuts the leg node off from the origin, datagrams and messages both.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -35,9 +35,9 @@ use crate::audio::opus::OpusEncoder;
 use crate::audio::FRAME;
 
 pub const ROOM: &str = "CS1";
-/// The call's media node, and the second node of [`Net::with_edge`].
+/// The call's media node, and the second node of [`Net::with_leg_node`].
 pub const ORIGIN: &str = "nodeA";
-pub const EDGE: &str = "nodeB";
+pub const LEG_NODE: &str = "nodeB";
 /// The simulated step.
 const STEP: Duration = Duration::from_millis(2);
 /// A downlink queue longer than this drops.
@@ -54,7 +54,7 @@ struct Packet {
 /// A browser stand-in.
 pub struct Client {
     pub key: LegKey,
-    /// The node its media is on: 0 the origin, 1 the edge.
+    /// The node its media is on: 0 the origin, 1 the leg node.
     pub node: usize,
     pub generation: u64,
     pub addr: SocketAddr,
@@ -91,8 +91,8 @@ pub struct Client {
     pub audio_frames: HashMap<String, Vec<(u64, Vec<u8>)>>,
 }
 
-/// The second media node of [`Net::with_edge`].
-pub struct Edge {
+/// The second media node of [`Net::with_leg_node`].
+pub struct LegNode {
     pub sfu: Sfu,
     pub addr: SocketAddr,
     to_sfu: VecDeque<Packet>,
@@ -114,11 +114,11 @@ pub struct Net {
     pub sfu_addr: SocketAddr,
     pub clients: Vec<Client>,
     to_sfu: VecDeque<Packet>,
-    pub edge: Option<Edge>,
+    pub leg_node: Option<LegNode>,
     messages: VecDeque<Message>,
     /// The relay messages sent, each node's: (from, the message).
     pub relayed: Vec<(&'static str, RelayMessage)>,
-    /// False cuts the edge off from the origin: their datagrams and messages are dropped.
+    /// False cuts the leg node off from the origin: their datagrams and messages are dropped.
     pub link_up: bool,
     pub latency: Duration,
     pub events: Vec<SfuEvent>,
@@ -149,7 +149,7 @@ impl Net {
             sfu_addr,
             clients: Vec::new(),
             to_sfu: VecDeque::new(),
-            edge: None,
+            leg_node: None,
             messages: VecDeque::new(),
             relayed: Vec::new(),
             link_up: true,
@@ -161,8 +161,8 @@ impl Net {
         }
     }
 
-    /// A network of two media nodes, each with `config`: the origin ([`Net::sfu`]) and an edge.
-    pub fn with_edge(config: SfuConfig) -> Self {
+    /// A network of two media nodes, each with `config`: the origin ([`Net::sfu`]) and a leg node.
+    pub fn with_leg_node(config: SfuConfig) -> Self {
         let mut net = Net::new();
         net.sfu = Sfu::new(SfuConfig {
             udp_candidates: vec![net.sfu_addr],
@@ -170,7 +170,7 @@ impl Net {
             ..config.clone()
         });
         let addr: SocketAddr = (Ipv4Addr::new(10, 0, 0, 2), 10_000).into();
-        net.edge = Some(Edge {
+        net.leg_node = Some(LegNode {
             sfu: Sfu::new(SfuConfig {
                 udp_candidates: vec![addr],
                 tcp_candidates: Vec::new(),
@@ -183,19 +183,19 @@ impl Net {
         net
     }
 
-    pub fn edge(&self) -> &Edge {
-        self.edge.as_ref().expect("a network with an edge")
+    pub fn leg_node(&self) -> &LegNode {
+        self.leg_node.as_ref().expect("a network with a leg node")
     }
 
-    pub fn edge_sfu(&mut self) -> &mut Sfu {
-        &mut self.edge.as_mut().expect("a network with an edge").sfu
+    pub fn leg_node_sfu(&mut self) -> &mut Sfu {
+        &mut self.leg_node.as_mut().expect("a network with a leg node").sfu
     }
 
     fn node_sfu(&mut self, node: usize) -> &mut Sfu {
         if node == 0 {
             &mut self.sfu
         } else {
-            self.edge_sfu()
+            self.leg_node_sfu()
         }
     }
 
@@ -204,8 +204,8 @@ impl Net {
         self.join_with(leg, simulcast, Protocol::Udp)
     }
 
-    /// A client that joins at the edge, whose SFU links the room to the origin as the host does for a leg there.
-    pub fn join_edge(&mut self, leg: &str, simulcast: bool) -> usize {
+    /// A client that joins at the leg node, whose SFU links the room to the origin as the host does for a leg there.
+    pub fn join_leg_node(&mut self, leg: &str, simulcast: bool) -> usize {
         self.join_at(leg, simulcast, Protocol::Udp, 1)
     }
 
@@ -249,7 +249,7 @@ impl Net {
             .join(now, &key, 1, &offer.to_sdp_string())
             .expect("join");
         if node == 1 {
-            self.edge_sfu().link(now, ROOM, ORIGIN).expect("linked");
+            self.leg_node_sfu().link(now, ROOM, ORIGIN).expect("linked");
         }
         rtc.sdp_api()
             .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
@@ -402,7 +402,7 @@ impl Net {
     pub fn pump(&mut self) {
         for _ in 0..50 {
             let mut moved = self.pump_node(0);
-            if self.edge.is_some() {
+            if self.leg_node.is_some() {
                 moved |= self.pump_node(1);
                 moved |= self.deliver_messages();
             }
@@ -438,7 +438,7 @@ impl Net {
             let queue = if node == 0 {
                 &mut self.to_sfu
             } else {
-                &mut self.edge.as_mut().expect("an edge").to_sfu
+                &mut self.leg_node.as_mut().expect("a leg node").to_sfu
             };
             if !queue.front().is_some_and(|p| p.at <= now) {
                 break;
@@ -455,9 +455,9 @@ impl Net {
                 SfuOutput::Transmit(t) => {
                     moved = true;
                     // to the other node: the link between the two
-                    if let Some(edge) = self.edge.as_mut() {
+                    if let Some(leg_node) = self.leg_node.as_mut() {
                         let to = match node {
-                            0 if t.destination == edge.addr => Some(&mut edge.to_sfu),
+                            0 if t.destination == leg_node.addr => Some(&mut leg_node.to_sfu),
                             1 if t.destination == self.sfu_addr => Some(&mut self.to_sfu),
                             _ => None,
                         };
@@ -539,7 +539,7 @@ impl Net {
             }
             SfuEvent::Offer { .. } => self.held.push(e.clone()),
             SfuEvent::Relay { room, message, .. } => {
-                let from = if node == 0 { ORIGIN } else { EDGE };
+                let from = if node == 0 { ORIGIN } else { LEG_NODE };
                 self.relayed.push((from, message.clone()));
                 self.messages.push_back(Message {
                     at: self.now + self.latency,
@@ -553,8 +553,8 @@ impl Net {
         }
         if node == 0 {
             self.events.push(e);
-        } else if let Some(edge) = self.edge.as_mut() {
-            edge.events.push(e);
+        } else if let Some(leg_node) = self.leg_node.as_mut() {
+            leg_node.events.push(e);
         }
     }
 
@@ -587,13 +587,13 @@ impl Net {
                     let node_addr = if c.node == 0 {
                         self.sfu_addr
                     } else {
-                        self.edge.as_ref().map_or(self.sfu_addr, |e| e.addr)
+                        self.leg_node.as_ref().map_or(self.sfu_addr, |e| e.addr)
                     };
                     if c.proto == Protocol::Udp && t.destination != node_addr {
                         continue;
                     }
-                    let queue = match (c.node, self.edge.as_mut()) {
-                        (1, Some(edge)) => &mut edge.to_sfu,
+                    let queue = match (c.node, self.leg_node.as_mut()) {
+                        (1, Some(leg_node)) => &mut leg_node.to_sfu,
                         _ => &mut self.to_sfu,
                     };
                     queue.push_back(Packet {

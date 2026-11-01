@@ -174,10 +174,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="endReasonEnumId" type="id"/>
         <field name="qualityJson" type="text-long"/>
         <field name="mediaNodeId" type="text-medium"><description>The node holding the leg's media (W7): the call's
-            mediaNodeId, or with rtc_cascade_enabled the node of its signaling socket (an edge, which relays to the call's
-            node), or a phone's SIP engine's node. Set as the leg binds; empty for a phone leg on the call's node.</description></field>
+            mediaNodeId, or with rtc_cascade_enabled the node of its signaling socket (a leg node, which relays to the
+            call's node), or a phone's SIP engine's node. Set as the leg binds; empty for a phone leg on the call's
+            node.</description></field>
         <field name="mediaNodePinned" type="text-indicator"><description>Y when the leg's media stays on the call's node:
-            the call's node refused its edge's relay link (W7).</description></field>
+            the call's node refused its leg node's relay link (W7).</description></field>
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one" related="moqui.call.CallParticipant" short-alias="participant"/>
         <relationship type="one" title="CallLegType" related="moqui.basic.Enumeration" short-alias="legType">

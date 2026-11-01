@@ -24,10 +24,11 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
-//! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (an edge,
-//! the node of its signaling socket). The edge's SFU links the room to the call's node (its origin) with a relay link on
-//! the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and relayed
-//! frames go between them as `roomFrame` (`driver.rs`). An edge that stops ends only its legs (`expire#Calls`).
+//! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (a leg node,
+//! the node of its signaling socket). The leg node's SFU links the room to the call's node (its origin) with a relay
+//! link on the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and
+//! relayed frames go between them as `roomFrame` (`driver.rs`). A leg node that stops ends only its legs
+//! (`expire#Calls`).
 
 pub(crate) mod captions;
 mod driver;
@@ -58,8 +59,8 @@ const REGISTER_SERVICE: &str = "org.moqui.impl.CallServices.register#MediaNode";
 
 /// Something for the driver.
 pub(crate) enum Command {
-    /// A signaling frame of a leg, from the socket at `route`. `origin` is the call's media node: another node's when the
-    /// leg's media is on this one as an edge (W7).
+    /// A signaling frame of a leg, from the socket at `route`. `origin` is the call's media node: another node's when
+    /// the leg's media is on this one as a leg node (W7).
     Frame {
         route: Route,
         room: String,

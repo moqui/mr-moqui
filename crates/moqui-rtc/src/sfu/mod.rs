@@ -270,7 +270,8 @@ pub enum SfuEvent {
     RelayUp { room: Arc<str>, node: Arc<str> },
     /// A relay link ended: `lost` (its ICE or DTLS failed after it connected), `unreachable` (it did not connect within
     /// 10 seconds, or failed before it did), `refused:<code>` (the origin did not take it), `empty` (no leg was left
-    /// behind it), `replaced` (the edge opened it again) or the reason the other node gave (`ended`, `unreachable`).
+    /// behind it), `replaced` (the leg node opened it again) or the reason the other node gave (`ended`,
+    /// `unreachable`).
     RelayDown {
         room: Arc<str>,
         node: Arc<str>,
@@ -655,7 +656,7 @@ impl Sfu {
             self.rooms.remove(room);
         } else if let Some((name, _)) = self.rooms.get_key_value(room) {
             let name = name.clone();
-            self.close_idle_edge(&name);
+            self.close_idle_leg_node(&name);
         }
         removed
     }
@@ -742,7 +743,7 @@ impl Sfu {
                 self.rooms.remove(room);
             } else if let Some((name, _)) = self.rooms.get_key_value(room) {
                 let name = name.clone();
-                self.close_idle_edge(&name);
+                self.close_idle_leg_node(&name);
             }
         }
         self.drive(now);
@@ -890,7 +891,7 @@ impl Sfu {
             if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
             } else {
-                self.close_idle_edge(&peer.key.room);
+                self.close_idle_leg_node(&peer.key.room);
             }
         }
     }

@@ -1,0 +1,604 @@
+# Edge Node
+
+Status 2026-11-01: draft. Gap analysis and plan; nothing is built. Tenancy, the web access default, the mail edge, the
+name and the voice fallback were decided on 2026-11-01. The rest of [§8](#8-open-questions) is open, and its answers
+will change parts of §5 and the phases.
+
+An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
+presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
+reaches: web access to the local node's apps, the public sites (mr-pass), mail, chat providers' webhooks, SIP trunks and
+phones, and the media of calls. The local node dials out to the edge node and keeps one link open. Everything the edge
+node needs from the local node goes over that link, so the local node needs no open port, port forward, fixed address or
+dynamic DNS.
+
+The edge node holds no business data. Its own small database has the framework tables, its configuration, the link's
+queues, the sessions of public-site visitors, and a replicated subset of the local node's configuration: the part it
+needs to answer while the local node is away, such as which mail addresses exist. For async comms (mail, chat) it
+stores and forwards. What arrives while the local node is offline or unreachable waits in the edge node's queue. It is
+delivered in order, and once, when the link is back.
+
+Sections: [1 shape](#1-shape) · [2 topologies](#2-topologies) · [3 what is built](#3-what-is-built) ·
+[4 gap analysis](#4-gap-analysis) · [5 design](#5-design) · [6 phases](#6-phases) ·
+[7 documents to change](#7-documents-to-change) · [8 open questions](#8-open-questions) ·
+[9 references](#9-references)
+
+---
+
+## 1. Shape
+
+```
+ the internet: browsers, site visitors, mail servers, SMS and chat providers, SIP trunks, phones, call legs
+    |  443: web access, public sites, webhooks, the link    25: MX    5060/5061: SIP    10000/udp: media    3478: TURN
+    v
+ edge node   edge.example.com, fixed address, Maximal package (--release), MoquiEdgeConf.xml, production
+    base components and mr-pass; its own embedded Postgres: conf, queues, replicated subset, visitor sessions
+    SFU and TURN, SIP edge, mail edge, chat webhooks, public sites, an offline page
+    ^
+    |  the edge link: TLS on 443, dialed by the local node, kept open
+    |  gRPC both ways on HTTP/2 (the local node's calls up; the edge node's calls down a reversed connection); byte tunnels
+    |
+ local node   behind NAT, dynamic address, no inbound port; Maximal or Enterprise, production
+    mr-mantle, mr-boss, mr-marble and the rest; all business data; comms logic (routing, inboxes, rooms); PASS authority
+    office users reach it on the LAN under the same names (split-horizon DNS)
+```
+
+| | Edge node | Local node |
+|---|---|---|
+| Data | Framework tables, edge node conf, queues, replicated subset, PASS visitor sessions | Everything |
+| Web | The public endpoint of the local node's apps; mr-pass sites; webhooks; an offline page | Serves the apps |
+| Mail | MX and the outbound edge, with a queue each way | Inboxes, rules, composing and sending |
+| Chat | Provider webhooks, MMS media; XMPP's public endpoint | Rooms, bridges, history |
+| Voice | SIP trunks, the registrar for phones outside, RTP; a voicemail fallback while the local node is away | Routing, users, boxes, voicemail storage |
+| Calls | The SFU (media node) and TURN | Call state, signaling, recordings, captions |
+| PASS | mr-pass in remote mode | The authority (mr-mantle) |
+
+Anything the local node can do by dialing out stays on the local node. That covers IMAP and POP sync, OAuth token
+refresh, Web Push, LLM calls, and providers' send APIs. The edge node is for what must be **reached**: MX, webhooks,
+inbound SIP and RTP, the SFU, TURN, public sites, and outside users of the apps.
+
+## 2. Topologies
+
+How an edge node changes the topologies in [Run-Deploy](../docs/Run-Deploy.md#choose-a-topology), and what it adds:
+
+| Topology | With an edge node |
+|---|---|
+| One production server | **A local server with an edge node** (new): the server stays in the office or at home, and the edge node gives it public reach and its comms. This is the case for a small business or a household running BOSS, Comms Inbox included, on its own machine |
+| PASS servers with a BOSS server or cluster | The edge node is the PASS server, and the authority needs no public address. Other PASS servers can still dial an authority that is reachable |
+| Cluster | A local cluster behind an edge node. One member holds the link at a time, through a lock row as scheduled jobs use, and another member takes over when it drops |
+| Dev instances with a dev group server | The group server can sit in the office. Laptops reach git, the LLM gateway and tasks through the edge node (web access, and the SSH tunnel) |
+| New: several local nodes on one edge node | Branch offices, or a provider hosting edge nodes for many small businesses. One local node per edge node comes first, but the edge node's rows are keyed by the paired node, so several can come later without a redesign ([decision 1](#8-open-questions)) |
+| New: an edge node with more media nodes | W7 cascading from the edge node to regional media nodes. Later |
+| New: a desktop or laptop local node | A personal instance ([Usability](proposals/Usability.md) hosts) attached to an edge node. It follows from the rest |
+
+## 3. What is built
+
+These pieces exist today. Each is a seam or a model for the edge node; none does the job yet.
+
+- **Cluster transports.** HTTPS POST with one shared client certificate on 8444
+  (`crates/moqui-host/src/cluster_edge.rs`), Postgres `LISTEN`/`NOTIFY` (`cluster_notify.rs`), and SSH
+  (`ssh/cluster.rs`).
+  - They carry 5 topics, cache invalidation and `rtc-signal` among them, sent through `cluster::send_to`
+    (`crates/moqui-core/src/cluster/direct.rs`).
+  - All three need one shared database and a peer that can be dialed. Delivery is best effort, and a message that fails
+    3 tries is lost.
+- **gRPC.** tonic 0.14 runs the server only, for the OTLP receiver on its own port 4317
+  (`crates/moqui-host/src/monitor/grpc.rs`). It is the `grpc` feature, in Enterprise and Maximal.
+  - There is no client and no `.proto` of our own: the OTLP messages come pre-generated.
+  - The main listener is HTTP/1.1 only (`http.rs:378`, ALPN `http/1.1` in `tls.rs:143`).
+- **An outbound reconnecting socket.** `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`) reconnects to
+  `/notws` with a backoff from 2 s to 60 s. It is the only reconnecting outbound socket, and it is client only.
+- **Instance-to-instance data.**
+  - EntitySync over REST, push or pull (`crates/moqui-core/src/service/system_sync/entity_sync.rs`). Pull lets a node
+    behind NAT fetch.
+  - SystemMessage with retry (`SystemMessageServices.xml`; its jobs are paused in the seed data).
+  - SFTP send and poll.
+- **Leased outboxes.**
+  - `ChatBridgeDelivery` (`crates/moqui-core/src/service/chat_bridge.rs`): an idempotency key, per-mapping order, and
+    backoff for 8 tries, about 2.7 hours.
+  - `ChatBridgeInbound`: a batch is stored before it is acknowledged.
+  - The A2A push outbox (`crates/moqui-llm/src/a2a/push.rs`).
+  - These are the model for the edge node queue.
+- **The PASS remote mode.** A public node with its own small database calls an authority for every read and write.
+  - One facade carries nearly all calls: `mr-pass/service/pass/Facade.js` (`authorityClient`, `call`), plus
+    `Account.js` for sign-in and SSO.
+  - There are 154 routes onto 149 operations. Each takes one `input` map and returns one `result` map.
+  - The authority's servlet is `mr-mantle/script/PassApi.js`.
+  - The PASS server dials the authority.
+- **A remote mail gateway.** [Mail-Inbound](../docs/interfaces/Mail-Inbound.md#dns-and-the-gateway) already describes a
+  small VPS gateway (Postfix with Rspamd) that delivers to mr-moqui over WireGuard. The `inbound-smtp` listener speaks
+  SMTP or LMTP, takes PROXY headers, and drops duplicates by Message-ID.
+- **A media node apart from the signaling node.** A call's media lives on one node (`CallSession.mediaNodeId`).
+  Signaling from a page on another node goes there over `rtc-signal`, and W7 cascades media between nodes. Today all of
+  this is inside one cluster.
+- **TURN apart from the data.** coturn needs only `turn_auth_secret` and no database. The embedded TURN server
+  restricts relays to the media nodes (`turn_allowed_peers`).
+- **The setup wizard pattern.** `<subscreens-panel type="wizard">` (`m-subscreens-wizard` in the qvt client). The
+  MailAccounts Add wizard in basic-comms (`screen/BasicComms/Settings/MailAccounts/Add/`: Address, Connect, Test,
+  Options, Finish) is the template for attaching to an edge node.
+- **Web Push** goes out from the node that holds the notification, so it works from behind NAT.
+
+## 4. Gap analysis
+
+| Area | What it assumes today | Gap for edge mode |
+|---|---|---|
+| **Node link** | A shared database; every peer reachable at `cluster_base_url`; the same secrets on every member | A link the local node dials and both sides use; no shared database; a key per local node; durable delivery for what must not be lost |
+| **gRPC** | Server only, on a port of its own | The tonic client (`channel` feature) and code generation (`tonic-build`/`prost-build`) for our own `.proto`; HTTP/2 on the HTTPS listener, or ALPN routing; a script binding to make gRPC calls |
+| **Tunnels and proxying** | None. SSH has no port forwarding; "proxy" in the host only means trusting `X-Forwarded-*` | A reversed HTTP/2 connection, HTTP and WebSocket forwarding, byte tunnels, and PROXY headers on the HTTPS listener (only the SMTP listener takes them) |
+| **Replicated data** | EntitySync to a URL that can be dialed | One-way replication of named entity subsets, from the local node to the edge node over the link, driven by commits, with a cursor and a full resync |
+| **Durable queues** | Outboxes inside one database. Mail out has no automatic retry: a failed send stays `ES_READY` with `sendError` until someone retries it, and a lost connection is treated as ambiguous and never resent (`moqui-mail/src/implementation.rs:1429`) | An edge node queue in each direction, kept for days, with receipts on the local node. Retry mail on its own when the edge node could not be reached |
+| **Web access** | Clients reach the node; certificates in `runtime/cert`; no ACME, no DDNS | The edge node forwards by host name, either passing TLS through by SNI or ending TLS itself. WebSockets (`/notws`, `/termws`, `/xmpp-websocket`), the client's address passed to the local node, and an offline page |
+| **mr-pass remote** | The PASS server dials the authority's public HTTPS. REST paths from `Routes.js`; the client secret in plain headers; the authority's HTTP session cookie carries the second factor (`passAuthorityCookie`); downloads streamed with `response.forward`; a 30 s timeout; no cache | A gRPC transport, with REST kept as an option. The authority reached down the link. The second factor's session as an explicit handle. Streamed downloads and uploads. A read cache for when the local node is away |
+| **Mail in** | An edge gateway does port 25, SPF, DKIM and DMARC, spam filtering, and the queue. `reject_unverified_recipient` asks mr-moqui live at `RCPT TO`. The listener stores into the account's `EmailMessage` and runs the ECAs on the same node | The edge node as the mail edge: first with the gateway beside it, then with an MTA in moqui, and later with filtering in moqui ([decision 3](#8-open-questions)). The recipient check answered from a replicated list while the local node is away. Delivery to the local node's existing delivery code over the link |
+| **Mail out** | SMTP through an `EmailServer` that can be reached. No DKIM signing or MX delivery in moqui | Submission to the edge node, a delivery queue with retry and DKIM signing, and delivery reports back to the `EmailMessage` |
+| **Mail standards, filtering** | Nothing in moqui checks SPF, DKIM, DMARC or ARC, or scores spam. The listener trusts the gateway's `Authentication-Results` and spam fields | Verification and signing in moqui, applied to mail inside the organization as well as mail from the internet. Filtering in moqui for mail and for the other inbound channels (public forms, chat) |
+| **Chat bridges, SMS** | The webhook handler runs `receive#Sms` on the node that has the `PhoneNumber`, room and opt-out rows. MMS media is served from that node at `channels_public_url` | Webhooks verified on the edge node with a replicated secret, then queued to the local node. MMS media kept on the edge node for the token's life. The `ChatBridgeAdapter` seam (`Extension::chat_bridge_adapters`) is where an edge node adapter would plug in |
+| **XMPP** | C3a turns each stanza into a service call by name, as the user; the SCRAM verifiers, rooms and MAM are on that node | Tunnel 5222 and 5223 to the local node first. C3b (s2s) on the edge node, queued while the local node is away |
+| **Matrix, federation** | Not built (C6a to C6c, C2). The plan keeps the room DAG and the signing keys in Moqui's Postgres | Decide the split before C6: other servers ask for keys and backfill whether the local node is up or not |
+| **SIP, voicemail** | The engine runs beside the media port, on a node that is both a `SipNode` and a `CallMediaNode`. Routing reads `PhoneNumber`, `CallHandlingRule`, `CommsSchedule` and `UserStatus`. The registrar checks `SipDeviceVerifier`. Boxes, greetings and audio are on that node | SIP and RTP on the edge node, with routing decided on the local node over the link. A voicemail fallback while it is away ([decision 4](#8-open-questions)). Audio sent back through the queue |
+| **WebRTC SFU** | Media nodes are cluster members on the shared database (`CallMediaNode` heartbeats). `rtc-signal` goes through `cluster::send_to`. Tested as "two servers of one cluster on one database" | The edge node as a media node of the local node's calls, without a shared database. The local node keeps the edge node's `CallMediaNode` row from the link. `rtc-signal` goes over the link. The edge node's driver calls its services on the local node |
+| **TURN** | Already separable | Run it on the edge node, with `turn_allowed_peers` set to the edge node's media port |
+| **Recording, captions** | The recorder runs on the call's media node and writes `dbresource://moqui/call/recording/` | Segments queued to the local node. Captions through the local node's `transcribe` binding (quota and `LlmCall` stay there) |
+| **Push** | Outbound HTTPS | None. The local node sends. Subscriptions are bound to the origin, so the apps keep one host name inside and outside |
+| **Conf, packaging** | MoquiProductionConf.xml and MoquiDemoConf.xml. A conf cannot remove a component | MoquiEdgeConf.xml, a `node_role` property, and a way to make an edge node runtime with only the base components and mr-pass |
+| **Setup screens** | Wizard support, and the MailAccounts wizard | System › Edge Node on the local node, and System › Edge Clients on the edge node |
+| **Dynamic address** | `rtc_public_address`, `sip_public_address` and `cluster_base_url` are static | Fine on the edge node, whose address is fixed. The local node needs none of them |
+
+## 5. Design
+
+### 5.1 The edge link
+
+- **Port.** The local node dials the edge node's 443, the one port nearly every network lets out. TLS uses ALPN
+  `moqui-edge/1`, so the HTTPS listener hands the connection to the link handler. Browsers' `h2` and `http/1.1` are not
+  touched, and the listener otherwise stays HTTP/1.1. A port of its own, as the OTLP receiver has, is the fallback.
+- **Identity.**
+  - The edge node's certificate is checked by WebPKI, and the fingerprint seen at pairing is pinned.
+  - The local node has a key of its own, which the edge node pins at pairing: mutual TLS with one key per local node,
+    not the cluster's one shared pair.
+  - The local node keeps `edge_node_url`, `edge_node_key` and `edge_node_pin` in `runtime/.env`, since keys are
+    configuration, not database rows (README redesign 7).
+- **Two connections, one in each direction of control.**
+  - **Up.** The local node is the HTTP/2 client. It carries Hello, outbound submissions, acknowledgements, replication
+    changes and telemetry.
+  - **Down.** The local node dials this one too, and the roles flip after the TLS handshake: the edge node is the HTTP/2
+    client and the local node serves it with hyper's HTTP/2 server and its own router. Everything the edge node starts
+    goes down:
+    - delegated service calls, queue delivery, and PASS authority calls, all as gRPC;
+    - forwarded HTTP, and WebSockets by HTTP/2 extended CONNECT (RFC 8441);
+    - byte tunnels.
+  - On the edge node, a tonic channel's connector hands out the down connection. An edge-to-local call is then an
+    ordinary gRPC call, with deadlines, cancellation, flow control and streaming. Forwarded web requests reuse the local
+    node's router unchanged.
+  - One bidirectional stream with our own framing inside it was considered. The reversed connection gets all of that
+    for free.
+- **Hello.** Each side sends:
+  - its binary and link protocol versions;
+  - the features compiled in (rtc, sip, xmpp, inbound-smtp, channels);
+  - the edge node sends its capabilities and public names; the local node sends its instance id.
+
+  Protobuf changes are additive only. The edge node accepts a local node one version behind, and says plainly when it
+  cannot.
+- **Liveness.**
+  - HTTP/2 PINGs every 15 s keep NAT mappings open.
+  - A dropped connection reconnects with a backoff from 1 s to 60 s.
+  - A link generation number fences a stale connection: it cannot acknowledge or answer once a new one is up.
+- **Not on the link.** Call media. Browsers and phones send it to the edge node's media sockets, and the local node is
+  not in the media path.
+- **QUIC.** Its connection migration would carry a link across an address change. It is a later option; quinn is in
+  the tree only under reqwest.
+
+### 5.2 How work crosses the link
+
+There are four ways, and each comms area uses some of them:
+
+| Way | Direction | While the local node is away | Used for |
+|---|---|---|---|
+| **Delegate** | Edge node to local: a synchronous gRPC call of a named service | Fails at once with "local node offline" | Call routing (`VoiceServices.receive#PhoneCall`), registrar checks, XMPP stanzas, PASS authority calls, TURN credentials (`CallServices.get#IceServers`) |
+| **Queue** | Either way: durable and ordered, delivered at least once and applied once by receipt | Waits on the edge node (a setting, 14 days by default, with a size cap) | Inbound mail, SMS, MMS and other bridge events, voicemail and recordings, delivery reports |
+| **Replicate** | Local to edge node; read-only on the edge node; driven by commits, with a cursor and a full resync | The edge node answers from its copy | Recipient addresses; each phone number's fallback (voicemail box, greeting, outside number); bridge webhook secrets; PASS site info and, later, cached public pages |
+| **Tunnel** | Raw bytes, edge node to local (TLS passthrough, SSH, XMPP) or local to edge node (SMTP submission) | Refused, or the offline page | Web access in passthrough, SSH, XMPP until C3b |
+
+- **Delegate.**
+  - On the edge node, with `node_role=edge`, the service facade sends the services a conf lists over the link, such as
+    `<edge-delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall"/>`.
+  - The call runs on the local node as a dedicated user, `_EDGE_` in the group `EDGE_DELEGATE`, which is granted only
+    those services. The original caller's identity travels as data, never as a login.
+  - The comms engines' Rust code also reads and writes entities directly: heartbeats, `CallMediaNode`,
+    `SipRegistration`, the recorder's spool. E0 lists each engine's entity access on a node without the business data,
+    and classifies each one: stays on the edge node, delegate, queue or replicate.
+- **Queue.**
+  - On the edge node, `moqui.edge.EdgeQueueItem` holds:
+    - the paired node's id, as on every edge node row that belongs to one local node (decision 1);
+    - the item id, direction, kind and idempotency key;
+    - the payload, or a content location for a large body;
+    - the size, the created date, attempts, the lease and the status.
+
+    It is modeled on `ChatBridgeDelivery`.
+  - The local node keeps `moqui.edge.EdgeReceipt` by item id, so a redelivery does nothing. The receipt goes up only
+    after the local transaction commits.
+  - Order is kept per conversation key (a room, a mailbox, a phone number).
+  - The depth and the oldest item of each kind are metrics, with alerts.
+- **Replicate.**
+  - The conf names entity sets, with only the fields needed: `<edge-replicate set="mailRecipients" ...>`.
+  - On the local node, a commit to an entity in a set registers the change in the transaction, as data feeds register
+    search documents. It is sent after the commit.
+  - A cursor is kept per set. On reconnect the local node sends from the cursor, or the whole set when the edge node has
+    lost it.
+  - EntitySync's code is the model.
+
+### 5.3 Web access
+
+- **One name everywhere.** `erp.example.com` points at the edge node in public DNS, and at the local node's LAN address
+  in the office's DNS. One name and one certificate then work inside and outside, and things bound to the origin keep
+  working: session cookies, Web Push subscriptions, and the PWA.
+- **Passthrough** (the default for the local node's apps, [decision 2](#8-open-questions)):
+  - The edge node reads the SNI, opens a tunnel down, writes a PROXY v2 header with the client's address, and pipes the
+    bytes. The local node ends TLS with its own certificate, so the edge node sees no content.
+  - The HTTPS listener needs PROXY headers on tunnel connections, which is new.
+  - The local node needs a certificate. ACME TLS-ALPN-01 through the tunnel would do it, but there is no ACME client
+    yet. Until then: DNS-01 with an outside tool, or a copied certificate.
+  - Web protection runs on the local node, by the PROXY address.
+- **Terminate:**
+  - The edge node ends TLS with its own certificate and sends each request down as HTTP/2, adding the client's address.
+    The local node trusts the link as a proxy.
+  - The edge node can rate-limit and ban at the edge, and show an offline page while the link is down.
+  - Used for webhooks and the mr-pass sites, which the edge node serves itself, and for the apps on a host name the
+    operator sets to terminate.
+- **While the link is down.** In terminate mode the edge node shows the offline page. In passthrough mode it refuses the
+  connection; it holds no certificate for the name.
+- **What rides on web access:** the apps and `/notws`, DAV (`/dav`), git over HTTPS, the LLM gateway, and MCP and A2A
+  when they are on. SSH (SFTP, git, the TUI) goes through a TCP tunnel on an edge node port.
+
+### 5.4 Comms on the edge node
+
+**Mail.** Decided 2026-11-01 ([decision 3](#8-open-questions)): both layouts are options. Once it is built, the MTA in
+moqui is the default, and Postfix with Rspamd is the supported external alternative, as coturn is for TURN. Spam
+filtering stays with an external Rspamd for some time. Filtering in moqui is a late phase, possibly after the first
+release.
+
+- **Three stages.**
+  1. **The gateway beside the edge node (E5a).** Postfix and Rspamd run on the edge node's host, as Mail-Inbound
+     describes. Postfix does port 25, the SPF, DKIM and DMARC checks, DKIM signing and delivery to MX, with Rspamd's
+     spam verdicts. The edge node's moqui does the rest of this section. It gets mail through the edge node with what
+     exists.
+  2. **The MTA in moqui (E5b), the default once built.** The edge node's moqui takes port 25 itself.
+     - **Inbound:** SMTP from the internet with STARTTLS; SPF, DKIM, DMARC and ARC checks, writing its own
+       `Authentication-Results`; the recipient check; connection and rate limits.
+     - **Outbound:** a delivery queue to each recipient's MX with retries; DKIM signing; DSNs for bounces; TLS policy
+       (MTA-STS, DANE); the edge node's reverse DNS and SPF record.
+     - **Spam verdicts** still come from an external Rspamd, over its HTTP API, so the spam fields the listener reads
+       today keep their meaning.
+     - **A library to check:** `mail-auth` (SPF, DKIM, DMARC and ARC, verifying and signing), against the license gate
+       in `deny.toml`.
+  3. **Filtering in moqui (E11, late).** Content and reputation scoring in moqui, which replaces the external Rspamd as
+     the default. It serves more than mail from the internet:
+     - mail inside a large organization;
+     - messages from public-facing forms (PASS, contact and request forms);
+     - chat from outside (bridges, and later federation).
+
+     It is a high cost, but the business need is high too, which justifies building it in.
+- **The same standards inside.** The checks and signing apply to mail between the organization's own accounts, not
+  only to mail from the internet. Internal mail is DKIM-signed and verified and carries `Authentication-Results`, so
+  rules, filters and users see one consistent picture. The verifying and signing code therefore goes in `moqui-mail`,
+  for the local node as well as the edge node, not in edge-only code.
+- **Inbound path, in every stage.**
+  - The edge node accepts mail only for the replicated recipients. `RCPT TO` is answered from that list, so unknown
+    addresses are refused while the local node is away too.
+  - In E5a, Postfix hands each accepted message by LMTP to the edge node's moqui. An edge mode of the SMTP listener
+    queues the raw message, instead of storing it into an account. In E5b the MTA queues it itself.
+  - The queue delivers it to the local node's delivery code (`moqui-mail/src/delivery.rs`), with the same routing,
+    rules, ECAs and Message-ID check as today.
+- **Outbound path.**
+  - The local node's `SYSTEM` server and the accounts' outgoing servers point at the edge node. Submission is SMTP
+    through a local tunnel port, which needs no change to the SMTP client, or a gRPC submit that returns an acceptance
+    id.
+  - The edge node queues the message, signs it with DKIM (Rspamd in E5a, moqui in E5b), delivers it to the MX with
+    retries, and queues its status (sent, deferred, bounced) back to the local node's `EmailMessage`.
+  - Mail the local node cannot hand to the edge node stays in its Outbox. Add automatic retry for "edge node not
+    reached"; it is safe, since nothing was sent. The ambiguous lost-connection case stays as it is.
+- **IMAP and POP sync, and OAuth refresh,** stay on the local node. The OAuth sign-in redirect comes back to the local
+  node's own host name through web access.
+
+**Chat bridges and SMS.**
+- The provider's webhook URL is the edge node's, `/channels/{chatBridgeId}/webhook`.
+  - The edge node checks the signature with the replicated bridge secret, drops a repeated provider transaction id,
+    answers 200 once the event is queued, and queues the raw event.
+  - The local node runs `SmsServices.receive#Sms` and the rest as today.
+  - While the edge node is down, providers retry, but their windows are short, hours rather than days.
+- Outbound sends are the local node's own calls to the provider's API, so they need no edge node. For MMS media, the
+  local node uploads the file to the edge node with the send, and the edge node serves `/channels/{id}/media/{token}`
+  for `channels_media_minutes`.
+- Channels that only connect outward need no edge node: Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway.
+
+**XMPP.**
+- First, tunnel 5222 and 5223 to the local node, with `/xmpp-websocket` over web access.
+  - The local node holds the certificates for the domain, `rooms.` and `upload.`.
+  - Clients cannot connect while the local node is away. They retry, and their messages wait in MAM as today.
+- C3b's s2s belongs on the edge node, with stanzas to local users queued while the local node is away. Plan C3b with
+  this split.
+
+**Voice (SIP).**
+- **On the edge node.** It runs the SIP listeners and RTP, with `sip_public_address` set to its fixed address. Trunks
+  register from the edge node. Phones outside the office register to the edge node's registrar, which delegates the
+  digest check to the local node. The HA1 verifiers (`SipDeviceVerifier`) are not copied to the cloud, so outside phones
+  fail to register while the local node is away and register again when it is back ([decision 4](#8-open-questions)).
+- **An incoming call.** The edge node delegates `receive#PhoneCall` to the local node for the routing decision. All the
+  media stays on the edge node (phone RTP and browser legs alike), so the local node is in signaling only.
+- **While the local node is away** (decision 4). The edge node answers from the replicated fallback:
+  - the number's voicemail box and greeting, or a forward to the number's outside fallback;
+  - a voicemail is recorded on the edge node and queued, and its notices go out when the local node takes it;
+  - without a fallback, it answers unavailable, so the trunk's own failover can act.
+- Recordings and voicemail audio are queued to the local node. The edge node deletes its copy after the receipt.
+
+**Calls (WebRTC).**
+- The edge node is a media node of the local node's calls.
+  - The local node keeps the call state (`CallSession`, `CallLeg` and the rest) and the signaling. The browser's
+    `/notws` reaches it through web access.
+  - The local node keeps the edge node's `CallMediaNode` row from the link: the heartbeat from link liveness, and
+    `mediaAddress` and `turnUrls` from Hello.
+  - `cluster::send_to` for the edge node's instance id goes over the link instead of the cluster sender.
+- On the edge node, the rtc driver's service calls are delegated or queued: binding a connection, leg checks, TURN
+  credentials, recording, captions.
+- TURN runs on the edge node with `turn_allowed_peers` set to the edge node's media port. coturn also works.
+- **Office-to-office calls.** Office users in a call with each other send media to the cloud and back
+  ([question 6](#8-open-questions)). A local media node, cascading to the edge node for outside legs, would fix that. W7
+  needs the shared database today, so edge-mode cascading is new work. Later.
+
+**Push.** No change. The local node sends Web Push itself.
+
+### 5.5 mr-pass on the edge node, gRPC by default
+
+- **Settings.**
+  - `pass_backend_transport` is `grpc` (the default) or `rest`.
+  - `pass_backend_url` keeps naming an authority to dial in direct mode.
+  - A new value, `edge:`, means the local node on the link. Local mode (in-process calls) stays the default when it is
+    empty.
+- **PASS seam.**
+  - Split into transport adapters behind one function:
+    - `Facade.js` `authorityClient` and the remote branch of `call`;
+    - `Account.js` `remoteAccount` and `callAuthority`;
+    - `download`, `downloadExport` and multipart uploads.
+  - The REST adapter is today's code.
+- **Authority seam.** Factor the logic in `PassApi.js` that runs after authentication into one function that the
+  servlet and the gRPC handler both call: the client check, the delegation, the operation to schema to service step,
+  and the error envelope.
+- **The service, first cut.**
+  - `PassAuthority.Call(operation, siteId, input as JSON bytes, delegation, visitor address, operation id, session
+    handle)` returns the result as JSON, or the error envelope.
+  - `Download` streams from the server, and `Upload` streams from the client.
+  - The account and SSO actions are operations like the rest.
+  - This matches today's one-input-map, one-result-map shape. Typed messages would need typed results, and only 3 of
+    the 149 have them (`Contracts.d.ts`). They are later, perhaps generated by `moqui types`.
+- **What it gains.** One long-lived, multiplexed HTTP/2 connection, with no TLS handshake or header parsing per call.
+  On the link it also means no public authority at all.
+- **Script side.** A host binding beside `ec.service.rest()` makes gRPC calls to a configured endpoint: a direct
+  channel, or the link.
+- **Authentication.**
+  - On the link, the link's identity replaces the client secret header. The edge node becomes a PASS client at pairing,
+    and the wizard writes `pass_client_<id>_*` into the local node's `.env`.
+  - Direct gRPC keeps the client secret, in metadata. Mutual TLS or request signing would be better, later.
+  - The second-factor cookie becomes an explicit session handle in metadata.
+  - The SSO front channel goes to the authority's host name, which in edge mode is the local node's, through web
+    access.
+- **Packages.** Lite, the package Run-Deploy suggests for PASS servers, has no `grpc`. Either Lite gets a `grpc-client`
+  feature, or REST stays the default on Lite. Decide in E4 from the size cost. The edge node itself is Maximal.
+- **While the local node is away.** Every PASS page needs the authority today. A read cache on the edge node, scoped by
+  publication generation as `plan/design-forum.md` describes, lets public pages read while the local node is away.
+  Writes fail closed with a notice, and the Shop takes no offline orders (`design-shop.md`). Later.
+- **Plan text to revise:** `design-shop.md:1333-1337` ("no new REST or GraphQL server") and
+  `implementation-forum.md:16` ("one configured HTTP authority").
+
+### 5.6 MoquiEdgeConf.xml and packaging
+
+A first draft. The listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP
+domain, LMTP from the gateway.
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node.
+    Build with --release (the Maximal package: rtc, sip, xmpp, inbound-smtp, channels, grpc and embedded Postgres).
+    The runtime has the base components and mr-pass only. Per-host settings (names, addresses, ports) go in .env.
+        ./moq run-production --release -c conf/MoquiEdgeConf.xml -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <default-property name="node_role" value="edge"/>
+    <default-property name="webapp_web_protection" value="true"/>
+    <default-property name="channels_webhooks_enabled" value="true"/>
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="pass_backend_url" value="edge:"/>
+    <default-property name="pass_backend_transport" value="grpc"/>
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+    <!-- queue retention and size cap, delegated services and replicated sets: the elements are settled in E1 and E3 -->
+</moqui-conf>
+```
+
+- **"Release build profile."** `--release` is the Maximal package, built with the `release` Cargo profile. Enterprise
+  has no embedded Postgres, and the edge node uses the embedded one.
+- **Components.** A conf adds components and never removes one, so an edge node runtime is a checkout or archive with
+  only the base components (framework, tools, webroot, basic-comms) and mr-pass. An `edge` component set in `addons.xml`
+  makes that `./moq component-get edge`. Then `./moq archive --release --no-data --conf conf/MoquiEdgeConf.xml`.
+- **`node_role`** is empty on a normal node, or `edge`. A local node needs no role: it links when `edge_node_url` is
+  set.
+- **Backups.** The queue is the only data on the edge node that matters, so the conf should run the embedded backup job
+  instead of leaving it paused.
+- **Build cost.** The tonic client, code generation, and hyper's `http2` feature. Measure the build time and binary size
+  in E0.
+
+### 5.7 Attaching a local node (System app)
+
+**On the edge node.** System › Edge Clients, for the operator:
+- make a pairing code (one use, good for an hour);
+- see each linked node: its link state, queues, replicated sets and last errors;
+- revoke a node.
+
+The edge node's own capabilities (listeners, names, trunks, the mail edge) are set in its `.env` and conf. They are what
+discovery reports.
+
+**On the local node.** System › Edge Node, a new screen in `tools/screen/System/`. It is a wizard panel, as the
+MailAccounts Add wizard is:
+
+1. **Edge node.** The URL and the pairing code.
+2. **Connect.**
+   - Check TLS, and show the edge node's name and fingerprint to confirm.
+   - Check the versions, then pair: the local node's key is made and written to `.env`.
+   - Bring the link up and show the round-trip time.
+3. **Discover.** The edge node reports what it offers, and the wizard turns it into a filled-out form. Each area can be
+   turned on or off, with the local choices filled in:
+   - **Web access:** the host names, passthrough or terminate.
+   - **Mail:** the domains whose MX is the edge node; which hosted and shared accounts receive through it; outgoing mail
+     through the edge node for `SYSTEM` and the accounts.
+   - **Phone:** the edge node's trunks and numbers, each mapped to local routing; the registrar for outside phones; the
+     voicemail fallback.
+   - **Chat:** which bridges' webhooks go to the edge node; MMS media.
+   - **Calls:** the edge node as media node; TURN.
+   - **XMPP:** the domain to tunnel.
+   - **PASS:** the sites the edge node serves. The PASS client registration is made on both sides.
+   - **Monitoring:** the edge node's telemetry sent to this node's Monitor.
+4. **Apply.**
+   - Write the local rows and settings: `EmailServer` records pointing at the edge node, the bridges' webhook base, the
+     edge node's `CallMediaNode`, and the PASS client properties in `.env`.
+   - Send the edge node its part (`Configure`) and start replication.
+   - List the DNS records to set, each checked live: MX, SPF, the DKIM key, DMARC, A and AAAA for each host,
+     `_sips._tcp`, and the XMPP SRV records.
+5. **Test.** Mail in and out, a webhook round trip, a test call, and the PASS readiness check. Then show the status
+   screen.
+
+**The status screen** shows:
+- the link's state and generation, the round-trip time, and the last connect;
+- the queue of each kind: depth and oldest item;
+- the replication cursors, errors, and certificate expiry.
+
+Its actions are pause, resync and unpair.
+
+### 5.8 Security
+
+- **What an edge node sees:**
+  - in passthrough, no app content; in terminate mode, all of it;
+  - always: mail and messages while they are queued; the media of calls that are not end-to-end encrypted (W8's
+    encrypted calls stay encrypted); PASS traffic; the replicated sets.
+- **What a compromised edge node can do:**
+  - read and forge inbound mail and messages, and send mail as the domains;
+  - call the delegated services as `_EDGE_`;
+  - make PASS calls as the PASS client, though user actions still need the visitor's delegation;
+  - answer the phones.
+
+  It cannot log in as a user, or read business data beyond what the delegated services return.
+- **Controls:**
+  - a key per node, pinned both ways, and a link either side can revoke;
+  - delegated services on an allowlist, run as `_EDGE_` with narrow grants;
+  - everything from the edge node checked as input from any client;
+  - replicated fields kept to the minimum and encrypted at rest;
+  - web protection on the edge node, and on the local node by the PROXY address.
+- **Sealing, as an option.** Once the edge node has made its checks (recipient, signature, spam verdict), it seals each
+  queued item to the local node's public key. A copy of the edge node's database then does not expose queued mail and
+  messages.
+- **Sensitive replicated data:** trunks' `authJson`, and bridge webhook secrets. SIP digest verifiers (HA1) are not
+  replicated: the registrar delegates the digest check (decision 4).
+- [Attack-Surface](../docs/security/Attack-Surface.md) gets the edge node's listeners and the link.
+
+### 5.9 Operations
+
+- **Monitoring.**
+  - The edge node exports OTLP to the local node's Monitor over the link; the OTLP receiver already exists.
+  - Metrics: link up, round-trip time, reconnects; queue depth and age by kind; replication lag; delegated call latency
+    and errors.
+  - Alerts: the link down for N minutes, a queued item older than N hours, a quota nearly reached.
+- **Upgrades.** Either side can go first. Hello refuses a link more than one version apart, with a clear message.
+- **When the edge node fails.** Mail senders retry for days, and providers' webhooks for hours. Calls fail over at the
+  trunk provider, so configure a failover number there. A second edge node (a secondary MX, a second webhook URL) is
+  later.
+- **Bandwidth.** All media of calls with outside parties runs through the edge node, so size the edge node's network for
+  calls, not for its database.
+
+## 6. Phases
+
+| Phase | What | Acceptance |
+|---|---|---|
+| **E0** | Settle §8. Audit each comms engine's entity access on a node without the business data. Measure the cost of the tonic client and hyper `http2` | Each access classified (edge node, delegate, queue, replicate); the size and build-time numbers recorded |
+| **E1** | The link: ALPN on 443, pairing, keys in `.env`, the up and down connections, Hello, liveness, reconnect, generations. `node_role`, MoquiEdgeConf.xml, and the status and Edge Clients screens, with no comms yet | A local node with no listening port links. An edge node restart, a change of the local address, and a dropped NAT mapping each recover within a minute. Unpairing cuts the link on both sides |
+| **E2** | Web access: passthrough with PROXY v2 (new on the HTTPS listener), terminate with HTTP/2 and extended CONNECT, the offline page, the SSH tunnel | The apps, `/notws`, DAV and git work through the edge node. The client's address is right in the logs and in web protection |
+| **E3** | Delegate, queue and replicate; `_EDGE_` and its group; metrics | With the local node stopped mid-stream, queued items arrive once, and in order, after it returns. Replication recovers when the edge node has lost its database |
+| **E4** | mr-pass on gRPC: the adapters, the PassApi refactor, `PassAuthority`, the direct and link channels; REST kept | The local/remote compatibility tests pass over gRPC direct, gRPC on the link, and REST |
+| **E5a** | Mail through the edge node, with Postfix and Rspamd beside it: the recipient list, LMTP into the edge node queue, outbound submission, delivery reports | MX at the edge node. Mail sent while the local node is down arrives after. Unknown recipients are refused while it is down. Outbound mail is DKIM-signed and passes DMARC at a large provider. Bounces reach the Outbox |
+| **E5b** | The MTA in moqui: port 25, SPF, DKIM, DMARC and ARC, DKIM signing, the MX delivery queue, DSNs, TLS policy; Rspamd still external, over HTTP. The same checks on internal mail. Becomes the default | E5a's cases pass with no Postfix. Internal mail carries verified DKIM and `Authentication-Results` |
+| **E6** | Chat bridges and SMS through the edge node | An SMS sent while the local node is away is delivered after. MMS media is served by the edge node |
+| **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
+| **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
+| **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |
+| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard |
+| **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
+| **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client | |
+
+E1 to E3 are the base, and the rest build on them. After E3 the order can follow need. E4 and E5a are the likely
+first two.
+
+## 7. Documents to change
+
+When it is built:
+- **Run-Deploy:** a topology row and a section, "A local server with an edge node"; the new properties; the PASS
+  section's transport.
+- **Guides:** Attack-Surface; Mail-Inbound (the edge node as the gateway, then the MTA in moqui); SMS, SIP, WebRTC and
+  TURN (the edge node as edge and media node).
+- **mr-pass:** `docs/Deployment.md`.
+- **Plans:**
+  - Comms-Framework: C3b's and C6's split between edge node and local node. Its line "this plan adds no new mail
+    features" should point here for the MTA and filtering work.
+  - The two mr-pass plan sentences in §5.5.
+
+## 8. Open questions
+
+**Decided 2026-11-01:**
+
+1. **Tenancy.** One local node per edge node first. The edge node's rows (queues, replicated sets, configuration) are
+   keyed by the paired node, so several local nodes on one edge node can come later without a redesign.
+2. **Web access default.** Both modes. Passthrough is the default for the local node's apps, and terminate can be
+   chosen per host name.
+3. **Mail edge.** Both layouts are options. The MTA in moqui is the default once built, and Postfix with Rspamd is the
+   supported external alternative. Rspamd is likely to stay external for some time, so filtering in moqui is a late
+   phase (E11), possibly after the first release. The same mail standards are used inside the organization too. Later,
+   filtering in moqui serves internal comms as well: large organizations, and requests from public-facing forms. It is
+   a high cost, but a high business need, which justifies the tight integration.
+4. **Voice while the local node is away.** The voicemail fallback. Each number's box, greeting and outside fallback are
+   replicated to the edge node. The registrar's digest check is delegated, and HA1 verifiers are not replicated.
+5. **The name.** "Edge node", in place of "relay node": "relay" already names W7's relay links between media nodes
+   (`sfu/relay.rs`, `RelayMessage`) and TURN relays.
+   - W7 called a media node holding some of a call's legs "an edge", beside the call's origin. That term is now "leg
+     node", in the code (`RelayRole::LegNode`), the specs and the guides, so "edge node" means only this plan's node.
+   - Web protection's metrics are named `edge_*`, and `edge.rs` and `cluster_edge.rs` name the host's async runtime and
+     the cluster listener. Each means the edge of one server, which does not conflict with an edge node.
+   - The code names stay apart from those metric names: `node_role=edge`, `edge_node_*` for the link's properties and
+     metrics, `moqui.edge` for the entities, and the ALPN `moqui-edge/1`.
+
+**Open.** Each has a working answer in §5, which may change.
+
+6. **Office calls through the cloud.** Is it acceptable at first that office-to-office calls send media to the edge node
+   and back? Working answer: yes, with a local media node later.
+7. **gRPC payloads.** One generic operation message, with the input and result as JSON, first; typed messages later?
+   Working answer: yes.
+8. **Lite and gRPC.** Add a gRPC client to Lite for direct PASS servers, or keep REST the default on Lite?
+
+## 9. References
+
+- Run and deploy: [Run-Deploy](../docs/Run-Deploy.md) (topologies, the PASS and cluster sections),
+  [Build-Test](../docs/Build-Test.md#packages).
+- Comms: [Comms-Framework](Comms-Framework.md) (§6.3 signaling, §6.5 network, D-E1),
+  [Mail-Inbound](../docs/interfaces/Mail-Inbound.md), [Chat-Bridges](../docs/interfaces/Chat-Bridges.md),
+  [SMS](../docs/interfaces/SMS.md), [XMPP](../docs/interfaces/XMPP.md), [SIP](../docs/interfaces/SIP.md),
+  [Voicemail](../docs/interfaces/Voicemail.md), [WebRTC](../docs/interfaces/WebRTC.md),
+  [TURN](../docs/interfaces/TURN.md), [Call-Recording](../docs/interfaces/Call-Recording.md).
+- PASS: `runtime/component/mr-pass/docs/Deployment.md`, `plan/design-forum.md` (the remote adapter, caches),
+  `plan/design-shop.md` (authority outage, caches).
+- Cluster: [Cluster](archive/Cluster.md), [Ssh](archive/Ssh.md) (the cluster channel).
+- Code:
+  - the link's models: `crates/moqui-core/src/cluster/`, `crates/moqui-host/src/cluster_edge.rs`,
+    `crates/moqui-host/src/tui_remote.rs`;
+  - gRPC: `crates/moqui-host/src/monitor/grpc.rs`;
+  - the listener: `crates/moqui-host/src/http.rs`, `tls.rs`;
+  - queues: `crates/moqui-core/src/service/chat_bridge.rs`;
+  - sync: `crates/moqui-core/src/service/system_sync/`;
+  - mail: `crates/moqui-host/src/smtp.rs`, `crates/moqui-mail/src/delivery.rs`;
+  - comms: `crates/moqui-host/src/channels.rs`, `crates/moqui-host/src/rtc/`, `crates/moqui-host/src/sip/`.
+- Messaging: [Messaging](proposals/Messaging.md), the FlatBuffers proposal for browsers and gateways. It rejected
+  protobuf for that purpose. The link here is server to server, where gRPC's tooling and streaming fit.

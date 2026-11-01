@@ -18,12 +18,12 @@
 //! long). A frame's reply, and the SFU's offers and events for a leg, go to the socket that leg's
 //! last frame came from ([`Route`]): on this node straight to the socket, on another by `rtc-signal`.
 //!
-//! Cascading (W7): a leg that joins here for a call whose media node is another (this node is an edge) links the room to
-//! that node (the origin); the SFUs' relay messages go between the two by `rtc-signal` (kind `relay`). What this node
-//! tells a room's legs of the room itself (a `participant`, a relayed `mute`, a notice, a caption) goes to the room's
-//! other nodes too (kind `roomFrame`), and the origin passes an edge's on to the other edges. A link that is lost puts
-//! the edge's legs on the reconnect path (`mediaLost`); one the origin refused sends them back to the call's node
-//! (`note#MediaEvent` `relayRefused`) the same way; one the origin closed (the call ended) ends them.
+//! Cascading (W7): a leg that joins here for a call whose media node is another (this node is a leg node) links the
+//! room to that node (the origin); the SFUs' relay messages go between the two by `rtc-signal` (kind `relay`). What
+//! this node tells a room's legs of the room itself (a `participant`, a relayed `mute`, a notice, a caption) goes to
+//! the room's other nodes too (kind `roomFrame`), and the origin passes a leg node's on to the other leg nodes. A link
+//! that is lost puts the leg node's legs on the reconnect path (`mediaLost`); one the origin refused sends them back to
+//! the call's node (`note#MediaEvent` `relayRefused`) the same way; one the origin closed (the call ended) ends them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
@@ -77,7 +77,7 @@ struct Driver<'a> {
     media: Media,
     /// The frames each leg gets when it joins: the rooms' recording and captions notices.
     notices: RoomNotices,
-    /// The call's media node of each room this node is an edge of (W7).
+    /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
 }
 
@@ -300,7 +300,7 @@ impl Driver<'_> {
                 .sfu
                 .join(now, &key, generation, sdp())
                 .and_then(|answer| {
-                    // a leg here of a call whose media is on another node: this node is an edge, linked to that one
+                    // a leg here of a call whose media is on another node: this node is a leg node, linked to that one
                     if !origin.is_empty() && origin != self.own {
                         if let Err(e) = self.sfu.link(now, room, origin) {
                             let _ = self.sfu.leave(now, &key, generation);
@@ -495,13 +495,13 @@ impl Driver<'_> {
         );
     }
 
-    /// A room's link ended. For an edge: lost, its legs reconnect (and link again), and a room with phone legs here links
-    /// again at once; refused or unreachable (it never connected), they go back to the call's node as they reconnect;
-    /// closed by the origin (the call ended), they end. Nothing else is done for the others.
+    /// A room's link ended. For a leg node: lost, its legs reconnect (and link again), and a room with phone legs here
+    /// links again at once; refused or unreachable (it never connected), they go back to the call's node as they
+    /// reconnect; closed by the origin (the call ended), they end. Nothing else is done for the others.
     fn relay_down(&mut self, room: &str, node: &str, reason: &str) {
-        let edge = self.origins.get(room).is_some_and(|origin| origin == node);
+        let leg_node = self.origins.get(room).is_some_and(|origin| origin == node);
         tracing::info!("call {room}: relay link to {node} ended: {reason}");
-        if !edge {
+        if !leg_node {
             return;
         }
         if reason == "ended" {
@@ -558,7 +558,7 @@ impl Driver<'_> {
         from: Option<&str>,
     ) {
         for (node, role, _) in self.sfu.relays(room) {
-            // an edge's frame goes on from the origin to the other edges; an edge sends only to its origin
+            // a leg node's frame goes on from the origin to the other leg nodes; a leg node sends only to its origin
             if from == Some(&*node) || (from.is_some() && role != RelayRole::Origin) {
                 continue;
             }

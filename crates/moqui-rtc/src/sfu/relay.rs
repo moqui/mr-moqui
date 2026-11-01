@@ -13,14 +13,14 @@
  */
 
 //! Cascading media nodes (plans/Comms-Framework.md §6.2 "The W7 gate", §6.3 "Cluster"): a relay link between the call's
-//! media node (its origin) and another node holding some of its legs (an edge). A link is one str0m peer on each side
-//! for one room, on the nodes' media sockets: the origin is ICE-lite, as it is to browsers, and the edge is full ICE, the
-//! controlling side, which offers first. The offers, answers and the rest go between the nodes as [`RelayMessage`]s,
-//! which the caller carries (the host by the cluster's send to one node).
+//! media node (its origin) and another node holding some of its legs (a leg node). A link is one str0m peer on each
+//! side for one room, on the nodes' media sockets: the origin is ICE-lite, as it is to browsers, and the leg node is
+//! full ICE, the controlling side, which offers first. The offers, answers and the rest go between the nodes as
+//! [`RelayMessage`]s, which the caller carries (the host by the cluster's send to one node).
 //!
 //! - Each side sends the other every track of the room it has that did not come from that side: its legs', its injected
-//!   sources', and at the origin the other edges'. So the origin sees every leg (its taps: recording, captions, the SIP
-//!   mix), and each edge every leg the origin has.
+//!   sources', and at the origin the other leg nodes'. So the origin sees every leg (its taps: recording, captions, the
+//!   SIP mix), and each leg node every leg the origin has.
 //! - A video track crosses once, whatever the number of subscribers behind the link, in its simulcast layers up to the
 //!   highest any of them wants (a [`RelayMessage::Want`] from the side that receives it, sent when that changes); each
 //!   subscriber then gets its own layer as on one node. Nothing wanted, no video crosses. A tap of video at the origin
@@ -29,9 +29,9 @@
 //! - Every message names its link; a link opened again (after a loss) has a new one, and the old one's messages are
 //!   dropped. A link that is lost or closed is reported by [`SfuEvent::RelayDown`]; what happens to the legs is the
 //!   caller's (the host's reconnect path).
-//! - Fencing: a room that ended here takes no new link (an edge's late offer is answered with `Close`, reason `ended`),
-//!   and a node that was an edge of a room never takes a new link of it from its origin (a late offer of a link it
-//!   closed). Both are remembered for [`FENCE_KEPT`]; a room's id is never used again.
+//! - Fencing: a room that ended here takes no new link (a leg node's late offer is answered with `Close`, reason
+//!   `ended`), and a node that was a leg node of a room never takes a new link of it from its origin (a late offer of a
+//!   link it closed). Both are remembered for [`FENCE_KEPT`]; a room's id is never used again.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ pub enum RelayRole {
     /// The call's media node: ICE-lite, it answers.
     Origin,
     /// A node with some of the call's legs: full ICE, it offers first.
-    Edge,
+    LegNode,
 }
 
 /// A track a relay sends, by its mid on the sending side, as its offer names it.
@@ -124,7 +124,8 @@ impl RelayMessage {
     }
 }
 
-/// How long a node remembers a room that ended, or the origin of a room it was an edge of, to drop late relay messages.
+/// How long a node remembers a room that ended, or the origin of a room it was a leg node of, to drop late relay
+/// messages.
 pub(super) const FENCE_KEPT: Duration = Duration::from_secs(600);
 
 /// How often the links' wants and track names are looked at: a want waits at most this, and a node busy with packets
@@ -136,11 +137,11 @@ pub(super) const RELAY_LOOK_EVERY: Duration = Duration::from_millis(50);
 pub(super) const RELAY_CONNECT_WITHIN: Duration = Duration::from_secs(10);
 
 /// What a node remembers to drop late relay messages: the rooms that ended here, and the origin of each room this node
-/// is or was an edge of, with when each was last touched.
+/// is or was a leg node of, with when each was last touched.
 #[derive(Default)]
 pub(super) struct Fences {
     ended: HashMap<Arc<str>, Instant>,
-    edge_of: HashMap<Arc<str>, (Arc<str>, Instant)>,
+    leg_node_of: HashMap<Arc<str>, (Arc<str>, Instant)>,
     /// The time of the SFU's last input.
     pub clock: Option<Instant>,
 }
@@ -149,26 +150,26 @@ impl Fences {
     pub fn ended(&mut self, now: Instant, room: &str) {
         self.prune(now);
         self.ended.insert(room.into(), now);
-        self.edge_of.remove(room);
+        self.leg_node_of.remove(room);
     }
 
     fn is_ended(&self, room: &str) -> bool {
         self.ended.contains_key(room)
     }
 
-    fn edge_of(&mut self, now: Instant, room: &str, origin: &str) {
+    fn leg_node_of(&mut self, now: Instant, room: &str, origin: &str) {
         self.prune(now);
-        self.edge_of.insert(room.into(), (origin.into(), now));
+        self.leg_node_of.insert(room.into(), (origin.into(), now));
     }
 
     fn origin_of(&self, room: &str) -> Option<&str> {
-        self.edge_of.get(room).map(|(origin, _)| &**origin)
+        self.leg_node_of.get(room).map(|(origin, _)| &**origin)
     }
 
     fn prune(&mut self, now: Instant) {
         self.ended
             .retain(|_, at| now.saturating_duration_since(*at) < FENCE_KEPT);
-        self.edge_of
+        self.leg_node_of
             .retain(|_, (_, at)| now.saturating_duration_since(*at) < FENCE_KEPT);
     }
 }
@@ -199,8 +200,8 @@ fn relay_leg(node: &str) -> String {
 }
 
 impl Sfu {
-    /// This node is an edge of `room`, whose media is on `origin`: opens a link to it when there is none. The link closes
-    /// when no leg, injected source or tap is left in the room here, or when the origin closes it.
+    /// This node is a leg node of `room`, whose media is on `origin`: opens a link to it when there is none. The link
+    /// closes when no leg, injected source or tap is left in the room here, or when the origin closes it.
     pub fn link(&mut self, now: Instant, room: &str, origin: &str) -> Result<(), SfuError> {
         if self.relay_id(room, origin).is_some() {
             return Ok(());
@@ -223,8 +224,8 @@ impl Sfu {
             rtc.add_local_candidate(c);
         }
         let link = self.new_link();
-        self.fences.edge_of(now, room, origin);
-        self.add_relay(now, &name, origin, RelayRole::Edge, link, rtc);
+        self.fences.leg_node_of(now, room, origin);
+        self.add_relay(now, &name, origin, RelayRole::LegNode, link, rtc);
         Ok(())
     }
 
@@ -271,21 +272,21 @@ impl Sfu {
                 let id = match same {
                     Some(id) => id,
                     None => {
-                        // an edge's offer for a new link: a link from that node again replaces the old one; an offer of
-                        // an origin's link this edge no longer has is stale
+                        // a leg node's offer for a new link: a link from that node again replaces the old one; an offer
+                        // of an origin's link this leg node no longer has is stale
                         if let Some(old) = current {
                             if self.peers.get(&old).and_then(|p| p.relay.as_ref()).map(|r| r.role)
-                                == Some(RelayRole::Edge)
+                                == Some(RelayRole::LegNode)
                             {
                                 return Ok(());
                             }
                             self.remove_relay(old, "replaced");
                         } else if self.fences.origin_of(room) == Some(from) {
-                            // a late offer of a link this edge closed: the room's origin never opens one
+                            // a late offer of a link this leg node closed: the room's origin never opens one
                             return Ok(());
                         }
                         if self.fences.is_ended(room) {
-                            // the room ended here: the edge's late link ends too
+                            // the room ended here: the leg node's late link ends too
                             self.out.push_back(SfuOutput::Event(SfuEvent::Relay {
                                 room: room.into(),
                                 node: from.into(),
@@ -372,7 +373,7 @@ impl Sfu {
         self.next_link
     }
 
-    /// The origin takes an edge's new link, within the caps.
+    /// The origin takes a leg node's new link, within the caps.
     fn accept_link(&mut self, now: Instant, room: &str, from: &str, link: u64) -> Result<PeerId, SfuError> {
         let in_room = self.relays.keys().filter(|(r, _)| &**r == room).count();
         if in_room >= self.config.max_relays_per_room || self.relays.len() >= self.config.max_relays {
@@ -404,7 +405,7 @@ impl Sfu {
             remote: HashMap::new(),
             wants_sent: None,
             named: HashMap::new(),
-            needs_channel: role == RelayRole::Edge,
+            needs_channel: role == RelayRole::LegNode,
             connected: false,
             opened: now,
             sent: [0; 5],
@@ -426,8 +427,8 @@ impl Sfu {
         id
     }
 
-    /// The other node's offer on a link: its tracks named, then answered. The edge does not give way to the origin's
-    /// offer while its own is out (glare): the origin gives way to the edge's and offers again.
+    /// The other node's offer on a link: its tracks named, then answered. The leg node does not give way to the
+    /// origin's offer while its own is out (glare): the origin gives way to the leg node's and offers again.
     fn relay_offer(
         &mut self,
         now: Instant,
@@ -441,7 +442,7 @@ impl Sfu {
         let Some(relay) = peer.relay.as_mut() else {
             return Err(SfuError::UnknownLeg);
         };
-        if relay.role == RelayRole::Edge && peer.has_pending_offer() {
+        if relay.role == RelayRole::LegNode && peer.has_pending_offer() {
             return Ok(());
         }
         let Some(relay) = peer.relay.as_mut() else {
@@ -492,9 +493,9 @@ impl Sfu {
         } else {
             reason
         };
-        if relay.role == RelayRole::Edge {
+        if relay.role == RelayRole::LegNode {
             if let Some(now) = self.fences.clock {
-                self.fences.edge_of(now, &peer.key.room, &relay.node);
+                self.fences.leg_node_of(now, &peer.key.room, &relay.node);
             }
         }
         for t in peer.tracks_in() {
@@ -522,21 +523,21 @@ impl Sfu {
         }
     }
 
-    /// An edge room with no leg, injected source or tap of its own left closes its links to the origin.
-    pub(super) fn close_idle_edge(&mut self, room: &Arc<str>) {
+    /// A leg node room with no leg, injected source or tap of its own left closes its links to the origin.
+    pub(super) fn close_idle_leg_node(&mut self, room: &Arc<str>) {
         let Some(r) = self.rooms.get(room) else { return };
         if !r.injected.is_empty() || !r.taps.is_empty() {
             return;
         }
-        let mut edge_links = Vec::new();
+        let mut leg_node_links = Vec::new();
         for id in &r.peers {
             match self.peers.get(id).and_then(|p| p.relay.as_ref()) {
                 None => return,
-                Some(relay) if relay.role == RelayRole::Edge => edge_links.push(*id),
+                Some(relay) if relay.role == RelayRole::LegNode => leg_node_links.push(*id),
                 Some(_) => {}
             }
         }
-        for id in edge_links {
+        for id in leg_node_links {
             self.send_close(id, "empty");
             self.remove_relay(id, "empty");
         }

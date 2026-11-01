@@ -55,14 +55,18 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 ## Chat and presence
 
 Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
-and acceptance gates in [§7](Comms-Framework.md#7-order). P0, A0–A4, W1–W6, M0 and V1–V5 are built (the PWA and
-Web Push, BasicComms and its extension model, calls with links and guests, TURN, recording, captions, and phone calls
-with voicemail, the IVR, queues, transfer and merge; [§7.4](Comms-Framework.md#74-built)); the C stream (delivery rows,
-SMS and the bridges) is next, then W7 and W8.
+and acceptance gates in [§7](Comms-Framework.md#7-order). P0, A0–A4, W1–W8, M0, V1–V5, C1, C7, C4-SMS and C3a are
+built (the PWA and Web Push, BasicComms and its extension model, calls with links and guests, TURN, recording,
+captions, cascading media nodes, end-to-end encrypted calls, phone calls with voicemail, the IVR, queues, transfer and
+merge, chat actors and bridges, encrypted rooms and chat keys, SMS and MMS on Telnyx, and XMPP for local users;
+[§7.4](Comms-Framework.md#74-built)). Next: C4 (WhatsApp, Messenger, Instagram, Telegram), C3b (XMPP federation), and
+C6a, C6b and C6c (the Matrix client API, federation and the appservice API); C2 and C5 when needed. An edge node in
+front of a local node behind a firewall, terminating the comms and storing and forwarding, is planned in
+[Edge-Node](Edge-Node.md).
 
 | Item | Source |
 |---|---|
-| Calls (`UserStatus.inCall` awaits call services); a link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
+| A link preview's picture, through an image proxy so no reader's address leaks (previews are text only, `service/chat_link.rs`); BOSS's chat screen rendering `m-assist-card`, with a Chromium smoke of the card | mr-boss `plan/impl-drawers-commons.md` §5 M10; 13.9 |
 
 ## Files and drives
 

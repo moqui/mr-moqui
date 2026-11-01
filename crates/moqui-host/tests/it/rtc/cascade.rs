@@ -13,14 +13,15 @@
  */
 
 //! Cascading media nodes (plans/Comms-Framework.md W7): one call on two servers of one cluster, on one test database,
-//! each with its media port and `rtc_cascade_enabled`. The call's media is on the first (the origin); a leg whose socket
-//! is on the second has its media there (an edge), which relays to the origin. Media goes both ways, a subscriber at the
-//! edge changes its layer of a publisher at the origin, and losing the edge ends only the edge's legs.
+//! each with its media port and `rtc_cascade_enabled`. The call's media is on the first (the origin); a leg whose
+//! socket is on the second has its media there (a leg node), which relays to the origin. Media goes both ways, a
+//! subscriber at the leg node changes its layer of a publisher at the origin, and losing the leg node ends only the leg
+//! node's legs.
 //!
-//! The second server runs in a child process of this test binary (the test `rtc::cascade::edge_node`), not in this one:
-//! the media driver's command channel, the notification socket's bindings and the notify bus's origin id are process
-//! globals, so two media nodes cannot share a process. A child process also makes the edge's loss a real one: it is
-//! killed.
+//! The second server runs in a child process of this test binary (the test `rtc::cascade::leg_node_process`), not in
+//! this one: the media driver's command channel, the notification socket's bindings and the notify bus's origin id are
+//! process globals, so two media nodes cannot share a process. A child process also makes the leg node's loss a real
+//! one: it is killed.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;
@@ -33,11 +34,11 @@ use serde_json::json;
 
 use super::{call, open_socket, run_until, text, Peer, VIDEO_LAYER_BYTES};
 
-/// The cluster directory the edge's child process adopts; set only for that child.
-const EDGE_ENV: &str = "MOQUI_RTC_EDGE_CLUSTER";
-const EDGE_TEST: &str = "rtc::cascade::edge_node";
-/// How long the edge's process may take to print its ready line.
-const EDGE_START: Duration = Duration::from_secs(30);
+/// The cluster directory the leg node's child process adopts; set only for that child.
+const LEG_NODE_ENV: &str = "MOQUI_RTC_LEG_NODE_CLUSTER";
+const LEG_NODE_TEST: &str = "rtc::cascade::leg_node_process";
+/// How long the leg node's process may take to print its ready line.
+const LEG_NODE_START: Duration = Duration::from_secs(30);
 const PROPERTIES: [(&str, &str); 2] = [("rtc_media_port", "0"), ("rtc_cascade_enabled", "true")];
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 5] = [
@@ -49,7 +50,7 @@ const SHARED_SECRETS: [&str; 5] = [
 ];
 
 /// The second server, in its child process.
-struct Edge {
+struct LegNode {
     child: Child,
     http: SocketAddr,
     node: String,
@@ -57,8 +58,8 @@ struct Edge {
     runtime: PathBuf,
 }
 
-impl Edge {
-    fn start(cluster_dir: &Path) -> Edge {
+impl LegNode {
+    fn start(cluster_dir: &Path) -> LegNode {
         let mut command = Command::new(std::env::current_exe().unwrap());
         // the cluster's members share their secrets: the session key and the cluster's certificate (each member checks
         // the others' fingerprints), and the key of the encrypted fields of the one database
@@ -69,14 +70,14 @@ impl Edge {
             }
         }
         let mut child = command
-            .args([EDGE_TEST, "--exact", "--nocapture", "--test-threads", "1"])
-            .env("MOQUI_TEST_OWN_PROCESS", EDGE_TEST)
-            .env(EDGE_ENV, cluster_dir)
+            .args([LEG_NODE_TEST, "--exact", "--nocapture", "--test-threads", "1"])
+            .env("MOQUI_TEST_OWN_PROCESS", LEG_NODE_TEST)
+            .env(LEG_NODE_ENV, cluster_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("the edge's process");
+            .expect("the leg node's process");
         // its ready line, read on a thread so a child that hangs as it starts fails the test instead of holding it; the
         // rest of its output is read and dropped there too, so its pipe does not fill
         let stdout = child.stdout.take().unwrap();
@@ -85,16 +86,16 @@ impl Edge {
             let mut lines = BufReader::new(stdout).lines().map_while(Result::ok);
             let ready = lines
                 .by_ref()
-                .find_map(|line| line.find("EDGE ").map(|at| line[at..].to_string()));
+                .find_map(|line| line.find("LEG_NODE ").map(|at| line[at..].to_string()));
             let _ = ready_tx.send(ready);
             lines.for_each(drop);
         });
-        let ready = match ready_rx.recv_timeout(EDGE_START) {
+        let ready = match ready_rx.recv_timeout(LEG_NODE_START) {
             Ok(Some(ready)) => ready,
             outcome => {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("the edge did not start: {outcome:?}");
+                panic!("the leg node did not start: {outcome:?}");
             }
         };
         let field = |name: &str| {
@@ -104,7 +105,7 @@ impl Edge {
                 .unwrap_or_default()
                 .to_string()
         };
-        Edge {
+        LegNode {
             child,
             http: field("http").parse().unwrap(),
             node: field("node"),
@@ -113,14 +114,14 @@ impl Edge {
         }
     }
 
-    /// The edge is lost: its process killed, nothing stopped in order.
+    /// The leg node is lost: its process killed, nothing stopped in order.
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-impl Drop for Edge {
+impl Drop for LegNode {
     fn drop(&mut self) {
         // closing its stdin stops it in order
         drop(self.child.stdin.take());
@@ -136,7 +137,7 @@ impl Drop for Edge {
     }
 }
 
-/// The first server, the call's media node: on a cluster port it advertises to the edge.
+/// The first server, the call's media node: on a cluster port it advertises to the leg node.
 fn start_origin(label: &str) -> crate::common::Gate {
     let port = crate::common::free_port().to_string();
     let mut properties = PROPERTIES.to_vec();
@@ -144,19 +145,19 @@ fn start_origin(label: &str) -> crate::common::Gate {
     crate::common::start_with_properties(label, None, &properties)
 }
 
-/// The edge's process: a server on the gate's database, until its stdin closes.
+/// The leg node's process: a server on the gate's database, until its stdin closes.
 #[test]
-fn edge_node() {
-    let Some(cluster_dir) = std::env::var_os(EDGE_ENV) else {
+fn leg_node_process() {
+    let Some(cluster_dir) = std::env::var_os(LEG_NODE_ENV) else {
         return;
     };
     if !crate::common::own_process() {
         return;
     }
-    let (server, runtime) = crate::common::start_member("rtc-edge", Path::new(&cluster_dir), &PROPERTIES);
+    let (server, runtime) = crate::common::start_member("rtc-leg-node", Path::new(&cluster_dir), &PROPERTIES);
     let node = moqui_core::cluster::instance_id(server.factory()).unwrap();
     println!(
-        "EDGE http={} node={node} media={} runtime={}",
+        "LEG_NODE http={} node={node} media={} runtime={}",
         server.address(),
         server.rtc_address().unwrap(),
         runtime.0.display()
@@ -266,35 +267,35 @@ fn field(entity: &str, key: &str, id: &str, field: &str) -> String {
 }
 
 #[test]
-fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge() {
+fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_leg_node() {
     if !crate::common::own_process() {
         return;
     }
     let gate = start_origin("rtc-cascade");
-    let edge = Edge::start(&gate.cluster_dir);
+    let leg_node = LegNode::start(&gate.cluster_dir);
     let http = gate.server.address();
     let factory = std::sync::Arc::clone(gate.server.factory());
     let origin = moqui_core::cluster::instance_id(&factory).unwrap();
-    assert_ne!(origin, edge.node);
+    assert_ne!(origin, leg_node.node);
 
     let (call_id, legs) = {
         let context = factory.new_context();
         let _entered = context.enter();
-        wait_for_nodes(&[&origin, &edge.node]);
+        wait_for_nodes(&[&origin, &leg_node.node]);
         let callee = create_user("cascade.callee");
         start_call(&origin, &[&callee])
     };
     let (caller_leg, callee_leg) = (legs[0].clone(), legs[1].clone());
 
-    // john's socket is on the origin, the callee's on the edge
+    // john's socket is on the origin, the callee's on the leg node
     let john_cookie = crate::common::sign_in(http, "john.doe", "moqui");
-    let callee_cookie = crate::common::sign_in(edge.http, "cascade.callee", PASSWORD);
+    let callee_cookie = crate::common::sign_in(leg_node.http, "cascade.callee", PASSWORD);
     factory.flush_sessions().unwrap();
     let mut john = Peer::new(open_socket(http, &john_cookie), &call_id, &caller_leg);
-    let mut callee = Peer::new(open_socket(edge.http, &callee_cookie), &call_id, &callee_leg);
+    let mut callee = Peer::new(open_socket(leg_node.http, &callee_cookie), &call_id, &callee_leg);
     john.join_with_video();
     callee.join();
-    // the layer the edge sends depends on its estimate of the callee's link (mid or high on a busy loopback)
+    // the layer the leg node sends depends on its estimate of the callee's link (mid or high on a busy loopback)
     let layered = |len: Option<usize>| len.is_some_and(|n| n == VIDEO_LAYER_BYTES[1] || n == VIDEO_LAYER_BYTES[2]);
     let flowed = run_until(&mut [&mut john, &mut callee], Duration::from_secs(10), |p| {
         p[0].received >= 20 && p[1].received >= 20 && layered(p[1].last_video_len)
@@ -304,13 +305,13 @@ fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge()
         "media both ways: john {} callee {} (video {:?}); frames {:?} {:?}",
         john.received, callee.received, callee.last_video_len, john.frames, callee.frames
     );
-    // the callee's media is on the edge: its answer names the edge's media port, and its leg the edge
+    // the callee's media is on the leg node: its answer names the leg node's media port, and its leg the leg node
     let joined = callee.frame("joined").cloned().unwrap_or_default();
     assert!(
         joined["sdp"]
             .as_str()
             .unwrap_or_default()
-            .contains(&format!(" {} typ host", edge.media.port())),
+            .contains(&format!(" {} typ host", leg_node.media.port())),
         "{joined}"
     );
     {
@@ -318,14 +319,14 @@ fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge()
         let _entered = context.enter();
         assert_eq!(
             field("moqui.call.CallLeg", "callLegId", &callee_leg, "mediaNodeId"),
-            edge.node
+            leg_node.node
         );
         assert_eq!(
             field("moqui.call.CallLeg", "callLegId", &caller_leg, "mediaNodeId"),
             origin
         );
     }
-    // john's track is named to the callee by the edge, john's connection by the origin across the link
+    // john's track is named to the callee by the leg node, john's connection by the origin across the link
     assert!(callee
         .frames
         .iter()
@@ -334,7 +335,7 @@ fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge()
         && f["callLegId"] == json!(caller_leg)
         && f["connected"] == json!(true)));
 
-    // a layer change at the edge: the callee asks for john's low layer
+    // a layer change at the leg node: the callee asks for john's low layer
     callee.send(json!({"rtc": "subscribe", "id": 5, "publisher": caller_leg, "layer": "low"}));
     let low = Some(VIDEO_LAYER_BYTES[0]);
     let changed = run_until(&mut [&mut john, &mut callee], Duration::from_secs(5), |p| {
@@ -342,7 +343,7 @@ fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge()
     });
     assert!(
         changed,
-        "the low layer at the edge: {:?}; frames {:?}",
+        "the low layer at the leg node: {:?}; frames {:?}",
         callee.last_video_len, callee.frames
     );
     assert!(callee
@@ -351,16 +352,16 @@ fn a_call_on_two_nodes_carries_media_both_ways_and_changes_a_layer_at_the_edge()
         .any(|f| f["rtc"] == json!("layer") && f["publisher"] == json!(caller_leg) && f["layer"] == json!("low")));
     drop(callee);
     drop(john);
-    drop(edge);
+    drop(leg_node);
 }
 
 #[test]
-fn losing_the_edge_ends_only_its_legs() {
+fn losing_the_leg_node_ends_only_its_legs() {
     if !crate::common::own_process() {
         return;
     }
     let gate = start_origin("rtc-cascade-loss");
-    let mut edge = Edge::start(&gate.cluster_dir);
+    let mut leg_node = LegNode::start(&gate.cluster_dir);
     let http = gate.server.address();
     let factory = std::sync::Arc::clone(gate.server.factory());
     let origin = moqui_core::cluster::instance_id(&factory).unwrap();
@@ -368,18 +369,18 @@ fn losing_the_edge_ends_only_its_legs() {
     let (call_id, legs) = {
         let context = factory.new_context();
         let _entered = context.enter();
-        wait_for_nodes(&[&origin, &edge.node]);
+        wait_for_nodes(&[&origin, &leg_node.node]);
         let near = create_user("cascade.near");
         let far = create_user("cascade.far");
         start_call(&origin, &[&near, &far])
     };
     let john_cookie = crate::common::sign_in(http, "john.doe", "moqui");
     let near_cookie = crate::common::sign_in(http, "cascade.near", PASSWORD);
-    let far_cookie = crate::common::sign_in(edge.http, "cascade.far", PASSWORD);
+    let far_cookie = crate::common::sign_in(leg_node.http, "cascade.far", PASSWORD);
     factory.flush_sessions().unwrap();
     let mut john = Peer::new(open_socket(http, &john_cookie), &call_id, &legs[0]);
     let mut near = Peer::new(open_socket(http, &near_cookie), &call_id, &legs[1]);
-    let mut far = Peer::new(open_socket(edge.http, &far_cookie), &call_id, &legs[2]);
+    let mut far = Peer::new(open_socket(leg_node.http, &far_cookie), &call_id, &legs[2]);
     john.join();
     near.join();
     far.join();
@@ -392,8 +393,8 @@ fn losing_the_edge_ends_only_its_legs() {
         john.received, near.received, far.received, far.frames
     );
 
-    // the edge is lost; its heartbeat stops (aged here, as a minute without one would)
-    edge.kill();
+    // the leg node is lost; its heartbeat stops (aged here, as a minute without one would)
+    leg_node.kill();
     let ended = {
         let context = factory.new_context();
         let _entered = context.enter();
@@ -401,7 +402,7 @@ fn losing_the_edge_ends_only_its_legs() {
         set_field(
             "moqui.call.CallMediaNode",
             "instanceId",
-            &edge.node,
+            &leg_node.node,
             "heartbeatDate",
             stale,
         );
@@ -430,5 +431,5 @@ fn losing_the_edge_ends_only_its_legs() {
         p[0].received > heard_john + 20 && p[1].received > heard_near + 20
     });
     assert!(going, "the origin's legs go on: {} {}", john.received, near.received);
-    drop(edge);
+    drop(leg_node);
 }

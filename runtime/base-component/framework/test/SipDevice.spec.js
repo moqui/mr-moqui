@@ -244,25 +244,25 @@ feature("a call rings the user's registered phone beside the tabs, and the phone
     }
 })
 
-const EDGE = "sipdev-spec-edge"
+const LEG_NODE = "sipdev-spec-leg-node"
 feature("a phone registered with another node rings there only with cascading media nodes, its leg's media on that node", {
     when() {
         return on(() => {
             nodesUp()
             sys(() => {
-                ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: EDGE, mediaAddress: "127.0.0.1:10002"}).call()
-                ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: EDGE, sipAddress: "127.0.0.1:5070"}).call()
+                ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}).call()
+                ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: LEG_NODE, sipAddress: "127.0.0.1:5070"}).call()
                 // the call's node is the one that registered last
-                for (const n of ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE).list()) {
+                for (const n of ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", LEG_NODE).list()) {
                     n.set("heartbeatDate", new Date(Date.now() - 5000))
                     n.update()
                 }
                 ec.entity.find("moqui.call.SipRegistration").condition("sipDeviceId", first.sipDeviceId).deleteAll()
             })
             const device = deviceRow(first.sipDeviceId)
-            internal("store#SipRegistration", {change: "added", sipRegistrationId: "ring-edge", sipDeviceId: device.sipDeviceId, instanceId: EDGE,
+            internal("store#SipRegistration", {change: "added", sipRegistrationId: "ring-leg-node", sipDeviceId: device.sipDeviceId, instanceId: LEG_NODE,
                 contactUri: "sip:" + device.username + "@192.168.1.21:5060", transport: "udp", sourceAddress: "198.51.100.8", sourcePort: 61001,
-                sipCallId: "reg-edge", cseq: 2, credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000,
+                sipCallId: "reg-leg-node", cseq: 2, credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000,
                 lastRefreshDate: Date.now(), userAgent: "Spec Phone/1.0"})
             setProperty("rtc_cascade_enabled", "false")
             const off = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
@@ -275,9 +275,9 @@ feature("a phone registered with another node rings there only with cascading me
             as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: onCall.callSessionId})
             setProperty("rtc_cascade_enabled", "false")
             sys(() => {
-                ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "ring-edge").deleteAll()
-                ec.entity.find("moqui.call.SipNode").condition("instanceId", EDGE).deleteAll()
-                ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE).deleteAll()
+                ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "ring-leg-node").deleteAll()
+                ec.entity.find("moqui.call.SipNode").condition("instanceId", LEG_NODE).deleteAll()
+                ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", LEG_NODE).deleteAll()
             })
             return {offLegs, onLegs, session}
         })
@@ -286,7 +286,7 @@ feature("a phone registered with another node rings there only with cascading me
         session.mediaNodeId == NODE
         offLegs.length == 0
         onLegs.length == 1
-        onLegs[0].mediaNodeId == EDGE
+        onLegs[0].mediaNodeId == LEG_NODE
         onLegs[0].statusId == "ClsOffered"
     }
 })

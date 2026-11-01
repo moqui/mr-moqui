@@ -2,7 +2,7 @@
 // §6.3, W1): starting, ringing, the first answer winning, repeated requests, binding a socket with a fenced generation,
 // presence across two calls, leaving and ending, declining, ringing out, a lost connection and a lost media node, and a
 // room's group call. With cascading media nodes (W7, rtc_cascade_enabled) a leg's media goes to its signaling node, an
-// edge, unless that is no live media node or its relay was refused; losing the edge ends only its legs. Every refusal has
+// leg node, unless that is no live media node or its relay was refused; losing the leg node ends only its legs. Every refusal has
 // its negative user with the same parameters as the positive one.
 // Run: ./moq test framework --spec Calls
 const A = "CALLS_SPEC_A"
@@ -462,11 +462,11 @@ feature("a link that lets guests straight in, guests who leave, and a meeting no
     }
 })
 
-const EDGE = "calls-spec-edge"
+const LEG_NODE = "calls-spec-leg-node"
 feature("with cascading media nodes a leg's media is on its signaling node, and losing that node ends only its legs", {
     when() {
         nodeUp()
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE, mediaAddress: "127.0.0.1:10002"}))
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}))
         const started = as(A, "start#Call", {calleeUserIdList: [B, C]})
         const id = started.callSessionId
         sys(() => {
@@ -478,35 +478,35 @@ feature("with cascading media nodes a leg's media is on its signaling node, and 
         const cLeg = as(C, "answer#Call", {callSessionId: id}).callLegId
         // off: every leg's media is on the call's node, whatever its socket's
         setProperty("rtc_cascade_enabled", "false")
-        const off = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        const off = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         setProperty("rtc_cascade_enabled", "true")
-        const onEdge = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
-        const stranger = as(D, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        const onLegNode = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
+        const stranger = as(D, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         const noMedia = as(A, "bind#Connection", {callSessionId: id, callLegId: started.callLegId, signalingNodeId: "calls-spec-nowhere"})
-        // the call's node refused B's edge's relay: B's media goes back to the call's node, and stays there
-        sys(() => call("org.moqui.impl.CallServices.note#MediaEvent", {callLegId: bLeg, generation: onEdge.generation, event: "relayRefused"}))
-        const pinned = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
-        const cOnEdge = as(C, "bind#Connection", {callSessionId: id, callLegId: cLeg, signalingNodeId: EDGE})
-        // the edge is lost: C's leg leaves with that reason; the call and the others go on
-        age("moqui.call.CallMediaNode", {instanceId: EDGE}, "heartbeatDate", 120000)
+        // the call's node refused B's leg node's relay: B's media goes back to the call's node, and stays there
+        sys(() => call("org.moqui.impl.CallServices.note#MediaEvent", {callLegId: bLeg, generation: onLegNode.generation, event: "relayRefused"}))
+        const pinned = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
+        const cOnLegNode = as(C, "bind#Connection", {callSessionId: id, callLegId: cLeg, signalingNodeId: LEG_NODE})
+        // the leg node is lost: C's leg leaves with that reason; the call and the others go on
+        age("moqui.call.CallMediaNode", {instanceId: LEG_NODE}, "heartbeatDate", 120000)
         const expired = expire()
         setProperty("rtc_cascade_enabled", "false")
         const leg = (legId) => sys(() => ec.entity.find(LEG).condition("callLegId", legId).one())
-        const out = {off, onEdge, stranger, noMedia, pinned, cOnEdge, expired, row: session(id), b: leg(bLeg), c: leg(cLeg)}
+        const out = {off, onLegNode, stranger, noMedia, pinned, cOnLegNode, expired, row: session(id), b: leg(bLeg), c: leg(cLeg)}
         as(A, "end#Call", {callSessionId: id})
-        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE).deleteAll())
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", LEG_NODE).deleteAll())
         return out
     },
-    then({off, onEdge, stranger, noMedia, pinned, cOnEdge, expired, row, b, c}) {
+    then({off, onLegNode, stranger, noMedia, pinned, cOnLegNode, expired, row, b, c}) {
         off.mediaNodeId == NODE
         off.originNodeId == NODE
-        onEdge.mediaNodeId == EDGE
-        onEdge.originNodeId == NODE
+        onLegNode.mediaNodeId == LEG_NODE
+        onLegNode.originNodeId == NODE
         stranger.reasonCode == "notFound"
         noMedia.mediaNodeId == NODE
         pinned.mediaNodeId == NODE
         b.mediaNodePinned == "Y"
-        cOnEdge.mediaNodeId == EDGE
+        cOnLegNode.mediaNodeId == LEG_NODE
         expired.legCount >= 1
         row.statusId == "CssActive"
         c.statusId == "ClsLeft"

@@ -64,7 +64,7 @@ const MAX_BINDINGS: usize = 4;
 static SIGNAL: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 
 /// A leg this socket bound, with the generation it claimed, the node holding its media and the call's media node (W7:
-/// another when the leg's is an edge).
+/// another when the leg's is a leg node).
 #[derive(Clone, Debug)]
 struct Binding {
     call: String,

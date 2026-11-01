@@ -440,9 +440,9 @@ Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links be
 same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
 messages on the cluster's client-certificate HTTPS transport (kind `relay`), so only a cluster member opens one. The
 origin takes at most 8 links a room and 64 in all, and refuses more (`tooManyRelays`); a message of an older link is
-dropped, a room that ended takes no new link, and a link not connected within 10 seconds is dropped. An edge forwards to
-the origin only its own legs' tracks; the origin decides nothing an edge asks beyond the layers it sends it. Any cluster
-member may open a link for any room id: the cluster's members are trusted alike.
+dropped, a room that ended takes no new link, and a link not connected within 10 seconds is dropped. A leg node forwards
+to the origin only its own legs' tracks; the origin decides nothing a leg node asks beyond the layers it sends it. Any
+cluster member may open a link for any room id: the cluster's members are trusted alike.
 
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.

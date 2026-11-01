@@ -368,7 +368,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         })
         const otherNode = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId})
         const meeting = as(A, "convert#CallToMeeting", {callSessionId: third.callSessionId})
-        // with cascading media nodes (W7) it merges: its phone stays on its node, now an edge of the first call
+        // with cascading media nodes (W7) it merges: its phone stays on its node, now a leg node of the first call
         setProperty("rtc_cascade_enabled", "true")
         const acrossNodes = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId,
             revision: rev(first.callSessionId)})

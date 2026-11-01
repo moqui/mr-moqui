@@ -38,9 +38,9 @@ along with this software (see the LICENSE.md file). If not, see
     legs whose socket did not come back, and calls whose media node stopped.
 
     Cascading media nodes (W7). With rtc_cascade_enabled (off by default) a leg's media is on the node of its signaling
-    socket when that node holds media (CallLeg.mediaNodeId), and that node (an edge) relays to the call's node (its
-    origin). bind#Connection answers both. An edge that stops ends only its legs (CerMediaNodeLost); the origin stopping
-    ends the call, as before.
+    socket when that node holds media (CallLeg.mediaNodeId), and that node (a leg node) relays to the call's node (its
+    origin). bind#Connection answers both. A leg node that stops ends only its legs (CerMediaNodeLost); the origin
+    stopping ends the call, as before.
 
     End-to-end encrypted calls (W8). encryptionMode e2ee-sframe, set at the start (requireE2ee, a room's or a call link's
     policy) and never lowered: each browser leg names its crypto device (C7 core) and gets a key index; the call's view
@@ -594,7 +594,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="send" noun="MediaControl" type="rust" location="moqui_core::service::call_media::send_media_control"
             authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: tell the media node of a call to close a leg ({action: 'closeLeg', callSessionId, callLegId}) or
-            the call ({action: 'closeRoom', callSessionId}), or an edge node (W7) to link the call's room there to the
+            the call ({action: 'closeRoom', callSessionId}), or a leg node (W7) to link the call's room there to the
             call's node ({action: 'link', callSessionId, originNodeId}), on the rtc-signal cluster topic to that node only,
             after the caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
         <in-parameters>

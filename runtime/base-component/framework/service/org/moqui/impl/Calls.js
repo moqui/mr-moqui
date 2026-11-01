@@ -143,13 +143,13 @@ function liveMediaNodes() {
  */
 const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
 
-/** The node holding a leg's media: its own (an edge, W7), else the call's. */
+/** The node holding a leg's media: its own (a leg node, W7), else the call's. */
 function legNode(session, callLegId) {
   const leg = callLegId ? one(LEG, { callLegId }) : null
   return (leg && leg.mediaNodeId) || session.mediaNodeId
 }
 
-/** The other nodes holding legs of the call (its edges, W7). */
+/** The other nodes holding legs of the call (its leg nodes, W7). */
 function edgeNodes(session) {
   return Array.from(new Set(rows(LEG, { callSessionId: session.callSessionId }).map((leg) => leg.mediaNodeId)
     .filter((node) => node && node !== session.mediaNodeId)))
@@ -315,8 +315,8 @@ function mediaControl(session, message) {
   }
 }
 
-/** Tells an edge node (W7) the call's room there relays to the call's node: a phone leg's media is on that edge. */
-function linkEdge(session, node) {
+/** Tells a leg node (W7) the call's room there relays to the call's node: a phone leg's media is on that leg node. */
+function linkLegNode(session, node) {
   if (!node || node === session.mediaNodeId || !session.mediaNodeId) return
   ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
     mediaNodeId: node, message: { action: 'link', callSessionId: session.callSessionId, originNodeId: session.mediaNodeId },
@@ -1115,7 +1115,7 @@ function mediaEvent(p) {
     leg.set('joinedDate', ec.user.nowTimestamp)
     leg.update()
   } else if (p.event === 'relayRefused') {
-    // the call's node refused its edge's relay link, or the link never connected (W7): the leg's media goes to the
+    // the call's node refused its leg node's relay link, or the link never connected (W7): the leg's media goes to the
     // call's node when it reconnects
     const session = one(SESSION, { callSessionId: leg.callSessionId })
     leg.setFields({ mediaNodeId: session ? session.mediaNodeId : null, mediaNodePinned: 'Y' }, true, null, null)
@@ -1181,7 +1181,7 @@ function expire() {
   const orphaned = Array.from(find(SESSION).condition('statusId', '!=', 'CssEnded').selectField('callSessionId')
     .selectField('mediaNodeId').limit(2000).list()).filter((s) => s.mediaNodeId && !liveNodes.has(s.mediaNodeId))
     .map((s) => ({ callSessionId: s.callSessionId }))
-  // W7: a leg whose media is on another node than the call's (an edge) that stopped leaves; the call goes on
+  // W7: a leg whose media is on another node than the call's (a leg node) that stopped leaves; the call goes on
   const orphanedCalls = new Set(orphaned.map((s) => s.callSessionId))
   // the live nodes are left out in the query, so the limit is spent only on legs whose node stopped
   let edgeFind = find(LEG).condition('statusId', 'in', OPEN_LEG).condition('mediaNodeId', '!=', null)
@@ -2374,7 +2374,7 @@ function mergeInto(p) {
       into = participant
     }
     for (const leg of open) {
-      // a phone's media stays on its SIP engine's node, now an edge of the target call when that is another (W7)
+      // a phone's media stays on its SIP engine's node, now a leg node of the target call when that is another (W7)
       const phone = leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)
       const node = leg.mediaNodeId || (phone && source.mediaNodeId !== target.mediaNodeId ? source.mediaNodeId : null)
       leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId, mediaNodeId: node }, true, null, null)
@@ -2395,7 +2395,7 @@ function mergeInto(p) {
   const movedUsers = new Set()
   for (const { leg, userId } of moved) {
     if (leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)) {
-      linkEdge(target, leg.mediaNodeId)
+      linkLegNode(target, leg.mediaNodeId)
       sipMessage(target, { action: 'move', callLegId: leg.callLegId, fromCallSessionId: source.callSessionId })
       if (leg.statusId === 'ClsAnswered') phoneJoined(target, leg)
     } else {

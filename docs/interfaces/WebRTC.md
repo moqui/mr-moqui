@@ -221,37 +221,38 @@ With `rtc_cascade_enabled` (off by default; set it on every node) a call spans m
   socket when that node is a live media node that is not draining, else to the call's node. `CallLeg.mediaNodeId` keeps
   it, and the answer names both nodes. A phone (SIP) leg's media is on its SIP engine's node: a desk phone registered
   with another node rings there, and a merged call's phones stay on their node.
-- **The relay link.** The leg's node (an edge) links the call's room to the call's node (the origin): one str0m peer on
-  each side per room, on the two nodes' media sockets. The origin is ICE-lite, as it is to browsers; the edge is full
-  ICE, the controlling side, and makes the first offer. The offers and answers go on `rtc-signal` (kind `relay`), with a
-  link id that a new link replaces.
+- **The relay link.** A leg node, the node of a leg's socket holding that leg's media, links the call's room to the
+  call's node (the origin): one str0m peer on each side per room, on the two nodes' media sockets. The origin is
+  ICE-lite, as it is to browsers; the leg node is full ICE, the controlling side, and makes the first offer. The offers
+  and answers go on `rtc-signal` (kind `relay`), with a link id that a new link replaces.
 - **What crosses.** Each side sends the other every track of the room it has that did not come from that side, so the
-  origin sees every leg (recording, captions and the SIP mix are there) and each edge every leg. A video track crosses a
-  link once, in its simulcast layers up to the highest layer any subscriber behind the link wants; each subscriber then
-  gets its own layer as on one node. With no one wanting it, no video crosses. A room recorded at the origin wants the
-  high layer of the edges' tracks; the mixer and captions take only audio and bring no video across.
+  origin sees every leg (recording, captions and the SIP mix are there) and each leg node every leg. A video track
+  crosses a link once, in its simulcast layers up to the highest layer any subscriber behind the link wants; each
+  subscriber then gets its own layer as on one node. With no one wanting it, no video crosses. A room recorded at the
+  origin wants the high layer of the leg nodes' tracks; the mixer and captions take only audio and bring no video
+  across.
 - **Room frames.** The notices (recording, captions), `participant`, the relayed `mute`, `hand` and `reaction`, and the
-  captions' lines go to the room's other nodes too (kind `roomFrame`); the origin passes an edge's on to the others. Each
-  node works out the active speaker itself, since it hears every leg.
+  captions' lines go to the room's other nodes too (kind `roomFrame`); the origin passes a leg node's on to the others.
+  Each node works out the active speaker itself, since it hears every leg.
 - **Limits.** At most 8 links a room and 64 a node (`SfuConfig`). Past them the origin refuses the link explicitly
-  (`tooManyRelays`): the edge's legs get `mediaLost` and, as they reconnect, bind to the call's node
+  (`tooManyRelays`): the leg node's legs get `mediaLost` and, as they reconnect, bind to the call's node
   (`CallLeg.mediaNodePinned`).
-- **Losses.** The origin lost ends the call ("media server lost"), as before. An edge lost ends only its legs, with the
-  same reason (`expire#Calls`). A link lost (its ICE or DTLS failed) is fenced at both ends: the edge's legs get
-  `mediaLost`, reconnect, and the edge links again with a new link; a room with phone legs on the edge links again at
-  once. A link that does not connect within 10 seconds (`unreachable`: its offer or answer was lost, or the nodes do not
-  reach each other's media ports) is handled as a refused one: the edge's browsers go back to the call's node. Phone
-  legs on such an edge cannot move and are logged as cut off.
-- **Late messages.** A room that ended on a node takes no new link there: an edge's late offer gets a `Close` (`ended`),
-  and a late `link` control or leg does not open it. An edge never takes a new link of a room from that room's origin.
-  Each node keeps these for 10 minutes; a call's id is never used again.
+- **Losses.** The origin lost ends the call ("media server lost"), as before. A leg node lost ends only its legs, with
+  the same reason (`expire#Calls`). A link lost (its ICE or DTLS failed) is fenced at both ends: the leg node's legs get
+  `mediaLost`, reconnect, and the leg node links again with a new link; a room with phone legs on the leg node links
+  again at once. A link that does not connect within 10 seconds (`unreachable`: its offer or answer was lost, or the
+  nodes do not reach each other's media ports) is handled as a refused one: the leg node's browsers go back to the
+  call's node. Phone legs on such a leg node cannot move and are logged as cut off.
+- **Late messages.** A room that ended on a node takes no new link there: a leg node's late offer gets a `Close`
+  (`ended`), and a late `link` control or leg does not open it. A leg node never takes a new link of a room from that
+  room's origin. Each node keeps these for 10 minutes; a call's id is never used again.
 - **Calls across nodes merge** (`merge#Calls`): without cascading they are refused (`differentNodes`).
 
-The relay link uses the media ports of both nodes (`rtc_media_port`): the edge sends from its port to the origin's
+The relay link uses the media ports of both nodes (`rtc_media_port`): the leg node sends from its port to the origin's
 public address, so the nodes must reach each other's media port. It carries no TCP or TURN fallback and does not share
 out a bandwidth estimate: the link between servers is not a browser's last mile.
 
-The choice of one peer per room and edge node, beside one peer for every pair of legs or a single link per node pair:
+The choice of one peer per room and leg node, beside one peer for every pair of legs or a single link per node pair:
 it keeps a track to one copy per node, uses the same str0m code and ICE as the browser legs (so no second transport),
 and a room ends its own link. A link per node pair carrying many rooms would save ICE and DTLS handshakes but needs its
 own multiplexing of rooms; that waits for a measured need.
@@ -265,19 +266,21 @@ own multiplexing of rooms; that waits for a measured need.
   through `/notws`, and a guest on `/callws`: a bad credential refused, media both ways, another leg's frames refused,
   and revoking the link ending it.
 - `./moq test framework --spec Calls`: the call state machine, and the node of a leg with cascading on: its signaling
-  node, the call's node when that is no media node or its relay was refused, and an edge lost ending only its legs.
+  node, the call's node when that is no media node or its relay was refused, and a leg node lost ending only its legs.
   `--spec Transfer` merges calls on two nodes, and refuses a transfer, an add and a call to a user a `call-target`
   provider keeps out (the example gallery's); `--spec SipDevice` rings a phone registered with another node.
   `./moq test mr-boss --spec CallTarget`: IronStone's provider, another organization's user refused with the same calls
   that reach a user of a shared party. `--spec CallCaptions` logs the captions notice per leg, a late joiner's too.
 - `cargo test -p moqui-rtc sfu::relay_tests`: two SFUs on the in-memory network: media both ways over one link, a track
-  crossing once in the layers up to the highest wanted (a layer change at the edge, nothing wanted), an edge's tracks
-  reaching the origin's taps in every layer, the caps refusing a link, a lost link reported and replaced (an old link's
-  message dropped), the link closed when the edge's last leg leaves or the room ends, an audio-only tap bringing no
-  video across, late links of an ended room fenced at both ends, and a link that never connects dropped as unreachable.
+  crossing once in the layers up to the highest wanted (a layer change at the leg node, nothing wanted), a leg node's
+  tracks reaching the origin's taps in every layer, the caps refusing a link, a lost link reported and replaced (an old
+  link's message dropped), the link closed when the leg node's last leg leaves or the room ends, an audio-only tap
+  bringing no video across, late links of an ended room fenced at both ends, and a link that never connects dropped as
+  unreachable.
 - `cargo test -p moqui-host --test it rtc::cascade`: two servers of one cluster on one test database, the second in a
-  child process of the test binary (the media driver and the socket bindings are process globals, and its loss is a
-  real kill): media both ways between a leg on each, a layer change at the edge, and the edge lost ending only its leg.
+  child process of the test binary (the media driver and the socket bindings are process globals, and its loss is a real
+  kill): media both ways between a leg on each, a layer change at the leg node, and the leg node lost ending only its
+  leg.
 - `cargo test -p moqui-host --lib rtc::captions`: captions with a fake transcriber on simulated time: speaker and chunk
   order with answers out of order, a timeout, backpressure with its gap, silence making nothing, and a provider that
   hangs while the frames keep flowing. `cargo test -p moqui-llm --lib speech`: the transcription call against a fake

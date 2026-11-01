@@ -29,7 +29,7 @@
 //! audio off the media thread: the codecs, resampling, the per-leg jitter buffer and the mix-minus mixer.
 //! [`record`] writes a call's tracks and its mixed audio as files (Opus in Ogg, VP8 in WebM), sans-IO.
 //!
-//! A call may span media nodes (W7): [`Sfu::link`] opens a relay link from an edge node to the call's node, and the two
+//! A call may span media nodes (W7): [`Sfu::link`] opens a relay link from a leg node to the call's node, and the two
 //! SFUs' [`RelayMessage`]s, carried by the caller, negotiate it.
 
 pub mod audio;

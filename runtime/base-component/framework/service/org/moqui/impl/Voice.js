@@ -598,7 +598,7 @@ function notifyPhoneLeg(p) {
   if (!leg || !PHONE_LEGS.includes(leg.legTypeEnumId) || leg.statusId !== 'ClsAnswered') return { notified: false }
   const session = one(SESSION, { callSessionId: leg.callSessionId })
   if (!session || !session.mediaNodeId || session.statusId === 'CssEnded') return { notified: false }
-  // the leg's own node when it is on an edge of the call (W7: a merged or cross-node phone)
+  // the leg's own node when it is on a leg node of the call (W7: a merged or cross-node phone)
   sipControl(leg.mediaNodeId || session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
   return { notified: true }
 }
