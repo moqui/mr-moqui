@@ -137,8 +137,9 @@ as end to end, never as plain.
   set `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
   links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings.
 - **No downgrade.** The mode is set at the start and nothing lowers it. A room's call going on that is not encrypted is
-  refused to a start that asks for encryption (`callNotEncrypted`), never answered in its place. A browser drops a frame
-  that does not decrypt instead of playing it, and sends nothing before it has a key.
+  refused to a start that asks for encryption, or in a room whose policy asks for it (`callNotEncrypted`), never
+  answered in its place. A browser drops a frame that does not decrypt instead of playing it, sends nothing before it
+  has a key, and opens no media for an encrypted call it has no keys for (a call it was moved to).
 - **Who can take part.** A browser leg answers or joins (`answer#Call`, `join#Call`) only when it says it has
   `RTCRtpScriptTransform` (`scriptTransform`) and names a crypto device of its user (`cryptoDeviceId`: a `ChatDevice`
   with its keys uploaded, not revoked); else `unsupportedClient` or `noCryptoDevice`, and the call rings on for the
@@ -170,8 +171,11 @@ connection generation). A device named, a leg bound again (a reconnect or a relo
    ([Chat keys](Chat-Keys.md); reach: users who share a live call).
 3. **Taken only from the right device.** A page installs a key only when it comes from the device the roster names for
    its leg (`senderUserId` and `senderDeviceId` from Olm, which the server cannot forge) and its KID carries that leg's
-   key index; one that comes before the roster shows the leg waits up to 15 seconds. A track is decrypted only with the
-   keys of the leg it comes from (its stream id), and each leg's last four epochs are kept.
+   key index, and no other leg of the roster has that key index; one that comes before the roster shows the leg waits up
+   to 15 seconds. A track is decrypted only with the keys of the leg it comes from (its stream id), each counter once (a
+   replay window of 1024 per track and key), and each leg's last four epochs are kept; a leg given another device or key
+   index loses the keys it had. A sender sends only with keys it made itself, kept apart from the keys that came in, so
+   a roster that gives two legs one key index cannot make two senders share a key and its nonces.
 4. **Rotation.** Any change of the roster (a join, a leave or removal, a revoked device, whose legs leave, or a
    reconnect, a new `keyGeneration`) makes each sender a new key and epoch, sent to the new roster. A sender moves to
    the new key a second after sending it, so the others have it first; its first key it uses at once. Who left does not

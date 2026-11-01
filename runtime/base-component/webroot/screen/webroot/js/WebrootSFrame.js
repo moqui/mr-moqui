@@ -20,6 +20,8 @@
  * - decrypt(lookup, metadata, data): Promise<{kid, ctr, plaintext}>; lookup(kid) is the key of a KID (or a promise of
  *   it), null when none: the promise rejects (unknown KID, or a frame that does not authenticate).
  * - aeadEncrypt(suite, keyBytes, nonce, aad, pt) and aeadDecrypt: the bare AEAD of §4.5, for the vectors.
+ * - keyRing(span, keep) and replayWindow(size): the worker's keys (its own apart from each leg's) and a receiver's
+ *   replay check.
  */
 (function (root) {
     "use strict";
@@ -231,7 +233,75 @@
         return Math.min(bytes.length, (bytes[0] & 1) === 0 ? 10 : 3);
     }
 
+    // ---- the worker's keys and replay checks (WebrootSFrameWorker.js) ----
+    /**
+     * The keys of a call's worker: this sender's own, the only ones it sends with, apart from each other leg's, the only
+     * ones that decrypt that leg's tracks. A key that comes in for another leg, even under this sender's KID (a roster
+     * that gives two legs one key index), never becomes the key this sender uses, so two senders never share a key and
+     * its nonces. Each keeps its last `keep` epochs. KIDs are Numbers (keyIndex * span + epoch).
+     */
+    function keyRing(span, keep) {
+        const own = new Map(); // kid -> key, oldest first
+        const legs = new Map(); // legId -> Map(kid -> key), oldest first
+        let send = null;
+        const put = (map, kid, key) => {
+            map.delete(kid);
+            map.set(kid, key);
+            while (map.size > keep) map.delete(map.keys().next().value);
+        };
+        return {
+            setOwn(kid, key, use) {
+                put(own, Number(kid), key);
+                if (use) send = key;
+            },
+            /** this sender moves to its own key of kid; false (and no change) when it has none */
+            useOwn(kid) {
+                const key = own.get(Number(kid));
+                if (key) send = key;
+                return !!key;
+            },
+            sendKey: () => send,
+            setLeg(legId, kid, key) {
+                const map = legs.get(legId) || new Map();
+                put(map, Number(kid), key);
+                legs.set(legId, map);
+            },
+            dropLeg(legId) {
+                legs.delete(legId);
+            },
+            /** the key of kid (a BigInt or Number) for a frame of legId, only when kid carries keyIndex, the leg's */
+            lookup(legId, keyIndex, kid) {
+                if (keyIndex == null || typeof kid === "bigint" && kid > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+                const n = Number(kid);
+                if (Math.floor(n / span) !== Number(keyIndex)) return null;
+                const map = legs.get(legId);
+                return (map && map.get(n)) || null;
+            }
+        };
+    }
+    /**
+     * A receiver's replay check for one key (SFrame itself has none; RFC 9605 leaves it to the application): a counter is
+     * taken once, and only when it is above the highest seen or within `size` below it (frames a little out of order).
+     */
+    function replayWindow(size) {
+        const span = BigInt(size);
+        let top = -1n;
+        let seen = new Set();
+        const fresh = (ctr) => ctr > top || (top - ctr < span && !seen.has(ctr));
+        return {
+            fresh,
+            /** takes ctr (a BigInt) when it is fresh; false for a repeat or one too old */
+            accept(ctr) {
+                if (!fresh(ctr)) return false;
+                seen.add(ctr);
+                if (ctr > top) top = ctr;
+                if (seen.size > 2 * size) seen = new Set(Array.from(seen).filter((c) => top - c < span));
+                return true;
+            }
+        };
+    }
+
     root.moquiSFrame = { SUITES, CALL_SUITE, encodeHeader, decodeHeader, deriveKey, deriveRaw, encrypt, decrypt, aeadEncrypt,
-        aeadDecrypt, clearBytes, concat };
+        aeadDecrypt, clearBytes, concat, keyRing, replayWindow };
     if (root.moqui) root.moqui.sframe = root.moquiSFrame;
 })(globalThis);

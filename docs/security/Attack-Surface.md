@@ -447,8 +447,9 @@ active speaker), each frame's size and timing, the first 10 bytes of a VP8 keyfr
 sender's key index and epoch, the counter), and who is in the call with which device. The roster the browsers send keys
 to is the server's (`get#Call`): a server that adds a device of a user in the call gets that leg's keys. A browser takes a
 key only from the device the roster names for its leg (the Olm sender, which the server cannot forge), with that leg's key
-index in its KID, and decrypts a track only with the keys of the leg it comes from; a frame that does not decrypt is
-dropped, never played. Devices are not verified yet (no emoji or QR verification: a later C7 pass), so a page shows each
+index in its KID (refused while another leg has that index), and decrypts a track only with the keys of the leg it comes
+from, each counter once (a replay window); a frame that does not decrypt is dropped, never played. A sender sends only
+with keys it made, so a server-made roster cannot make two senders share a key and its nonces. Devices are not verified yet (no emoji or QR verification: a later C7 pass), so a page shows each
 device as unverified. The mode is set at the start (`requireE2ee`, a room's or a link's policy) and never lowered, and a
 leg of such a call binds only with a crypto device of its user (`noCryptoDevice`); recording, captions, phone legs, desk
 phones, forwarded numbers, guests and merges are refused. The browser's crypto store is not encrypted at rest (see Chat

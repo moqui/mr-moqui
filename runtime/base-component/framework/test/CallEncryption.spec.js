@@ -293,21 +293,25 @@ feature("a room's owner or moderator makes its calls encrypted; a plain call goi
         const chatRoomId = room.chatRoomId
         const plainRoomCall = as(A, "start#Call", {chatRoomId})
         const downgrade = as(B, "start#Call", {chatRoomId, requireE2ee: true, ...browser(B)})
-        as(A, "end#Call", {callSessionId: plainRoomCall.callSessionId})
         const byMember = as(C, "set#RoomCallEncryption", {chatRoomId, required: true})
         const byOwner = as(A, "set#RoomCallEncryption", {chatRoomId, required: true})
         const byStranger = as(D, "set#RoomCallEncryption", {chatRoomId, required: true})
+        // the room's policy asks for encryption while its plain call goes on: that call is not offered either
+        const policyDowngrade = as(B, "start#Call", {chatRoomId, ...browser(B)})
+        as(A, "end#Call", {callSessionId: plainRoomCall.callSessionId})
         const started = as(B, "start#Call", {chatRoomId, ...browser(B)})
         roomCall = started.callSessionId
         const joinedPlainly = as(A, "join#Call", {callSessionId: roomCall})
         const joined = as(A, "join#Call", {callSessionId: roomCall, ...browser(A)})
         const roomView = sys(() => call("org.moqui.impl.ChatServices.get#RoomAccess", {chatRoomId, userId: A}))
-        return {plainRoomCall, downgrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}
+        return {plainRoomCall, downgrade, policyDowngrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}
     },
-    then({plainRoomCall, downgrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}) {
+    then({plainRoomCall, downgrade, policyDowngrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}) {
         plainRoomCall.call.e2ee == false
         downgrade.reasonCode == "callNotEncrypted"
         downgrade.callSessionId == plainRoomCall.callSessionId
+        policyDowngrade.reasonCode == "callNotEncrypted"
+        policyDowngrade.call == null
         byMember.reasonCode == "notAllowed"
         byOwner.required == true
         byStranger.reasonCode == "notFound"

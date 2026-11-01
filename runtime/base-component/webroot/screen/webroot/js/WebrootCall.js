@@ -297,6 +297,8 @@
             const vm = call.vm || {};
             const list = vm.currentPathList || [];
             const onScreen = list[list.length - 1] === "Call" && (vm.currentParameters || {}).callSessionId === state.current;
+            // W8: the keys of the old call are not the new one's (connectWith takes no media of an encrypted call without them)
+            if (moqui.callKeys && moqui.callKeys.state.active && moqui.callKeys.state.callSessionId !== toCallSessionId) moqui.callKeys.end();
             state.current = toCallSessionId;
             state.remotes = {};
             call.trackSources = {};
@@ -458,6 +460,17 @@
             const id = state.current;
             const legId = state.legId;
             if (!id) return Promise.resolve();
+            // W8: an end-to-end encrypted call's media only through its keys: without them (a call this page moved to, keys
+            // ended) no media at all, never plain
+            const known = state.calls[id];
+            if (known && known.e2ee && !call.keysOn(id)) {
+                if (call.pc) {
+                    try { call.pc.close(); } catch (e) { /* closed */ }
+                    call.pc = null;
+                }
+                state.phase = "idle";
+                return Promise.reject(new Error(t("This call is end-to-end encrypted, and this page has no keys for it: join it again")));
+            }
             if (call.unsubscribe) call.unsubscribe();
             const client = call.vm && call.vm.notificationClient;
             if (call.guest) call.unsubscribe = null;

@@ -88,3 +88,51 @@ test("a call's frames come out as the sframe crate makes them (crates/moqui-rtc/
         assert.equal(hex(S.concat(encrypted.subarray(0, clear), out.plaintext)), f.frame);
     }
 });
+
+test("the worker's keys: a key that comes in for another leg, even under this sender's KID, is never sent with", async () => {
+    const ring = S.keyRing(65536, 4);
+    const mine = await S.deriveKey(S.CALL_SUITE, 65537, new Uint8Array(16).fill(1));
+    const theirs = await S.deriveKey(S.CALL_SUITE, 65537, new Uint8Array(16).fill(2));
+    assert.equal(ring.sendKey(), null);
+    ring.setOwn(65537, mine, true);
+    // a roster that gave another leg this sender's key index: its key lands under the same KID
+    ring.setLeg("LEG_B", 65537, theirs);
+    assert.equal(ring.sendKey(), mine);
+    assert.equal(ring.useOwn(65537), true);
+    assert.equal(ring.sendKey(), mine);
+    // the sender moves only to a key of its own
+    assert.equal(ring.useOwn(65538), false);
+    ring.setLeg("LEG_B", 65538, theirs);
+    assert.equal(ring.useOwn(65538), false);
+    assert.equal(ring.sendKey(), mine);
+    // a leg's frames decrypt only with that leg's keys, under its key index
+    assert.equal(ring.lookup("LEG_B", 1, 65537n), theirs);
+    assert.equal(ring.lookup("LEG_C", 1, 65537n), null);
+    assert.equal(ring.lookup("LEG_B", 2, 65537n), null);
+    assert.equal(ring.lookup("LEG_B", undefined, 65537n), null);
+    assert.equal(ring.lookup("LEG_B", 1, 1n << 60n), null);
+    // the last four epochs of a leg, and none once it is dropped
+    for (let epoch = 3; epoch <= 6; epoch++) ring.setLeg("LEG_B", 65536 + epoch, theirs);
+    assert.equal(ring.lookup("LEG_B", 1, 65538n), null);
+    assert.equal(ring.lookup("LEG_B", 1, 65542n), theirs);
+    ring.dropLeg("LEG_B");
+    assert.equal(ring.lookup("LEG_B", 1, 65542n), null);
+});
+
+test("a receiver takes each counter once: a repeated frame or one far behind is refused, a little out of order is taken", async () => {
+    const w = S.replayWindow(8);
+    assert.equal(w.accept(0n), true);
+    assert.equal(w.accept(0n), false);
+    assert.equal(w.accept(5n), true);
+    assert.equal(w.accept(3n), true);
+    assert.equal(w.accept(3n), false);
+    assert.equal(w.accept(5n), false);
+    for (let c = 6n; c < 40n; c++) assert.equal(w.accept(c), true);
+    // within the window below the top: taken once
+    assert.equal(w.accept(32n), false);
+    assert.equal(w.accept(31n), false);
+    // older than the window: refused even when never seen
+    assert.equal(w.accept(30n), false);
+    assert.equal(w.accept(1n), false);
+    assert.equal(w.accept(1000n), true);
+});

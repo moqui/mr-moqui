@@ -141,8 +141,10 @@
         if (view.status === "ended") return;
         const next = rosterOf(view);
         const key = Array.from(next.values()).map((r) => r.legId + ":" + r.deviceId + ":" + r.keyGeneration).sort().join(",");
-        for (const legId of roster.keys()) {
-            if (!next.has(legId) && worker) {
+        // a leg gone, or given another device or key index, loses the keys it had: they came from another device
+        for (const [legId, was] of roster) {
+            const now = next.get(legId);
+            if ((!now || now.deviceId !== was.deviceId || now.keyIndex !== was.keyIndex) && worker) {
                 worker.postMessage({ type: "dropLeg", legId });
                 delete state.keys[legId];
             }
@@ -175,7 +177,7 @@
             const base = root.crypto.getRandomValues(new Uint8Array(16));
             const first = state.kid == null;
             const legId = state.legId;
-            worker.postMessage({ type: "setKey", legId, kid, baseKey: base.buffer.slice(0), use: first });
+            worker.postMessage({ type: "setOwnKey", kid, baseKey: base.buffer.slice(0), use: first });
             const others = new Map();
             for (const r of roster.values()) {
                 if (r.legId === legId) continue;
@@ -212,7 +214,11 @@
         return rotating;
     }
 
-    /** A key event: taken only from the device the roster names for its leg, with that leg's key index in its KID. */
+    /**
+     * A key event: taken only from the device the roster names for its leg, with that leg's key index in its KID, and only
+     * while no other leg of the roster (this page's included) has that key index: a roster that gives two legs one
+     * index would have two senders' keys under one KID.
+     */
     function onKeyEvent(event) {
         if (!event || event.type !== EVENT) return;
         const c = event.content || {};
@@ -229,6 +235,7 @@
         if (!leg || c.callLegId === state.legId) return false;
         if (leg.userId !== event.senderUserId || leg.deviceId !== event.senderDeviceId) return false;
         if (!Number.isSafeInteger(kid) || Math.floor(kid / KID_SPAN) !== leg.keyIndex || Number(c.suite || 4) !== 4) return false;
+        for (const r of roster.values()) if (r.legId !== leg.legId && r.keyIndex === leg.keyIndex) return false;
         const key = fromBase64(c.key);
         if (key.length !== 16 || !worker) return false;
         worker.postMessage({ type: "setKey", legId: c.callLegId, kid, baseKey: key.buffer });

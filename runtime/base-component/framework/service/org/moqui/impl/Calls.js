@@ -652,8 +652,9 @@ function start(p) {
     if (!access?.canPost) return refuse('notFound', 'Chat room not found')
     const current = Array.from(find(SESSION).condition('chatRoomId', chatRoomId).condition('statusId', '!=', 'CssEnded')
       .orderBy('-startedDate').limit(1).list())[0]
-    // an encrypted call was asked for: a call going on that is not is never offered in its place (no downgrade)
-    if (current && truthy(p.requireE2ee) && !isE2ee(current)) {
+    // an encrypted call was asked for, or the room's policy asks for one: a call going on that is not is never offered in
+    // its place (no downgrade)
+    if (current && !isE2ee(current) && (truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId))) {
       return Object.assign(refuse('callNotEncrypted', 'A call that is not end-to-end encrypted is going on in this room'),
         { callSessionId: current.callSessionId })
     }
