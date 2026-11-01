@@ -598,16 +598,23 @@ fn render_gallery(link: &HostLink) {
 /// Every Gallery screen at 180x50 as text, compared with its golden in `tests/tui_snapshots/` (`UPDATE_GOLDEN=1`
 /// rewrites them), so a change of look shows in the diff as the screenshots do for qvt. List, Detail and Widgets also in
 /// ASCII; and every screen in monochrome writes no color. The clock is fixed, and the date of today, which some
-/// screens show (in each form they write it, the Panel's `toLocaleDateString` as M/D/YYYY), is written as `<today>`;
-/// the screens whose sample data is dated back from today write those days as `<today-N>` (the Panel's overdue items,
-/// the Report's hit bins of the last week, as dates and as the chart's MM-DD labels), so the goldens hold on any day.
-/// The Calendar, whose events are days of this month, has no golden.
+/// screens show (in each form they write it, the Panel's `toLocaleDateString` as MM/DD/YYYY, and M/D/YYYY too should
+/// the engine stop padding), is written as `<today>`; the screens whose sample data is dated back from today write
+/// those days as `<today-N>` (the Panel's overdue items, the Report's hit bins of the last week, as dates and as the
+/// chart's MM-DD labels), so the goldens hold on any day.
+/// The Calendar, whose events are days of this month, has no golden. The List is found to one type, Email Type, whose
+/// descriptions sort the same in byte order and in a language's order: the database orders by description in its
+/// collation, which is the locale initdb ran in (C when LANG is unset, where `A number` sorts before `A2A`), and the
+/// order of all the enumerations, the width of the Type column, and so whether the Changed column fits, would follow it.
+/// Its Changed column is when the seed template was loaded, which may be a day before today, so it is `<stamp>`.
+/// [`list_order_holds_in_any_collation`] fails when a row of that type would sort differently in the two.
 fn snapshot_gallery(link: &HostLink) {
     let today = jiff::Zoned::now().date();
     let stamps: Vec<(String, String)> = vec![
         (today.strftime("%Y-%m-%d").to_string(), "<today>".to_string()),
         (today.strftime("%a %b %-d").to_string(), "<today>".to_string()),
         (today.strftime("%B %Y").to_string(), "<today>".to_string()),
+        (today.strftime("%m/%d/%Y").to_string(), "<today>".to_string()),
         (today.strftime("%-m/%-d/%Y").to_string(), "<today>".to_string()),
     ];
     // the days back from today a screen's sample data is dated by, in the forms it writes them
@@ -638,11 +645,19 @@ fn snapshot_gallery(link: &HostLink) {
             _ => stamps.clone(),
         };
         let path = format!("/apps/gallery/{name}");
-        let mut view = AppView::with_session(Session::start(&path), link.clone());
+        let start = if *name == "List" {
+            format!("{path}?enumTypeId={GOLDEN_LIST_TYPE}")
+        } else {
+            path.clone()
+        };
+        let mut view = AppView::with_session(Session::start(&start), link.clone());
         view.run_requests();
         view.set_clock("Tue 14:32");
         // The Calendar's events are days of this month, so it has no golden; drive_components reads it.
-        let text = masked(&view.screen_text(180, 50), &stamps);
+        if *name == "List" {
+            list_order_holds_in_any_collation(&view);
+        }
+        let text = masked(&list_stamps(name, view.screen_text(180, 50)), &stamps);
         if *name != "Calendar" {
             if let Err(err) = golden(&format!("gallery-{name}-180x50"), &text) {
                 failures.push(err);
@@ -670,7 +685,7 @@ fn snapshot_gallery(link: &HostLink) {
             let mut theme = view.theme().clone();
             theme.ascii = true;
             view.set_theme(theme);
-            let text = masked(&view.screen_text(180, 50), &stamps);
+            let text = masked(&list_stamps(name, view.screen_text(180, 50)), &stamps);
             if let Err(err) = golden(&format!("gallery-{name}-180x50-ascii"), &text) {
                 failures.push(err);
             }
@@ -698,6 +713,65 @@ fn masked(text: &str, stamps: &[(String, String)]) -> String {
         } else {
             rest = tail;
         }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The Email Type enumerations of the List golden, chosen for an order that does not depend on the database collation.
+const GOLDEN_LIST_TYPE: &str = "EmailType";
+
+/// The List's page in description order the same in byte order (a C collation) and in a language's order, which here
+/// is case and the characters other than letters and digits left out; a row of [`GOLDEN_LIST_TYPE`] added that sorts
+/// differently in the two makes the List golden depend on the locale initdb ran in, so choose another type.
+fn list_order_holds_in_any_collation(view: &AppView<HostLink>) {
+    let rows = view.session().list_page("EnumList");
+    assert!(
+        rows.len() > 5,
+        "the {GOLDEN_LIST_TYPE} rows of the List: {}",
+        rows.len()
+    );
+    let descriptions: Vec<String> = rows
+        .iter()
+        .map(|row| row.cells.get(1).map(|cell| cell.text().to_string()).unwrap_or_default())
+        .collect();
+    let language = |text: &str| -> String {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|ch| ch.to_ascii_lowercase())
+            .collect()
+    };
+    let mut bytes = descriptions.clone();
+    bytes.sort();
+    let mut words = descriptions.clone();
+    words.sort_by_key(|text| language(text));
+    assert_eq!(
+        bytes, words,
+        "{GOLDEN_LIST_TYPE} descriptions sort differently by collation"
+    );
+}
+
+/// The List's Changed column (`yyyy-MM-dd HH:mm`, when the seed template was loaded) as `<stamp>`; other screens as
+/// they are.
+fn list_stamps(name: &str, text: String) -> String {
+    if name != "List" {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    let shape = |at: &[u8]| {
+        at.len() >= 16
+            && at[..16].iter().enumerate().all(|(i, b)| match i {
+                4 | 7 => *b == b'-',
+                10 => *b == b' ',
+                13 => *b == b':',
+                _ => b.is_ascii_digit(),
+            })
+    };
+    while let Some(at) = rest.as_bytes().windows(16).position(shape) {
+        out.push_str(&rest[..at]);
+        out.push_str("<stamp>");
+        rest = &rest[at + 16..];
     }
     out.push_str(rest);
     out

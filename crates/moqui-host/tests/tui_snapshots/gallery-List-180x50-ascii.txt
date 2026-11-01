@@ -11,31 +11,31 @@
      Split               | +------------------------------------------------------------------------------------------------------------------------------------------------------+
      Settings            | Enumerations
      Wizard              | [ View: list v ]  [ New enumeration. ]
-     Dialog              | Type . . . . : [                                v] Description  : [____________________]              Find . . . . :
-     Report              |       ID                           Description                     Type                                  State   Code            Seq Parent            >
-     Panel               | --------------------------------------------------------------------------------------------------------------------------------------------
-     Widgets             |   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a             3
-     Editor              |   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable       2
-     Message             |   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered                 2
-     Views               |   [ ] ChrSelectiveAccept           Accept only callers on a list   Call Handling Kind                    Ordered selectiveAccept 3
-     Handheld            |   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain
- v Home                  |   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                       System
-                         |   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain
-                         |   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent           4
-                         |   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL
-                         |   [ ] CqsAllAtOnce                 All agents at once              Call Queue Strategy                   Ordered allAtOnce       3
-                         |   [ ] RgsSimultaneous              All at once                     Ring Group Strategy                   Ordered simultaneous    1
-                         |   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered                 1
-                         |   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all             1
-                         |   [ ] AUTHZT_ALLOW                 Allow                           Authorization Type                    Plain
-                         |   [ ] GmaMerged                    Already in the target           Git Mergeability                      Ordered merged          4
-                         |   [ ] AUTHZT_ALWAYS                Always Allow (overrides Deny)   Authorization Type                    Plain
-                         |   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered                 3
-                         |   [ ] PnrIvr                       An IVR menu                     Phone Number Route                    Ordered ivr             3
-                         |   [ ] RgfGroup                     Another group                   Ring Group Fallback                   Ordered group           2
-                         |   [ ] CtgMenu                      Another menu                    Call Target                           Ordered menu            4
-                         |   Rows 1-20 of 421 - Page 1/22
+     Dialog              | Type . . . . : [Email Type                      v] Description  : [____________________]              Find . . . . :
+     Report              |       ID                           Description                       Type       State Code Seq Parent Changed          Row Actions
+     Panel               | -----------------------------------------------------------------------------------------------------------------------------------
+     Widgets             |   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp>
+     Editor              |   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp>
+     Message             |   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp>
+     Views               |   [ ] EMT_EMAIL_AUTHC_FACTOR_SENT  Email Authentication Code Sent    Email Type Child          System <stamp>
+     Handheld            |   [ ] EMT_NOTIFICATION             Notification                      Email Type Child          System <stamp>
+ v Home                  |   [ ] EMT_NOTIFICATION_DIGEST      Notification Digest               Email Type Child          System <stamp>
+                         |   [ ] EMT_PWD_RESET                Password Reset                    Email Type Child          System <stamp>
+                         |   [ ] EMT_REG_CONFIRM              Registration Confirmation         Email Type Plain                 <stamp>
+                         |   [ ] EMT_SCREEN_RENDER            Screen Render                     Email Type Child          System <stamp>
+                         |   [ ] EMT_SINGLE_USE_CODE          Single Use Code                   Email Type Child          System <stamp>
+                         |   [ ] EMT_SYSTEM                   System                            Email Type Plain                 <stamp>
+                         |   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp>
+                         |   Rows 1-12 of 12 - Page 1/1   Find: Type = EmailType
                          | Back to the Landing
+                         |
+                         |
+                         |
+                         |
+                         |
+                         |
+                         |
+                         |
                          |
                          |
                          |
