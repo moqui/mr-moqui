@@ -9583,6 +9583,9 @@
         const config = JSON.parse(configEl.textContent);
         qvt.config = config;
         moqui.config = config;
+        // The session token now, not at the mount: the mount waits for the language catalog, and a page script (or a test)
+        // that posts once the document has loaded would otherwise send an empty token and get a 401.
+        if (config.sessionToken) moqui.sessionToken = config.sessionToken;
         moqui.setNumberSeparators(config.locale);
         let catalogReady = Promise.resolve();
         if (moqui.l10n) {
