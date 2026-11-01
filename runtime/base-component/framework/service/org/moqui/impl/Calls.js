@@ -912,7 +912,8 @@ function mediaEvent(p) {
     leg.set('joinedDate', ec.user.nowTimestamp)
     leg.update()
   } else if (p.event === 'relayRefused') {
-    // the call's node refused its edge's relay link (W7): the leg's media goes to the call's node when it reconnects
+    // the call's node refused its edge's relay link, or the link never connected (W7): the leg's media goes to the
+    // call's node when it reconnects
     const session = one(SESSION, { callSessionId: leg.callSessionId })
     leg.setFields({ mediaNodeId: session ? session.mediaNodeId : null, mediaNodePinned: 'Y' }, true, null, null)
     leg.update()
@@ -979,7 +980,10 @@ function expire() {
     .map((s) => ({ callSessionId: s.callSessionId }))
   // W7: a leg whose media is on another node than the call's (an edge) that stopped leaves; the call goes on
   const orphanedCalls = new Set(orphaned.map((s) => s.callSessionId))
-  const edgeLost = Array.from(find(LEG).condition('statusId', 'in', OPEN_LEG).condition('mediaNodeId', '!=', null)
+  // the live nodes are left out in the query, so the limit is spent only on legs whose node stopped
+  let edgeFind = find(LEG).condition('statusId', 'in', OPEN_LEG).condition('mediaNodeId', '!=', null)
+  if (liveNodes.size) edgeFind = edgeFind.condition('mediaNodeId', 'not-in', Array.from(liveNodes))
+  const edgeLost = Array.from(edgeFind
     .selectField('callLegId').selectField('callSessionId').selectField('mediaNodeId').limit(2000).list())
     .filter((leg) => !liveNodes.has(leg.mediaNodeId) && !orphanedCalls.has(leg.callSessionId))
     .map((leg) => ({ callLegId: leg.callLegId }))

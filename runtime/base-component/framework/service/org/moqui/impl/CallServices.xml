@@ -464,7 +464,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="note" noun="MediaEvent" authenticate="false" allow-remote="false">
         <description>Internal (the media node): what the media of a leg of that generation did: connected (its
             joinedDate), quality (qualityJson), or relayRefused (W7: the call's node refused the relay link of the leg's
-            node, so the leg's media stays on the call's node from its next bind).</description>
+            node, or the link never connected, so the leg's media stays on the call's node from its next bind).</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="generation" type="Integer" required="true"/>

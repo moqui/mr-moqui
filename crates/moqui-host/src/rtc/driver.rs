@@ -191,9 +191,11 @@ impl Driver<'_> {
             }
             Command::Link { room, origin } => {
                 if !origin.is_empty() && origin != self.own {
-                    self.origins.insert(room.clone(), origin.clone());
-                    if let Err(e) = self.sfu.link(Instant::now(), &room, &origin) {
-                        tracing::warn!("call {room}: not linked to its media node {origin}: {e}");
+                    match self.sfu.link(Instant::now(), &room, &origin) {
+                        Ok(()) => {
+                            self.origins.insert(room.clone(), origin.clone());
+                        }
+                        Err(e) => tracing::warn!("call {room}: not linked to its media node {origin}: {e}"),
                     }
                 }
             }
@@ -300,11 +302,11 @@ impl Driver<'_> {
                 .and_then(|answer| {
                     // a leg here of a call whose media is on another node: this node is an edge, linked to that one
                     if !origin.is_empty() && origin != self.own {
-                        self.origins.insert(room.to_string(), origin.to_string());
                         if let Err(e) = self.sfu.link(now, room, origin) {
                             let _ = self.sfu.leave(now, &key, generation);
                             return Err(e);
                         }
+                        self.origins.insert(room.to_string(), origin.to_string());
                     }
                     Ok(answer)
                 })
@@ -493,8 +495,9 @@ impl Driver<'_> {
         );
     }
 
-    /// A room's link ended. For an edge: lost, its legs reconnect (and link again); refused, they go back to the call's
-    /// node as they reconnect; closed by the origin (the call ended), they end. Nothing else is done for the others.
+    /// A room's link ended. For an edge: lost, its legs reconnect (and link again), and a room with phone legs here links
+    /// again at once; refused or unreachable (it never connected), they go back to the call's node as they reconnect;
+    /// closed by the origin (the call ended), they end. Nothing else is done for the others.
     fn relay_down(&mut self, room: &str, node: &str, reason: &str) {
         let edge = self.origins.get(room).is_some_and(|origin| origin == node);
         tracing::info!("call {room}: relay link to {node} ended: {reason}");
@@ -504,7 +507,8 @@ impl Driver<'_> {
         if reason == "ended" {
             return self.command(Command::CloseRoom { room: room.to_string() });
         }
-        if reason != "lost" && !reason.starts_with("refused") {
+        let pinned = reason.starts_with("refused") || reason == "unreachable";
+        if reason != "lost" && !pinned {
             return;
         }
         let legs: Vec<(LegKey, u64)> = self
@@ -514,7 +518,7 @@ impl Driver<'_> {
             .map(|(k, r)| (k.clone(), r.generation))
             .collect();
         for (key, generation) in legs {
-            if reason.starts_with("refused") {
+            if pinned {
                 super::note(
                     self.factory,
                     "org.moqui.impl.CallServices.note#MediaEvent",
@@ -529,6 +533,17 @@ impl Driver<'_> {
             if self.sfu.generation(&key) == Some(generation) {
                 let _ = self.sfu.leave(Instant::now(), &key, generation);
             }
+        }
+        // what is left here has no socket to reconnect: a phone's (SIP) leg, whose media stays on this node
+        if self.sfu.legs(room).is_empty() {
+            return;
+        }
+        if pinned {
+            tracing::error!(
+                "call {room}: the phone legs here are cut off from the call's media node {node} (link {reason})"
+            );
+        } else if let Err(e) = self.sfu.link(Instant::now(), room, node) {
+            tracing::error!("call {room}: the phone legs here are not linked again to {node}: {e}");
         }
     }
 

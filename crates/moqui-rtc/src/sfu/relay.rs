@@ -23,16 +23,19 @@
 //!   mix), and each edge every leg the origin has.
 //! - A video track crosses once, whatever the number of subscribers behind the link, in its simulcast layers up to the
 //!   highest any of them wants (a [`RelayMessage::Want`] from the side that receives it, sent when that changes); each
-//!   subscriber then gets its own layer as on one node. Nothing wanted, no video crosses. Taps at the origin want the
-//!   high layer.
+//!   subscriber then gets its own layer as on one node. Nothing wanted, no video crosses. A tap of video at the origin
+//!   (the recorder) wants the high layer; an audio-only one (the mixer, captions) none.
 //! - Caps on links per room and per node; past them a link is refused explicitly ([`RelayMessage::Refused`]).
 //! - Every message names its link; a link opened again (after a loss) has a new one, and the old one's messages are
 //!   dropped. A link that is lost or closed is reported by [`SfuEvent::RelayDown`]; what happens to the legs is the
 //!   caller's (the host's reconnect path).
+//! - Fencing: a room that ended here takes no new link (an edge's late offer is answered with `Close`, reason `ended`),
+//!   and a node that was an edge of a room never takes a new link of it from its origin (a late offer of a link it
+//!   closed). Both are remembered for [`FENCE_KEPT`]; a room's id is never used again.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use str0m::change::{SdpAnswer, SdpOffer};
@@ -121,6 +124,55 @@ impl RelayMessage {
     }
 }
 
+/// How long a node remembers a room that ended, or the origin of a room it was an edge of, to drop late relay messages.
+pub(super) const FENCE_KEPT: Duration = Duration::from_secs(600);
+
+/// How often the links' wants and track names are looked at: a want waits at most this, and a node busy with packets
+/// does not rebuild them for each one.
+pub(super) const RELAY_LOOK_EVERY: Duration = Duration::from_millis(50);
+
+/// A link not connected this long after it opened is dropped (`unreachable`): its offer or answer was lost, or the
+/// nodes do not reach each other's media ports.
+pub(super) const RELAY_CONNECT_WITHIN: Duration = Duration::from_secs(10);
+
+/// What a node remembers to drop late relay messages: the rooms that ended here, and the origin of each room this node
+/// is or was an edge of, with when each was last touched.
+#[derive(Default)]
+pub(super) struct Fences {
+    ended: HashMap<Arc<str>, Instant>,
+    edge_of: HashMap<Arc<str>, (Arc<str>, Instant)>,
+    /// The time of the SFU's last input.
+    pub clock: Option<Instant>,
+}
+
+impl Fences {
+    pub fn ended(&mut self, now: Instant, room: &str) {
+        self.prune(now);
+        self.ended.insert(room.into(), now);
+        self.edge_of.remove(room);
+    }
+
+    fn is_ended(&self, room: &str) -> bool {
+        self.ended.contains_key(room)
+    }
+
+    fn edge_of(&mut self, now: Instant, room: &str, origin: &str) {
+        self.prune(now);
+        self.edge_of.insert(room.into(), (origin.into(), now));
+    }
+
+    fn origin_of(&self, room: &str) -> Option<&str> {
+        self.edge_of.get(room).map(|(origin, _)| &**origin)
+    }
+
+    fn prune(&mut self, now: Instant) {
+        self.ended
+            .retain(|_, at| now.saturating_duration_since(*at) < FENCE_KEPT);
+        self.edge_of
+            .retain(|_, (_, at)| now.saturating_duration_since(*at) < FENCE_KEPT);
+    }
+}
+
 /// The relay side of a [`Peer`].
 pub(super) struct Relay {
     pub role: RelayRole,
@@ -135,6 +187,8 @@ pub(super) struct Relay {
     pub named: HashMap<String, String>,
     pub needs_channel: bool,
     pub connected: bool,
+    /// When this side opened or took the link: one not connected [`RELAY_CONNECT_WITHIN`] after is dropped.
+    pub opened: Instant,
     /// Frames sent over the link: audio, video without layers, and each layer low to high.
     pub sent: [u64; 5],
 }
@@ -151,6 +205,10 @@ impl Sfu {
         if self.relay_id(room, origin).is_some() {
             return Ok(());
         }
+        // a room that ended here is not opened again by a late leg or control
+        if self.fences.is_ended(room) {
+            return Err(SfuError::UnknownRoom);
+        }
         if self.relays.len() >= self.config.max_relays {
             return Err(SfuError::TooManyRelays);
         }
@@ -165,6 +223,7 @@ impl Sfu {
             rtc.add_local_candidate(c);
         }
         let link = self.new_link();
+        self.fences.edge_of(now, room, origin);
         self.add_relay(now, &name, origin, RelayRole::Edge, link, rtc);
         Ok(())
     }
@@ -221,6 +280,21 @@ impl Sfu {
                                 return Ok(());
                             }
                             self.remove_relay(old, "replaced");
+                        } else if self.fences.origin_of(room) == Some(from) {
+                            // a late offer of a link this edge closed: the room's origin never opens one
+                            return Ok(());
+                        }
+                        if self.fences.is_ended(room) {
+                            // the room ended here: the edge's late link ends too
+                            self.out.push_back(SfuOutput::Event(SfuEvent::Relay {
+                                room: room.into(),
+                                node: from.into(),
+                                message: RelayMessage::Close {
+                                    link,
+                                    reason: "ended".to_string(),
+                                },
+                            }));
+                            return Ok(());
                         }
                         match self.accept_link(now, room, from, link) {
                             Ok(id) => id,
@@ -332,6 +406,7 @@ impl Sfu {
             named: HashMap::new(),
             needs_channel: role == RelayRole::Edge,
             connected: false,
+            opened: now,
             sent: [0; 5],
         });
         if let Some(r) = self.rooms.get_mut(room) {
@@ -411,6 +486,17 @@ impl Sfu {
         peer.rtc.disconnect();
         let Some(relay) = peer.relay.take() else { return };
         self.relays.remove(&(peer.key.room.clone(), relay.node.clone()));
+        // a link that failed before it ever connected: the nodes do not reach each other's media ports
+        let reason = if reason == "lost" && !relay.connected {
+            "unreachable"
+        } else {
+            reason
+        };
+        if relay.role == RelayRole::Edge {
+            if let Some(now) = self.fences.clock {
+                self.fences.edge_of(now, &peer.key.room, &relay.node);
+            }
+        }
         for t in peer.tracks_in() {
             self.out.push_back(SfuOutput::Event(SfuEvent::Track {
                 key: LegKey {
@@ -470,6 +556,40 @@ impl Sfu {
         }
     }
 
+    /// Looks at the links every [`RELAY_LOOK_EVERY`] while there is one: drops those that did not connect in time, and
+    /// tells the others' nodes of changed wants and track names. Keeps `next` (the
+    /// SFU's next timeout) no later than the next look.
+    pub(super) fn relays_tick(&mut self, now: Instant, next: &mut Option<Instant>) {
+        self.fences.clock = Some(now);
+        if self.relays.is_empty() {
+            self.relays_due = None;
+            return;
+        }
+        let due = match self.relays_due {
+            Some(due) if now < due => due,
+            _ => {
+                let stalled: Vec<PeerId> = self
+                    .relays
+                    .values()
+                    .copied()
+                    .filter(|id| {
+                        self.peers.get(id).and_then(|p| p.relay.as_ref()).is_some_and(|r| {
+                            !r.connected && now.saturating_duration_since(r.opened) >= RELAY_CONNECT_WITHIN
+                        })
+                    })
+                    .collect();
+                for id in stalled {
+                    self.send_close(id, "unreachable");
+                    self.remove_relay(id, "unreachable");
+                }
+                self.update_relays();
+                now + RELAY_LOOK_EVERY
+            }
+        };
+        self.relays_due = Some(due);
+        *next = Some(next.map_or(due, |n| n.min(due)));
+    }
+
     /// Tells each link's other node what this side wants of the video it relays, and what the tracks this side relays
     /// carry, when either changed. The want of a publisher is the highest any subscriber here (a leg, or another link's
     /// node) wants; a room with a tap wants the high layer.
@@ -483,7 +603,8 @@ impl Sfu {
             let Some(room) = self.rooms.get(&p.key.room) else {
                 continue;
             };
-            let tapped = !room.taps.is_empty();
+            // a tap of video (the recorder) wants the high layer; the mixer and captions take only audio
+            let tapped = room.taps.iter().any(|(_, tap)| tap.wants_video());
             let mut wants: HashMap<Arc<str>, Option<Layer>> = HashMap::new();
             for t in p.tracks_in().filter(|t| t.kind() == crate::tap::Kind::Video) {
                 let mut cap = tapped.then_some(Layer::High);

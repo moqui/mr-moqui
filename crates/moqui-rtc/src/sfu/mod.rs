@@ -268,8 +268,9 @@ pub enum SfuEvent {
     },
     /// A relay link is connected.
     RelayUp { room: Arc<str>, node: Arc<str> },
-    /// A relay link ended: `lost` (its ICE or DTLS failed), `refused:<code>` (the origin did not take it), `empty` (no
-    /// leg was left behind it), `replaced` (the edge opened it again) or the reason the other node gave (`ended`).
+    /// A relay link ended: `lost` (its ICE or DTLS failed after it connected), `unreachable` (it did not connect within
+    /// 10 seconds, or failed before it did), `refused:<code>` (the origin did not take it), `empty` (no leg was left
+    /// behind it), `replaced` (the edge opened it again) or the reason the other node gave (`ended`, `unreachable`).
     RelayDown {
         room: Arc<str>,
         node: Arc<str>,
@@ -395,6 +396,10 @@ pub struct Sfu {
     /// The relay links, by room and the node at the other end.
     relays: HashMap<(Arc<str>, Arc<str>), PeerId>,
     next_link: u64,
+    /// The rooms that ended and the rooms' origins, for dropping late relay messages.
+    fences: relay::Fences,
+    /// When the links' wants and track names are looked at next ([`relay::RELAY_LOOK_EVERY`]).
+    relays_due: Option<Instant>,
     next_id: PeerId,
     out: VecDeque<SfuOutput>,
     next_timeout: Option<Instant>,
@@ -416,6 +421,8 @@ impl Sfu {
             next_link: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(1, |d| d.as_nanos() as u64),
+            fences: relay::Fences::default(),
+            relays_due: None,
             next_id: 1,
             out: VecDeque::new(),
             next_timeout: None,
@@ -602,6 +609,7 @@ impl Sfu {
     /// close).
     pub fn close_room(&mut self, now: Instant, room: &str) {
         self.close_relays(room, "ended");
+        self.fences.ended(now, room);
         let Some(r) = self.rooms.get(room) else { return };
         for id in r.peers.clone() {
             self.remove_peer(id);
@@ -914,7 +922,7 @@ impl Sfu {
                 self.propagate(item, now);
             }
         }
-        self.update_relays();
+        self.relays_tick(now, &mut next);
         self.next_timeout = next;
     }
 

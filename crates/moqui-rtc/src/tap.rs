@@ -72,6 +72,12 @@ pub trait MediaTap: Send {
     fn is_closed(&self) -> bool {
         false
     }
+
+    /// Whether it takes video. A room's relay links (W7) bring the high layer of each video across for a tap that does;
+    /// one that takes only audio (the mixer, captions) brings no video across.
+    fn wants_video(&self) -> bool {
+        true
+    }
 }
 
 /// A frame copied out of the media loop.
@@ -185,6 +191,10 @@ impl QueueTap {
 }
 
 impl MediaTap for QueueTap {
+    fn wants_video(&self) -> bool {
+        self.kinds == Kinds::All
+    }
+
     fn on_frame(&mut self, frame: &TapFrame<'_>) {
         if self.closed || (self.kinds == Kinds::Audio && frame.kind != Kind::Audio) {
             return;

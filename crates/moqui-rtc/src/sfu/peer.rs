@@ -948,8 +948,13 @@ impl Peer {
         let offer_id = self.next_offer_id;
         self.next_offer_id += 1;
         self.pending = Some((offer_id, pending));
-        if let Some(relay) = &self.relay {
+        if self.relay.is_some() {
             let tracks = self.relay_tracks();
+            let Some(relay) = self.relay.as_mut() else { return true };
+            // what the offer names each track as, so a later change of its source is told ([`RelayMessage::Tracks`])
+            for t in &tracks {
+                relay.named.insert(t.mid.clone(), t.source.clone());
+            }
             out.push_back(SfuOutput::Event(SfuEvent::Relay {
                 room: self.key.room.clone(),
                 node: relay.node.clone(),

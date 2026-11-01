@@ -15,7 +15,8 @@
 //! The W7 gate (plans/Comms-Framework.md §6.2): one room on two media nodes, an origin and an edge, on the in-memory
 //! network. Media both ways over the relay link; each track crossing once, in the layers up to the highest any
 //! subscriber behind the link wants, a layer changed at the edge; the edge's tracks reaching the origin's taps; the caps
-//! refusing a link; a lost link reported and replaced; the link closed when its last leg leaves or the room ends.
+//! refusing a link; a lost link reported and replaced; the link closed when its last leg leaves or the room ends; an
+//! audio-only tap bringing no video across; late links of an ended room fenced; a link that never connects dropped.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,7 +25,7 @@ use str0m::media::MediaKind;
 
 use super::testnet::{Net, EDGE, LAYER_BYTES, ORIGIN, ROOM};
 use super::{LegKey, RelayMessage, RelayRole, SfuConfig, SfuError, SfuEvent, Source};
-use crate::tap::{Kind, MediaTap, TapFrame};
+use crate::tap::{Kind, Kinds, MediaTap, QueueTap, TapFrame};
 
 fn secs(s: u64) -> Duration {
     Duration::from_secs(s)
@@ -305,4 +306,98 @@ fn the_link_closes_when_the_edge_s_last_leg_leaves_or_the_room_ends() {
     net.run(Duration::from_millis(200));
     assert!(down(&net.edge().events).contains(&"ended".to_string()));
     assert!(net.edge().sfu.relays(ROOM).is_empty());
+}
+
+#[test]
+fn an_audio_only_tap_brings_no_video_across_and_a_video_tap_the_high_layer() {
+    let mut net = edge_net();
+    net.join("A", false);
+    net.join_edge("B", true);
+    // A wants none of B's video; the origin's mixer (an audio tap) wants none either
+    let now = net.now;
+    net.sfu
+        .subscribe(now, &LegKey::new(ROOM, "A"), 1, "B", None)
+        .expect("subscribed");
+    let (mixer, _mixed) = QueueTap::channel(10_000, Kinds::Audio);
+    net.sfu.add_tap(ROOM, Box::new(mixer)).expect("tapped");
+    net.run(secs(2));
+    let off = net.edge().sfu.relay_sent(ROOM, ORIGIN).expect("a link");
+    net.run(secs(1));
+    let still = net.edge().sfu.relay_sent(ROOM, ORIGIN).expect("a link");
+    assert_eq!(still[1..], off[1..], "no video crosses for an audio tap");
+    assert!(still[0] > off[0] + 30, "audio crosses: {off:?} {still:?}");
+
+    // the recorder (a tap of every kind) wants the high layer
+    let (recorder, _recorded) = QueueTap::channel(10_000, Kinds::All);
+    net.sfu.add_tap(ROOM, Box::new(recorder)).expect("tapped");
+    net.run(secs(1));
+    let on = net.edge().sfu.relay_sent(ROOM, ORIGIN).expect("a link");
+    net.run(secs(1));
+    let after = net.edge().sfu.relay_sent(ROOM, ORIGIN).expect("a link");
+    assert!(after[4] > on[4] + 10, "the high layer crosses: {on:?} {after:?}");
+}
+
+#[test]
+fn a_room_that_ended_takes_no_late_link_and_an_edge_none_from_its_origin() {
+    let mut net = edge_net();
+    net.join("A", false);
+    net.join_edge("B", false);
+    net.run(secs(2));
+    let now = net.now;
+    net.sfu.close_room(now, ROOM);
+    net.run(Duration::from_millis(200));
+    assert_eq!(down(&net.edge().events), vec!["ended".to_string()]);
+
+    // a late link of the edge's (its leg not yet gone): the origin does not open the room again, and ends the link
+    let now = net.now;
+    net.edge_sfu().link(now, ROOM, ORIGIN).expect("linked");
+    net.run(Duration::from_millis(200));
+    assert_eq!(net.sfu.room_count(), 0, "the origin did not open the room again");
+    assert!(net.sfu.relays(ROOM).is_empty());
+    assert_eq!(down(&net.edge().events), vec!["ended".to_string(), "ended".to_string()]);
+    assert!(net.edge().sfu.relays(ROOM).is_empty());
+
+    // the room ended at the edge too: a late leg or control does not link it again
+    let now = net.now;
+    net.edge_sfu().close_room(now, ROOM);
+    assert_eq!(net.edge_sfu().link(now, ROOM, ORIGIN), Err(SfuError::UnknownRoom));
+}
+
+#[test]
+fn an_edge_takes_no_new_link_from_its_origin() {
+    let mut net = edge_net();
+    net.join("A", false);
+    net.join_edge("B", false);
+    net.run(secs(2));
+    let now = net.now;
+    net.edge_sfu().leave(now, &LegKey::new(ROOM, "B"), 1).expect("left");
+    net.run(Duration::from_millis(200));
+    assert_eq!(net.edge().sfu.room_count(), 0);
+
+    // a late offer of the origin's, of a link the edge closed: dropped, nothing opened
+    let now = net.now;
+    let late = RelayMessage::Offer {
+        link: 7,
+        offer_id: 3,
+        sdp: "v=0".to_string(),
+        tracks: Vec::new(),
+    };
+    assert_eq!(net.edge_sfu().handle_relay(now, ROOM, ORIGIN, late), Ok(()));
+    assert_eq!(net.edge().sfu.room_count(), 0, "the edge opened nothing");
+    assert!(net.edge().sfu.relays(ROOM).is_empty());
+}
+
+#[test]
+fn a_link_that_never_connects_is_dropped_as_unreachable() {
+    let mut net = edge_net();
+    net.join("A", false);
+    // the edge's offer never reaches the origin
+    net.link_up = false;
+    net.join_edge("B", false);
+    net.run(secs(8));
+    assert!(down(&net.edge().events).is_empty(), "still trying");
+    net.run(secs(3));
+    assert_eq!(down(&net.edge().events), vec!["unreachable".to_string()]);
+    assert!(net.edge().sfu.relays(ROOM).is_empty());
+    assert!(net.sfu.relays(ROOM).is_empty());
 }

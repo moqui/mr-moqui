@@ -138,7 +138,7 @@ With `rtc_cascade_enabled` (off by default; set it on every node) a call spans m
   origin sees every leg (recording, captions and the SIP mix are there) and each edge every leg. A video track crosses a
   link once, in its simulcast layers up to the highest layer any subscriber behind the link wants; each subscriber then
   gets its own layer as on one node. With no one wanting it, no video crosses. A room recorded at the origin wants the
-  high layer of the edges' tracks.
+  high layer of the edges' tracks; the mixer and captions take only audio and bring no video across.
 - **Room frames.** The notices (recording, captions), `participant`, the relayed `mute`, `hand` and `reaction`, and the
   captions' lines go to the room's other nodes too (kind `roomFrame`); the origin passes an edge's on to the others. Each
   node works out the active speaker itself, since it hears every leg.
@@ -147,7 +147,13 @@ With `rtc_cascade_enabled` (off by default; set it on every node) a call spans m
   (`CallLeg.mediaNodePinned`).
 - **Losses.** The origin lost ends the call ("media server lost"), as before. An edge lost ends only its legs, with the
   same reason (`expire#Calls`). A link lost (its ICE or DTLS failed) is fenced at both ends: the edge's legs get
-  `mediaLost`, reconnect, and the edge links again with a new link.
+  `mediaLost`, reconnect, and the edge links again with a new link; a room with phone legs on the edge links again at
+  once. A link that does not connect within 10 seconds (`unreachable`: its offer or answer was lost, or the nodes do not
+  reach each other's media ports) is handled as a refused one: the edge's browsers go back to the call's node. Phone
+  legs on such an edge cannot move and are logged as cut off.
+- **Late messages.** A room that ended on a node takes no new link there: an edge's late offer gets a `Close` (`ended`),
+  and a late `link` control or leg does not open it. An edge never takes a new link of a room from that room's origin.
+  Each node keeps these for 10 minutes; a call's id is never used again.
 - **Calls across nodes merge** (`merge#Calls`): without cascading they are refused (`differentNodes`).
 
 The relay link uses the media ports of both nodes (`rtc_media_port`): the edge sends from its port to the origin's
@@ -173,7 +179,8 @@ own multiplexing of rooms; that waits for a measured need.
 - `cargo test -p moqui-rtc sfu::relay_tests`: two SFUs on the in-memory network: media both ways over one link, a track
   crossing once in the layers up to the highest wanted (a layer change at the edge, nothing wanted), an edge's tracks
   reaching the origin's taps in every layer, the caps refusing a link, a lost link reported and replaced (an old link's
-  message dropped), and the link closed when the edge's last leg leaves or the room ends.
+  message dropped), the link closed when the edge's last leg leaves or the room ends, an audio-only tap bringing no
+  video across, late links of an ended room fenced at both ends, and a link that never connects dropped as unreachable.
 - `cargo test -p moqui-host --test it rtc::cascade`: two servers of one cluster on one test database, the second in a
   child process of the test binary (the media driver and the socket bindings are process globals, and its loss is a
   real kill): media both ways between a leg on each, a layer change at the edge, and the edge lost ending only its leg.

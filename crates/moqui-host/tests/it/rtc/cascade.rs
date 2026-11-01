@@ -36,6 +36,8 @@ use super::{call, open_socket, run_until, text, Peer, VIDEO_LAYER_BYTES};
 /// The cluster directory the edge's child process adopts; set only for that child.
 const EDGE_ENV: &str = "MOQUI_RTC_EDGE_CLUSTER";
 const EDGE_TEST: &str = "rtc::cascade::edge_node";
+/// How long the edge's process may take to print its ready line.
+const EDGE_START: Duration = Duration::from_secs(30);
 const PROPERTIES: [(&str, &str); 2] = [("rtc_media_port", "0"), ("rtc_cascade_enabled", "true")];
 /// The generated secrets a second member of the cluster takes from the first.
 const SHARED_SECRETS: [&str; 5] = [
@@ -75,14 +77,26 @@ impl Edge {
             .stderr(Stdio::null())
             .spawn()
             .expect("the edge's process");
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let ready = lines
-            .by_ref()
-            .map_while(Result::ok)
-            .find_map(|line| line.find("EDGE ").map(|at| line[at..].to_string()))
-            .expect("the edge started");
-        // the rest of its output is not read; a thread keeps its pipe from filling
-        std::thread::spawn(move || lines.for_each(drop));
+        // its ready line, read on a thread so a child that hangs as it starts fails the test instead of holding it; the
+        // rest of its output is read and dropped there too, so its pipe does not fill
+        let stdout = child.stdout.take().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut lines = BufReader::new(stdout).lines().map_while(Result::ok);
+            let ready = lines
+                .by_ref()
+                .find_map(|line| line.find("EDGE ").map(|at| line[at..].to_string()));
+            let _ = ready_tx.send(ready);
+            lines.for_each(drop);
+        });
+        let ready = match ready_rx.recv_timeout(EDGE_START) {
+            Ok(Some(ready)) => ready,
+            outcome => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("the edge did not start: {outcome:?}");
+            }
+        };
         let field = |name: &str| {
             ready
                 .split_whitespace()
