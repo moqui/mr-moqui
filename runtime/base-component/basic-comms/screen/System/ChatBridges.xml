@@ -18,13 +18,25 @@ along with this software (see the LICENSE.md file). If not, see
     (the same idempotency key; an uncertain one may then arrive twice). Disable stops a bridge's deliveries and input; Enable
     lets the worker start it again. org.moqui.impl.ChatBridgeServices find#Bridges, store#Bridge and retry#Delivery, which need
     the ChatBridgeAdmin permission. A bridge is made and its rooms mapped by store#Bridge and store#RoomBridge; the networks'
-    own setup comes with their adapters (C4 on). basic-comms' MoquiConf.xml mounts this in the tools System app. -->
+    own setup comes with their adapters (C4 on). While the copies the chat actors migration kept (CHAT_*_PRE_C1) are there,
+    they are listed with Drop the old copies (get# and drop#PreC1Backups, each table's key and counts checked first).
+    basic-comms' MoquiConf.xml mounts this in the tools System app. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat Bridges" default-menu-index="21" menu-image="sym_o_hub" menu-image-type="icon">
 
     <transition name="setDisabled">
         <service-call name="org.moqui.impl.ChatBridgeServices.store#Bridge" in-map="{chatBridgeId:chatBridgeId, disabled:disabled}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Bridge changed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="dropPreC1Backups">
+        <service-call name="org.moqui.impl.ChatBridgeServices.drop#PreC1Backups" out-map="dropOut"/>
+        <actions><if condition="!ec.message.hasError()"><script><![CDATA[
+            const dropped = Array.from(dropOut?.droppedList || []).length
+            const kept = Array.from(dropOut?.keptList || []).length
+            ec.message.addMessage(ec.resource.expand('${dropped} old copies dropped', '', {dropped})
+                + (kept ? ' · ' + ec.resource.expand('${kept} kept: see why below', '', {kept}) : ''), kept ? 'warning' : 'success')
+        ]]></script></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="retryDelivery">
@@ -56,6 +68,19 @@ along with this software (see the LICENSE.md file). If not, see
             errorLine: [p.reasonCode, p.error].filter((part) => part).join(': '),
             whenText: when(p.lastAttemptDate) + (p.attemptCount ? ' · ' + p.attemptCount + ' ' + L(p.attemptCount === 1 ? 'attempt' : 'attempts') : ''),
         }))
+        // the copies the chat actors migration (C1) kept of the tables it rebuilt, while they are there
+        backupList = []
+        if (allowed) {
+            const backups = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.get#PreC1Backups').requireNewTransaction(true).call() || {}
+            if (ec.message.hasError()) { ec.logger.warn(`Chat bridges: the pre-C1 copies are left out: ${ec.message.errorsString}`); ec.message.clearErrors() }
+            backupList = Array.from(backups.backupList || []).map((b) => Object.assign({}, b, {
+                countText: ec.resource.expand('${backupRows} in the copy, ${tableRows} in the table now', '', b),
+                stateText: b.droppable ? L('Can be dropped') : b.reasonCode === 'notRebuilt' ? L('Kept: its table was not rebuilt')
+                    : L('Kept: its table has fewer rows than the copy; it may be the only one of them'),
+                stateColor: b.droppable ? 'positive' : 'warning',
+            }))
+        }
+        droppableCount = backupList.filter((b) => b.droppable).length
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-mb-sm">
@@ -101,6 +126,28 @@ along with this software (see the LICENSE.md file). If not, see
                         <columns type="mobile">
                             <column><field-ref name="messageText"/><field-ref name="bridgeName"/><field-ref name="errorLine"/></column>
                             <column><field-ref name="stateText"/><field-ref name="tools"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+            </widgets></section>
+            <section name="PreC1Backups" condition="backupList.length"><widgets>
+                <container style="row items-center q-mt-md">
+                    <label type="h6" text="Old copies from the chat actors migration" style="q-my-none"/>
+                    <container style="col"/>
+                    <section name="DropBackups" condition="droppableCount"><widgets>
+                        <link url="dropPreC1Backups" link-type="hidden-form-link" text="Drop the old copies" icon="sym_o_delete_sweep"
+                                confirmation="Drop the copies the migration kept of the chat tables it rebuilt? Each table is checked first; take a database backup if you may still need a rollback."/>
+                    </widgets></section>
+                </container>
+                <label type="p" style="m-muted" text="The migration to chat actors kept the old rows of the tables it rebuilt, for a rollback. Once the new build has run a while, drop them; a copy whose table has fewer rows than it stays."/>
+                <container-box><box-body-nopad>
+                    <form-list name="BackupList" list="backupList" skip-form="true" paginate="false">
+                        <field name="backupTable"><default-field title="Copy"><display style="text-weight-medium"/></default-field></field>
+                        <field name="countText"><default-field title="Rows"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><display style="text-${stateColor}"/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="backupTable"/><field-ref name="countText"/></column>
+                            <column><field-ref name="stateText"/></column>
                         </columns>
                     </form-list>
                 </box-body-nopad></container-box>

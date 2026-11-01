@@ -46,8 +46,10 @@ Open these ports on the firewall:
   refused; a channel to any other address or port is refused; nothing is relayed to or from another port of a media
   node's address (its SSH, database or HTTP port) or from any other address. A plain TURN credential would let a
   client relay anywhere; this rule ties it to calls. TURN relays only UDP here, so the ICE-TCP port is no relay peer.
-- The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215):
-  `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>` (`make#IceServers`), and such a relay may reach
+- The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215), issued
+  only while `xmpp_turn_enabled` is true (off by default), never to an external user (`EXTERNAL_USER`), and at most
+  `xmpp_turn_per_hour` (30) a user an hour: `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>`
+  (`make#IceServers`), and such a relay may reach
   public unicast addresses too, never loopback, private, unique-local, link-local, shared (100.64/10), multicast or
   documentation ranges, nor an IPv6 address carrying an inside IPv4 one (6to4, IPv4-compatible, NAT64, Teredo)
   (`moqui-rtc` `turn::is_public`), nor another port of a media node's address or of the TURN server's own address

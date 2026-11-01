@@ -344,6 +344,34 @@ impl EntityFacade {
         ))
     }
 
+    /// Drop a table that is no entity's (the backup [`Self::rekey_table`] keeps), in the database of `entity_name`'s
+    /// group, once its rows are no longer needed; false when there is no such table. The caller checks first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `table` is not a plain name or is the entity's own table, or the statement fails.
+    pub fn drop_backup_table(&self, entity_name: &str, table: &str) -> Result<bool, Error> {
+        if table.is_empty() || !table.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return Err(Error::new(format!("{table:?} is not a table name")));
+        }
+        if self.backup_table_rows(entity_name, table)?.is_none() {
+            return Ok(false);
+        }
+        let (dialect, own, tx) = self.with_group(entity_name, |entity, dialect, _, tx| {
+            Ok((dialect.clone(), physical_name(dialect, &entity.table_name), tx.clone()))
+        })?;
+        let name = physical_name(&dialect, table);
+        if name.eq_ignore_ascii_case(&own) {
+            return Err(Error::new(format!(
+                "{table} is the table of {entity_name}, not a backup"
+            )));
+        }
+        with_reserve_tx(&tx, |conn| {
+            execute_conn(conn, &format!("DROP TABLE {}", quote_ident(&dialect, &name)), &[])
+        })?;
+        Ok(true)
+    }
+
     /// The table of an entity as its database names it (`example` on Postgres for `EXAMPLE`); `None` for an entity
     /// not defined or a view.
     #[must_use]

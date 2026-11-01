@@ -34,7 +34,7 @@
 //! went, a 5xx other than 503) is `Uncertain` and is not sent again unless someone asks (`retry#Delivery`).
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use moqui_core::service::chat_bridge::{
@@ -44,8 +44,6 @@ use moqui_core::service::chat_bridge::{
 use moqui_lib::http::RestClient;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
-
-use crate::webhook::ReplayCache;
 
 const DEFAULT_API: &str = "https://api.telnyx.com";
 const DEFAULT_MAX_TEXT: usize = 1600;
@@ -133,7 +131,6 @@ pub struct TelnyxSms {
     /// Clients for public addresses only, and (a test's fake Telnyx, `allowInternalAddresses`) for any.
     public: OnceLock<RestClient>,
     internal: OnceLock<RestClient>,
-    pub(crate) replays: Mutex<ReplayCache>,
 }
 
 impl Default for TelnyxSms {
@@ -147,7 +144,6 @@ impl TelnyxSms {
         Self {
             public: OnceLock::new(),
             internal: OnceLock::new(),
-            replays: Mutex::new(ReplayCache::default()),
         }
     }
 
@@ -310,7 +306,11 @@ impl ChatBridgeAdapter for TelnyxSms {
     }
 
     fn webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
-        crate::webhook::handle(self, bridge, &Config::of(&bridge.config), request)
+        crate::webhook::handle(bridge, &Config::of(&bridge.config), request)
+    }
+
+    fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
+        crate::webhook::verify(bridge, &Config::of(&bridge.config), request)
     }
 
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -435,8 +435,16 @@ impl TelnyxSms {
             .client(config.allow_internal)
             .get(url)
             .timeout(Duration::from_secs(20))
+            // read no further than the bridge's bound (the client's own is the 20 MiB cap)
+            .max_response_bytes(max)
             .send(false)
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| {
+                if error.message().contains("larger than the limit") {
+                    format!("the file is over {max} bytes")
+                } else {
+                    error.message().to_string()
+                }
+            })?;
         if response.status() != 200 {
             return Err(format!("the file's address answered {}", response.status()));
         }

@@ -16,7 +16,17 @@
 //! `session::tests::every_advertised_feature_answers` sends a request for each one and checks it is served, so an
 //! advertised feature cannot be left without its handler (docs/interfaces/XMPP.md "What is served").
 
-use crate::ns;
+use crate::{ns, Config};
+
+/// Whether a feature of these lists is offered under `config`: software version (XEP-0092) only with a version to
+/// answer, external services (XEP-0215) only while TURN is on for XMPP (`xmpp_turn_enabled`).
+pub fn offered(config: &Config, var: &str) -> bool {
+    match var {
+        ns::VERSION => !config.software_version.is_empty(),
+        ns::EXTDISCO => config.turn_enabled,
+        _ => true,
+    }
+}
 
 /// The server's own JID (the domain).
 pub const SERVER: &[&str] = &[

@@ -69,8 +69,9 @@ struct Sasl2Request {
     resume: Option<(String, u32)>,
 }
 
-/// The key decoy salts are derived from, per process.
-fn decoy_key() -> &'static [u8; 32] {
+/// The key decoy salts are derived from when the server has none of its own ([`crate::Config::decoy_key`]), per
+/// process.
+fn process_decoy_key() -> &'static [u8; 32] {
     static KEY: OnceLock<[u8; 32]> = OnceLock::new();
     KEY.get_or_init(|| {
         let mut key = [0_u8; 32];
@@ -221,7 +222,12 @@ impl Session {
             None => (None, Vec::new()),
         };
         let binding = if plus { self.binding.clone() } else { None };
-        let (exchange, challenge) = ServerExchange::start(first, credentials, binding, decoy_key());
+        let decoy: &[u8] = if self.server.config.decoy_key.is_empty() {
+            process_decoy_key()
+        } else {
+            &self.server.config.decoy_key
+        };
+        let (exchange, challenge) = ServerExchange::start(first, credentials, binding, decoy);
         self.auth.pending = Some(Pending {
             sasl2,
             scram: exchange,

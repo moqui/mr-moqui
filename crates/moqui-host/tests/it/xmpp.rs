@@ -505,3 +505,105 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
     });
     assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
 }
+
+/// A PUT's request line and headers (and the start of its body) on a connection of its own, left open.
+fn put_open(http: SocketAddr, path: &str, headers: &str, body: &[u8]) -> std::net::TcpStream {
+    use std::io::Write as _;
+    let mut stream = std::net::TcpStream::connect(http).unwrap();
+    stream
+        .write_all(format!("PUT {path} HTTP/1.1\r\nHost: moqui.local\r\n{headers}Connection: close\r\n\r\n").as_bytes())
+        .unwrap();
+    stream.write_all(body).unwrap();
+    stream.flush().unwrap();
+    stream
+}
+
+/// The status of the response on `stream` within `wait`, or None when none came.
+fn status_within(stream: &mut std::net::TcpStream, wait: Duration) -> Option<u16> {
+    use std::io::Read as _;
+    stream.set_read_timeout(Some(wait)).unwrap();
+    let mut got = Vec::new();
+    let mut chunk = [0_u8; 512];
+    while !got.windows(2).any(|pair| pair == b"\r\n") {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => got.extend_from_slice(&chunk[..read]),
+        }
+    }
+    String::from_utf8_lossy(&got)
+        .split(' ')
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+}
+
+#[test]
+fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_put_once() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let started = Instant::now();
+    let gate = crate::common::start_with_files(
+        "xmpp-upload",
+        Some(DATA),
+        &[("xmpp_domain", "moqui.local"), ("xmpp_upload_seconds", "2")],
+        &[],
+    );
+    let http = gate.server.address();
+    let factory = Arc::clone(gate.server.factory());
+    let slot = |name: &str| {
+        let out = as_user(&factory, "xmpp.ann", || {
+            call(
+                "org.moqui.impl.XmppServices.create#UploadSlot",
+                &[
+                    ("fileName", Value::string(name)),
+                    ("fileSize", Value::I64(11)),
+                    ("contentType", Value::string("text/plain")),
+                ],
+            )
+        });
+        format!("/xmpp-upload/{}/{}", get(&out, "token"), get(&out, "urlName"))
+    };
+    let headers = "Content-Type: text/plain\r\nContent-Length: 11\r\n";
+
+    // an unknown token is answered before its body is sent
+    let mut unknown = put_open(http, "/xmpp-upload/notatoken/a.txt", headers, b"");
+    assert_eq!(status_within(&mut unknown, Duration::from_secs(5)), Some(404));
+    // a declared length that is not the slot's, likewise
+    let first = slot("first.txt");
+    let mut wrong = put_open(http, &first, "Content-Type: text/plain\r\nContent-Length: 12\r\n", b"");
+    assert_eq!(status_within(&mut wrong, Duration::from_secs(5)), Some(400));
+    // a body over the slot's size (chunked, so no length declares it) is refused at the slot's size, and leaves the slot open
+    let mut long = put_open(
+        http,
+        &first,
+        "Content-Type: text/plain\r\nTransfer-Encoding: chunked\r\n",
+        b"15\r\nhello world, and more\r\n0\r\n\r\n",
+    );
+    assert_eq!(status_within(&mut long, Duration::from_secs(5)), Some(413));
+    // a body that stops short past the deadline (xmpp_upload_seconds 2) is 408, and the slot stays open
+    let mut slow = put_open(http, &first, headers, b"hello");
+    assert_eq!(status_within(&mut slow, Duration::from_secs(5)), Some(408));
+
+    // two PUTs at once: the first holds the slot's row while its body comes; the second waits for it, then finds the
+    // slot done
+    let mut one = put_open(http, &first, headers, b"hello");
+    std::thread::sleep(Duration::from_millis(300));
+    let mut two = put_open(http, &first, headers, b"other words");
+    assert_eq!(
+        status_within(&mut two, Duration::from_millis(400)),
+        None,
+        "the second waits for the first"
+    );
+    {
+        use std::io::Write as _;
+        one.write_all(b" world").unwrap();
+    }
+    assert_eq!(status_within(&mut one, Duration::from_secs(5)), Some(201));
+    assert_eq!(status_within(&mut two, Duration::from_secs(5)), Some(409));
+    let fetched = crate::common::exchange(
+        http,
+        &format!("GET {first} HTTP/1.1\r\nHost: moqui.local\r\nConnection: close\r\n\r\n"),
+    );
+    assert_eq!((fetched.0, fetched.2.as_str()), (200, "hello world"));
+    assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
+}

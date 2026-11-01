@@ -21,6 +21,8 @@
 //!   At most [`PER_SOURCE`] connections from one address at once and [`MAX_CONNECTIONS`] in all, WebSockets included.
 //!   `/xmpp-websocket` (RFC 7395) on the HTTP listener
 //!   when `xmpp_websocket_enabled` ([`ws`]), and `/xmpp-upload/` for files ([`upload`]).
+//! - **Settings.** External services (XEP-0215) hand out TURN credentials only with `xmpp_turn_enabled`; the SCRAM salts
+//!   of unknown users derive from `xmpp_scram_decoy_key` (generated when unset), so they stay the same across restarts.
 //! - **The backend.** Each service the session names runs on a request worker ([`crate::worker`]): as the signed-in
 //!   user, logged in by username (`internal_login_user`, which refuses a disabled account), or as internal work.
 //! - **Pushes.** A subscription to the notification bus's `notification-message` topic, as `/notws` has, hands every
@@ -162,6 +164,13 @@ pub(crate) fn config() -> Option<Config> {
     config.resume_timeout = Duration::from_secs(number("xmpp_resume_seconds", 300_u64).clamp(0, 3600));
     config.fast_token_lifetime = Duration::from_secs(number("xmpp_fast_token_days", 14_u64).clamp(1, 365) * 86_400);
     config.software_version = env!("CARGO_PKG_VERSION").to_string();
+    config.turn_enabled = property("xmpp_turn_enabled") == "true";
+    let decoy = property("xmpp_scram_decoy_key");
+    if decoy.is_empty() || decoy.ends_with("CHANGEME") {
+        tracing::warn!("XMPP: xmpp_scram_decoy_key is not set; unknown users' SCRAM salts change with each start");
+    } else {
+        config.decoy_key = decoy.into_bytes();
+    }
     Some(config)
 }
 
@@ -175,15 +184,13 @@ pub(crate) fn routes(
     app: axum::Router<Arc<crate::http::HttpState>>,
     factory: &ExecutionContextFactory,
 ) -> axum::Router<Arc<crate::http::HttpState>> {
-    let Some(server) = server_of(factory) else {
+    if server_of(factory).is_none() {
         return app;
-    };
-    let most = usize::try_from(server.config.upload_max_bytes)
-        .unwrap_or(usize::MAX)
-        .saturating_add(1024);
+    }
+    // a PUT's body is read only after its slot is checked, and never past the slot's size (upload.rs)
     let app = app.route(
         &format!("{}{{token}}/{{name}}", upload::PREFIX),
-        axum::routing::any(upload::handle).layer(axum::extract::DefaultBodyLimit::max(most)),
+        axum::routing::any(upload::handle),
     );
     if property("xmpp_websocket_enabled") == "true" {
         tracing::info!("XMPP over WebSocket at {}", ws::PATH);

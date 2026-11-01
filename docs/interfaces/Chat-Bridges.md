@@ -49,11 +49,15 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit). Each implementation narrows these to the API version it verified. |
 | `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
 | `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room, the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
-| `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers 404. |
+| `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers as an unsigned request (`WebhookResponse::not_signed`). |
+| `verify_webhook` | The signature step alone, for a disabled bridge: whether the request is the network's. The default refuses every request. |
 | `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. |
 
-The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge or one with no adapter
-404, a disabled one 503), `media_url` and `media` (a file of a message that goes out by address, signed under
+The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge, one with no adapter
+and a disabled one to anyone but its network answer as an unsigned request does, 401, so bridge ids cannot be probed; a
+disabled one answers its network, by its signature, 503), `replay_take` and `replay_finish` (the webhooks' replay cache:
+the distributed `moqui.security.hmac.replay` the system-message HMAC check uses, so a copy that reaches another node is
+caught there once that cache is shared; until a distributed cache is configured it is the node's own), `media_url` and `media` (a file of a message that goes out by address, signed under
 `channels_media_key` for one bridge and an expiry, served only for a message delivered to that bridge),
 `store#BridgeMedia` and `send#BridgeDirect` (one message straight to an adapter outside any room, no delivery row: the
 system's sign-in codes by SMS).
@@ -147,6 +151,13 @@ configuration is encrypted and never returned; the inbound token is kept only as
 mapping of an external room per bridge; no direct conversation) and `end#RoomBridge`. System, Chat Bridges lists the
 bridges and the failed deliveries with Send again, and disables or enables a bridge.
 
+While the copies the chat actors migration kept are there (`CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1`,
+`CHAT_POLL_VOTE_PRE_C1`), System, Chat Bridges lists them with their rows and the table's (`get#PreC1Backups`) and has
+Drop the old copies (`drop#PreC1Backups`, both `ChatBridgeAdmin`, in `chat_migrate.rs`). Each table is checked again
+first: a copy goes only when its table is on its new key with at least the copy's rows; one whose table has fewer rows
+(a rebuild cut off) stays, named with why, as it may be the only copy of them. A copy that fails to drop is logged and
+the rest go on.
+
 ## Tests
 
 - `crates/moqui-core/src/service/chat_bridge_tests.rs`: an in-memory adapter registered only in the tests, with crash and
@@ -156,7 +167,10 @@ bridges and the failed deliveries with Send again, and disables or enables a bri
   admin list and sent again), duplicate batches and echo loops between two networks, reordered edits, a reaction and a
   stale edit, a whole batch refused for security and malformed items rejected by name, an unsupported edit refused before
   the change.
-- `crates/moqui-host/tests/it/chat_actors.rs`: the migration on embedded Postgres (below).
+- `crates/moqui-host/tests/it/chat_actors.rs`: the migration on embedded Postgres (below), then the copies: refused to a
+  user without `ChatBridgeAdmin`, the two whose tables hold their rows dropped, the emptied table's copy kept.
+- `crates/moqui-channels/src/tests.rs`: an unknown and a disabled bridge answering as an unsigned request, the
+  disabled one its network 503; a webhook's replay held in the shared replay cache.
 - `crates/moqui-host/tests/it/lock_then_insert.rs`: racing first joins make one actor.
 - `basic-comms/test/BasicCommsBridges.spec.js`: a bridged room that is not connected in the browser, the terminal and the
   admin screen, and who may retry and administer.

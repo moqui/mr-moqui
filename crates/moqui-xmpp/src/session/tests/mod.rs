@@ -36,9 +36,13 @@ use fake::{Fake, JANE_PASSWORD, JOHN_PASSWORD};
 const EXPORTER: [u8; 32] = [9; 32];
 
 fn server() -> (Arc<Server>, Arc<Fake>) {
-    let fake = Fake::new();
     let mut config = Config::for_domain("moqui.local");
     config.software_version = "test".to_string();
+    server_with(config)
+}
+
+fn server_with(config: Config) -> (Arc<Server>, Arc<Fake>) {
+    let fake = Fake::new();
     let server = Server::new(config, Arc::clone(&fake) as Arc<dyn crate::backend::Backend>);
     let _ = fake.server.set(Arc::downgrade(&server));
     (server, fake)
@@ -570,7 +574,11 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
 
 #[tokio::test]
 async fn every_advertised_feature_answers() {
-    let (server, _) = server();
+    // TURN on for XMPP (xmpp_turn_enabled), so external services (XEP-0215) are advertised too
+    let mut config = Config::for_domain("moqui.local");
+    config.software_version = "test".to_string();
+    config.turn_enabled = true;
+    let (server, _) = server_with(config);
     let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
     // the probe of each feature the server and the account advertise; none may answer service-unavailable
     let probes: &[(&str, &str)] = &[
@@ -596,10 +604,12 @@ async fn every_advertised_feature_answers() {
         .chain(crate::features::ROOMS)
         .chain(crate::features::UPLOAD)
         .copied()
+        .filter(|var| crate::features::offered(&server.config, var))
         .filter(|var| {
             !var.starts_with("http://jabber.org/protocol/pubsub#") && *var != ns::MAM_EXTENDED && *var != ns::SID
         })
         .collect();
+    assert!(advertised.contains(&ns::EXTDISCO));
     for var in advertised {
         let Some((_, probe)) = probes.iter().find(|(probed, _)| *probed == var) else {
             panic!("no probe for the advertised feature {var}");
@@ -623,6 +633,104 @@ async fn every_advertised_feature_answers() {
     assert!(slot.contains("https://moqui.local/xmpp-upload/tok123/a.jpg"), "{slot}");
     let big = text_of(&john.send("<iq type='get' id='u2' to='upload.moqui.local'><request xmlns='urn:xmpp:http:upload:0' filename='a.bin' size='999999999'/></iq>").await);
     assert!(big.contains("file-too-large"), "{big}");
+}
+
+/// The features a server's service discovery answers.
+async fn disco_features(client: &mut Client) -> Vec<String> {
+    let out = client
+        .send("<iq type='get' id='d' to='moqui.local'><query xmlns='http://jabber.org/protocol/disco#info'/></iq>")
+        .await;
+    let query = find(&out, "iq", ns::CLIENT)
+        .and_then(|iq| iq.get_child("query", ns::DISCO_INFO))
+        .unwrap_or_else(|| panic!("{}", text_of(&out)));
+    query
+        .children()
+        .filter(|child| child.name() == "feature")
+        .filter_map(|child| child.attr("var").map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn turn_for_xmpp_is_off_by_default_and_then_neither_advertised_nor_issued() {
+    // off (xmpp_turn_enabled false, the default): the server's features have no XEP-0215, and a client that asks
+    // anyway gets an empty list, without the TURN service being asked
+    let (server, fake) = server();
+    assert!(!server.config.turn_enabled);
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let features = disco_features(&mut john).await;
+    assert!(features.iter().any(|var| var == ns::DISCO_INFO), "{features:?}");
+    assert!(!features.iter().any(|var| var == ns::EXTDISCO), "{features:?}");
+    // what is advertised is what `features::offered` lets through, so the advertise check covers it
+    let offered: Vec<&str> = crate::features::SERVER
+        .iter()
+        .copied()
+        .filter(|var| crate::features::offered(&server.config, var))
+        .collect();
+    assert_eq!(features, offered);
+    let ice = text_of(
+        &john
+            .send("<iq type='get' id='e'><services xmlns='urn:xmpp:extdisco:2'/></iq>")
+            .await,
+    );
+    assert!(ice.contains("type='result'") && !ice.contains("<service "), "{ice}");
+    assert!(!fake
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .any(|call| call == crate::backend::services::ICE_SERVERS));
+
+    // on: advertised, and the service's list handed on (the service itself refuses external users and a user past
+    // the hour's rate, with an empty list: XmppServices.spec.js)
+    let mut config = Config::for_domain("moqui.local");
+    config.turn_enabled = true;
+    let (server, _) = server_with(config);
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    assert!(disco_features(&mut john).await.iter().any(|var| var == ns::EXTDISCO));
+    let ice = text_of(
+        &john
+            .send("<iq type='get' id='e'><services xmlns='urn:xmpp:extdisco:2'/></iq>")
+            .await,
+    );
+    assert!(ice.contains("turn.moqui.local"), "{ice}");
+}
+
+/// The salt the server gives an unknown user in the SCRAM challenge.
+async fn decoy_salt(server: &Arc<Server>, username: &str) -> String {
+    let mut client = Client::new(server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    client.open().await;
+    let (_, first) = ClientExchange::new(username, "not-a-password", Some(EXPORTER.to_vec()));
+    let out = client
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='SCRAM-SHA-256-PLUS'><initial-response>{}</initial-response></authenticate>",
+            STANDARD.encode(first)
+        ))
+        .await;
+    let challenge = find(&out, "challenge", ns::SASL2).unwrap_or_else(|| panic!("{}", text_of(&out)));
+    let text = String::from_utf8(STANDARD.decode(challenge.text()).unwrap()).unwrap();
+    text.split(',')
+        .find_map(|part| part.strip_prefix("s="))
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn an_unknown_users_salt_is_the_same_from_a_restarted_server_with_the_same_key() {
+    // xmpp_scram_decoy_key: two servers (a restart, or two nodes) with the same key give an unknown name the same salt;
+    // another key gives another
+    let config = |key: &[u8]| {
+        let mut config = Config::for_domain("moqui.local");
+        config.decoy_key = key.to_vec();
+        config
+    };
+    let (first, _) = server_with(config(b"the deployment's decoy key"));
+    let (restarted, _) = server_with(config(b"the deployment's decoy key"));
+    let (other, _) = server_with(config(b"another deployment's key"));
+    let salt = decoy_salt(&first, "nobody").await;
+    assert_eq!(salt, decoy_salt(&restarted, "nobody").await);
+    assert_ne!(salt, decoy_salt(&other, "nobody").await);
+    assert_ne!(salt, decoy_salt(&first, "somebody.else").await);
 }
 
 /// Stanzas for other servers, kept.

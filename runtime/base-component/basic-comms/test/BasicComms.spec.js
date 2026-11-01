@@ -2,7 +2,7 @@
 // static data) and in tui; the screens render the same under an app's own mount (IronStone's /qapps/Comms, when it is
 // installed) with that app's extensions, and the launcher has one Comms; a user with no party (users only) uses the mail
 // settings; the user search leaves out disabled and system accounts; the provider hooks answer for the apps the user may
-// open, and a hook nobody declares is unavailable.
+// open, and a hook nobody declares is unavailable; Settings, Chat apps says which app passwords work with XMPP apps.
 // Run: ./moq test basic-comms --spec BasicComms
 const root = "component://basic-comms/screen/BasicComms.xml"
 const webroot = "component://webroot/screen/webroot.xml"
@@ -268,5 +268,48 @@ feature("the component calls no Mantle or IronStone service, reads no Mantle ent
     },
     then({problems}) {
         problems.join("\n") == ""
+    }
+})
+
+feature("Chat apps says which app passwords work with XMPP apps and offers a new one for XMPP, in qvt and tui", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.spec")
+        sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
+        // an app password from before XMPP sign-in (no SCRAM verifiers), and one made now
+        const older = sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Old tablet"})).appPasswordId
+        sys(() => {
+            const row = ec.entity.find("moqui.security.UserAppPassword").condition("appPasswordId", older).one()
+            row.setFields({scramSalt: null, scramIterations: null, scramStoredKeys: null, scramServerKeys: null}, true, null, null)
+            row.update()
+        })
+        sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Phone chat"}))
+        const served = withProperty("xmpp_domain", "moqui.local", () => ({
+            qvt: render(root, "Settings/ChatApps", "qvt", {}),
+            tui: render(root, "Settings/ChatApps", "tui", {}),
+            settings: sys(() => call("org.moqui.impl.XmppServices.get#ClientSettings", {}))
+        }))
+        // the terminal renders the sections that show (the qvt page carries both, for the browser to choose)
+        const off = withProperty("xmpp_domain", "", () => render(root, "Settings/ChatApps", "tui", {}))
+        sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
+        login("john.doe")
+        return {served, off}
+    },
+    then({served, off}) {
+        served.qvt.status == 200
+        !served.qvt.broken
+        served.qvt.output.includes("New app password for XMPP")
+        served.qvt.output.includes("basic.comms.spec@moqui.local")
+        served.qvt.output.includes("Works with XMPP apps")
+        served.qvt.output.includes("Made before XMPP sign-in")
+        served.tui.status == 200
+        !served.tui.broken
+        served.tui.output.includes("Works with XMPP apps")
+        served.tui.output.includes("Made before XMPP sign-in")
+        served.settings.appPasswordList.length == 2
+        served.settings.readyCount == 1
+        served.settings.jid == "basic.comms.spec@moqui.local"
+        off.status == 200
+        off.output.includes("not set up on this server")
+        !off.output.includes("New app password for XMPP")
     }
 })

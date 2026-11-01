@@ -17,8 +17,13 @@
 //!
 //! - [`webhook`]: a request to `/channels/{chatBridgeId}/webhook`, handed to the bridge's adapter
 //!   ([`super::ChatBridgeAdapter::webhook`]) with its raw body, which the adapter checks (a signature over the bytes, a replay
-//!   window) before it parses anything. An unknown bridge, or one whose adapter this build lacks, is 404; a disabled one
-//!   503, so the network tries again once it is enabled.
+//!   window) before it parses anything. An unknown bridge, or one whose adapter this build lacks, answers as a request
+//!   with no signature does (401, [`WebhookResponse::not_signed`]); a disabled one checks the signature first
+//!   ([`super::ChatBridgeAdapter::verify_webhook`]) and answers its network 503, so the network tries again once it is
+//!   enabled, and anyone else as an unknown bridge: no bridge id can be told from another by its answers.
+//! - [`replay_take`] and [`replay_finish`]: the webhooks' replay cache, the distributed cache the system-message HMAC
+//!   check uses (`moqui.security.hmac.replay`), so a copy of a request is caught on every node that cache reaches (it
+//!   stays on its node until a distributed cache is configured, as for the HMAC check: docs/security/Proof-Tests.md).
 //! - [`media_url`] and [`media`]: a file of a message that goes out by address (MMS), at
 //!   `/channels/{chatBridgeId}/media/{token}` under `channels_public_url`. The token names the `ChatAttachment` and an
 //!   expiry, signed with HMAC-SHA-256 under `channels_media_key`; only a file of a message delivered to that bridge is
@@ -142,6 +147,86 @@ impl WebhookResponse {
             ..Self::text(status, text)
         }
     }
+
+    /// The one answer to a request whose signature is missing, out of its window or wrong, and to any request to an
+    /// unknown bridge, one whose adapter this build lacks, or a disabled one (before its network's signature): 401,
+    /// counted by web protection.
+    pub fn not_signed() -> Self {
+        Self::refused(401, "not signed")
+    }
+}
+
+// ---- the replay cache ----
+
+/// The distributed cache the system-message HMAC check keeps its signatures in; a webhook's go there too.
+const REPLAY_CACHE: &str = "moqui.security.hmac.replay";
+
+/// What the replay cache knows of a webhook's signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Replay {
+    /// Not seen in the window: it is now held for this request.
+    New,
+    /// Taken by another request (on any node) that is still being worked.
+    Working,
+    /// Its request was worked.
+    Done,
+}
+
+fn replay_cache() -> Result<moqui_lib::cache::MCache<String, Value>, String> {
+    crate::context::ExecutionContext::with_current(|ec| ec.factory().cache().get(REPLAY_CACHE))
+        .ok_or("no execution context is entered")?
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("cache {REPLAY_CACHE} is not configured"))
+}
+
+fn replay_key(bridge_id: &str, signature: &str) -> String {
+    format!("chatBridge:{bridge_id}:{}", signature.trim())
+}
+
+/// The replay window a webhook can have: `wanted_ms`, or the replay cache's live time when that is shorter (a
+/// signature must be held for as long as its timestamp is taken).
+pub fn replay_window_ms(wanted_ms: i64) -> i64 {
+    match replay_cache().map(|cache| cache.info().expire_live_ms) {
+        Ok(live) if live > 0 => wanted_ms.min(live),
+        _ => wanted_ms,
+    }
+}
+
+/// Whether `signature` was taken on bridge `bridge_id` within the cache's live time; when not, it is held from now
+/// (one atomic check and store, so two copies at once are not both worked).
+///
+/// # Errors
+///
+/// Returns why the cache could not be read (strict: the caller refuses the request).
+pub fn replay_take(bridge_id: &str, signature: &str) -> Result<Replay, String> {
+    let cache = replay_cache()?;
+    let key = replay_key(bridge_id, signature);
+    if cache
+        .put_if_absent(key.clone(), Value::Bool(false))
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(Replay::New);
+    }
+    Ok(match cache.get(&key).map_err(|error| error.to_string())? {
+        Some(Value::Bool(true)) => Replay::Done,
+        _ => Replay::Working,
+    })
+}
+
+/// The request of `signature` was worked (`true`: kept as done) or not (`false`: let go, so the network's retry goes
+/// through). A failure is logged.
+pub fn replay_finish(bridge_id: &str, signature: &str, worked: bool) {
+    let key = replay_key(bridge_id, signature);
+    let done = replay_cache().and_then(|cache| {
+        if worked {
+            cache.put(key, Value::Bool(true)).map_err(|error| error.to_string())
+        } else {
+            cache.remove(&key).map(|_| ()).map_err(|error| error.to_string())
+        }
+    });
+    if let Err(error) = done {
+        tracing::warn!("chat bridge {bridge_id}: a webhook's replay entry was not kept: {error}");
+    }
 }
 
 /// A file fetched from a network.
@@ -160,9 +245,11 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     let row = facade
         .find(BRIDGE)
         .and_then(|find| find.eq("chatBridgeId", Value::string(bridge_id)).disable_authz().one());
+    // an unknown bridge, one with no adapter here, and a disabled one before its network's signature all answer as an
+    // unsigned request does, so bridge ids cannot be probed
     let row = match row {
         Ok(Some(row)) => row,
-        Ok(None) => return WebhookResponse::text(404, "no such bridge"),
+        Ok(None) => return WebhookResponse::not_signed(),
         Err(error) => {
             tracing::error!("chat bridge {bridge_id}: its webhook could not read the bridge: {error}");
             return WebhookResponse::text(500, "the bridge could not be read");
@@ -170,10 +257,15 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     };
     let info = bridge_info(&row);
     let Some(adapter) = adapter_of(factory, &facade, &info) else {
-        return WebhookResponse::text(404, "no such bridge");
+        return WebhookResponse::not_signed();
     };
     if text_of(&row, "statusId").as_deref() == Some("CbsDisabled") {
-        return WebhookResponse::text(503, "the bridge is disabled");
+        let verified = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.verify_webhook(&info, request)));
+        return match verified {
+            Ok(None) => WebhookResponse::text(503, "the bridge is disabled"),
+            Ok(Some(refused)) => refused,
+            Err(_) => WebhookResponse::not_signed(),
+        };
     }
     // what `ingest#Event` `transportVerified` asks for: only a batch of the bridge whose webhook this context is working
     // goes in without a token (a parameter alone, from any caller, is refused)

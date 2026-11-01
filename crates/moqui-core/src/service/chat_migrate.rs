@@ -26,6 +26,9 @@
 //!    A table with a row that has no actor is not rebuilt (strict: no row is dropped); one already on the new key is
 //!    left alone.
 //! 4. The references are checked: every actor a row names exists and is the actor of the row's user.
+//!
+//! `get#PreC1Backups` and `drop#PreC1Backups` (the ChatBridgeAdmin permission; System, Chat Bridges) list the
+//! `<table>_PRE_C1` copies and drop the ones whose table is on its new key with at least the copy's rows.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -40,6 +43,8 @@ pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, migrate_chat_actors)?;
+    rust_service!(map, get_pre_c1_backups)?;
+    rust_service!(map, drop_pre_c1_backups)?;
     Ok(())
 }
 
@@ -304,5 +309,117 @@ fn migrate_chat_actors(
             "problemList".to_string(),
             Value::List(problems.into_iter().map(Value::string).collect()),
         ),
+    ]))
+}
+
+/// The permission the backups need (the chat bridges' administrators: ADMIN has it).
+const BACKUP_ADMIN: &str = "ChatBridgeAdmin";
+
+/// A backup of [`REKEYED`] as it is now: (entity, backup table, the backup's rows, the table's rows, why it must stay).
+type BackupState = (&'static str, &'static str, u64, u64, Option<&'static str>);
+
+/// The backups the migration kept that are still there, each with whether it may go: only once its table is on the new
+/// key and holds at least the backup's rows (a rebuild cut off leaves fewer, and then the backup is the only copy).
+fn pre_c1_backups(facade: &EntityFacade) -> Result<Vec<BackupState>, LibError> {
+    let mut found = Vec::new();
+    for (entity, backup) in REKEYED {
+        let Some(kept) = facade.backup_table_rows(entity, backup)? else {
+            continue;
+        };
+        let rekeyed = facade
+            .table_primary_key(entity)?
+            .iter()
+            .any(|column| column.replace('_', "").eq_ignore_ascii_case("chatactorid"));
+        let rows = facade.find(entity)?.disable_authz().count()?;
+        let rows = u64::try_from(rows).unwrap_or(0);
+        let reason = if !rekeyed {
+            Some("notRebuilt")
+        } else if rows < kept {
+            Some("fewerRows")
+        } else {
+            None
+        };
+        found.push((entity, backup, kept, rows, reason));
+    }
+    Ok(found)
+}
+
+fn backup_admin() -> Result<(), LibError> {
+    if crate::user::has_permission(BACKUP_ADMIN).map_err(|error| LibError::new(error.message().to_string()))? {
+        Ok(())
+    } else {
+        Err(LibError::new(
+            "The pre-C1 copies are for administrators (ChatBridgeAdmin)",
+        ))
+    }
+}
+
+fn backup_value(state: &BackupState) -> Value {
+    let (entity, backup, kept, rows, reason) = *state;
+    let mut map = indexmap::IndexMap::new();
+    map.insert("entityName".to_string(), Value::string(entity));
+    map.insert("backupTable".to_string(), Value::string(backup));
+    map.insert(
+        "backupRows".to_string(),
+        Value::I64(i64::try_from(kept).unwrap_or(i64::MAX)),
+    );
+    map.insert(
+        "tableRows".to_string(),
+        Value::I64(i64::try_from(rows).unwrap_or(i64::MAX)),
+    );
+    map.insert("droppable".to_string(), Value::Bool(reason.is_none()));
+    map.insert("reasonCode".to_string(), reason.map_or(Value::Null, Value::string));
+    Value::Map(map)
+}
+
+/// `get#PreC1Backups` (ChatBridgeAdmin): the copies the C1 migration kept that are still there. Out: backupList
+/// [{entityName, backupTable, backupRows, tableRows, droppable, reasonCode (notRebuilt, fewerRows)}].
+fn get_pre_c1_backups(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    backup_admin()?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let list = pre_c1_backups(facade)?.iter().map(backup_value).collect();
+    Ok(BTreeMap::from([("backupList".to_string(), Value::List(list))]))
+}
+
+/// `drop#PreC1Backups` (ChatBridgeAdmin): drop each copy whose table is on its new key with at least the copy's rows;
+/// the others stay, each named with why. One that fails is logged and the rest go on. Out: droppedList (the backup
+/// tables dropped), keptList (as get#PreC1Backups lists them).
+fn drop_pre_c1_backups(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    backup_admin()?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut dropped = Vec::new();
+    let mut kept = Vec::new();
+    for state in pre_c1_backups(facade)? {
+        let (entity, backup, rows_kept, rows, reason) = state;
+        if let Some(reason) = reason {
+            tracing::warn!("chat actors: {backup} is kept: {entity} has {rows} rows, the copy {rows_kept} ({reason})");
+            kept.push(backup_value(&state));
+            continue;
+        }
+        match facade.drop_backup_table(entity, backup) {
+            Ok(_) => {
+                tracing::info!("chat actors: {backup} dropped ({entity} has {rows} rows, the copy had {rows_kept})");
+                dropped.push(Value::string(backup));
+            }
+            Err(error) => {
+                tracing::error!("chat actors: {backup} was not dropped: {error}");
+                let mut value = backup_value(&state);
+                if let Value::Map(map) = &mut value {
+                    map.insert("reasonCode".to_string(), Value::string("dropFailed"));
+                    map.insert("droppable".to_string(), Value::Bool(false));
+                }
+                kept.push(value);
+            }
+        }
+    }
+    Ok(BTreeMap::from([
+        ("droppedList".to_string(), Value::List(dropped)),
+        ("keptList".to_string(), Value::List(kept)),
     ]))
 }

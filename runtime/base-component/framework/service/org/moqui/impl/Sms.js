@@ -13,8 +13,9 @@
 // deployment and the user (VoicePolicy, VoiceUserSetting, as for calls), the person must not have opted out (STOP), and the
 // day's limits (VoicePolicy smsMaxPerUserPerDay and smsMaxPerDay, counted in SmsSendCount) must allow it. The system's own
 // texts (a sign-in code, send#SmsMessage) go from VoicePolicy.smsSystemNumber straight to the provider (send#BridgeDirect)
-// with the same checks, and are kept in no room. A promotional text needs a yes from an sms-consent provider (Mantle's
-// consent records); with none it is refused.
+// with the same checks, and are kept in no room; they have a daily budget of their own (smsSystemMaxPerDay, counted apart
+// from the users' texts), so users cannot use up what sign-in codes need. A promotional text needs a yes from an
+// sms-consent provider (Mantle's consent records); with none it is refused.
 
 const VOICE = 'component://framework/service/org/moqui/impl/Voice.js'
 const NUMBER = 'moqui.call.PhoneNumber'
@@ -32,7 +33,7 @@ const BRIDGE = 'moqui.chat.ChatBridge'
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT', 'REVOKE']
 const START_WORDS = ['START', 'UNSTOP', 'YES', 'OPTIN']
 const HELP_WORDS = ['HELP', 'INFO']
-const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000 }
+const DEFAULT_LIMITS = { smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500 }
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -307,26 +308,30 @@ function checkSend(p) {
   const limits = smsPolicy()
   const reserve = p.reserve === true || p.reserve === 'true' || p.reserve === 'Y'
   const userKey = userId ? 'user:' + userId : 'system'
+  // the users' texts count toward their own and all users' limits; the system's (sign-in codes) toward a budget of their
+  // own, which the users' texts do not touch
+  const lockKey = userId ? 'all' : 'system'
   const day = today()
-  // reserve: the check and the count are one step, under the lock of the day's deployment count (made at 0 when there is
-  // none yet), so sends at once cannot pass a limit together; the caller lets the count go (release#SmsSend) when the text
-  // does not reach the provider
-  if (reserve && !find(COUNT).condition({ counterKey: 'all', dayDate: day }).forUpdate(true).one()) {
+  // reserve: the check and the count are one step, under the lock of the day's count of all users' texts or of the
+  // system's (made at 0 when there is none yet), so sends at once cannot pass a limit together; the caller lets the count
+  // go (release#SmsSend) when the text does not reach the provider
+  if (reserve && !find(COUNT).condition({ counterKey: lockKey, dayDate: day }).forUpdate(true).one()) {
     const first = ec.entity.makeValue(COUNT)
-    first.setFields({ counterKey: 'all', dayDate: day, sentCount: 0 }, true, null, null)
+    first.setFields({ counterKey: lockKey, dayDate: day, sentCount: 0 }, true, null, null)
     first.create()
   }
-  if (sentToday(userKey, day) >= (userId ? limits.smsMaxPerUserPerDay : limits.smsMaxPerDay) || sentToday('all', day) >= limits.smsMaxPerDay) {
-    return no('dailyLimit', 'The limit of texts for a day is reached')
-  }
+  const over = userId
+    ? sentToday(userKey, day) >= limits.smsMaxPerUserPerDay || sentToday('all', day) >= limits.smsMaxPerDay
+    : sentToday('system', day) >= limits.smsSystemMaxPerDay
+  if (over) return no('dailyLimit', 'The limit of texts for a day is reached')
   if (reserve) countSent(userKey, day, 1)
   return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass,
     counterDay: reserve ? day : null }
 }
 
-/** Add delta to the day's counts of counterKey and of the deployment (all), never below 0. */
+/** Add delta to the day's counts of counterKey and, for a user's text, of all users (all), never below 0. */
 function countSent(userKey, day, delta) {
-  for (const counterKey of [userKey, 'all']) {
+  for (const counterKey of userKey === 'system' ? ['system'] : [userKey, 'all']) {
     const row = find(COUNT).condition({ counterKey, dayDate: day }).forUpdate(true).one()
     if (row) {
       row.setFields({ sentCount: Math.max(0, Number(row.sentCount || 0) + delta), lastSentDate: ec.user.nowTimestamp }, true, null, null)
@@ -339,7 +344,7 @@ function countSent(userKey, day, delta) {
   }
 }
 
-/** Internal: a text went to the provider (taken, or not known): it counts for the sender's and the deployment's day. */
+/** Internal: a text went to the provider (taken, or not known): it counts for the sender's day (a user's, and all users'; or the system's). */
 function noteSent(p) {
   countSent(blank(p.userId) ? 'system' : 'user:' + p.userId, today(), 1)
   return {}

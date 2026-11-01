@@ -31,6 +31,9 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="MIG_ANN" username="mig.ann" userFullName="Ann Migrate"/>
     <moqui.security.UserAccount userId="MIG_BEN" username="mig.ben" userFullName="Ben Migrate"/>
     <moqui.security.UserAccount userId="MIG_CAL" username="mig.cal" userFullName="Cal Migrate"/>
+    <moqui.security.UserPermission userPermissionId="ChatBridgeAdmin" description="Set up chat bridges"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatBridgeAdmin" fromDate="0"/>
+    <moqui.security.UserGroupMember userGroupId="ADMIN" userId="MIG_ANN" fromDate="0"/>
 </entity-facade-xml>"#;
 
 const CHAT: &str = "org.moqui.impl.ChatServices";
@@ -319,4 +322,65 @@ fn old_chat_rows_move_to_actors_and_keep_their_counts() {
     let cut = as_user(&factory, "mig.ann", || call(&format!("{CHAT}.migrate#ChatActors"), &[]));
     assert_eq!(get(&cut, "failedCount"), "1", "{cut:?}");
     assert!(get(&cut, "problemList").contains("ChatEventMention: empty"), "{cut:?}");
+
+    // the copies: an administrator drops the ones whose table is on its new key with at least the copy's rows; the
+    // emptied mention table's copy stays (it may be the only one of its rows). Someone else is refused, with the same
+    // (no) parameters, and nothing is dropped.
+    let refused = as_user(&factory, "mig.ben", || {
+        call_refused("org.moqui.impl.ChatBridgeServices.drop#PreC1Backups")
+    });
+    assert!(refused.contains("administrators"), "{refused}");
+    assert_eq!(
+        scalar(&factory, "SELECT COUNT(*) FROM chat_room_member_pre_c1"),
+        members_before
+    );
+    let listed = as_user(&factory, "mig.ann", || {
+        call("org.moqui.impl.ChatBridgeServices.get#PreC1Backups", &[])
+    });
+    let listed = get(&listed, "backupList");
+    assert!(
+        listed.contains("CHAT_EVENT_MENTION_PRE_C1") && listed.contains("fewerRows"),
+        "{listed}"
+    );
+    let dropped = as_user(&factory, "mig.ann", || {
+        call("org.moqui.impl.ChatBridgeServices.drop#PreC1Backups", &[])
+    });
+    let (gone, kept) = (get(&dropped, "droppedList"), get(&dropped, "keptList"));
+    assert!(
+        gone.contains("CHAT_ROOM_MEMBER_PRE_C1") && gone.contains("CHAT_POLL_VOTE_PRE_C1"),
+        "{gone}"
+    );
+    assert!(
+        kept.contains("CHAT_EVENT_MENTION_PRE_C1") && !gone.contains("MENTION"),
+        "{kept}"
+    );
+    let exists = |table: &str| {
+        scalar(
+            &factory,
+            &format!("SELECT COUNT(*) FROM pg_tables WHERE tablename = '{table}'"),
+        )
+    };
+    assert_eq!(exists("chat_room_member_pre_c1"), "0");
+    assert_eq!(exists("chat_poll_vote_pre_c1"), "0");
+    assert_eq!(exists("chat_event_mention_pre_c1"), "1");
+    assert_eq!(
+        scalar(&factory, "SELECT COUNT(*) FROM chat_room_member"),
+        members_before
+    );
+}
+
+/// The errors of a call that is refused.
+fn call_refused(name: &str) -> String {
+    let called = moqui_core::service::sync(name, &BTreeMap::new());
+    let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
+        let mut message = ec.message();
+        let errors = message.errors().join("; ");
+        message.clear_errors();
+        errors
+    })
+    .unwrap_or_default();
+    match called {
+        Err(err) => format!("{err} {errors}"),
+        Ok(out) => format!("{errors} {out:?}"),
+    }
 }

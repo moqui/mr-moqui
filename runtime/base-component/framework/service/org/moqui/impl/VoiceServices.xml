@@ -460,7 +460,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="premiumPrefixes"/>
             <parameter name="alertUserGroupId"/>
             <parameter name="smsMaxPerUserPerDay"><description>C4-SMS: texts a user may send a day</description></parameter>
-            <parameter name="smsMaxPerDay"><description>C4-SMS: texts the deployment sends a day</description></parameter>
+            <parameter name="smsMaxPerDay"><description>C4-SMS: texts the users send a day, in all</description></parameter>
+            <parameter name="smsSystemMaxPerDay"><description>The system's own texts (sign-in codes) a day, a budget users' texts do not use</description></parameter>
             <parameter name="smsSystemNumber"><description>C4-SMS: the number the system's own texts go from (one with messaging)</description></parameter>
         </in-parameters>
         <out-parameters>

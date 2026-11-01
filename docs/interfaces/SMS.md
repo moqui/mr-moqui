@@ -39,8 +39,8 @@ with a messaging bridge and no trunk texts.
    | `apiBaseUrl` | `https://api.telnyx.com` |
    | `maxTextLength` | 1600 characters |
    | `maxMediaCount`, `maxMediaBytes` | 10 files and 1 MiB in all for an MMS that goes out |
-   | `maxInboundMediaBytes` | 5 MiB, the largest file taken from a text that comes in |
-   | `webhookToleranceSeconds` | 300 |
+   | `maxInboundMediaBytes` | 5 MiB (at most 20 MiB), the largest file taken from a text that comes in: each fetch reads no further |
+   | `webhookToleranceSeconds` | 300, at most the replay cache's live time (300) |
    | `sendsPerMinute` | 60 (the bridge's own field wins); Telnyx's long-code rate is lower per number, so set it to what the account allows |
    | `allowInternalAddresses` | false; only a test's fake provider needs it |
 
@@ -48,8 +48,8 @@ with a messaging bridge and no trunk texts.
    members, its caller-ID grants) are the members of its pair rooms; only users granted the number (Caller IDs, or a ring
    group's number) send from it.
 5. **The server.** `channels_webhooks_enabled=true`; `channels_public_url` the https base the provider reaches this server
-   at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits and the
-   system's number (sign-in codes).
+   at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits (people's
+   texts a day each and in all; the system's own texts a day) and the system's number (sign-in codes).
 
 ## The number pair's room
 
@@ -79,16 +79,21 @@ call. The outside person is an external actor of the bridge (`ChatExternalUser` 
 `POST /channels/{chatBridgeId}/webhook` (off unless `channels_webhooks_enabled`):
 
 1. The host reads the raw body first, at most `channels_webhook_max_bytes` (256 KiB; a larger declared or sent body is
-   413), and hands it with the headers to the bridge's adapter on a request worker. An unknown bridge, or one this build
-   has no adapter for, is 404; a disabled one 503, so the provider tries again later.
+   413), and hands it with the headers to the bridge's adapter on a request worker. An unknown bridge (or an id that is
+   not one), one this build has no adapter for, and a disabled one to anyone but its provider get the answer of an
+   unsigned request (401 `not signed`, counted for web protection), so bridge ids cannot be probed. A disabled bridge
+   checks the signature first and answers its provider 503, so the provider tries again once it is enabled.
 2. The adapter checks `telnyx-signature-ed25519`, the Ed25519 signature of `{telnyx-timestamp}|{raw body}` under the
    bridge's `publicKey` (aws-lc-rs, the crypto provider rustls already links), before it parses anything. A missing or
-   wrong signature, or one whose timestamp is more than `webhookToleranceSeconds` from now, is 401 and counts for web
-   protection as a refused login. A signature already worked within the window is answered 200 `duplicate` and not
-   worked again, one still being worked on another worker 409; neither counts for web protection (the signature is
-   the provider's, and counting it could block the provider's address). A signature is held from when its request is
-   taken and let go when it was not worked (not 2xx), so the provider's retry of one that failed goes through. The
-   cache is the node's; another node's copy is deduped by the ids below.
+   wrong signature, or one whose timestamp is more than `webhookToleranceSeconds` from now, is the one 401 above and
+   counts for web protection as a refused login. A signature already worked within the window is answered 200
+   `duplicate` and not worked again, one still being worked on another worker 409; neither counts for web protection
+   (the signature is the provider's, and counting it could block the provider's address). A signature is held from
+   when its request is taken and let go when it was not worked (not 2xx), so the provider's retry of one that failed
+   goes through. The cache is the distributed one the system-message HMAC check uses (`moqui.security.hmac.replay`,
+   `chat_bridge::replay_take`), so a copy that reaches another node of a cluster is caught there once that cache is
+   shared (it stays on its node until a distributed cache is configured, as for the HMAC check); the ids below dedupe
+   on any node. A request that cannot be checked against it (the cache missing) is 503 and not worked.
 3. `message.received`: `SmsServices.receive#Sms` checks that our number's messaging bridge is this one (else 200,
    `ignored`), keeps a STOP, START or HELP (below), finds or makes the pair room, and hands the text to `ingest#Event`
    (`transportVerified`: no inbound token, honored only inside that bridge's webhook, which `chat_bridge::webhook` marks
@@ -116,7 +121,7 @@ A user writes in the pair's room; the delivery layer sends it. Before the provid
 | `emergency` | An emergency number: texts to them are not sent from here |
 | `optedOut` | The person sent STOP to our number and not START since |
 | `consentRequired` | A promotional text (`send#SmsMessage` `isPromotional`) with no `sms-consent` provider saying yes |
-| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or the deployment's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`. The check and the count are one step (`reserve`) under the lock of the day's deployment count, so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts |
+| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or all people's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`; the system's own texts (sign-in codes) have a budget of their own (`smsSystemMaxPerDay`, 500, counted apart), so people's texts cannot use up what sign-in codes need. The check and the count are one step (`reserve`) under the lock of the day's count (all people's, or the system's), so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts |
 | `textTooLong`, `tooManyFiles`, `mediaTooLarge`, `mediaUnreachable` | The bridge's limits, or no `channels_public_url` for a file |
 
 The text goes to `POST /v2/messages` with the delivery's idempotency key in `Idempotency-Key`; Telnyx does not dedupe
@@ -151,7 +156,8 @@ messaging profile answers STOP and HELP itself (its opt-out management), and blo
 `message`, `isPromotional`; `successful`, `messageId`, `errorMessage`) with `fromNumber` and `userId` added, and is
 internal (`allow-remote="false"`). From `fromNumber`, else `VoicePolicy.smsSystemNumber`, it goes straight to the
 provider (`send#BridgeDirect`: no room, no delivery row, no retry), so a sign-in code (`UserServices.send#AuthcCodeSms`)
-is seen by nobody else. The checks are `check#SmsSend`'s, with the system's day limit when `userId` is empty. A refusal
+is seen by nobody else. The checks are `check#SmsSend`'s, with the system's own day limit (`smsSystemMaxPerDay`) when
+`userId` is empty: the people's texts do not count toward it, nor it toward theirs. A refusal
 or a failure is an error with its `reasonCode`. Marketing's texts (Mantle) go through it with `isPromotional`, and Mantle
 answers the `sms-consent` hook from its consent records.
 
@@ -168,13 +174,16 @@ answers the `sms-consent` hook from its consent records.
 ## Tests
 
 - `crates/moqui-channels/src/tests.rs`, against a fake Telnyx on loopback (each well under a second): a signed text in,
-  the pair room and its members; a replayed, tampered, wrongly keyed, unsigned and stale webhook refused; a duplicate
+  the pair room and its members; a replayed, tampered, wrongly keyed, unsigned and stale webhook refused, each with the
+  one answer, and the replay held in the shared replay cache (another adapter sees it); an unknown bridge and a
+  disabled one answering an unsigned and a signed request as an unsigned request, the disabled one its provider 503; a duplicate
   callback and the same message under another event; a text to a number that is not ours; a reply out with its headers,
-  receipts in order and a carrier's refusal; MMS in (a file fetched, a page kept as bytes, a file that 404s named) and out
+  receipts in order and a carrier's refusal; MMS in (a file fetched, a page kept as bytes, a file that 404s named, a file
+  over `maxInboundMediaBytes` refused at the fetch) and out
   (the signed address served to that bridge only, while it works), over the count and size limits; a lost answer
   uncertain and not sent again, a 503 tried again and taken, a STOP block from the provider, the provider unreachable; a
-  STOP and START, international, a user with no number, a promotional text with no consent and the day's limit, all
-  before the provider; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
+  STOP and START, international, a user with no number, a promotional text with no consent, the people's day's limit
+  reached with a sign-in code still sent, and the system's own day's limit, all before the provider; the pair room shared by a text and a call (`receive#PhoneCall`); a sign-in code through the real
   sender, in no room.
 - `crates/moqui-core/src/service/chat_bridge_web.rs`: a file address signed for its bridge that runs out; a file from a
   network never kept as a page.

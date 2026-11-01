@@ -2,12 +2,17 @@
 // §4.3, C3a; docs/interfaces/XMPP.md): an app password's SCRAM verifiers, made with it and sharing the user's salt; PLAIN
 // taking app passwords only; a FAST token and a session's sign-in check going with the app password they came from; the
 // archive, an event by its clientRef, an OMEMO message kept unreadable, PEP by access model, and uploads attached only by
-// their owner, each refused to another user with the very same parameters. The calls run with authorization on, as the
+// their owner, each refused to another user with the very same parameters; TURN for XMPP apps (get#IceServers) off by
+// default, and on, refused to an external user (EXTERNAL_USER) and past the hour's rate, with the parameters an allowed
+// user has. The calls run with authorization on, as the
 // XMPP session makes them (XmppClientServices, granted to ALL_USERS).
 // Run: ./moq test framework --spec XmppServices
 const A = "XMPP_SPEC_A"
 const B = "XMPP_SPEC_B"
 const C = "XMPP_SPEC_C"
+// an external user (an app's client contact): the framework permission EXTERNAL_USER through a group
+const D = "XMPP_SPEC_D"
+const EXTERNAL_GROUP = "XMPP_SPEC_EXTERNAL"
 const X = "org.moqui.impl.XmppServices."
 
 function sys(run) {
@@ -50,7 +55,23 @@ const passwords = {}
 
 spec({
     setupSpec() {
-        for (const u of [A, B, C]) makeUser(u)
+        for (const u of [A, B, C, D]) makeUser(u)
+        sys(() => {
+            if (!ec.entity.find("moqui.security.UserGroup").condition("userGroupId", EXTERNAL_GROUP).one()) {
+                const group = ec.entity.makeValue("moqui.security.UserGroup")
+                group.setFields({userGroupId: EXTERNAL_GROUP, description: "Xmpp spec external"}, true, null, null)
+                group.create()
+                const grant = ec.entity.makeValue("moqui.security.UserGroupPermission")
+                grant.setFields({userGroupId: EXTERNAL_GROUP, userPermissionId: "EXTERNAL_USER", fromDate: new Date(Date.now() - 60000)}, true, null, null)
+                grant.create()
+            }
+            if (!ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: EXTERNAL_GROUP, userId: D}).one()) {
+                const member = ec.entity.makeValue("moqui.security.UserGroupMember")
+                member.setFields({userGroupId: EXTERNAL_GROUP, userId: D, fromDate: new Date(Date.now() - 60000)}, true, null, null)
+                member.create()
+            }
+            ec.cache.getCache("moqui.xmpp.turn.issued").clear()
+        })
         sys(() => {
             for (const entity of ["moqui.xmpp.XmppPepItem", "moqui.xmpp.XmppPepNode", "moqui.xmpp.XmppUpload", "moqui.xmpp.XmppFastToken",
                     "moqui.security.UserAppPassword"]) {
@@ -227,5 +248,38 @@ feature("an upload is attached only by the user who put it; a slot over the limi
         owner.errors == ""
         owner.chatAttachmentId != null
         tooLarge.errors != ""
+    }
+})
+
+feature("TURN for XMPP apps is off by default; on, an external user and a user past the hour's rate get none", {
+    when() {
+        // the same parameters for each user: none (the credential is keyed to the signed-in user)
+        const ask = (userId) => as(userId, "get#IceServers", {})
+        const off = withProperty("xmpp_turn_enabled", null, () => ask(A))
+        return withProperty("turn_external_urls", "turn:turn.example.org:3478?transport=udp", () =>
+            withProperty("xmpp_turn_enabled", "true", () => withProperty("xmpp_turn_per_hour", "2", () => {
+                const allowed = ask(A)
+                const external = ask(D)
+                const second = ask(A)
+                const third = ask(A)
+                const other = ask(B)
+                return {off, allowed, external, second, third, other}
+            })))
+    },
+    then({off, allowed, external, second, third, other}) {
+        off.errors == ""
+        off.serviceList.length == 0
+        off.reasonCode == "turnOff"
+        allowed.errors == ""
+        allowed.serviceList.length == 1
+        allowed.serviceList[0].host == "turn.example.org"
+        allowed.serviceList[0].username.endsWith(":xmpp." + A)
+        external.errors == ""
+        external.serviceList.length == 0
+        external.reasonCode == "notAllowed"
+        second.serviceList.length == 1
+        third.serviceList.length == 0
+        third.reasonCode == "rateLimited"
+        other.serviceList.length == 1
     }
 })

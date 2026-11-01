@@ -246,7 +246,7 @@ impl Session {
                 .a("type", "pep"));
         }
         for var in list {
-            if *var == ns::VERSION && self.server.config.software_version.is_empty() {
+            if !features::offered(&self.server.config, var) {
                 continue;
             }
             query = query.c(E::new("feature", ns::DISCO_INFO).a("var", *var));
@@ -433,8 +433,13 @@ impl Session {
 
     /// XEP-0215: the embedded TURN server (and any external ones) with a credential for this user.
     async fn external_services(&mut self, iq: &Element) {
-        let found = self.call(services::ICE_SERVERS, json!({})).await.unwrap_or(Json::Null);
         let mut services_el = E::new("services", ns::EXTDISCO);
+        if !self.server.config.turn_enabled {
+            // not advertised, and no TURN while off (`xmpp_turn_enabled`): an empty list, as for a user refused
+            return self.send(iq_result(iq).c(services_el).build());
+        }
+        // the service refuses an external user and a user past the hour's rate with an empty list
+        let found = self.call(services::ICE_SERVERS, json!({})).await.unwrap_or(Json::Null);
         for server in backend::list(&found, "serviceList") {
             services_el = services_el.c(E::new("service", ns::EXTDISCO)
                 .a("type", backend::text(server, "type"))

@@ -15,8 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Voice, Fraud (plans/Comms-Framework.md §5.2): the deployment's limits (international and premium destinations, off by
     default; calls at once and per day; failed sign-ins before a source is blocked, and for how long), each user's phone
     permissions, and the source addresses with failed SIP sign-ins, blocked ones first, with Clear. A block is per source
-    address and never locks an account. Texts (C4-SMS): the texts a person and the deployment send in a day, and the number
-    the system's own texts (sign-in codes) go from. org.moqui.impl.VoiceServices get# and update#VoicePolicy, find# and
+    address and never locks an account. Texts (C4-SMS): the texts a person and the users in all send in a day, the system's
+    own texts (sign-in codes) in a day, a budget the users' texts do not use, and the number they go from. org.moqui.impl.VoiceServices get# and update#VoicePolicy, find# and
     store#VoiceUserSetting (V3: forwardEnabled, calls to them may go to outside numbers), find#AuthBlocks and clear#AuthBlock. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Fraud" default-menu-index="5">
@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
                 maxCallsPerUserPerDay:maxCallsPerUserPerDay, maxCallsPerDay:maxCallsPerDay, authFailureLimit:authFailureLimit,
                 authFailureWindowSeconds:authFailureWindowSeconds, authBlockSeconds:authBlockSeconds, homeCountryCode:homeCountryCode,
                 emergencyNumbers:emergencyNumbers, premiumPrefixes:premiumPrefixes, smsMaxPerDay:smsMaxPerDay,
-                smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemNumber:smsSystemNumber}"/>
+                smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemMaxPerDay:smsSystemMaxPerDay, smsSystemNumber:smsSystemNumber}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Limits saved</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -83,8 +83,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="homeCountryCode"><default-field title="Country code" tooltip="Numbers dialed without one are in this country"><text-line size="4"/></default-field></field>
                 <field name="emergencyNumbers"><default-field title="Emergency numbers" tooltip="Comma separated"><text-line size="20"/></default-field></field>
                 <field name="premiumPrefixes"><default-field title="Premium prefixes" tooltip="E.164 prefixes, comma separated"><text-line size="40"/></default-field></field>
-                <field name="smsMaxPerDay"><default-field title="Texts in a day" tooltip="International and premium numbers above apply to texts too"><text-line size="6"/></default-field></field>
+                <field name="smsMaxPerDay"><default-field title="Texts in a day, everyone" tooltip="International and premium numbers above apply to texts too"><text-line size="6"/></default-field></field>
                 <field name="smsMaxPerUserPerDay"><default-field title="Texts in a day per person"><text-line size="6"/></default-field></field>
+                <field name="smsSystemMaxPerDay"><default-field title="System texts in a day" tooltip="Sign-in codes and other texts of the system: a budget of their own, which people's texts do not use"><text-line size="6"/></default-field></field>
                 <field name="smsSystemNumber"><default-field title="System texts from" tooltip="Sign-in codes and other texts of the system go from this number">
                     <drop-down allow-empty="true"><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                 <field name="submitButton"><default-field title="Save limits"><submit/></default-field></field>
@@ -95,6 +96,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <field-row><field-ref name="authFailureLimit"/><field-ref name="authFailureWindowSeconds"/></field-row>
                     <field-row><field-ref name="authBlockSeconds"/><field-ref name="homeCountryCode"/></field-row>
                     <field-row><field-ref name="emergencyNumbers"/><field-ref name="premiumPrefixes"/></field-row>
+                    <field-row><field-ref name="smsMaxPerDay"/><field-ref name="smsMaxPerUserPerDay"/></field-row>
+                    <field-row><field-ref name="smsSystemMaxPerDay"/><field-ref name="smsSystemNumber"/></field-row>
                     <field-ref name="submitButton"/>
                 </field-layout>
             </form-single>

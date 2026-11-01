@@ -19,12 +19,14 @@
 //!   `channels_webhook_max_bytes` (a larger declared or sent body is 413 before anything else), then handed with the
 //!   headers to the bridge's adapter on a request worker in a fresh context
 //!   ([`moqui_core::service::chat_bridge::webhook`]), which checks the network's signature over those bytes and a replay
-//!   window before it parses them. A refused signature counts for web protection as a refused login does.
+//!   window before it parses them. A refused signature counts for web protection as a refused login does. A bridge id
+//!   that is no bridge's (or not even an id), one without its adapter in this build, and a disabled bridge to anyone but
+//!   its network all get the answer of an unsigned request, so bridge ids cannot be probed.
 //! - `GET /channels/{chatBridgeId}/media/{token}`: a file of a message that went to that bridge, for the network to
 //!   fetch (an MMS picture); the token is signed and runs out ([`moqui_core::service::chat_bridge::media`]).
 //!
 //! No session, cookie or CSRF token is read: a network is no user. The adapters are the `channels` feature's
-//! (crates/moqui-channels); without it every bridge answers 404.
+//! (crates/moqui-channels); without it every bridge answers as an unsigned request.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -80,13 +82,14 @@ async fn webhook(
     Path(bridge): Path<String>,
     request: Request,
 ) -> Response {
-    if !valid_id(&bridge) {
-        return plain(404, "no such bridge");
-    }
     let client = request
         .extensions()
         .get::<ClientAddr>()
         .map_or(peer.ip(), |client| client.0);
+    if !valid_id(&bridge) {
+        state.guard.record(client, Event::AuthFailure);
+        return response_of(WebhookResponse::not_signed());
+    }
     let (parts, body) = request.into_parts();
     let limit = moqui_lib::env::get_prop_or_env(MAX_BYTES_PROPERTY)
         .trim()

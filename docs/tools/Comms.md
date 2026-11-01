@@ -55,9 +55,11 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
   administrator allows them. See [SMS](../interfaces/SMS.md).
 - <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
-  app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Make an app password
-  in the account settings and sign in as `username@domain` with it (an email-style username has its `@` written as
-  `\40`). The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
+  app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
+  shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the
+  server and its ports, and the app passwords, each saying whether it works with XMPP apps (one made before XMPP
+  sign-in has no SCRAM verifiers, and most apps refuse it), with New app password for XMPP. Calls between XMPP apps get
+  a TURN relay only when the administrator turned it on (`xmpp_turn_enabled`), and never for an external user. The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
   the people of direct messages as contacts, the history of both, reactions, replies, edits and deletes, files, typing
   and read markers, and the same presence as the web. A room that is end-to-end encrypted in Moqui does not open in an
   XMPP app. Messages two XMPP apps encrypt with OMEMO stay between them: the web shows "Encrypted message (OMEMO)". See

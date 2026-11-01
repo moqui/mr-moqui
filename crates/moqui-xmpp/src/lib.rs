@@ -64,6 +64,12 @@ pub struct Config {
     pub fast_token_lifetime: Duration,
     /// The version answered to XEP-0092 software version queries; empty answers none.
     pub software_version: String,
+    /// Whether external services (XEP-0215) hand out TURN credentials (`xmpp_turn_enabled`, off by default). While off,
+    /// the feature is not advertised and a request is answered with no services.
+    pub turn_enabled: bool,
+    /// The key the SCRAM salts of unknown users are derived from (`xmpp_scram_decoy_key`), so they stay the same across
+    /// restarts and nodes; empty uses a random key of this process.
+    pub decoy_key: Vec<u8>,
 }
 
 impl Config {
@@ -79,6 +85,8 @@ impl Config {
             max_stanza_bytes: 256 * 1024,
             fast_token_lifetime: Duration::from_secs(14 * 24 * 3600),
             software_version: String::new(),
+            turn_enabled: false,
+            decoy_key: Vec::new(),
             domain,
         }
     }

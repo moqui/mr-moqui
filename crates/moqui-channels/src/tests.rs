@@ -255,6 +255,11 @@ fn bed() -> Bed {
         moqui_core::service::ServicePools::inline(),
         moqui_core::context::framework_dir(),
     );
+    // the replay cache MoquiDefaultConf.xml declares (moqui.security.hmac.replay), which a test context has not
+    ctx.factory()
+        .cache()
+        .get_or_create("moqui.security.hmac.replay")
+        .unwrap();
     let facade = moqui_core::testing::open();
     // the files (dbresource://) are kept in tables the in-memory facade has
     facade.assume_db_tables();
@@ -528,6 +533,62 @@ fn body_json(response: &WebhookResponse) -> Json {
 
 // ---- the tests ----
 
+/// The bridge's settings as the bed stored them.
+fn bridge_config(bed: &Bed) -> Json {
+    let public = base64::engine::general_purpose::STANDARD.encode(bed.key.public_key().as_ref());
+    json!({"apiKey": "KEY-1", "publicKey": public, "apiBaseUrl": bed.fake.base, "allowInternalAddresses": true})
+}
+
+fn bridge_info(bed: &Bed) -> moqui_core::service::chat_bridge::BridgeInfo {
+    moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: BRIDGE.to_string(),
+        type_enum_id: "CbtSms".to_string(),
+        adapter_name: "sms".to_string(),
+        name: "Telnyx".to_string(),
+        config: bridge_config(bed),
+    }
+}
+
+#[test]
+fn an_unknown_or_disabled_bridge_answers_anyone_but_its_network_as_an_unsigned_request() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let n = bed.next();
+    let event = bed.received(&format!("ev-{n}"), "in-probe", THEIRS, "Hello", json!([]));
+    let signed = bed.signed(&event, now() / 1000);
+    let mut unsigned = signed.clone();
+    unsigned.headers.retain(|(name, _)| name != "telnyx-signature-ed25519");
+    let hook_to = |bridge: &str, request: &WebhookRequest| {
+        let context = bed.ctx.factory().new_context();
+        let _entered = context.enter();
+        webhook(bed.ctx.factory(), bridge, request)
+    };
+    // the same request, unsigned, to the bridge and to ids that are no bridge's: one answer
+    let known = hook_to(BRIDGE, &unsigned);
+    assert_eq!(known, WebhookResponse::not_signed());
+    assert_eq!(hook_to("NO_SUCH_BRIDGE", &unsigned), known);
+    assert_eq!(hook_to("NO_SUCH_BRIDGE", &signed), known);
+    // disabled: anyone but its network gets the same; the network, by its signature, 503 (it tries again later)
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridge")
+            .unwrap()
+            .eq("chatBridgeId", text(BRIDGE))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("statusId", text("CbsDisabled"));
+        row.update(&bed.facade).unwrap();
+    }
+    assert_eq!(hook_to(BRIDGE, &unsigned), known);
+    let disabled = hook_to(BRIDGE, &signed);
+    assert_eq!(status(&disabled), 503);
+    assert!(!disabled.auth_failure);
+    assert!(bed.room(THEIRS).is_none(), "nothing was taken while disabled");
+}
+
 #[test]
 fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
     let bed = bed();
@@ -561,6 +622,26 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
     assert_eq!(status(&replay), 200);
     assert_eq!(body_json(&replay)["outcome"], "duplicate");
     assert!(!replay.auth_failure);
+    // the signature is held in the distributed cache the system-message HMAC check uses, not in this adapter, so a copy
+    // that reaches another node (another adapter, the same cluster cache) is a replay there too
+    let signature = request.header("telnyx-signature-ed25519").unwrap().to_string();
+    let held = bed
+        .ctx
+        .factory()
+        .cache()
+        .get("moqui.security.hmac.replay")
+        .unwrap()
+        .expect("the replay cache")
+        .get(&format!("chatBridge:{BRIDGE}:{signature}"))
+        .unwrap();
+    assert_eq!(held, Some(Value::Bool(true)));
+    {
+        let context = bed.ctx.factory().new_context();
+        let _entered = context.enter();
+        let config = crate::telnyx::Config::of(&bridge_config(&bed));
+        let on_another_node = crate::webhook::handle(&bridge_info(&bed), &config, &request);
+        assert_eq!(body_json(&on_another_node)["outcome"], "duplicate");
+    }
     // a timestamp past what a time can be is refused, not a panic
     let mut huge = request.clone();
     for (name, value) in &mut huge.headers {
@@ -569,7 +650,7 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
         }
     }
     let refused_huge = bed.hook(&huge);
-    assert_eq!(status(&refused_huge), 401);
+    assert_eq!(refused_huge, WebhookResponse::not_signed());
     // a changed body under the same signature, a wrong key's signature, no signature, a time out of the window
     let mut tampered = request.clone();
     tampered.body = event.to_string().replace("Hello there", "Send money").into_bytes();
@@ -585,9 +666,11 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
     assert!(refused.auth_failure);
     let mut unsigned = request.clone();
     unsigned.headers.retain(|(name, _)| name != "telnyx-signature-ed25519");
-    assert_eq!(status(&bed.hook(&unsigned)), 401);
     let stale = bed.signed(&event, now() / 1000 - 600);
-    assert_eq!(status(&bed.hook(&stale)), 401);
+    // each refusal the same answer, whatever was wrong
+    for bad in [&tampered, &forged, &unsigned, &stale] {
+        assert_eq!(bed.hook(bad), WebhookResponse::not_signed());
+    }
     assert_eq!(bed.messages(&room).len(), 1, "nothing refused was taken");
 
     // the provider's duplicate callback (the same event, signed again later) changes nothing
@@ -726,6 +809,24 @@ fn mms_comes_in_and_goes_out_within_the_limits() {
     assert_eq!(get(1, "contentType"), "application/octet-stream");
     assert!(get(0, "uploadedByUserId").is_empty());
     drop(_authz);
+
+    // a file over the bridge's inbound bound (maxInboundMediaBytes) is not read past it, whatever bound the caller asks
+    let large = bed.fake.file("large.jpg", "image/jpeg", &[7_u8; 3000]);
+    use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
+    let adapter = crate::telnyx::TelnyxSms::new();
+    let bridge = moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: BRIDGE.to_string(),
+        type_enum_id: "CbtSms".to_string(),
+        adapter_name: "sms".to_string(),
+        name: "Telnyx".to_string(),
+        config: json!({"apiKey": "KEY-1", "allowInternalAddresses": true, "maxInboundMediaBytes": 2000}),
+    };
+    let refused = adapter.fetch_media(&bridge, &large, u64::MAX).unwrap_err();
+    assert_eq!(refused, "the file is over 2000 bytes");
+    assert_eq!(
+        adapter.fetch_media(&bridge, &picture, u64::MAX).unwrap().bytes,
+        vec![1, 2, 3, 4, 5]
+    );
 
     // out: a picture goes by a signed address, which serves it to the provider and nobody else
     let file = bed.upload(&room, "map.png", 100);
@@ -907,8 +1008,9 @@ fn refusals_come_before_the_provider() {
     assert_eq!(system(THEIRS, false).0, "true");
     assert_eq!(bed.fake.sends().len(), 2);
 
-    // the day's limit
-    {
+    // the people's texts at their day's limit in all (smsMaxPerDay) do not hold back the system's own: sign-in codes
+    // have a budget of their own (smsSystemMaxPerDay)
+    let set_policy = |field: &str, value: i64| {
         let _authz = bed.ctx.disable_authz();
         let mut policy = bed
             .facade
@@ -918,11 +1020,49 @@ fn refusals_come_before_the_provider() {
             .one()
             .unwrap()
             .unwrap();
-        policy.set("smsMaxPerDay", Value::I64(2));
+        policy.set(field, Value::I64(value));
         policy.update(&bed.facade).unwrap();
+    };
+    set_policy("smsMaxPerDay", 1);
+    let day = jiff::Timestamp::now().strftime("%Y-%m-%d").to_string();
+    {
+        let _authz = bed.ctx.disable_authz();
+        let found = bed
+            .facade
+            .find("moqui.call.SmsSendCount")
+            .unwrap()
+            .eq("counterKey", text("all"))
+            .eq("dayDate", text(&day))
+            .one()
+            .unwrap();
+        let mut count = match found {
+            Some(count) => count,
+            None => {
+                let mut count = bed.facade.make_value("moqui.call.SmsSendCount").unwrap();
+                count.set("counterKey", text("all"));
+                count.set("dayDate", text(&day));
+                count.set("sentCount", Value::I64(0));
+                count.create(&bed.facade).unwrap();
+                count
+            }
+        };
+        count.set("sentCount", Value::I64(1));
+        count.update(&bed.facade).unwrap();
     }
+    assert_eq!(system(THEIRS, false).0, "true");
+    assert_eq!(bed.fake.sends().len(), 3);
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsSendCount",
+            &[("counterKey", text("all")), ("dayDate", text(&day))]
+        )["sentCount"],
+        "1",
+        "the system's texts are not the people's"
+    );
+    // the system's own day's limit
+    set_policy("smsSystemMaxPerDay", 2);
     assert_eq!(system(THEIRS, false), ("false".to_string(), "dailyLimit".to_string()));
-    assert_eq!(bed.fake.sends().len(), 2);
+    assert_eq!(bed.fake.sends().len(), 3);
 }
 
 #[test]

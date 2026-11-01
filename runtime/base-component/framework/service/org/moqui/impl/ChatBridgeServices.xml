@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
     again with the same idempotency key.
 
     Administration (the ChatBridgeAdmin permission): find#Bridges (status, last error, counts, the deliveries that failed),
-    store#Bridge, store#RoomBridge and end#RoomBridge. -->
+    store#Bridge, store#RoomBridge and end#RoomBridge; get# and drop#PreC1Backups, the copies the chat actors migration kept. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Inbound ========== -->
@@ -752,6 +752,27 @@ along with this software (see the LICENSE.md file). If not, see
                 eventSeq: Number(row.eventSeq), state: row.statusEnumId === 'CdsFailed' ? 'failed' : 'uncertain', reasonCode: row.reasonCode ?? null,
                 error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), lastAttemptDate: toMillis(row.lastAttemptDate)})
         ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="PreC1Backups" type="rust" location="moqui_core::service::chat_migrate::get_pre_c1_backups"
+            allow-remote="false" transaction="ignore">
+        <description>The copies the chat actors migration (ChatServices.migrate#ChatActors, C1) kept of the tables it rebuilt,
+            CHAT_ROOM_MEMBER_PRE_C1, CHAT_EVENT_MENTION_PRE_C1 and CHAT_POLL_VOTE_PRE_C1, that are still there (ChatBridgeAdmin):
+            backupList [{entityName, backupTable, backupRows, tableRows, droppable, reasonCode}]. A copy may be dropped once
+            its table is on its new key and has at least the copy's rows; else reasonCode notRebuilt or fewerRows (a rebuild
+            cut off: the copy may be the only one of its rows).</description>
+        <out-parameters><parameter name="backupList" type="List"/></out-parameters>
+    </service>
+
+    <service verb="drop" noun="PreC1Backups" type="rust" location="moqui_core::service::chat_migrate::drop_pre_c1_backups"
+            allow-remote="false" transaction="ignore">
+        <description>Drop the chat actors migration's copies (get#PreC1Backups) that may go, after checking each table's
+            key and counts again (ChatBridgeAdmin); the others stay, with why. A copy that fails to drop is logged and the
+            rest go on. droppedList (the tables dropped) and keptList (as get#PreC1Backups lists them).</description>
+        <out-parameters>
+            <parameter name="droppedList" type="List"/>
+            <parameter name="keptList" type="List"/>
+        </out-parameters>
     </service>
 
     <service verb="store" noun="Bridge">

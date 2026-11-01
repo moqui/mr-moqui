@@ -196,10 +196,18 @@ pub trait ChatBridgeAdapter: Send + Sync {
     /// A request to the bridge's webhook route (`/channels/{chatBridgeId}/webhook` on the host, [`webhook`]): the raw
     /// body, read within its bound, and the headers. The adapter checks the network's signature over the raw bytes
     /// before it parses anything, then hands what came to `ChatBridgeServices.ingest#Event`. Called on a request worker
-    /// in a fresh context; the default answers 404 (the network sends no webhooks).
+    /// in a fresh context; the default answers as a request with no signature ([`WebhookResponse::not_signed`]: the
+    /// network sends no webhooks).
     fn webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
         let _ = (bridge, request);
-        WebhookResponse::text(404, "this network takes no webhooks")
+        WebhookResponse::not_signed()
+    }
+    /// The signature step of [`Self::webhook`] alone, for a disabled bridge: None when the request is the network's,
+    /// else the refusal [`Self::webhook`] would give. A disabled bridge then answers 503 only to its network, and to
+    /// anyone else as an unknown bridge does, so bridge ids cannot be probed. The default refuses every request.
+    fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
+        let _ = (bridge, request);
+        Some(WebhookResponse::not_signed())
     }
     /// The bytes of a file a message from the network names (`ChatBridgeServices.store#BridgeMedia`), up to
     /// `max_bytes`. The default fetches nothing.
@@ -1440,7 +1448,10 @@ fn push_state(room_id: &str, seq: i64) {
 
 #[path = "chat_bridge_web.rs"]
 mod web;
-pub use web::{media, media_token_valid, media_url, webhook, FetchedMedia, MediaFile, WebhookRequest, WebhookResponse};
+pub use web::{
+    media, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook, FetchedMedia,
+    MediaFile, Replay, WebhookRequest, WebhookResponse,
+};
 
 #[cfg(test)]
 #[path = "chat_bridge_tests.rs"]

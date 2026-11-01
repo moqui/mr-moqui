@@ -256,7 +256,11 @@
         upload.<domain>, else default). xmpp_websocket_enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
         xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
         largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
-        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts. -->
+        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts.
+        xmpp_upload_seconds is the longest a PUT to an upload slot may take. xmpp_turn_enabled true lets external services
+        (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
+        xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
+        of names that are no user's, so they stay the same across restarts and nodes (generated when unset). -->
     <default-property name="xmpp_domain" value=""/>
     <default-property name="xmpp_rooms_domain" value=""/>
     <default-property name="xmpp_upload_domain" value=""/>
@@ -270,6 +274,10 @@
     <default-property name="xmpp_upload_secret" value="CHANGEME" is-secret="true"/>
     <default-property name="xmpp_resume_seconds" value="300"/>
     <default-property name="xmpp_fast_token_days" value="14"/>
+    <default-property name="xmpp_upload_seconds" value="300"/>
+    <default-property name="xmpp_turn_enabled" value="false"/>
+    <default-property name="xmpp_turn_per_hour" value="30"/>
+    <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
 
     <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
@@ -478,6 +486,8 @@
         <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
         <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
+        <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
+        <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
     </cache-list>
     <telemetry enabled="${telemetry_enabled}" sample-ratio="${telemetry_sample_ratio}" interval-seconds="60"
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"

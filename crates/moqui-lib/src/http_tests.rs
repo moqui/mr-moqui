@@ -161,6 +161,38 @@ fn a_large_body_is_an_error_or_its_start_when_truncated() {
 }
 
 #[test]
+fn a_call_can_bound_its_own_response_below_the_clients() {
+    let body = "x".repeat(2000);
+    let ok = |body: &str| {
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    let port = serve(vec![ok(&body), ok(&body), ok(&body)]);
+    let url = format!("http://127.0.0.1:{port}/file");
+    let client = RestClient::new().max_response_bytes(10_000);
+    let err = client
+        .get(&url)
+        .max_response_bytes(1000)
+        .send(false)
+        .expect_err("over this call's bound");
+    assert!(err.message().contains("larger than the limit"), "{err}");
+    assert_eq!(
+        client.get(&url).send(false).expect("the client's bound").bytes().len(),
+        2000
+    );
+    // a call cannot raise the client's bound
+    let err = RestClient::new()
+        .max_response_bytes(1000)
+        .get(&url)
+        .max_response_bytes(5000)
+        .send(false)
+        .expect_err("over the client's bound");
+    assert!(err.message().contains("larger than the limit"), "{err}");
+}
+
+#[test]
 fn a_redirect_to_another_host_is_followed_only_when_asked() {
     // 127.0.0.1 and localhost are two hosts to the redirect policy
     let moved = "HTTP/1.1 302 Found\r\nlocation: http://localhost:{port}/next\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";

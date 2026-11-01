@@ -32,6 +32,10 @@ Everything is off until `xmpp_domain` is set; each listener is off until its por
 | `xmpp_upload_secret` | generated | Derives the URLs of chat files sent to XMPP clients |
 | `xmpp_resume_seconds` | 300 | How long a dropped session waits for resumption |
 | `xmpp_fast_token_days` | 14 | How long a FAST token lasts |
+| `xmpp_upload_seconds` | 300 | The longest a PUT to an upload slot may take |
+| `xmpp_turn_enabled` | `false` | External services (XEP-0215) hand out TURN credentials ([Calls](#calls)) |
+| `xmpp_turn_per_hour` | 30 | TURN credentials a user gets an hour |
+| `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of unknown users, the same across restarts and nodes |
 
 **DNS and certificates.** `_xmpp-client._tcp.<domain>` (5222) and `_xmpps-client._tcp.<domain>` (5223) name the host.
 The TLS listeners use `runtime/cert` by the name a client asks for (the domain, `rooms.<domain>`, `upload.<domain>`,
@@ -49,7 +53,9 @@ certificate. In dev an empty `runtime/cert` gets a self-signed `localhost` certi
 
 ## Sign-in
 
-A client signs in with an **app password** (Account, App passwords), as DAV and SFTP clients do. The account password
+A client signs in with an **app password**, as DAV and SFTP clients do. Settings, Chat apps (basic-comms,
+`XmppServices.get#ClientSettings`) shows what to enter (the JID, the server and its ports, the WebSocket) and the user's
+app passwords, each saying whether it works with XMPP apps, with New app password for XMPP. The account password
 is never taken: a failure would count toward the account's lockout, and it cannot carry a second factor. An account
 with a second factor signs in with an app password, which is made after it.
 
@@ -60,7 +66,10 @@ with a second factor signs in with an app password, which is made after it.
 - The server keeps no password. `create#UserAppPassword` stores SCRAM verifiers with the password
   (`UserAppPassword.scram*`): salted, 10,000 iterations, one for the password as shown and one without its dashes. A
   user's app passwords share one salt, so one challenge fits each. App passwords made before C3a have none; PLAIN
-  takes them.
+  takes them. `get#UserAppPasswords` says which have them (`xmppReady`), and Chat apps marks the others.
+- **Unknown users** go through the SCRAM exchange with a salt derived from their name and `xmpp_scram_decoy_key`
+  (is-secret, generated when unset), and fail at its end as a wrong password does: the salt is the same across
+  restarts and nodes, so it does not tell a name that is no user's apart.
 - **STARTTLS is required** on `xmpp_port`: before it, anything but `<starttls/>` (a SASL `<auth>` included) ends the
   stream, so a client whose STARTTLS offer was stripped on the way cannot be led to sign in in the clear.
 - **PLAIN** only over TLS, as a fallback for a client without SCRAM.
@@ -150,7 +159,11 @@ client). The bookmarks node lists the user's rooms too, with autojoin, so an app
 ## Files
 
 An upload slot (XEP-0363, `upload.<domain>`) is a URL under `/xmpp-upload/` that takes one PUT of the size asked
-for, within an hour, then serves the file. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
+for, within an hour, then serves the file. A PUT is checked (the token, an open slot, a declared length and type that
+are the slot's) before any of its body is read; the body is then streamed to storage, never past the slot's size (a
+longer one is 413, a shorter one 400), within `xmpp_upload_seconds` (408 after), with the slot's row locked for update
+in the transaction that marks it done, so of two PUTs at once one writes and the other gets 409. A PUT that fails
+leaves no file and the slot open. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
 shows it. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`. The
 URL is the capability, as XEP-0363 has it: anyone it is passed to can read the file.
 
@@ -158,7 +171,10 @@ URL is the capability, as XEP-0363 has it: anyone it is passed to can read the f
 
 External services (XEP-0215) hand an XMPP client the embedded TURN server (and `turn_external_urls`) with a credential
 keyed to the user, for its own Jingle calls. Such a credential may relay to public addresses only ([TURN](TURN.md)).
-Moqui's own calls stay WebRTC in the browser.
+This is off unless `xmpp_turn_enabled` is true: while off, the feature is not advertised (service discovery's list goes
+through `features::offered`) and a request is answered with an empty list. Even on, an external user (`EXTERNAL_USER`)
+gets none, nor a user past `xmpp_turn_per_hour` credentials in the hour; each is the same empty list. Moqui's own calls
+stay WebRTC in the browser.
 
 ## Push
 
@@ -182,7 +198,7 @@ sends a request for each advertised feature and checks it is served.
 | Messages | XEP-0308, XEP-0424, XEP-0444, XEP-0461, XEP-0333 (displayed), XEP-0085, XEP-0359, XEP-0066 links to uploads |
 | PEP | XEP-0163 with publish-options, owner configure and delete; XEP-0084, XEP-0402, both OMEMO namespaces |
 | Mobile | XEP-0352, XEP-0357 (registration and the notification; delivery needs federation) |
-| Files and calls | XEP-0363, XEP-0215 |
+| Files and calls | XEP-0363, XEP-0215 (with `xmpp_turn_enabled`) |
 
 **XEP-0479 levels claimed: none.** Every suite builds on the Core suite, whose server requirements include RFC 6120
 server-to-server and XEP-0114 components, which C3a does not have (federation is C3b); IM Core also needs vCard
@@ -195,7 +211,7 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
 
 ## Tests
 
-- `cargo test -p moqui-xmpp` (21, under a second): the stream reader (stanzas split across reads, entities refused,
+- `cargo test -p moqui-xmpp` (23, under a second): the stream reader (stanzas split across reads, entities refused,
   the size limit, a deep stanza and a long stream header refused, WebSocket frames), SCRAM (RFC 7677's example, the binding to the exporter, a downgrade refused, an
   unknown user like a wrong password), FAST (bound to its TLS session, its count), and sessions on recorded stanzas
   against an in-memory backend: STARTTLS first, and SASL before it refused; SASL2 with SCRAM-PLUS, Bind 2 and a FAST token, then FAST, and the
@@ -204,19 +220,25 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   PLAIN and binding; a room message reflected with its id and reaching the other member, a correction, a reaction and
   the archive paged; a direct message, a carbon, and the roster; OMEMO kept as it came, refused in a bridged room, and
   an encrypted Moqui room refused; PEP for both OMEMO namespaces with notifications to who asked and a
-  precondition refused; every advertised feature answering; stream management counts and resumption inside SASL2; a
+  precondition refused; every advertised feature answering (TURN on); TURN off by default, neither advertised nor
+  issued; an unknown user's salt the same from a server with the same decoy key; stream management counts and resumption inside SASL2; a
   detached session's text-free push; at most 10 detached sessions a user, and no resumption once unacknowledged
   stanzas were let go.
-- `cargo test -p moqui-host --test it -- xmpp::` (about 4 s): a real server with tokio-xmpp as one client
+- `cargo test -p moqui-host --test it -- xmpp::` (about 6 s, two servers): an upload PUT answered before its body for
+  an unknown token and a wrong length, a body over the slot's size 413, one past `xmpp_upload_seconds` 408, and two PUTs
+  at once, the second waiting on the row and then 409; and a real server with tokio-xmpp as one client
   (SCRAM-SHA-256-PLUS over tls-exporter on direct TLS; a room joined, its message read on the web side and the web's
   answer back; the room's archive paged; an upload put and fetched over HTTP; an OMEMO device list published), and a
   raw SASL2 client for the other (SCRAM-PLUS with Bind 2, stream management and a FAST token; the device list read over
   PEP; the connection dropped, a message while away, FAST and resumption inside SASL2 with the message replayed).
-- `./moq test framework --spec XmppServices` (6): an app password's verifiers sharing the user's salt, PLAIN taking
+- `./moq test framework --spec XmppServices` (7): TURN off by default, and on, an external user and a user past the
+  hour's rate refused with the parameters an allowed user has; an app password's verifiers sharing the user's salt, PLAIN taking
   app passwords only, a FAST token and the session check refused once the app password is revoked, and the archive, an event by clientRef, an OMEMO message, PEP by access model and an upload's
   attachment, each refused to another user with the same parameters; the calls with authorization on, as the session
   makes them.
 - `cargo test -p moqui-rtc turn`: an XMPP user's TURN credential relays to public addresses only.
+- `./moq test basic-comms --spec BasicComms`: Chat apps in qvt and tui, marking an app password made before XMPP
+  sign-in, and saying XMPP is not set up while `xmpp_domain` is empty.
 
 **Not checked live:** Conversations, Monal, Dino and Gajim against a deployment, the XEP-0479 compliance tester, a
 web client over `/xmpp-websocket` with channel binding behind this process's HTTPS, and push notifications reaching an

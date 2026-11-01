@@ -51,8 +51,9 @@ const DEFAULT_POLICY = {
   maxCallsPerUserPerDay: 100, maxCallsPerDay: 1000, authFailureLimit: 5, authFailureWindowSeconds: 600,
   authBlockSeconds: 3600, homeCountryCode: '1', emergencyNumbers: '911,112,999', premiumPrefixes: '+1900,+1976',
   alertUserGroupId: 'ADMIN',
-  // C4-SMS: texts a user and the deployment send a day, and the number the system's own texts go from
-  smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemNumber: null,
+  // C4-SMS: texts a user and the users in all send a day, the system's own texts (sign-in codes) a day, and the number
+  // they go from
+  smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemMaxPerDay: 500, smsSystemNumber: null,
 }
 const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
@@ -111,7 +112,7 @@ function policy() {
   const out = Object.assign({}, DEFAULT_POLICY)
   if (row) for (const key of Object.keys(DEFAULT_POLICY)) if (!blank(row[key])) out[key] = row[key]
   for (const key of ['maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay', 'maxCallsPerDay',
-    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay']) out[key] = Number(out[key])
+    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay']) out[key] = Number(out[key])
   out.homeCountryCode = String(out.homeCountryCode).replace(/\D/g, '') || '1'
   return out
 }
@@ -1092,7 +1093,7 @@ function deleteLocation(p) {
 
 const POLICY_FIELDS = ['internationalEnabled', 'premiumEnabled', 'maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay',
   'maxCallsPerDay', 'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'homeCountryCode', 'emergencyNumbers',
-  'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemNumber']
+  'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemMaxPerDay', 'smsSystemNumber']
 
 function getPolicy() {
   const denied = notAdmin()
