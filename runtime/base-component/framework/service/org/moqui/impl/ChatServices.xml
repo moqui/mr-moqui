@@ -2392,11 +2392,6 @@ along with this software (see the LICENSE.md file). If not, see
             const reactionKey = String(key || '').trim()
             // an encrypted room (C7): its reactions are ciphertext, and checked once the room is known
             const roomRow0 = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).selectField('encrypted').one()
-            if (roomRow0 && roomRow0.encrypted === 'Y') {
-                if (senderActorId || reactionKey || (encrypted == null && takeBack == null)) { reasonCode = 'encryptedRoom'
-                    ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its reactions are encrypted in the browser')); return }
-            } else if (encrypted != null || takeBack != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
-            else if (!reactionKey || Array.from(reactionKey).length > 32 || /[<>]/.test(reactionKey)) { ec.message.addError(ec.l10n.localize('A reaction is an emoji or a short word')); return }
             // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
             let externalActor = null
             if (senderActorId) {
@@ -2424,6 +2419,12 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to post in it'); return }
+            // checked once the user may post there, so one who may not learns nothing of the room
+            if (roomRow0 && roomRow0.encrypted === 'Y') {
+                if (senderActorId || reactionKey || (encrypted == null && takeBack == null)) { reasonCode = 'encryptedRoom'
+                    ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: its reactions are encrypted in the browser')); return }
+            } else if (encrypted != null || takeBack != null) { reasonCode = 'notEncrypted'; ec.message.addError(ec.l10n.localize('This room is not encrypted')); return }
+            else if (!reactionKey || Array.from(reactionKey).length > 32 || /[<>]/.test(reactionKey)) { ec.message.addError(ec.l10n.localize('A reaction is an emoji or a short word')); return }
             const target = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
             if (!target || target.eventTypeEnumId !== 'CetMessage' || target.redactedDate) { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
             // a bridge that cannot carry the change refuses it before it is made

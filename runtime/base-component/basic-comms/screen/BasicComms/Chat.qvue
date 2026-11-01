@@ -1485,7 +1485,12 @@ const chatRoom = {
             if (!event || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
             // an encrypted room's event is decrypted first, the events kept in their order (C7); a member who left takes no later key
             if (this.sealed && moqui.chat && moqui.chat.openEvent) {
-                if (event.type === 'membership' && event.content && ['leave', 'remove'].includes(event.content.action)) moqui.crypto.rotateRoom(this.roomId).catch(() => null);
+                if (event.type === 'membership' && event.content && ['leave', 'remove'].includes(event.content.action)) {
+                    // out of the members at once, not when the room's meta reloads: a message sent meanwhile shares no key with them
+                    const gone = event.content.userId || event.senderUserId;
+                    if (gone) this.members = this.members.filter((person) => person.userId !== gone);
+                    moqui.crypto.rotateRoom(this.roomId).catch(() => null);
+                }
                 const copy = Object.assign({}, event);
                 this.liveQueue = (this.liveQueue || Promise.resolve()).then(() => moqui.chat.openEvent(this.roomId, copy, (file) => this.sealedUrl(file)))
                     .then(() => this.applyLive(Object.assign({}, payload, { event: copy })), (err) => console.error('An encrypted event was not shown', err));

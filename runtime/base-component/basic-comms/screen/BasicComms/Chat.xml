@@ -290,7 +290,9 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createFrom">
         <actions><script><![CDATA[
             // the server has no text of an encrypted room's message (C7): nothing is made from it
-            if (ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
+            // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+                    && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: nothing is made from it')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
             const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), kind: kind || ''}}).call()
@@ -306,7 +308,9 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="fileOnRecord">
         <actions><script><![CDATA[
             // the server has no text of an encrypted room's message (C7): it is not filed on a record
-            if (ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
+            // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+                    && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: it is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
             const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), recordEntityName: recordEntityName || '',

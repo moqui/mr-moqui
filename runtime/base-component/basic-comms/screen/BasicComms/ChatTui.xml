@@ -35,7 +35,8 @@ along with this software (see the LICENSE.md file). If not, see
             const escape = (line) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
             const text = String(bodyText || '').replace(/\r\n?/g, '\n').trim()
             if (!text) ec.message.addError(ec.l10n.localize('Write a message first'))
-            else if (ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId || '').condition('encrypted', 'Y').count())
+            else if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+                    && ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId || '').condition('encrypted', 'Y').count())
                 ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: open it in a browser to write in it'))
             else ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '',
                 body: text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('')}).call()

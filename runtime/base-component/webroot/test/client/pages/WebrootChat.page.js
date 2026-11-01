@@ -476,3 +476,24 @@ test("a card's button posts to chatAssistCard; an agent's typing carries its sta
     chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "_AGENT_ASSIST_", typing: false }), "ann", 1100);
     assert.equal(state.typingText.R1._AGENT_ASSIST_, undefined);
 });
+
+test("an encrypted room's decrypted HTML keeps what a plain room's message may have, and a decrypted file opens as an image or bytes", async () => {
+    await chat.loadPurify();
+    const kept = '<p>Hi <span data-mention-id="bob">@Bob</span> <a href="https://example.com/x" hreflang="en">link</a> <b>bold</b></p>'
+        + '<table><tbody><tr><td colspan="2">cell</td></tr></tbody></table><img src="/files/a.png" alt="a" width="10">';
+    assert.equal(chat.clean(kept), kept, "the markup a plain room keeps stays");
+    const cleaned = chat.clean('<p class="fixed-full z-max" id="moqui" style="color:red" onclick="alert(1)">x</p>'
+        + '<a href="javascript:alert(1)" target="_blank">y</a><svg><circle onload="alert(1)"></circle></svg><script>alert(1)</script>'
+        + '<img src="x" onerror="alert(1)"><iframe src="https://example.com"></iframe><form><input name="a"></form>'
+        + '<video src="https://example.com/v.mp4"></video><span data-other="1" aria-label="z">z</span>');
+    for (const bad of ["class", "id=", "style", "onclick", "javascript:", "target", "<svg", "<circle", "<script", "onerror", "<iframe", "<form",
+        "<input", "<video", "data-other", "aria-label"]) {
+        assert.ok(cleaned.indexOf(bad) < 0, "no " + bad + " in " + cleaned);
+    }
+    assert.ok(cleaned.indexOf("<p>x</p>") >= 0, cleaned);
+    assert.equal(chat.blobType("image/PNG"), "image/png");
+    assert.equal(chat.blobType("image/jpeg"), "image/jpeg");
+    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "", null]) {
+        assert.equal(chat.blobType(type), "application/octet-stream", String(type));
+    }
+});

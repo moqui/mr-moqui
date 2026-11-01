@@ -10,6 +10,7 @@ const root = "component://basic-comms/screen/BasicComms.xml"
 const CHAT = "org.moqui.impl.ChatServices."
 const A = "CHAT_E2EE_SPEC_A"
 const B = "CHAT_E2EE_SPEC_B"
+const C = "CHAT_E2EE_SPEC_C"
 const SECRET = "Plaintext that never reaches the server"
 
 function sys(run) {
@@ -65,7 +66,7 @@ let secret = null
 
 spec({
     setupSpec() {
-        for (const u of [A, B]) makeUser(u)
+        for (const u of [A, B, C]) makeUser(u)
         plain = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "E2EE spec plain", memberUserIdList: [B]}).chatRoomId
         secret = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "E2EE spec encrypted", memberUserIdList: [B], encrypted: true}).chatRoomId
     }
@@ -265,5 +266,35 @@ feature("Create from, File on record and the terminal's send refuse an encrypted
         page.indexOf("open it in a browser") >= 0
         page.indexOf(SECRET) < 0
         list.indexOf("Encrypted message") >= 0
+    }
+})
+
+// One who is not in the room learns nothing of it: the same calls a member is refused with encryptedRoom answer the outsider
+// as for any room it cannot see (not found), never that the room is encrypted.
+feature("an outsider sending the same reaction, Create from or File on record to an encrypted room hears only that it is not found", {
+    when() {
+        const sent = as(A, "send#Message", {chatRoomId: secret, encrypted: sealed("o1")})
+        const memberKey = as(B, "react#Message", {chatRoomId: secret, eventSeq: sent.eventSeq, key: "👍"})
+        const outsiderKey = as(C, "react#Message", {chatRoomId: secret, eventSeq: sent.eventSeq, key: "👍"})
+        const outsiderSealed = as(C, "react#Message", {chatRoomId: secret, eventSeq: sent.eventSeq, encrypted: sealed("o2")})
+        ec.user.internalLoginUser(username(C))
+        const made = json("createFrom", {chatRoomId: secret, eventSeq: sent.eventSeq, kind: "task"})
+        const filed = json("fileOnRecord", {chatRoomId: secret, eventSeq: sent.eventSeq, recordEntityName: "moqui.security.UserAccount", recordId: C})
+        const before = Number(roomRow(secret).lastEventSeq)
+        ec.screen.makeTest().rootScreen(root).renderMode("tui").render("ChatTui/send", {chatRoomId: secret, bodyText: SECRET}, null)
+        const tuiErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        return {memberKey, outsiderKey, outsiderSealed, made, filed, tuiErrors, before, after: Number(roomRow(secret).lastEventSeq)}
+    },
+    then({memberKey, outsiderKey, outsiderSealed, made, filed, tuiErrors, before, after}) {
+        memberKey.reasonCode == "encryptedRoom"
+        outsiderKey.reasonCode == null
+        outsiderKey.errors.indexOf("not found") >= 0
+        outsiderSealed.reasonCode == null
+        outsiderSealed.errors.indexOf("not found") >= 0
+        made == null || made.reasonCode != "encryptedRoom"
+        filed == null || filed.reasonCode != "encryptedRoom"
+        tuiErrors.indexOf("encrypted") < 0
+        after == before
     }
 })

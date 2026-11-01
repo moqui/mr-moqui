@@ -151,6 +151,16 @@ feature("a second tab of the same browser reads through the tab that holds the s
             return other.moqui.crypto.decryptRoom(roomId, item).then((out) => ({role: other.moqui.crypto.state.role, body: out.content ? out.content.body : null,
                 leader: window.moqui.crypto.state.role}))
         }, [room.id, item])
+        // a page that knows the user and deviceId (localStorage) but not the store key finds no leader to ask
+        const probe = b.evaluate(([roomId, item]) => new Promise((resolve) => {
+            const user = window.moqui.webrootVue.userId
+            const names = ["moqui-crypto:" + user + ":" + window.moqui.crypto.thisDeviceId(), "moqui-crypto:" + user + ":" + window.moqui.crypto.thisDeviceId() + ":0"]
+            const channels = names.map((name) => new BroadcastChannel(name))
+            const heard = []
+            channels.forEach((ch) => { ch.onmessage = (e) => heard.push(e.data && e.data.op) })
+            channels.forEach((ch, i) => ch.postMessage({ op: "call", id: "probe" + i, tab: "probe", name: "decryptRoom", args: [roomId, item] }))
+            setTimeout(() => { channels.forEach((ch) => ch.close()); resolve(heard) }, 1000)
+        }), [room.id, item])
         // the first tab closes its store: the second takes it and reads on its own
         const taken = b.evaluate(([roomId, item]) => {
             const other = window.__secondTab
@@ -163,9 +173,10 @@ feature("a second tab of the same browser reads through the tab that holds the s
                 look()
             })).then((role) => other.moqui.crypto.decryptRoom(roomId, item).then((out) => ({role, body: out.content ? out.content.body : null})))
         }, [room.id, item])
-        return {item, relayed, taken}
+        return {item, relayed, probe, taken}
     },
-    then({item, relayed, taken}) {
+    then({item, relayed, probe, taken}) {
+        probe == []
         relayed.leader == "leader"
         relayed.role == "follower"
         relayed.body == LATER

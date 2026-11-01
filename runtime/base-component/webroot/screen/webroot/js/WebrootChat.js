@@ -499,10 +499,27 @@
             return chat.purifyLoad || (chat.purifyLoad = moqui.loadScript("/libs/dompurify/purify.min.js", null, () => !!root.DOMPurify)
                 .catch((err) => { chat.purifyLoad = null; throw err; }));
         },
-        // decrypted HTML as the room shows it: no script, style, form, frame or event attribute
+        // Decrypted HTML as the room shows it: what the server lets into a plain room's message (allow-html="safe", ammonia's
+        // defaults and the mention and record spans) and no more. No script, style, class, id, form, frame, media, SVG or
+        // MathML, and no event attribute, so a member cannot put markup in an encrypted room that a plain room would refuse
+        // (a class of the page's own CSS could lay a link over the whole page).
+        purifyConfig: {
+            ALLOWED_TAGS: ["a", "abbr", "acronym", "article", "aside", "b", "bdi", "bdo", "blockquote", "br", "caption", "center", "cite", "code", "col",
+                "colgroup", "data", "dd", "del", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2", "h3", "h4",
+                "h5", "h6", "header", "hgroup", "hr", "i", "img", "ins", "kbd", "li", "mark", "nav", "ol", "p", "pre", "q", "rp", "rt", "rtc", "ruby",
+                "s", "samp", "small", "span", "strike", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "time",
+                "tr", "tt", "u", "ul", "var", "wbr"],
+            ALLOWED_ATTR: ["lang", "title", "href", "hreflang", "dir", "cite", "datetime", "align", "char", "charoff", "span", "size", "width", "height",
+                "alt", "src", "start", "summary", "colspan", "rowspan", "headers", "data-mention-id", "data-record-entity", "data-record-id"],
+            ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+        },
         clean(html) {
-            return root.DOMPurify.sanitize(String(html || ""), { FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe", "object", "embed"],
-                FORBID_ATTR: ["style"] });
+            return root.DOMPurify.sanitize(String(html || ""), chat.purifyConfig);
+        },
+        // the type a decrypted file's blob is made with: an image the room shows inline keeps its type, anything else is
+        // bytes to save (a blob URL is of this origin, so a decrypted page or SVG must never open as one)
+        blobType(contentType) {
+            return /^image\/(png|jpe?g|gif|webp)$/i.test(String(contentType || "")) ? String(contentType).toLowerCase() : "application/octet-stream";
         },
         escapeHtml(text) {
             return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "<br>");
@@ -531,7 +548,7 @@
                 if (!response.ok) throw new Error("status " + response.status);
                 return response.arrayBuffer();
             }).then((data) => moqui.crypto.decryptFile(data, file.sealed)).then((bytes) => root.URL.createObjectURL(new root.Blob([bytes],
-                { type: file.contentType || "application/octet-stream" }))).catch((err) => { delete chat.fileUrls[id]; throw err; });
+                { type: chat.blobType(file.contentType) }))).catch((err) => { delete chat.fileUrls[id]; throw err; });
             return chat.fileUrls[id];
         },
         // my reaction with key to a message of a room (its eventSeq, to take it back), null when none

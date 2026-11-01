@@ -19,9 +19,9 @@
  *   key a second after sending it, so the others have it first (the first key at once); receivers keep a leg's last four.
  *   A leg that left does not get the new key, so it cannot read what is said after it left. Rotation cannot take back a
  *   key a leg already had.
- * - **One tab.** The keys travel over the user's crypto device, whose store one tab of a browser holds at a time
- *   (moqui.crypto, reasonCode busy): a call is encrypted in the tab that opens the store; another tab of the same browser
- *   and user that holds it (Settings, My devices, or another call) must close it first. prepare() says so.
+ * - **One store.** The keys travel over the user's crypto device, whose store one tab of a browser holds at a time; the
+ *   user's other tabs ask that tab (moqui.crypto's leader, C7), so a call is encrypted in any of them. reasonCode busy:
+ *   the leader did not answer; prepare() says so.
  * - **No downgrade.** Nothing is sent before the first key, and a frame that does not decrypt is dropped, never played.
  *
  * The API: supported(), prepare() (Promise<{cryptoDeviceId, scriptTransform: true}>, or a rejection with reasonCode and

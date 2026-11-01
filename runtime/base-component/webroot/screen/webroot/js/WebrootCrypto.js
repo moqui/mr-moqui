@@ -17,12 +17,15 @@
  * device, and a page of another user never opens it. One tab at a time opens a store (a Web Lock on it): two OlmMachines
  * on one store would each keep their own copy of its Olm sessions and spoil them. The tab that holds the lock is the
  * leader: the user's other tabs of this browser are followers, which ask the leader over a BroadcastChannel named for the
- * user and device (moqui-crypto:<userId>:<deviceId>) to encrypt, decrypt and send for them, and hear its to-device events;
- * each waits for the lock, so when the leader's tab closes another takes it and opens the store.
+ * user, device and a tag made from the device's store key (moqui-crypto:<userId>:<deviceId>:<tag>) to encrypt, decrypt and
+ * send for them, and hear its to-device events; each waits for the lock, so when the leader's tab closes another takes it
+ * and opens the store. A tab finds the channel only after fetching the store key as the device's signed-in user, so a page
+ * of another account in the same browser (which can read the deviceId from localStorage) cannot ask the leader for anything.
  *
  * At rest the store is encrypted with its store key, a passphrase the server keeps for the device (/ChatKeys/storeKey,
  * given only to the device's own signed-in user and dropped when it is revoked): a copy of the browser profile alone does
- * not open it.
+ * not open it. It does not protect the store from one who can also sign in as the user (or read the server's database
+ * with its encryption key), nor from script running in a page of this origin while the user is signed in.
  *
  * Encrypted rooms (C7): Megolm room keys are shared with the room's members' devices over Olm to-device messages before a
  * message is encrypted (encryptRoom); the machine starts a new session when a member or device it shared with is gone,
@@ -357,15 +360,11 @@
             pointer = { deviceId: made.deviceId, user_id: made.user_id };
             writePointer(user, pointer);
         }
-        const release = await lockStore(storePrefix(user, pointer.deviceId));
-        // another tab holds the store: this one follows it, and takes the store when that tab goes
-        if (!release) return follow(user, pointer);
-        releaseLock = release;
+        // the store key first: the leader opens the store with it, and a follower finds the leader's channel by it
         let storeKey = null;
         try {
-            storeKey = (await call("storeKey", { deviceId: pointer.deviceId })).storeKey || null;
+            storeKey = await storeKeyOf(pointer);
         } catch (err) {
-            unlock();
             if (err && (err.reasonCode === "notFound" || err.reasonCode === "revoked")) {
                 writePointer(user, null);
                 await deleteStore(storePrefix(user, pointer.deviceId));
@@ -373,6 +372,10 @@
             }
             throw err;
         }
+        const release = await lockStore(storePrefix(user, pointer.deviceId));
+        // another tab holds the store: this one follows it, and takes the store when that tab goes
+        if (!release) return follow(user, pointer);
+        releaseLock = release;
         try {
             machine = await sdk.OlmMachine.initialize(new sdk.UserId(pointer.user_id), new sdk.DeviceId(pointer.deviceId),
                 storePrefix(user, pointer.deviceId), storeKey);
@@ -562,7 +565,11 @@
     const pending = new Map();
     let callSeq = 0;
     const RELAY_WAIT = 30000;
-    const relayed = {};
+    // the functions a follower may ask of the leader, by name (no prototype: a name such as constructor is no function here)
+    const relayed = Object.create(null);
+    // the channel's name ends with a tag made from the device's store key, so only a page that can fetch that key (signed
+    // in as the device's user: /ChatKeys/storeKey) finds the leader; a page of another account of this browser does not
+    let channelTag = null;
     const roomKeyListeners = new Set();
 
     function post(message) {
@@ -573,18 +580,34 @@
         ? { reasonCode: err.reasonCode || "failed", errors: err.errors || err.message || String(err) } : { reasonCode: "failed", errors: String(err) });
     const closedError = () => ({ reasonCode: "closed", errors: "The crypto device is closed" });
 
+    /** The channel tag of a store key: the first 128 bits of SHA-256("moqui-crypto-channel:" + key), in hex. */
+    async function tagOf(storeKey) {
+        const subtle = root.crypto && root.crypto.subtle;
+        if (!storeKey || !subtle || !root.TextEncoder) return null;
+        const digest = new Uint8Array(await subtle.digest("SHA-256", new root.TextEncoder().encode("moqui-crypto-channel:" + storeKey)));
+        return Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    /** The store key of this user's device (a refusal rejects: notFound, revoked), and the channel tag made from it. */
+    async function storeKeyOf(pointer) {
+        const storeKey = (await call("storeKey", { deviceId: pointer.deviceId })).storeKey || null;
+        channelTag = await tagOf(storeKey);
+        return storeKey;
+    }
+
     function openChannel(user, deviceId, onMessage) {
         if (channel) { try { channel.close(); } catch (err) { /* closed */ } channel = null; }
-        if (!root.BroadcastChannel) return;
-        channel = new root.BroadcastChannel("moqui-crypto:" + user + ":" + deviceId);
-        channel.onmessage = (e) => onMessage(e.data || {});
+        // no tag (no store key, or no Web Crypto): no relay; each tab waits for the store instead
+        if (!root.BroadcastChannel || !channelTag) return;
+        channel = new root.BroadcastChannel("moqui-crypto:" + user + ":" + deviceId + ":" + channelTag);
+        channel.onmessage = (e) => onMessage(e.data && typeof e.data === "object" ? e.data : {});
     }
 
     /** This tab holds the store: it answers the other tabs' calls, and runs those it asked while it followed. */
     function lead(user, pointer) {
         role = "leader";
         openChannel(user, pointer.deviceId, (msg) => {
-            if (msg.op !== "call" || !relayed[msg.name]) return;
+            if (msg.op !== "call" || typeof msg.name !== "string" || typeof relayed[msg.name] !== "function" || typeof msg.id !== "string"
+                || typeof msg.tab !== "string" || (msg.args != null && !Array.isArray(msg.args))) return;
             Promise.resolve().then(() => relayed[msg.name].apply(null, msg.args || [])).then(
                 (value) => post({ op: "result", id: msg.id, tab: msg.tab, ok: true, value }),
                 (err) => post({ op: "result", id: msg.id, tab: msg.tab, ok: false, error: plainError(err) }));
@@ -638,7 +661,7 @@
         if (role !== "follower" || me !== user) { release(); return; }
         releaseLock = release;
         await loadSdk();
-        const storeKey = (await call("storeKey", { deviceId: pointer.deviceId })).storeKey || null;
+        const storeKey = await storeKeyOf(pointer);
         machine = await sdk.OlmMachine.initialize(new sdk.UserId(pointer.user_id), new sdk.DeviceId(pointer.deviceId),
             storePrefix(user, pointer.deviceId), storeKey);
         wire();
@@ -657,6 +680,7 @@
         lockAbort = null;
         if (channel) { try { channel.close(); } catch (err) { /* closed */ } }
         channel = null;
+        channelTag = null;
         for (const item of pending.values()) { clearTimeout(item.timer); item.reject(closedError()); }
         pending.clear();
         flows.clear();

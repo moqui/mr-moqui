@@ -44,8 +44,12 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   `OlmMachine`s on one store would spoil its Olm sessions.
   - That tab is the leader. The user's other tabs of the browser are followers: they send their calls (encrypt,
     decrypt, send to devices, backup, verification) to the leader over a `BroadcastChannel` named
-    `moqui-crypto:<userId>:<deviceId>`, and hear its to-device events, new room keys and verifications. `state.role` says
-    which a tab is.
+    `moqui-crypto:<userId>:<deviceId>:<tag>`, and hear its to-device events, new room keys and verifications. `state.role`
+    says which a tab is. The tag is the first 128 bits of SHA-256 of the device's store key, so a tab finds the channel
+    only after fetching that key as the device's signed-in user: a page of another account in the same browser profile
+    (which can read the deviceId from localStorage) cannot ask the leader to decrypt or share keys. The leader answers
+    only calls of the API's own functions, with an array of arguments. Without Web Crypto there is no relay: each tab waits
+    for the store.
   - Each follower waits for the lock. When the leader's tab closes (or closes its store), one of them takes the store
     and leads; calls still waiting are asked of it. A call not answered in 30 seconds is refused (`busy`).
   - Encrypted files are encrypted and decrypted in any tab: that needs the module, not the store.
@@ -53,6 +57,11 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   (`ChatDevice.storeKey`, an encrypted field). It is given only to the device's own signed-in user (`/ChatKeys/storeKey`)
   and dropped when the device is revoked. A copy of the browser profile alone does not open the store; with a signed-in
   session it does. A store made before the store key (unencrypted) does not open with it: the browser makes a new device.
+  - What it does not protect against: anyone who can sign in as the user (or holds a stolen session) together with the
+    browser profile; whoever reads the server's database with its field-encryption key, or an administrator with entity
+    data access in Tools (the field is encrypted at rest on the server, not hidden from those tools); and script running in
+    a page of this origin while the user is signed in. It is a lock against a copied or stolen profile, not against the
+    server.
 - **A refused key upload.** The machine's upload is not retried as it is: a device whose keys the server refuses
   (`keysChanged`, `keyExists`, `badKeys`, `tooLarge`) is revoked and made again once; a second refusal stops this page's
   uploads (`state.status` error). `tooManyKeys` stops uploads until keys are claimed.
