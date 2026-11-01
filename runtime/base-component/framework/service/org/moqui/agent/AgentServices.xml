@@ -142,7 +142,9 @@ along with this software (see the LICENSE.md file). If not, see
             nothing. The reply, the approval and question cards and the typing status go to the room as the run works.
             The same message again starts no second run. It trusts none of its parameters but the room, the message's
             eventSeq and the agent member (the sender is the message's), so any caller may hand it a message, and the run
-            is always the sender's; not callable remotely.</description>
+            is always the sender's; not callable remotely. A message of an external actor of a chat bridge (no local
+            sender) starts nothing, and nor does any message of a room an external actor is a member of (its replies would
+            reach that network); a room's agentsReadExternal hands such messages to other agent services only.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>

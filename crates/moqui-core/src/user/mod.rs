@@ -29,8 +29,8 @@ pub(crate) use authz::current_user_groups;
 pub use authz::{authorize, authorize_own, context_entered, group_permits};
 pub(crate) use authz::{denied, entity_permitted, is_permitted, note_entity_write, AuthInfo, Permit, StackAuthz};
 pub use factor::{
-    login_with_code, random_code, random_string, second_factor_required, send_login_code, single_use_hash,
-    totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
+    login_with_code, random_code, random_string, reauthenticate, second_factor_required, send_login_code,
+    send_reauth_code, single_use_hash, totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
 };
 pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
 pub(crate) use filter::apply_view_filters;
@@ -43,11 +43,12 @@ pub use login::{
     login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key, logout,
     logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login, now_value, with_client_ip,
 };
+pub use login::{last_auth_millis, recent_auth};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
 pub use moqui_entity::period::period_range;
-pub use password::{hash_login_key, hash_password};
+pub use password::{hash_login_key, hash_password, scram_sha256_verifier};
 pub use policy::password_acceptable;
 pub use preference::{
     current_user_external, get_preference, get_preference_for, get_preferences, has_permission, is_external_user,

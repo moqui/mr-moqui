@@ -39,10 +39,13 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="recipient" noun="Source" type="interface">
-        <description>recipient-source: people, groups and lists with addresses for a text (recipientList).</description>
+        <description>recipient-source: people, groups and lists with addresses for a text (recipientList), each {itemId (unique in
+            the source), kind, name, and its addresses; for kinds phone (the Dialer, V3), phoneList [{number in E.164, label}]}, at
+            most limit, the source's own page (recipientListCount, its total). Authority is the signed-in user's.</description>
         <in-parameters>
             <parameter name="text"/>
-            <parameter name="kinds"><description>A comma list of person, group and list; empty for all</description></parameter>
+            <parameter name="kinds"><description>A comma list of person, group, list and phone (recipients with phone numbers);
+                empty for all</description></parameter>
             <parameter name="limit" type="Integer" default="10"/>
         </in-parameters>
     </service>
@@ -105,11 +108,18 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="call" noun="Context" type="interface">
-        <description>call-context: who a caller is and their open records, for a screen pop (contact, recordList).</description>
+        <description>call-context: who a caller is and their open records, for a screen pop (V5: the ring bar and m-call,
+            CallServices.get#CallContext, as the user rung). number is E.164. Answers contactList (each {name, kind: person or
+            organization, url, detail}) and recordList (each {title, status, url}), at most 10 and 20, only what the user
+            may see.</description>
         <in-parameters>
             <parameter name="number"/>
             <parameter name="address"/>
         </in-parameters>
+        <out-parameters>
+            <parameter name="contactList" type="List"/>
+            <parameter name="recordList" type="List"/>
+        </out-parameters>
     </service>
     <service verb="home" noun="Source" type="interface">
         <description>home-source: the Comms Home cards it adds (cardList, each with its rows and a link to more).</description>
@@ -130,5 +140,30 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="chatActorId"/>
             <parameter name="idempotencyKey" required="true"/>
         </in-parameters>
+    </service>
+    <service verb="sms" noun="Consent" type="interface">
+        <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber, as the
+            caller's user (org.moqui.impl.SmsServices check#SmsSend). consent true allows it, false refuses it whatever another
+            provider says; with no provider saying true, a promotional text is refused (consentRequired).</description>
+        <in-parameters>
+            <parameter name="fromNumber" required="true"/>
+            <parameter name="toNumber" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="consent" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="call" noun="Target" type="interface">
+        <description>call-target: which of the users in userIdList the current user may not call, transfer a call to or add
+            to a call (org.moqui.impl.CallTransferServices transfer#Call and add#CallParticipant, CallServices start#Call),
+            for an app that keeps them to the user's own (IronStone: the user's organizations). A user named in any
+            provider's refusedUserIdList is refused, with the same answer as a user that does not exist; with no provider
+            every enabled user may be reached; a provider that fails refuses them all.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refusedUserIdList" type="List"/>
+        </out-parameters>
     </service>
 </services>

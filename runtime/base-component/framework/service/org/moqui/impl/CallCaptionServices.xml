@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Live captions of a call (plans/Comms-Framework.md §5.4, §6.4, W6; docs/interfaces/WebRTC.md, Captions). Someone in the
+    call turns them on or off; the call's media node transcribes each speaker's audio in chunks through the speech provider
+    (org.moqui.impl.SpeechServices, the model bound to the transcribe feature) and sends the text to every leg as rtc frames,
+    with the notice that captions are on and which provider hears the audio. The policy is CallCaptions.js beside this file.
+
+    Refusals carry reasonCode: captionsOff (call_captions_enabled is not true), notSignedIn, notFound (not in the call: the
+    same answer as for a call that does not exist), callEnded, encrypted (the call's media is end-to-end encrypted, which
+    captions never downgrade), mediaUnavailable (no media node), noProvider (no speech to text set up). Like the call
+    services, these check the signed-in user's part in the call themselves; the Calls screen's transitions call them with
+    authorization off, each in its own transaction. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="start" noun="Captions">
+        <description>Turn on a call's captions, as someone in it. Every leg is told they are on and who transcribes. When
+            they are on already, the notice goes out again (repeated).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="captions" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('start', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="Captions">
+        <description>Turn off a call's captions, as someone in it. Stopping when they are off answers repeated.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="captions" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('stop', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CaptionState">
+        <description>A call's captions as the user in it sees them: captions {allowed (the CC button: the policy allows them
+            for this call), on, providerLabel, local, startedByUserId}, and reasonCode when not allowed.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="captions" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('getState', context))</script></actions>
+    </service>
+
+    <service verb="note" noun="CaptionsLeg" authenticate="false" allow-remote="false">
+        <description>Internal (Calls.js, in its transaction): a leg joined a call (a browser's leg bound, a phone answered)
+            while its captions are on: its notice is logged (CallCaptionsNotice), and a phone hears it as a prompt (a browser
+            has the rtc frame from its media node). Nothing when captions are off.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('legJoined', context))</script></actions>
+    </service>
+</services>

@@ -11,31 +11,31 @@
      Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Settings            │ Enumerations
      Wizard              │ [ View: list ▾ ]  [ New enumeration… ]
-     Dialog              │ Type . . . . : [                                ▾] Description  : [____________________]              Find . . . . :
-     Report              │       ID                           Description                     Type                                  State   Code      Seq Parent Changed          ▸
-     Panel               │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-     Widgets             │   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a       3          <today> hh:mm
-     Editor              │   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable 2          <today> hh:mm
-     Message             │   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered           2          <today> hh:mm
-     Views               │   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain                        <today> hh:mm
-     Handheld            │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                 System <today> hh:mm
- ▾ Home                  │   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain                        <today> hh:mm
-                         │   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent     4          <today> hh:mm
-                         │   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL                  <today> hh:mm
-                         │   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered           1          <today> hh:mm
-                         │   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all       1          <today> hh:mm
-                         │   [ ] AUTHZT_ALLOW                 Allow                           Authorization Type                    Plain                        <today> hh:mm
-                         │   [ ] GmaMerged                    Already in the target           Git Mergeability                      Ordered merged    4          <today> hh:mm
-                         │   [ ] AUTHZT_ALWAYS                Always Allow (overrides Deny)   Authorization Type                    Plain                        <today> hh:mm
-                         │   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered           3          <today> hh:mm
-                         │   [ ] AgikAnswer                   Answer                          Agent Run Input Kind                  Ordered answer    2          <today> hh:mm
-                         │   [ ] CuoAnswered                  Answered                        Call Outcome                          Ordered answered  2          <today> hh:mm
-                         │   [ ] ErmAny                       Any condition                   Email Rule Match                      Ordered           2          <today> hh:mm
-                         │   [ ] CrvUsers                     Any user may read and join      Chat Room Visibility                  Ordered users     2          <today> hh:mm
-                         │   [ ] OctApple                     Apple                           OpenID Connect Client Type            Plain                        <today> hh:mm
-                         │   [ ] AgpsApproval                 Approval                        Agent Run Pause Kind                  Ordered approval  1          <today> hh:mm
-                         │   Rows 1–20 of 360 · Page 1/18
+     Dialog              │ Type . . . . : [Email Type                      ▾] Description  : [____________________]              Find . . . . :
+     Report              │       ID                           Description                       Type       State Code Seq Parent Changed          Row Actions
+     Panel               │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Widgets             │   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp>
+     Editor              │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp>
+     Message             │   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp>
+     Views               │   [ ] EMT_EMAIL_AUTHC_FACTOR_SENT  Email Authentication Code Sent    Email Type Child          System <stamp>
+     Handheld            │   [ ] EMT_NOTIFICATION             Notification                      Email Type Child          System <stamp>
+ ▾ Home                  │   [ ] EMT_NOTIFICATION_DIGEST      Notification Digest               Email Type Child          System <stamp>
+                         │   [ ] EMT_PWD_RESET                Password Reset                    Email Type Child          System <stamp>
+                         │   [ ] EMT_REG_CONFIRM              Registration Confirmation         Email Type Plain                 <stamp>
+                         │   [ ] EMT_SCREEN_RENDER            Screen Render                     Email Type Child          System <stamp>
+                         │   [ ] EMT_SINGLE_USE_CODE          Single Use Code                   Email Type Child          System <stamp>
+                         │   [ ] EMT_SYSTEM                   System                            Email Type Plain                 <stamp>
+                         │   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp>
+                         │   Rows 1–12 of 12 · Page 1/1   Find: Type = EmailType
                          │ Back to the Landing
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
                          │
                          │
                          │

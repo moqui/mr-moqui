@@ -51,6 +51,19 @@ pub fn simple_hash(password: &str, salt: &str, hash_type: &str, base64_encode: b
     }
 }
 
+/// The SCRAM-SHA-256 verifiers of a password (RFC 5802, RFC 7677): `StoredKey` and `ServerKey` with `salt` and
+/// `iterations`. The XMPP server (moqui-xmpp `scram.rs`) checks a client's proof against them; the password is not kept.
+pub fn scram_sha256_verifier(password: &str, salt: &[u8], iterations: u32) -> (Vec<u8>, Vec<u8>) {
+    use hmac::{KeyInit, Mac};
+    let salted = pbkdf2::pbkdf2_hmac_array::<Sha256, 32>(password.as_bytes(), salt, iterations);
+    let keyed = |label: &[u8]| {
+        let mut mac = hmac::Hmac::<Sha256>::new_from_slice(&salted).expect("HMAC takes a key of any length");
+        mac.update(label);
+        mac.finalize().into_bytes().to_vec()
+    };
+    (Sha256::digest(keyed(b"Client Key")).to_vec(), keyed(b"Server Key"))
+}
+
 /// Login-key hash. Uses `login-key/@encrypt-hash-type`, an empty salt, and hex. Never argon2.
 pub fn hash_login_key(login_key: &str) -> Result<String, Error> {
     simple_hash(login_key, "", &policy::login_key_hash_type(), false)

@@ -39,6 +39,7 @@ mod agent_remote;
 mod agent_screens;
 mod assist;
 mod backup;
+mod chat_actors;
 mod cluster_notify;
 mod collab;
 mod component_load;
@@ -82,6 +83,8 @@ mod report_monitoring;
 mod report_schedule_lock;
 #[cfg(feature = "rtc")]
 mod rtc;
+#[cfg(feature = "sip")]
+mod sip;
 mod search;
 mod search_logs_postgres;
 mod search_opensearch;
@@ -106,3 +109,4 @@ mod wasm_browser;
 mod web_protection;
 mod web_scripts;
 mod web_streaming;
+mod xmpp;

@@ -35,6 +35,16 @@ spec({
             ...Array.from({length: 12}, (_, index) => "private/AcctSearchProbe-" + index + ".txt")
         ])
             ec.resource.getLocationReference(root + "/" + path).putText("Search fixture " + path)
+        // find#Resources reads the MoquiDriveFile index once it exists, which another component's data may have made
+        // before this spec (mr-boss's files demo does): then the fixture is indexed too, so the first three features
+        // find the same files through the index; without the index they test the walk.
+        if (ec.search.isAvailable() && ec.search.indexExists({documentType: "MoquiDriveFile"}))
+            ec.service
+                .sync()
+                .name("org.moqui.impl.FileServices.index#DriveFiles")
+                .parameters({driveId, pathList: ["public", "private"], extractMissing: false})
+                .disableAuthz()
+                .call()
     },
     setup() {
         login("john.doe")

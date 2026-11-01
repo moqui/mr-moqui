@@ -24,8 +24,13 @@
 //!   new layer. Below [`SfuConfig::audio_only_below_kbps`] a subscriber gets audio only.
 //! - Every command carries the leg's connection generation; one from an older generation is refused, and a join with a
 //!   newer one replaces the old peer.
+//! - A room may span media nodes (W7, [`relay`]): a relay link to another node is a peer of the room too, whose tracks in
+//!   are that node's legs' tracks.
 
 mod peer;
+mod relay;
+
+pub use relay::{RelayMessage, RelayRole, RelayTrack, RelayWant};
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -198,6 +203,10 @@ pub struct SfuConfig {
     pub layer_kbps: [u64; 3],
     /// The estimate kept for each audio track before video is shared out.
     pub audio_kbps: u64,
+    /// The relay links one room may have to other media nodes (W7).
+    pub max_relays_per_room: usize,
+    /// The relay links this node may have, all rooms together.
+    pub max_relays: usize,
 }
 
 impl Default for SfuConfig {
@@ -211,6 +220,8 @@ impl Default for SfuConfig {
             audio_only_below_kbps: 120,
             layer_kbps: [150, 500, 1_500],
             audio_kbps: 40,
+            max_relays_per_room: 8,
+            max_relays: 64,
         }
     }
 }
@@ -248,6 +259,23 @@ pub enum SfuEvent {
     /// The leg now speaking in a room, from the audio level header extension: the loudest above the floor, held for two
     /// looks so a cough does not move the speaker view.
     ActiveSpeaker { room: Arc<str>, leg: Arc<str> },
+    /// A message for the node at the other end of a room's relay link (W7), which it passes to its
+    /// [`Sfu::handle_relay`].
+    Relay {
+        room: Arc<str>,
+        node: Arc<str>,
+        message: RelayMessage,
+    },
+    /// A relay link is connected.
+    RelayUp { room: Arc<str>, node: Arc<str> },
+    /// A relay link ended: `lost` (its ICE or DTLS failed after it connected), `unreachable` (it did not connect within
+    /// 10 seconds, or failed before it did), `refused:<code>` (the origin did not take it), `empty` (no leg was left
+    /// behind it), `replaced` (the edge opened it again) or the reason the other node gave (`ended`, `unreachable`).
+    RelayDown {
+        room: Arc<str>,
+        node: Arc<str>,
+        reason: String,
+    },
 }
 
 /// What [`Sfu::poll_output`] gives.
@@ -264,6 +292,8 @@ pub enum SfuOutput {
 pub enum SfuError {
     TooManyRooms,
     RoomFull,
+    /// Past [`SfuConfig::max_relays_per_room`] or [`SfuConfig::max_relays`].
+    TooManyRelays,
     /// The command is for an older connection of the leg.
     StaleGeneration,
     UnknownLeg,
@@ -277,6 +307,7 @@ impl SfuError {
         match self {
             SfuError::TooManyRooms => "tooManyRooms",
             SfuError::RoomFull => "roomFull",
+            SfuError::TooManyRelays => "tooManyRelays",
             SfuError::StaleGeneration => "staleGeneration",
             SfuError::UnknownLeg => "unknownLeg",
             SfuError::UnknownRoom => "unknownRoom",
@@ -340,11 +371,11 @@ impl Room {
     }
 }
 
-/// The room's active speaker, and the one about to be.
+/// The room's active speaker, and the one about to be, by leg.
 #[derive(Default)]
 struct Speaker {
-    current: Option<PeerId>,
-    candidate: Option<PeerId>,
+    current: Option<Arc<str>>,
+    candidate: Option<Arc<str>>,
     looks: u8,
     looked: Option<Instant>,
 }
@@ -362,6 +393,13 @@ pub struct Sfu {
     rooms: HashMap<Arc<str>, Room>,
     peers: HashMap<PeerId, Peer>,
     by_leg: HashMap<LegKey, PeerId>,
+    /// The relay links, by room and the node at the other end.
+    relays: HashMap<(Arc<str>, Arc<str>), PeerId>,
+    next_link: u64,
+    /// The rooms that ended and the rooms' origins, for dropping late relay messages.
+    fences: relay::Fences,
+    /// When the links' wants and track names are looked at next ([`relay::RELAY_LOOK_EVERY`]).
+    relays_due: Option<Instant>,
     next_id: PeerId,
     out: VecDeque<SfuOutput>,
     next_timeout: Option<Instant>,
@@ -378,6 +416,13 @@ impl Sfu {
             rooms: HashMap::new(),
             peers: HashMap::new(),
             by_leg: HashMap::new(),
+            relays: HashMap::new(),
+            // a link's id is unique across this node's restarts: the other node drops an old link's messages by it
+            next_link: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64),
+            fences: relay::Fences::default(),
+            relays_due: None,
             next_id: 1,
             out: VecDeque::new(),
             next_timeout: None,
@@ -397,6 +442,7 @@ impl Sfu {
             .peers
             .iter()
             .filter_map(|id| self.peers.get(id))
+            .filter(|p| p.relay.is_none())
             .map(|p| p.key.leg.clone())
             .collect();
         legs.extend(r.injected.iter().map(|i| i.leg.clone()));
@@ -405,6 +451,16 @@ impl Sfu {
 
     pub fn room_count(&self) -> usize {
         self.rooms.len()
+    }
+
+    /// A room's legs here: its peers but the relay links, and its injected sources.
+    fn legs_in(&self, room: &Room) -> usize {
+        let relays = room
+            .peers
+            .iter()
+            .filter(|id| self.peers.get(id).is_some_and(|p| p.relay.is_some()))
+            .count();
+        room.peers.len() - relays + room.injected.len()
     }
 
     /// The generation of a leg's peer, when it has one.
@@ -426,11 +482,7 @@ impl Sfu {
             return Err(SfuError::TooManyRooms);
         }
         let replacing = self.by_leg.get(key).copied();
-        let in_room = self
-            .rooms
-            .get(&key.room)
-            .map(|r| r.peers.len() + r.injected.len())
-            .unwrap_or(0);
+        let in_room = self.rooms.get(&key.room).map(|r| self.legs_in(r)).unwrap_or(0);
         if replacing.is_none() && in_room >= self.config.max_legs_per_room {
             return Err(SfuError::RoomFull);
         }
@@ -556,11 +608,25 @@ impl Sfu {
     /// Ends a room: every peer is removed and its injected sources and taps dropped (their consumers see the queue
     /// close).
     pub fn close_room(&mut self, now: Instant, room: &str) {
+        self.close_relays(room, "ended");
+        self.fences.ended(now, room);
         let Some(r) = self.rooms.get(room) else { return };
         for id in r.peers.clone() {
             self.remove_peer(id);
         }
         self.rooms.remove(room);
+        self.drive(now);
+    }
+
+    /// Asks every browser publishing video in a room for a keyframe: a tap's consumer (the recorder) starts a file
+    /// only at one, and browsers send one only now and then unless asked.
+    pub fn request_keyframes(&mut self, now: Instant, room: &str) {
+        let Some(r) = self.rooms.get(room) else { return };
+        for id in r.peers.clone() {
+            if let Some(p) = self.peers.get_mut(&id) {
+                p.request_video_keyframes(now);
+            }
+        }
         self.drive(now);
     }
 
@@ -587,6 +653,9 @@ impl Sfu {
         let removed = r.taps.len() != before;
         if r.is_empty() {
             self.rooms.remove(room);
+        } else if let Some((name, _)) = self.rooms.get_key_value(room) {
+            let name = name.clone();
+            self.close_idle_edge(&name);
         }
         removed
     }
@@ -612,13 +681,14 @@ impl Sfu {
             return Err(SfuError::StaleGeneration);
         }
         let name = self.room_or_new(room)?;
-        let r = self.rooms.get_mut(&name).ok_or(SfuError::UnknownRoom)?;
+        let r = self.rooms.get(&name).ok_or(SfuError::UnknownRoom)?;
         if r.injected.iter().any(|i| &*i.leg == leg) {
             return Ok(());
         }
-        if r.peers.len() + r.injected.len() >= self.config.max_legs_per_room {
+        if self.legs_in(r) >= self.config.max_legs_per_room {
             return Err(SfuError::RoomFull);
         }
+        let r = self.rooms.get_mut(&name).ok_or(SfuError::UnknownRoom)?;
         let id = self.next_id;
         self.next_id += 1;
         let track = Arc::new(TrackIn::injected(id, key.leg.clone()));
@@ -670,6 +740,9 @@ impl Sfu {
             }
             if r.is_empty() {
                 self.rooms.remove(room);
+            } else if let Some((name, _)) = self.rooms.get_key_value(room) {
+                let name = name.clone();
+                self.close_idle_edge(&name);
             }
         }
         self.drive(now);
@@ -724,37 +797,39 @@ impl Sfu {
                 continue;
             }
             s.looked = Some(now);
+            // by leg: a relay link carries the other node's legs, each with its own loudness
             let loudest = room
                 .peers
                 .iter()
-                .filter_map(|id| self.peers.get(id).map(|p| (*id, p.loudness(now))))
+                .filter_map(|id| self.peers.get(id))
+                .flat_map(|p| p.loudness(now))
                 .filter(|(_, loud)| *loud >= SPEAKER_FLOOR)
                 .max_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(id, _)| id);
+                .map(|(leg, _)| leg.clone());
             let Some(best) = loudest else {
                 s.candidate = None;
                 s.looks = 0;
                 continue;
             };
-            if s.current == Some(best) {
+            if s.current.as_ref() == Some(&best) {
                 s.candidate = None;
                 s.looks = 0;
                 continue;
             }
-            if s.candidate == Some(best) {
+            if s.candidate.as_ref() == Some(&best) {
                 s.looks += 1;
             } else {
                 s.candidate = Some(best);
                 s.looks = 1;
+                continue;
             }
             if s.looks >= SPEAKER_LOOKS {
-                s.current = Some(best);
-                s.candidate = None;
+                s.current = s.candidate.take();
                 s.looks = 0;
-                if let Some(p) = self.peers.get(&best) {
+                if let Some(leg) = s.current.clone() {
                     self.out.push_back(SfuOutput::Event(SfuEvent::ActiveSpeaker {
                         room: name.clone(),
-                        leg: p.key.leg.clone(),
+                        leg,
                     }));
                 }
             }
@@ -787,6 +862,10 @@ impl Sfu {
     }
 
     fn remove_peer(&mut self, id: PeerId) {
+        if self.peers.get(&id).is_some_and(|p| p.relay.is_some()) {
+            self.remove_relay(id, "lost");
+            return;
+        }
         let Some(mut peer) = self.peers.remove(&id) else { return };
         peer.rtc.disconnect();
         if self.by_leg.get(&peer.key) == Some(&id) {
@@ -810,6 +889,8 @@ impl Sfu {
             room.leave(&peer.key.leg);
             if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
+            } else {
+                self.close_idle_edge(&peer.key.room);
             }
         }
     }
@@ -841,6 +922,7 @@ impl Sfu {
                 self.propagate(item, now);
             }
         }
+        self.relays_tick(now, &mut next);
         self.next_timeout = next;
     }
 
@@ -910,3 +992,6 @@ mod tests;
 
 #[cfg(test)]
 mod audio_tests;
+
+#[cfg(test)]
+mod relay_tests;

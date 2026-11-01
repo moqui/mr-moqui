@@ -523,6 +523,8 @@ impl ExecutionContextFactory {
         for extension in crate::extension::linked() {
             (extension.before_shutdown)(self);
         }
+        // the chat bridge worker stops its adapters, and releases the factory, before the workers stop
+        crate::service::chat_bridge::shutdown(self);
         self.requests.shutdown();
         self.pools.shutdown();
         crate::telemetry::for_factory(self).shutdown();

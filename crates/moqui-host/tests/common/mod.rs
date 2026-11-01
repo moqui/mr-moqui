@@ -719,7 +719,52 @@ fn seed(runtime: &Path, cluster_dir: &Path, fixtures: &Template, extra_conf: &st
         ..LoadFlags::default()
     };
     load_data(runtime, &framework, cluster_dir, &grant_flags).unwrap();
+    drop_telemetry(cluster_dir);
 }
+
+/// Drop the telemetry tables the loads above wrote, so the template is the same whichever test builds it: the log lines
+/// of the loads reach `otel_logs` only when the building process installed the logger, and a table made then is not
+/// day-partitioned for a test that asks for that.
+#[cfg(feature = "embedded-postgres")]
+fn drop_telemetry(cluster_dir: &Path) {
+    use moqui_core::driver::DbDriver;
+    let (cluster, driver) = moqui_host::db::embedded::EmbeddedCluster::start(cluster_dir, 10).unwrap();
+    let mut conn = driver.connect().unwrap();
+    let telemetry = "(name LIKE 'otel\\_%' OR name IN ('monitor_annotations', 'browser_replays'))";
+    let tables = conn
+        .query(
+            &format!(
+                "SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = 'search' AND c.relkind IN ('r', 'p') AND NOT c.relispartition AND {}",
+                telemetry.replace("name", "c.relname")
+            ),
+            &[],
+        )
+        .unwrap();
+    for row in &tables {
+        let name = row
+            .get("name")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default();
+        conn.execute(&format!("DROP TABLE IF EXISTS search.\"{name}\" CASCADE"), &[])
+            .unwrap();
+    }
+    if !tables.is_empty() {
+        conn.execute(
+            &format!(
+                "DELETE FROM search.document_index WHERE {}",
+                telemetry.replace("name", "document_id")
+            ),
+            &[],
+        )
+        .unwrap();
+    }
+    drop(conn);
+    drop(cluster);
+}
+
+#[cfg(not(feature = "embedded-postgres"))]
+fn drop_telemetry(_cluster_dir: &Path) {}
 
 /// A second seeded server beside the gate a test holds, on its own runtime and database: a remote for a client of the
 /// first (the A2A and MCP clients over loopback). It runs under the first gate's lock, so it takes none, and sets no
@@ -736,6 +781,36 @@ pub fn start_second(label: &str, data: Option<&str>, extra_conf: &str) -> Gate {
         &[],
         &[],
     )
+}
+
+/// Another member of a gate's cluster, in this process (a child process the gate's test started): a server on its own
+/// runtime directory against the gate's running database at `cluster_dir`, whose postmaster it adopts and leaves
+/// running. Its process properties are set first. Drop the server before the runtime directory.
+#[allow(dead_code)]
+pub fn start_member(label: &str, cluster_dir: &Path, properties: &[(&str, &str)]) -> (moqui_host::Server, DirGuard) {
+    assert_own_process();
+    for (name, value) in properties {
+        moqui_lib::env::set_property(name, (*value).to_string());
+    }
+    // the port it advertises to the gate, which an ephemeral `0` would not be
+    moqui_lib::env::set_property("cluster_https_port", free_port().to_string());
+    let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
+    let guard = DirGuard(runtime.clone());
+    std::fs::create_dir_all(&runtime).unwrap();
+    prepare_runtime(&runtime, template(), "");
+    let framework = repo_root().join("runtime/base-component/framework");
+    let bind = SocketAddr::from(([127, 0, 0, 1], 0));
+    let server = start_server(&runtime, &framework, cluster_dir, bind).unwrap();
+    (server, guard)
+}
+
+/// A loopback TCP port free now, for a listener a cluster member advertises (an ephemeral `0` is not advertised).
+#[allow(dead_code)]
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .unwrap()
 }
 
 fn start_seeded(
@@ -815,8 +890,11 @@ fn start_seeded_under(
         load_data(&runtime, &framework, &cluster_dir, &extra_flags).unwrap();
     }
 
-    // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free.
-    moqui_lib::env::set_property("cluster_https_port", "0");
+    // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free; a gate whose
+    // cluster has another member names a port of its own (`free_port`), which it advertises to that member
+    if !properties.iter().any(|(name, _)| *name == "cluster_https_port") {
+        moqui_lib::env::set_property("cluster_https_port", "0");
+    }
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
     Gate {

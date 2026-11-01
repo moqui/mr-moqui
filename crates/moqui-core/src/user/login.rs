@@ -200,6 +200,7 @@ fn authenticate(
     // A request repeating Basic credentials for the user its session already holds keeps its id.
     let same_user = session::current_username()?.as_deref() == Some(username);
     finish_login(facade, account, Some(password), true)?;
+    note_recent_auth(&user_id);
     Ok(Checked::LoggedIn { rotate: !same_user })
 }
 
@@ -395,7 +396,18 @@ fn without_authz() -> Option<crate::context::AuthzGuard> {
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or needs a password change.
 pub fn internal_login_user(username: &str) -> Result<(), Error> {
-    internal_login(username).1
+    // The login that finishes a second factor: the password of this user was checked in this session, and the caller
+    // verified the code. It is a sign-in (note_recent_auth); other internal logins (jobs, a verified callback) are not.
+    let finishes_factor = !username.is_empty()
+        && session::session_attribute_flag(AUTHC_FACTOR_REQUIRED)
+        && session::session_attribute(PRE_AUTHC_USERNAME).as_deref() == Some(username);
+    internal_login(username).1?;
+    if finishes_factor {
+        if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
+            note_recent_auth(&user_id);
+        }
+    }
+    Ok(())
 }
 
 /// [`internal_login_user`], with the user id of the account once it passed the gate (None before), for the login history.
@@ -440,8 +452,13 @@ fn recorded_login(username: &str) -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or not allowed from this address.
-pub fn login_external_user(username: &str) -> Result<(), Error> {
+pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Result<(), Error> {
     recorded_login(username)?;
+    if let Some(at) = authenticated_at {
+        if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
+            note_recent_auth_at(&user_id, at);
+        }
+    }
     session::rotate_on_password_login()
 }
 
@@ -736,9 +753,151 @@ pub fn logout() -> Result<(), Error> {
     } else {
         Ok(())
     };
+    session::set_session_attribute(LAST_AUTH, None);
+    session::set_session_attribute(REAUTH_PASSWORD, None);
     session::clear_login();
     forget_shell_providers();
     update.and(session::flush_after_logout())
+}
+
+/// The session attribute of the session's last sign-in that proved who its user is: `<millis> <userId>`. A password
+/// login (the form, an SSH or terminal password, Basic credentials), the code that finishes a second factor, an SSO
+/// login and a re-authentication ([`super::reauthenticate`]) set it. A login key, an API key, an app password and an
+/// internal login (jobs, `internalLoginUser`) do not: they are not a person signing in.
+pub(crate) const LAST_AUTH: &str = "moquiLastAuth";
+/// The password a re-authentication checked while it waits for the code: `<millis> <userId>`.
+pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
+/// How long a re-authentication's checked password waits for its code.
+const REAUTH_PASSWORD_MILLIS: i64 = 5 * 60 * 1000;
+
+/// The session's user signed in (or confirmed who they are) now.
+pub(super) fn note_recent_auth(user_id: &str) {
+    note_recent_auth_at(user_id, now_millis());
+}
+
+/// The session's user signed in at `at` (epoch millis; an identity provider's `auth_time`), never later than now.
+fn note_recent_auth_at(user_id: &str, at: i64) {
+    if user_id.is_empty() {
+        return;
+    }
+    let at = at.min(now_millis());
+    // a later sign-in of this user already noted stays (an SSO login answered from an older provider session after a
+    // password login)
+    let noted = session::session_attribute(LAST_AUTH).and_then(|text| {
+        text.split_once(' ')
+            .map(|(millis, owner)| (millis.parse::<i64>().ok(), owner == user_id))
+    });
+    if let Some((Some(noted), true)) = noted {
+        if noted > at {
+            session::set_session_attribute(REAUTH_PASSWORD, None);
+            return;
+        }
+    }
+    session::set_session_attribute(LAST_AUTH, Some(&format!("{at} {user_id}")));
+    session::set_session_attribute(REAUTH_PASSWORD, None);
+}
+
+/// A login of `user_id` drops the sign-in stamps of another user, so an account switch in one session (a key, an
+/// internal login, "login as") never finds an earlier user's sign-in when that user comes back without signing in.
+fn drop_stamps_of_others(user_id: &str) {
+    for name in [LAST_AUTH, REAUTH_PASSWORD] {
+        let owner =
+            session::session_attribute(name).and_then(|text| text.split_once(' ').map(|(_, owner)| owner.to_string()));
+        if owner.is_some_and(|owner| owner != user_id) {
+            session::set_session_attribute(name, None);
+        }
+    }
+}
+
+/// The time in the stamp attribute `name` when it is the current user's.
+fn stamp_of(name: &str) -> Option<i64> {
+    let user_id = session::current_user_id().ok().flatten().filter(|id| !id.is_empty())?;
+    let text = session::session_attribute(name)?;
+    let (millis, owner) = text.split_once(' ')?;
+    (owner == user_id).then(|| millis.parse::<i64>().ok()).flatten()
+}
+
+/// When the session's user last signed in in a way that proves who they are ([`LAST_AUTH`]), in epoch millis; none
+/// with nobody signed in, or when this session's user came only by a key, an app password or an internal login.
+pub fn last_auth_millis() -> Option<i64> {
+    stamp_of(LAST_AUTH)
+}
+
+/// Whether the session's user signed in (or confirmed who they are) in the last `max_age_millis`.
+pub fn recent_auth(max_age_millis: i64) -> bool {
+    last_auth_millis().is_some_and(|at| {
+        let age = now_millis() - at;
+        (0..=max_age_millis).contains(&age)
+    })
+}
+
+/// The signed-in user's id, or the error that nobody is.
+pub(super) fn current_user() -> Result<String, Error> {
+    session::current_user_id()?
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| Error::new("Sign in first"))
+}
+
+/// Whether a re-authentication checked `user_id`'s password in this session in the last five minutes.
+pub(super) fn reauth_password_checked(user_id: &str) -> bool {
+    session::current_user_id().ok().flatten().as_deref() == Some(user_id)
+        && stamp_of(REAUTH_PASSWORD).is_some_and(|at| (0..=REAUTH_PASSWORD_MILLIS).contains(&(now_millis() - at)))
+}
+
+/// The password check of a re-authentication of the signed-in `user_id`: the account's gate and its password, a wrong one
+/// counted as a failed login, as at the login form; the user, the session and its id do not change. A right one is
+/// remembered for the code ([`reauth_password_checked`]).
+pub(super) fn check_reauth_password(user_id: &str, password: &str) -> Result<(), Error> {
+    noting_invalid(reauth_password(user_id, password))
+}
+
+fn reauth_password(user_id: &str, password: &str) -> Result<(), Error> {
+    if password.is_empty() {
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let now = now_millis();
+    let (account, _checking) = loop {
+        let Some(account) = find_user_id(&facade, user_id)? else {
+            password::burn_verify(password);
+            return Err(Error::new(INVALID_LOGIN));
+        };
+        if let Err(err) = gate_account(&facade, &account, now) {
+            password::burn_verify(password);
+            return Err(err);
+        }
+        if text_field(&account, "currentPassword").is_empty() {
+            return Err(Error::new(
+                "This account signs in through its identity provider: sign in with it again",
+            ));
+        }
+        let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
+        if let Some(checking) = LoginCheck::enter(user_id, left) {
+            break (account, checking);
+        }
+        LoginCheck::wait(user_id);
+    };
+    if legacy_hash(&account) {
+        password::burn_verify(password);
+    }
+    if !password_ok(&account, password)? {
+        increment_failed(&facade, user_id)?;
+        return Err(Error::new(INVALID_LOGIN));
+    }
+    if needs_reset(&account) {
+        update_user(
+            &facade,
+            user_id,
+            &[
+                ("successiveFailedLogins", Value::I64(0)),
+                ("disabled", Value::string("N")),
+                ("disabledDateTime", Value::Null),
+            ],
+        )?;
+    }
+    session::set_session_attribute(REAUTH_PASSWORD, Some(&format!("{now} {user_id}")));
+    Ok(())
 }
 
 /// A login or logout changes what the session's user may open: the shell providers kept for it go.
@@ -912,6 +1071,7 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
     if !fields.is_empty() {
         update_user(facade, &user_id, &fields)?;
     }
+    drop_stamps_of_others(&user_id);
     session::set_user(&user_id, &username);
     forget_shell_providers();
     let locale = nonempty(text_field(account, "locale"));

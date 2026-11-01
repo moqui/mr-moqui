@@ -161,7 +161,16 @@ pub(super) fn transcribe(caller: &Caller, params: &Params) -> Answer {
     let mut record = crate::usage::CallRecord::new(crate::usage::CallSource::Api, &target);
     record.user_id = Some(caller.user_id.clone());
     let started = std::time::Instant::now();
-    let answered = transcribe_with(&target, &bytes, &media_type, language.as_deref());
+    let answered = crate::speech::transcribe_with(
+        &target,
+        &moqui_core::llm_hooks::SpeechRequest {
+            audio: &bytes,
+            media_type: &media_type,
+            language: language.as_deref(),
+            purpose: "assist:transcribe",
+            ..moqui_core::llm_hooks::SpeechRequest::default()
+        },
+    );
     record.duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     // the endpoint reports no tokens: estimated, the audio at about a token a kilobyte and the text at four characters
     record.usage_estimated = true;
@@ -209,77 +218,6 @@ fn count_hit(call: &str) -> Result<(), DrawerError> {
     })
     .unwrap_or(Ok(()))
     .map_err(|error| DrawerError::of(&moqui_lib::error::Error::from(error)))
-}
-
-/// One transcription call: a multipart form with the model's name, the file and the language.
-fn transcribe_with(
-    target: &crate::registry::Target,
-    audio: &[u8],
-    media_type: &str,
-    language: Option<&str>,
-) -> Result<String, moqui_lib::error::Error> {
-    // the guard every model call has: a private address needs allow-private-network
-    crate::provider::check_address(target).map_err(moqui_lib::error::Error::new)?;
-    let boundary = format!("moqui-{}", run::now_millis());
-    let extension = media_type.rsplit('/').next().unwrap_or("webm");
-    let mut body: Vec<u8> = Vec::new();
-    let mut field = |name: &str, value: &str| {
-        body.extend_from_slice(
-            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes(),
-        );
-    };
-    field("model", &target.model.name);
-    field("response_format", "json");
-    if let Some(language) = language {
-        field("language", language);
-    }
-    body.extend_from_slice(
-        format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"dictation.{extension}\"\r\nContent-Type: {media_type}\r\n\r\n"
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(audio);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let mut headers = vec![(
-        "Content-Type".to_string(),
-        format!("multipart/form-data; boundary={boundary}"),
-    )];
-    if let Some(auth) = target.endpoint.auth() {
-        headers.push(auth);
-    }
-    for (name, value) in &target.endpoint.headers {
-        headers.retain(|(known, _)| !known.eq_ignore_ascii_case(name));
-        headers.push((name.clone(), value.clone()));
-    }
-    let url = format!("{}/v1/audio/transcriptions", target.endpoint.url.trim_end_matches('/'));
-    let mut response = moqui_core::outbound::open(moqui_core::outbound::OpenRequest {
-        method: moqui_core::outbound::Method::Post,
-        url,
-        headers,
-        body: Some(bytes::Bytes::from(body)),
-        timeout: Some(std::time::Duration::from_secs(120)),
-        follow_redirects: false,
-    })?;
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut std::io::Read::take(&mut response.reader, 1_000_000), &mut text)
-        .map_err(|error| moqui_lib::error::Error::new(format!("the answer could not be read: {error}")))?;
-    if response.status != 200 {
-        return Err(moqui_lib::error::Error::new(format!(
-            "the endpoint answered HTTP {}",
-            response.status
-        )));
-    }
-    let answer: Json = serde_json::from_str(&text).unwrap_or(Json::String(text));
-    Ok(match answer {
-        Json::String(text) => text.trim().to_string(),
-        other => other
-            .get("text")
-            .and_then(Json::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string(),
-    })
 }
 
 // ---- inline text actions ----

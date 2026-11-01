@@ -18,6 +18,8 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 | `manifest.webmanifest`, `images/pwa-icon-*` | the `/qapps` web app's manifest and icons (the Moqui logo drawn at 192 and 512, a maskable 512 and an SVG) |
 | `sw.js` | the PWA's service worker: caches only versioned shell assets, shows Web Push notifications; served uncached with `Service-Worker-Allowed: /` ([Qvt-Client](../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | `WebPush.xml` | not a file but the `/WebPush` transitions: status, store and delete of the browser's push subscription |
+| `ChatKeys.xml` | not a file but the `/ChatKeys` transitions: the browser's crypto device, its keys and to-device messages ([Chat keys](../../../../../docs/interfaces/Chat-Keys.md)) |
+| `ReAuth.xml` | not a file but the `/ReAuth` transitions: the recent sign-in check and the re-authentication of sensitive actions (`js/WebrootReAuth.js`, [Recent sign-in](../../../../../docs/security/Recent-Auth.md)) |
 
 ## Vendored browser libraries (`libs/`)
 
@@ -47,6 +49,7 @@ is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--writ
 | Tiptap, with ProseMirror and Yjs (one esbuild bundle; `refresh.mjs` lists the packages and the exports) | 3.31.4 | `tiptap/tiptap.min.js` (587 KB, 187 KB gzipped), global `Tiptap` | Lazy, once a page's first `m-rich-text` or `m-coedit` mounts |
 | xterm.js, with `@xterm/addon-fit` | 6.0.0, 0.11.0 | `xterm/xterm.js`, `xterm/xterm.css`, `xterm/addon-fit.js`, globals `Terminal` and `FitAddon` | Lazy, the Terminal screen (`apps/Terminal.qvue`, the browser terminal on `/termws`) |
 | QZ Tray | 2.3.0 | `qz-tray/qz-tray.js` (LGPL-2.1, served unmodified) | Only when the user preference `qz.print.enabled` is `true`. The page needs the `qzSign` transition of `apps.xml`. |
+| matrix-sdk-crypto-wasm | 18.9.0 | `matrix-sdk-crypto/index.mjs`, `pkg/matrix_sdk_crypto_wasm_bg.js` and `.wasm` (7.8 MB; its crates in `licenses/matrix-sdk-crypto-wasm-18.9.0-crates.txt`) | `js/WebrootCrypto.js`, by a dynamic import only when a crypto device is needed ([Chat keys](../../../../../docs/interfaces/Chat-Keys.md)) |
 
 The `html` mode theme (`WebrootThemeData.xml`) links Font Awesome, the style sheet and `moqui-html.js`. A widget that needs Tom Select or
 SortableJS adds its paths to `footer_scripts` and `footer_stylesheets`, which `Footer.html.fancy` writes. A fragment that

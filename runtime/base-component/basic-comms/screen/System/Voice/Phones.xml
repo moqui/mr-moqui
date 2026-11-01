@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Phones (plans/Comms-Framework.md §5.2 "Registrar for phones", V4): every user's desk and soft phones and their live
+    registrations (the contact, the address and port and transport each registered from, its user agent, when it expires,
+    Outbound), whether the registrar is on, and Remove. Users add their own in Settings, Desk and soft phones; an admin
+    removes one here. org.moqui.impl.SipDeviceServices find#SipDevices (allUsers) and revoke#SipDevice, which need the
+    VoiceAdmin permission for another user's phones. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Phones" default-menu-index="7">
+
+    <transition name="revokeDevice">
+        <service-call name="org.moqui.impl.SipDeviceServices.revoke#SipDevice" in-map="{sipDeviceId:sipDeviceId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Phone removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <parameter name="includeRevoked"/>
+
+    <actions><script><![CDATA[
+        showingRemoved = includeRevoked === 'Y'
+        const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.find#SipDevices').parameters({allUsers: true,
+            includeRevoked: showingRemoved}).requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const L = (text) => ec.l10n.localize(text)
+        const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
+        registrarText = out.registrarEnabled ? L('On') + (out.domain ? ' · ' + out.domain : '') : L('Off (sip_registrar_enabled)')
+        deviceList = Array.from(out.deviceList || []).map((d) => ({sipDeviceId: d.sipDeviceId, userName: d.userName, name: d.name,
+            username: d.username, profileText: d.deviceProfile === 'legacy' ? L('Legacy (MD5)') : L('Standard'),
+            statusText: d.status === 'revoked' ? L('Removed') : L('Active'), active: d.status === 'active',
+            registeredText: Array.from(d.registrationList || []).map((r) => (r.userAgent || '') + ' ' + r.sourceAddress + ':' + r.sourcePort +
+                ' ' + String(r.transport || '').toUpperCase() + (r.outbound ? ' ' + L('Outbound') : '') + ' · ' + L('until') + ' ' + when(r.expiresDate)).join('; '),
+            lastSeenText: when(d.lastSeenDate)}))
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Desk and soft phones" style="q-my-none"/>
+            <container style="col"/>
+            <link url="." text="${showingRemoved ? 'Hide removed' : 'Show removed'}" link-type="anchor" parameter-map="{includeRevoked: showingRemoved ? 'N' : 'Y'}"/>
+        </container>
+        <label type="p" style="m-muted" text="The registrar: ${registrarText}. People add their own phones in Comms settings; the password is shown to them once and never kept."/>
+        <container-box><box-body-nopad>
+            <form-list name="DeviceList" list="deviceList" skip-form="true" paginate="false">
+                <field name="userName"><default-field title="Who"><display style="text-weight-medium"/></default-field></field>
+                <field name="name"><default-field title="Phone"><display/></default-field></field>
+                <field name="username"><default-field title="SIP username"><display/></default-field></field>
+                <field name="profileText"><default-field title="Profile"><display/></default-field></field>
+                <field name="statusText"><default-field title="Status"><display/></default-field></field>
+                <field name="registeredText"><default-field title="Registrations"><display/></default-field></field>
+                <field name="lastSeenText"><default-field title="Last seen"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="revokeDevice" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger" condition="active"
+                            confirmation="Remove ${name} of ${userName}? It stops ringing and cannot register again." parameter-map="{sipDeviceId:sipDeviceId}"/>
+                </default-field></field>
+            </form-list>
+            <section name="NoDevices" condition="!deviceList.length"><widgets>
+                <label type="p" text="No phones yet." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

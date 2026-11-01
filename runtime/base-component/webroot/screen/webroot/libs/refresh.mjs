@@ -238,6 +238,12 @@ const HLJS_LANGS = ['bash', 'css', 'diff', 'groovy', 'java', 'javascript', 'json
 const QUASAR_LANGS = ['en-US', 'de', 'es', 'fr', 'it', 'pt-BR', 'ja', 'zh-CN', 'ru', 'nl'];
 
 const LGPL_URL = 'https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt';
+// The crates compiled into matrix-sdk-crypto-wasm's WebAssembly module, with their versions, licenses and license texts.
+// Made for each pin from the Cargo.lock of the package's git tag: `cargo metadata --locked --filter-platform
+// wasm32-unknown-unknown` on that Cargo.toml and lock (which fetches the crates), then every normal dependency reachable
+// from the root that is not a procedural macro, with the LICENSE, COPYING and NOTICE files of its package, each text once.
+// Kept as committed: the npm package does not carry it.
+const CRYPTO_CRATES_NOTICE = 'licenses/matrix-sdk-crypto-wasm-18.9.0-crates.txt';
 const OFL_URL = 'https://openfontlicense.org/documents/OFL.txt';
 
 // Each entry: npm package and exact version, SPDX license, files copied from the package
@@ -500,11 +506,30 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
     copy: [['qz-tray.js', 'qz-tray/qz-tray.js']],
     noticeText: () => `Copyright (c) QZ Industries, LLC. The file header states "@license LGPL-2.1-only". The package carries no license file.\n\nThe full text is in licenses/LGPL-2.1.txt, from ${LGPL_URL}.\nSource: https://github.com/qzind/tray (tag v2.3.0), and the npm package qz-tray@2.3.0 contains the same file unmodified.`,
   },
+  {
+    // End-to-end encryption in the browser (plans/Comms-Framework.md §4.5, C7 core): matrix-sdk-crypto's OlmMachine (on
+    // vodozemac) built to WebAssembly by its maintainers. js/WebrootCrypto.js imports index.mjs only when a device is
+    // needed, never on a page load: the module is 7.8 MB. Pinned Oct 31, 2026; 18.9.0 was published Sep 21, 2026.
+    id: 'matrix-sdk-crypto', name: 'matrix-sdk-crypto-wasm', npm: '@matrix-org/matrix-sdk-crypto-wasm', version: '18.9.0',
+    license: 'Apache-2.0 AND MIT AND BSD-3-Clause AND ISC AND Zlib AND Unicode-3.0 AND BSL-1.0 AND MPL-2.0',
+    licenseNote: 'The package is Apache-2.0. Its WebAssembly module has 240 Rust crates inside (a dual license taken on its ' +
+      'permissive side); each, with its version, license and license text, is in ' + CRYPTO_CRATES_NOTICE + '. Seven are ' +
+      'MPL-2.0 (as_variant, eyeball, eyeball-im, readlock, readlock-tokio, imbl, imbl-sized-chunks), unmodified: their ' +
+      'source is on crates.io at the versions listed there.',
+    copy: [
+      ['index.mjs', 'matrix-sdk-crypto/index.mjs'],
+      ['pkg/matrix_sdk_crypto_wasm_bg.js', 'matrix-sdk-crypto/pkg/matrix_sdk_crypto_wasm_bg.js'],
+      ['pkg/matrix_sdk_crypto_wasm_bg.wasm', 'matrix-sdk-crypto/pkg/matrix_sdk_crypto_wasm_bg.wasm'],
+    ],
+    licenseFiles: ['LICENSE'],
+  },
 ];
 
 const LICENSE_TEXTS = [
   { path: 'licenses/LGPL-2.1.txt', url: LGPL_URL },
   { path: 'licenses/OFL-1.1.txt', url: OFL_URL },
+  // Kept as committed (no url): made once per pin from the crates' own license files (see CRYPTO_CRATES_NOTICE).
+  { path: CRYPTO_CRATES_NOTICE, url: null },
 ];
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -663,15 +688,16 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   for (const { path, url } of LICENSE_TEXTS) {
     let buf;
     try {
+      if (!url) throw new Error(`${path} is kept as committed`);
       buf = Buffer.from(run('curl', ['-fsSL', '--max-time', '20', url]), 'utf8');
     } catch (err) {
       const kept = join(here, path);
       if (!existsSync(kept)) throw err;
-      console.error(`could not download ${url}; keeping the copy at ${path}`);
+      if (url) console.error(`could not download ${url}; keeping the copy at ${path}`);
       buf = readFileSync(kept);
     }
     outputs.set(path, buf);
-    lt.push({ path, from: url, size: buf.length, sha256: sha256(buf) });
+    lt.push({ path, from: url || 'committed', size: buf.length, sha256: sha256(buf) });
   }
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });

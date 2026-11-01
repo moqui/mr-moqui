@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of PhoneDevices (style-guide §4.8): the user's desk and soft phones with their live registrations,
+    Add a phone, New password and Remove (org.moqui.impl.SipDeviceServices). A new phone's or a new password's credentials
+    show once, as the message after the change; they are not kept. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Desk and soft phones" default-menu-include="false">
+
+    <transition name="add">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.create#SipDevice').parameters({name: name || null,
+                deviceProfile: deviceProfile === 'legacy' ? 'legacy' : 'standard'}).requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('Set up the phone with these; the password is shown only now. Username ${u}, password ${p}, domain ${d}, port ${port} (${tr}).', '',
+                {u: out.username, p: out.password, d: out.domain, port: out.tlsPort || out.sipPort || '', tr: out.transport || ''}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="newPassword">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.rotate#SipDeviceCredential').parameter('sipDeviceId', sipDeviceId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('The old password no longer works. Username ${u}, new password ${p}; it is shown only now.', '',
+                {u: out.username, p: out.password}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="remove">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.SipDeviceServices.revoke#SipDevice').parameter('sipDeviceId', sipDeviceId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Phone removed'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.find#SipDevices').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        registrarEnabled = !!out.registrarEnabled
+        const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
+        deviceList = Array.from(out.deviceList || []).map((d) => ({sipDeviceId: d.sipDeviceId, name: d.name, username: d.username,
+            profileText: d.deviceProfile === 'legacy' ? ec.l10n.localize('Legacy (MD5)') : ec.l10n.localize('Standard'),
+            registeredText: Array.from(d.registrationList || []).map((r) => (r.userAgent || r.transport) + ' · ' + r.sourceAddress + ':' + r.sourcePort +
+                ' · ' + ec.l10n.localize('until') + ' ' + when(r.expiresDate)).join('; ') || ec.l10n.localize('Not registered'),
+            lastSeenText: when(d.lastSeenDate)}))
+        profileOptions = [{key: 'standard', text: ec.l10n.localize('Standard (SHA-256)')}, {key: 'legacy', text: ec.l10n.localize('Legacy (MD5), for a phone without SHA-256')}]
+    ]]></script></actions>
+
+    <widgets>
+        <label type="p" text="Desk and soft phones that register with this server and ring with your calls." style="m-muted"/>
+        <section name="RegistrarOff" condition="!registrarEnabled"><widgets>
+            <label type="p" text="The registrar is off on this server: phones cannot register until an administrator turns it on (sip_registrar_enabled)." style="text-warning"/>
+        </widgets></section>
+        <section name="NoDevices" condition="!deviceList.length"><widgets><label type="p" text="No phones yet."/></widgets></section>
+        <form-list name="DeviceList" list="deviceList" skip-form="true">
+            <field name="name"><default-field title="Phone"><display/></default-field></field>
+            <field name="username"><default-field title="Username"><display/></default-field></field>
+            <field name="profileText"><default-field title="Profile"><display/></default-field></field>
+            <field name="registeredText"><default-field title="Registered"><display/></default-field></field>
+            <field name="lastSeenText"><default-field title="Last seen"><display/></default-field></field>
+            <field name="actions"><default-field title="">
+                <link url="newPassword" text="New password" icon="sym_o_key" confirmation="Make a new password? The phone stops working until you enter it.">
+                    <parameter name="sipDeviceId"/></link>
+                <link url="remove" text="Remove" icon="sym_o_delete" confirmation="Remove this phone? It stops ringing and cannot register again.">
+                    <parameter name="sipDeviceId"/></link>
+            </default-field></field>
+        </form-list>
+        <form-single name="AddDevice" transition="add">
+            <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+            <field name="deviceProfile"><default-field title="Profile"><drop-down no-current-selected-key="standard">
+                <list-options list="profileOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+            <field name="submitButton"><default-field title="Add a phone"><submit/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

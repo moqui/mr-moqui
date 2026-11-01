@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The recent sign-in check for the signed-in browser (org.moqui.impl.RecentAuthServices; js/WebrootReAuth.js,
+    moqui.reauth): /ReAuth/check answers check#RecentAuth (recent, method, secondFactor, authFlowId, authFlowList);
+    /ReAuth/password takes {password, code} (reauthenticate#User: reauthenticated, or codeNeeded with codeText and
+    sendableFactors); /ReAuth/sendCode takes {factorId} (send#ReauthCode). An account without a password signs in again
+    at /sso/login with reauth=true and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
+    Posts need the session's CSRF token. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
+    <transition name="check" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.check#RecentAuth').disableAuthz().call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors, recent: !!out.recent, authAgeSeconds: out.authAgeSeconds ?? null, method: out.method || null,
+                    secondFactor: !!out.secondFactor, authFlowId: out.authFlowId || null, authFlowList: out.authFlowList || []})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="password" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const params = ec.web.parameters
+                const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.reauthenticate#User')
+                    .parameters({password: params.password || '', code: params.code || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors, reasonCode: errors ? 'notConfirmed' : null, reauthenticated: !!out.reauthenticated,
+                    codeNeeded: !!out.codeNeeded, codeText: out.codeText || null, sendableFactors: out.sendableFactors || []})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sendCode" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.send#ReauthCode')
+                    .parameters({factorId: ec.web.parameters.factorId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors, sent: !!out.sent})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

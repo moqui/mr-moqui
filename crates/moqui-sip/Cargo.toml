@@ -1,0 +1,38 @@
+# Phone calls (plans/Comms-Framework.md §5.1, §5.2; "The V1 gate" in §6.2): the SIP user agent and back-to-back user
+# agent (B2BUA) toward trunk providers, on rsipstack, and the phone side of a call's media: SDP offer and answer for
+# PCMU, PCMA and Opus with telephone-event, symmetric RTP, SRTP by SDES, RFC 4733 DTMF, the digest credentials and
+# their checks, the dial classes and the per-source block of failed digests. The signaling runs on Tokio (rsipstack's);
+# the media, digest, dial and race logic is sans-IO and tested in memory. It knows no ExecutionContext: moqui-host links
+# it under its sip feature, owns the sockets and calls the voice services (org.moqui.impl.VoiceServices).
+
+[package]
+name = "moqui-sip"
+description = "The SIP user agent and B2BUA for phone calls, with the phone side of call media."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# rsipstack's transport inspector is an async_trait (the block of failed-digest sources, ua.rs).
+async-trait = "0.1"
+base64 = { workspace = true }
+getrandom = { workspace = true }
+hmac = { workspace = true }
+md-5 = { workspace = true }
+moqui-lib = { workspace = true }
+moqui-rtc = { workspace = true }
+rsipstack = { workspace = true }
+rustls = { workspace = true }
+sha2 = { workspace = true }
+str0m = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The TLS test's certificate.
+rcgen = { workspace = true }
+
+[lints]
+workspace = true

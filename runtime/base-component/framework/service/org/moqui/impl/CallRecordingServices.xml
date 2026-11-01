@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Call recording (plans/Comms-Framework.md W5, §5.4 "Recording", §6.4, D-V5): starting, pausing, resuming and stopping
+    a call's recording, the notice and consent of each leg, the files, and retention. The model is the Recording block of
+    framework/entity/CallEntities.xml; the logic is CallRecordings.js beside this file. The recorder itself runs on the
+    call's media node (moqui-host src/rtc/recorder.rs), told by send#MediaControl ({action: 'recording'}).
+
+    Policy (MoquiDefaultConf default-properties): call_recording_enabled (off by default: every start is refused with
+    reasonCode recordingOff), call_recording_ack_required (each leg must acknowledge the notice; the recording pauses while
+    a current leg has not, or after one withdraws), call_recording_policy_revision, call_recording_retention_days, and the
+    recorder's limits (call_recording_queue_frames, call_recording_segment_mb, call_recording_segment_minutes,
+    call_recording_max_mb).
+
+    Who. A host of the call (its starter, or the owner of the call link it was opened by) starts, pauses, resumes and
+    stops its recording. A recording is read (listed, played, downloaded) only by its owner (who started it) and the
+    call's hosts, and deleted only by its owner; anyone else gets "not found" for the same parameters. The files are
+    reached only through get#RecordingFile by segment id: no route serves their dbresource:// locations to users, and
+    record links an app shows (BOSS) go through these services and never widen this. Each leg of the call, a guest's by
+    its credential, acknowledges or withdraws its own consent only.
+
+    Refusals carry reasonCode: recordingOff, notFound, notAllowed, callEnded, notRecording, notSignedIn, notInCall,
+    mediaUnavailable. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== The recording of a call ========== -->
+
+    <service verb="get" noun="RecordingState" authenticate="anonymous-all">
+        <description>What a call's page shows of recording: the policy (enabled, ackRequired), whether the current user may
+            record (canRecord), the call's recording going now (recording: callRecordingId, state recording or paused,
+            pauseReason, kind, startedDate; null when none), and this leg's notice (myConsent: noticed, ackRequired,
+            acknowledged, withdrawn). A guest passes their credential. A call the user cannot see is "not found".</description>
+        <in-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="credential"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="ackRequired" type="Boolean"/>
+            <parameter name="canRecord" type="Boolean"/>
+            <parameter name="encrypted" type="Boolean"><description>The call is end-to-end encrypted (W8): it cannot be recorded</description></parameter>
+            <parameter name="recording" type="Map"/>
+            <parameter name="myConsent" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('state', context))</script></actions>
+    </service>
+
+    <service verb="start" noun="Recording">
+        <description>Start recording an active call (a host of it, with call_recording_enabled on). kind: perTrack (each
+            track and the mixed audio, the default) or mixed (the mixed audio only). Every current leg gets the notice, logged
+            in CallRecordingConsent; the starter's own leg counts as acknowledged. With call_recording_ack_required it starts
+            paused until every current leg acknowledged. A call already being recorded answers that recording (repeated).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="kind" default-value="perTrack"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callRecordingId"/>
+            <parameter name="recording" type="Map"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('start', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="Recording">
+        <description>Stop the call's recording (a host): the media node closes and stores its last segments. By
+            callRecordingId, or the one going in callSessionId.</description>
+        <in-parameters>
+            <parameter name="callRecordingId"/>
+            <parameter name="callSessionId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recording" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('stop', context))</script></actions>
+    </service>
+
+    <service verb="pause" noun="Recording">
+        <description>Pause the call's recording (a host); its segments so far are closed and stored.</description>
+        <in-parameters>
+            <parameter name="callRecordingId"/>
+            <parameter name="callSessionId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recording" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('pause', context))</script></actions>
+    </service>
+
+    <service verb="resume" noun="Recording">
+        <description>Resume a recording the host paused: it records again in a new period of segments, unless the policy
+            holds it paused (a current leg has not acknowledged, or one withdrew).</description>
+        <in-parameters>
+            <parameter name="callRecordingId"/>
+            <parameter name="callSessionId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recording" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('resume', context))</script></actions>
+    </service>
+
+    <!-- ========== Notice and consent ========== -->
+
+    <service verb="ack" noun="RecordingNotice" authenticate="anonymous-all">
+        <description>The current user's leg in the call (a guest's by its credential) acknowledges the recording notice
+            (a click; a phone presses 1 instead, ack#LegRecordingNotice). A withdrawal before is taken back. When
+            every current leg has acknowledged, a recording held for that resumes.</description>
+        <in-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="credential"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recording" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('ack', context))</script></actions>
+    </service>
+
+    <service verb="withdraw" noun="RecordingConsent" authenticate="anonymous-all">
+        <description>The current user's leg (a guest's by its credential) withdraws its consent: the recording pauses
+            while that leg is in the call; the call goes on. Acknowledging again takes the withdrawal back.</description>
+        <in-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="credential"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recording" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('withdraw', context))</script></actions>
+    </service>
+
+    <service verb="notify" noun="LegRecording" authenticate="false" allow-remote="false">
+        <description>Internal: the hook that gives a leg that is not a browser (a phone number or a SIP device) the
+            recording notice: a prompt played to it by its SIP engine (VoiceServices.notify#PhoneLeg: the recording tone, with
+            ackRequired the acknowledgement tone that asks for 1, then call_recording_prompt_audio when set). Its answer comes
+            back as ack#LegRecordingNotice. Browser and guest legs get the rtc recording frame instead, so this does nothing
+            for them.</description>
+        <in-parameters>
+            <parameter name="callRecordingId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="state"/>
+            <parameter name="ackRequired" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notified" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('notifyLeg', context))</script></actions>
+    </service>
+
+    <service verb="ack" noun="LegRecordingNotice" authenticate="false" allow-remote="false">
+        <description>Internal (VoiceServices.note#PhoneLeg, when a phone leg presses 1): that leg acknowledges the
+            notice of the recording going in its call, logged in its CallRecordingConsent with the method dtmf (CamDtmf); a
+            recording held for acknowledgements resumes when every current leg has one. Only while a recording asks for
+            acknowledgements and the leg has not given one; at any other time the key is the call's (acknowledged false).
+            Withdrawing by phone is hanging up.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acknowledged" type="Boolean"/>
+            <parameter name="recording" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('legAck', context))</script></actions>
+    </service>
+
+    <!-- ========== Recordings and their files ========== -->
+
+    <service verb="find" noun="Recordings">
+        <description>The recordings the current user may read (theirs, and those of calls they host), newest first, of one
+            call or all: each with the call's people, its state, length, error, whether the user may delete it, and its
+            segments by period ({period, segments: [{callRecordingSegmentId, trackKind, source, name, contentType,
+            startOffsetMs, durationMs, segmentSeq, byteSize}]}) for a player that plays a period's tracks together.</description>
+        <in-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recordingList" type="List"/>
+            <parameter name="recordingListCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('find', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="RecordingFile">
+        <description>One stored segment of a recording the current user may read, for a download transition (which sends
+            the location): location, contentType, fileName, byteSize. Anyone else gets "not found" for the same segment.</description>
+        <in-parameters>
+            <parameter name="callRecordingSegmentId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="contentType"/>
+            <parameter name="fileName"/>
+            <parameter name="byteSize" type="Long"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('file', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="Recording">
+        <description>Delete a recording that is not going (its owner only): its files, segments, tracks, notices and the
+            recording.</description>
+        <in-parameters>
+            <parameter name="callRecordingId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deleted" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('remove', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="Recordings" authenticate="anonymous-all" transaction="ignore">
+        <description>The recording job (hourly): recordings past their retentionUntilDate are deleted, files and rows;
+            recovery: a recording still going whose call ended or whose media node stopped fails ("the recorder stopped"), a
+            segment that was not stored is removed with any partial file, and files under the recordings' root that no
+            recording row names (an upload whose rows rolled back) are deleted. Each item is on its own: one that fails is
+            logged and the rest go on.</description>
+        <out-parameters>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="recoveredCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('expire', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="RecordingItem" authenticate="false" allow-remote="false">
+        <description>Internal: one item of expire#Recordings (itemKind retention, stale, failedSegment or orphanFiles).</description>
+        <in-parameters>
+            <parameter name="itemKind" required="true"/>
+            <parameter name="callRecordingId"/>
+            <parameter name="callRecordingSegmentId"/>
+            <parameter name="location"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="done" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('expireItem', context))</script></actions>
+    </service>
+
+    <!-- ========== Internal: the call services and the media node ========== -->
+
+    <service verb="note" noun="CallChange" authenticate="false" allow-remote="false">
+        <description>Internal (Calls.js, in its transaction): a leg of a call being recorded was bound to a socket (change
+            legBound: a late joiner gets the notice, logged, and the policy is checked again), left (legLeft: its tracks end,
+            and a recording held for its acknowledgement may resume), or the call ended (ended: its recordings stop).
+            Failure tolerant: an error is logged, never returned, so the call's own change goes on.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="change" required="true"/>
+            <parameter name="callLegId"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('callChange', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="RecordingBytes" authenticate="false" allow-remote="false">
+        <description>Internal (FileServices): the bytes the stored files of the recordings userId owns take. They count toward
+            the quota of that user's personal drive, with its files: start#Recording refuses (quotaFull) when it is full, and
+            a recording stops when it fills it.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="recordingBytes" type="Long"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('recordingBytes', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="RecordingSegment" authenticate="false" allow-remote="false">
+        <description>Internal (the media node's recorder): a closed segment file at tempPath (under runtime/tmp/call-recording)
+            is stored at dbresource://moqui/call/recording/(callRecordingId)/(segment id).(ogg or webm) through
+            store#RecordingFile, with its track (made the first time: by leg and source, or the mix) and segment rows.
+            trackEnded: the track's last segment (its leg left, or the recording stopped). A segment of a recording that is
+            gone or failed is dropped with its file.</description>
+        <in-parameters>
+            <parameter name="callRecordingId" required="true"/>
+            <parameter name="callLegId"/>
+            <parameter name="trackKind" required="true"/>
+            <parameter name="source"/>
+            <parameter name="codec"/>
+            <parameter name="contentType"/>
+            <parameter name="segmentPeriod" type="Integer"/>
+            <parameter name="segmentSeq" type="Integer"/>
+            <parameter name="startOffsetMs" type="Long"/>
+            <parameter name="durationMs" type="Long"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="tempPath" required="true"/>
+            <parameter name="trackEnded" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callRecordingSegmentId"/>
+            <parameter name="contentLocation"/>
+            <parameter name="stored" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('storeSegment', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="RecordingFile" type="rust" location="moqui_core::service::call_media::store_recording_file"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: moves a recorder's spooled file (tempPath, which must be under the runtime's
+            tmp/call-recording) to contentLocation (under dbresource://moqui/call/recording/), and deletes the spooled file.
+            byteSize is what was stored. A path outside the spool, or a location outside the recordings' root, is refused.</description>
+        <in-parameters>
+            <parameter name="tempPath" required="true"/>
+            <parameter name="contentLocation" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="byteSize" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="note" noun="RecorderEnd" authenticate="false" allow-remote="false">
+        <description>Internal (the media node's recorder): the recorder ended on its own. outcome failed (a full queue, a
+            file or store error: the recording fails with errorText as lastErrorText, its partial files already removed) or
+            limit (it reached call_recording_max_mb: it stops, with that as lastErrorText). Either way the call goes on and
+            every leg is told the recording stopped.</description>
+        <in-parameters>
+            <parameter name="callRecordingId" required="true"/>
+            <parameter name="outcome" required="true"/>
+            <parameter name="errorText"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('recorderEnd', context))</script></actions>
+    </service>
+</services>

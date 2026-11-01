@@ -25,6 +25,7 @@ tracing = { workspace = true }
 turn-server-proto = { workspace = true }
 
 [dev-dependencies]
+sframe = { workspace = true }
 turn-client-proto = { workspace = true }
 
 [lints]

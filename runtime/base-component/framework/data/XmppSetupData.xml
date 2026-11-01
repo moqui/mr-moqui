@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- XMPP for local users (framework/entity/XmppEntities.xml, org.moqui.impl.XmppServices, C3a): the cleanup job. -->
+<entity-facade-xml type="seed-initial">
+    <!-- Upload slots never put within an hour, with their files, and expired FAST tokens. Each on its own. -->
+    <moqui.service.job.ServiceJob jobName="clean_XmppUploads_daily" description="Delete unused XMPP upload slots and expired FAST tokens"
+            serviceName="org.moqui.impl.XmppServices.clean#Uploads" cronExpression="0 37 4 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+</entity-facade-xml>

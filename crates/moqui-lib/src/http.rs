@@ -121,6 +121,8 @@ pub struct PreparedRequest {
     headers: Vec<(String, String)>,
     body: Option<String>,
     timeout: Duration,
+    /// This request's own bound on the response body, below the client's ([`Call::max_response_bytes`]).
+    max_response_bytes: Option<u64>,
 }
 
 impl PreparedRequest {
@@ -350,7 +352,9 @@ impl RestClient {
             .iter()
             .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
             .collect();
-        let max = self.max_response_bytes;
+        let max = request
+            .max_response_bytes
+            .map_or(self.max_response_bytes, |own| own.min(self.max_response_bytes));
         if !self.truncate_body && response.content_length().is_some_and(|length| length > max) {
             return Err(Error::new(format!(
                 "HTTP {method} {shown} response is larger than the limit"
@@ -435,6 +439,7 @@ impl RestClient {
             body: PendingBody::Absent,
             timeout: self.timeout,
             allow_in_sim: false,
+            max_response_bytes: None,
         }
     }
 
@@ -479,6 +484,7 @@ pub struct Call<'a> {
     body: PendingBody,
     timeout: Duration,
     allow_in_sim: bool,
+    max_response_bytes: Option<u64>,
 }
 
 impl Call<'_> {
@@ -509,6 +515,14 @@ impl Call<'_> {
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// The largest response body this call reads, when below the client's
+    /// [`max_response_bytes`](RestClient::max_response_bytes): a larger body is an error (or cut, with the client's
+    /// [`truncate_body`](RestClient::truncate_body)), read no further than that.
+    pub fn max_response_bytes(mut self, max: u64) -> Self {
+        self.max_response_bytes = Some(max);
         self
     }
 
@@ -566,6 +580,7 @@ impl Call<'_> {
             headers,
             body,
             timeout: self.timeout,
+            max_response_bytes: self.max_response_bytes,
         })
     }
 }

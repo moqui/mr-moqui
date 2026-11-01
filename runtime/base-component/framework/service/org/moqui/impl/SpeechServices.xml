@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Speech to text for server code (plans/Comms-Framework.md §6.4, §10.1): one audio file to text by the model bound to the
+    transcribe feature on an OpenAI-compatible endpoint (moqui-llm; docs/ai/Models.md), with the user's api quota checked and
+    the call kept as an LlmCall. Call captions, voicemail (V2) and recording transcripts (W5) use it. In a binary without the
+    agent runtime (the llm feature) the answer is reasonCode notBuiltIn. Both services are internal: the caller checks who
+    may send that audio out (the consent policy) before calling. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="transcribe" noun="Audio" type="rust" location="moqui_core::service::speech::transcribe_audio"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: the audio at audioLocation (a resource location), or in audio (bytes, or base64 text), as
+            text. A transcription that does not work is an answer, not a failed service: reasonCode (notBuiltIn,
+            notConfigured, invalid, quota, timeout, failed) and errorText, so the caller keeps the audio and records the
+            state. The quota and the LlmCall are userId's (the current user by default); purpose is kept as the call's
+            client (captions:&lt;callSessionId&gt;, voicemail:&lt;voicemailId&gt;).</description>
+        <in-parameters>
+            <parameter name="audioLocation"/>
+            <parameter name="audio" type="Object"/>
+            <parameter name="mediaType" required="true"><description>audio/wav, audio/ogg, audio/webm, audio/mpeg, ...</description></parameter>
+            <parameter name="language"><description>An ISO 639-1 code; empty lets the model tell</description></parameter>
+            <parameter name="prompt"><description>Words to expect (names, terms)</description></parameter>
+            <parameter name="userId"/>
+            <parameter name="purpose"/>
+            <parameter name="timeoutSeconds" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="text"/>
+            <parameter name="reasonCode"/>
+            <parameter name="errorText"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="SpeechProvider" type="rust" location="moqui_core::service::speech::get_speech_provider"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: whether speech to text works now (a model is bound to transcribe), and what a consent notice
+            names: providerLabel (the endpoint and model) and local (the endpoint is on this deployment's own network).
+            Else reasonCode and errorText as transcribe#Audio.</description>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/>
+            <parameter name="providerLabel"/>
+            <parameter name="local" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="errorText"/>
+        </out-parameters>
+    </service>
+</services>

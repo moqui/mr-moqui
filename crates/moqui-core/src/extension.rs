@@ -44,6 +44,9 @@ pub struct Extension {
     pub after_boot: fn(&ExecutionContextFactory),
     /// Stop what the crate runs, at the start of the factory's shutdown, before the service workers stop.
     pub before_shutdown: fn(&ExecutionContextFactory),
+    /// The crate's chat bridge adapters (plans/Comms-Framework.md §4.3), each serving the `ChatBridge` rows that name it
+    /// ([`crate::service::chat_bridge`]).
+    pub chat_bridge_adapters: fn() -> Vec<std::sync::Arc<dyn crate::service::chat_bridge::ChatBridgeAdapter>>,
 }
 inventory::collect!(Extension);
 
@@ -55,6 +58,7 @@ impl Extension {
         register_native: |_| Ok(()),
         after_boot: |_| {},
         before_shutdown: |_| {},
+        chat_bridge_adapters: Vec::new,
     };
 }
 
@@ -70,6 +74,8 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("moqui_mail::test_server", "smtp"),
     ("moqui_mail::push_remote_changes", "smtp"),
     ("moqui_mail::", "imap"),
+    // the host's SIP engine (moqui-host src/sip/audio.rs), the sip feature
+    ("moqui_host::sip::", "sip"),
 ];
 
 /// The linked framework crates.

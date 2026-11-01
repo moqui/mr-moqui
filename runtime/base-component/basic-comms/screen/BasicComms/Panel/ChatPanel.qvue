@@ -153,7 +153,7 @@ module.exports = {
         snippetOf(room) {
             const last = room.lastMessage;
             if (!last) return room.topic || t('No messages yet');
-            const text = last.redacted || !last.snippet ? t('Message removed') : last.snippet;
+            const text = last.encrypted ? t('Encrypted message') : last.redacted || !last.snippet ? t('Message removed') : last.snippet;
             if (last.senderUserId === this.me.userId) return t('You') + ': ' + text;
             if (room.roomTypeEnumId === 'CrtDirect' && room.otherUserId) return text;
             return String(last.senderName || '').split(' ')[0] + ': ' + text;
@@ -231,7 +231,8 @@ module.exports = {
             if (event.type === 'message' && event.threadRootEventSeq == null) {
                 const text = String(event.bodyText || '').replace(/\s+/g, ' ').trim();
                 room.lastMessage = { eventSeq: event.eventSeq, senderUserId: event.senderUserId, senderName: event.senderName, sentDate: event.sentDate,
-                    snippet: (text.length > 140 ? text.slice(0, 139) + '…' : text) || (event.attachments || []).map((file) => '📎 ' + file.fileName).join(', '), redacted: false };
+                    snippet: event.encrypted ? null : (text.length > 140 ? text.slice(0, 139) + '…' : text) || (event.attachments || []).map((file) => '📎 ' + file.fileName).join(', '),
+                    redacted: false, encrypted: !!event.encrypted };
                 room.lastEventDate = event.sentDate;
             } else if (event.type === 'redaction' || event.type === 'membership' || event.type === 'system') this.scheduleRooms();
         },

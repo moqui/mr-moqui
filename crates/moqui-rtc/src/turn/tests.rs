@@ -68,7 +68,7 @@ impl Net {
         let now = Instant::now();
         let config = TurnConfig {
             secret: SECRET.to_vec(),
-            allowed_peers: vec![media().ip()],
+            allowed_peers: vec![media()],
             max_per_user,
             ..TurnConfig::default()
         };
@@ -244,6 +244,96 @@ fn a_peer_that_is_no_media_node_is_refused() {
 }
 
 #[test]
+fn another_port_on_a_media_node_is_refused() {
+    let mut net = Net::new(2);
+    let (user, pass) = credential(SECRET, "LEG1", unix_now() + 600);
+    let mut c = net.client(5000, &user, &pass);
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    let relayed = c.allocated().expect("an allocation");
+    // the permission is by address (RFC 8656), so the media node's is taken
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, media().ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    assert!(c.permitted(media().ip()));
+    // but nothing goes to or comes from another port of it: ssh, its database, the HTTP port
+    let other = SocketAddr::new(media().ip(), 22);
+    assert!(c.send(&mut net, other, b"to another port"));
+    net.turn.handle_peer(net.now, other, relayed, b"from another port");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert!(net.at_peers.iter().all(|(_, to, _)| *to != other));
+    assert!(c.received.is_empty());
+    // the media port still relays both ways
+    assert!(c.send(&mut net, media(), b"to the media port"));
+    net.turn.handle_peer(net.now, media(), relayed, b"from the media port");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert!(net.at_peers.iter().any(|(_, to, _)| *to == media()));
+    assert_eq!(c.received, vec![b"from the media port".to_vec()]);
+    // and a channel to another port is refused before the server sees it
+    let tnow = net.tnow();
+    let bound = c.client.bind_channel(TransportType::Udp, other, tnow);
+    if bound.is_ok() {
+        net.run(&mut [&mut c], Duration::from_secs(45));
+        assert!(!c
+            .events
+            .iter()
+            .any(|e| matches!(e, turn_client_proto::api::TurnEvent::ChannelCreated(_, p) if *p == other)));
+    }
+}
+
+#[test]
+fn an_xmpp_users_credential_relays_to_public_addresses_only() {
+    let mut net = Net::new(2);
+    let (user, pass) = credential(SECRET, "xmpp.U1", unix_now() + 600);
+    let mut c = net.client(5000, &user, &pass);
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    let relayed = c.allocated().expect("an allocation");
+    // a peer XMPP client on the internet
+    let public = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)), 50000);
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, public.ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    assert!(c.permitted(public.ip()));
+    net.turn.handle_peer(net.now, public, relayed, b"from the peer");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert_eq!(c.received, vec![b"from the peer".to_vec()]);
+    // never into the server's own networks
+    let inside = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 22);
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, inside.ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(45));
+    assert!(!c.permitted(inside.ip()));
+    for ip in [
+        "127.0.0.1",
+        "10.1.2.3",
+        "100.64.0.1",
+        "169.254.1.1",
+        "::1",
+        "fd00::1",
+        "fe80::1",
+        "::ffff:10.0.0.1",
+        "192.0.2.1",
+        "2002:0a00:0001::1",
+        "2002:7f00:0001::",
+        "::10.0.0.1",
+        "64:ff9b::a00:1",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+    ] {
+        assert!(!super::is_public(ip.parse().unwrap()), "{ip}");
+    }
+    assert!(super::is_public("2a00:1450::1".parse().unwrap()));
+    assert!(
+        super::is_public("2002:0808:0404::1".parse().unwrap()),
+        "6to4 of a public address"
+    );
+}
+
+#[test]
 fn revoking_a_leg_closes_its_relay_and_refuses_it_after() {
     let mut net = Net::new(2);
     let (user, pass) = credential(SECRET, "LEG1", unix_now() + 600);
@@ -291,4 +381,29 @@ fn a_stream_is_split_into_stun_messages_and_channel_data() {
     assert_eq!(frame_len(&[0x00, 0x01, 0x00, 0x0c]), Some(32));
     assert_eq!(frame_len(&[0x40, 0x00, 0x00, 0x05]), Some(12));
     assert_eq!(frame_len(&[0x00, 0x01]), None);
+}
+
+#[test]
+fn an_xmpp_users_credential_reaches_no_other_port_of_the_servers_own_addresses() {
+    let media: SocketAddr = "9.9.9.9:10000".parse().unwrap();
+    let listen: SocketAddr = "1.0.0.1:3478".parse().unwrap();
+    let config = TurnConfig {
+        secret: SECRET.to_vec(),
+        allowed_peers: vec![media],
+        ..TurnConfig::default()
+    };
+    let turn = Turn::new(config, &[(Proto::Udp, listen)]);
+    // public addresses, so the XMPP rule would take them but for a media node's or a listener's address
+    let xmpp = Some("xmpp.U1");
+    assert!(turn.peer_allowed(media, false, xmpp));
+    assert!(turn.peer_allowed(media, false, Some("LEG1")));
+    for other in ["9.9.9.9:22", "[::ffff:9.9.9.9]:22", "1.0.0.1:5060", "1.0.0.1:3478"] {
+        let other: SocketAddr = other.parse().unwrap();
+        assert!(!turn.peer_allowed(other, false, xmpp), "{other}");
+        assert!(!turn.peer_allowed(other, false, Some("LEG1")), "{other}");
+    }
+    // a permission for the media node's address is taken; its other ports still are not relayed to
+    assert!(turn.peer_allowed("[::ffff:9.9.9.9]:1".parse().unwrap(), true, Some("LEG1")));
+    // an XMPP peer on the internet still is
+    assert!(turn.peer_allowed("8.8.4.4:50000".parse().unwrap(), false, xmpp));
 }

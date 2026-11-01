@@ -89,6 +89,17 @@ fn a_date_pattern_formats_a_time_stamp_whatever_its_letters() {
     );
     holds(r#"ec.l10n.format(stamp) === "2024-03-05 14:07" && ec.l10n.format(millis) === "1,709,647,629,000""#);
     holds(r#"ec.l10n.format("100050", null) === "100050" && ec.l10n.format("CT-REQ", null) === "CT-REQ""#);
+    // Java's format(value, pattern, locale, timeZone): the local time in a named zone (the call handling schedules)
+    holds(
+        r#"ec.l10n.format(millis, "yyyy-MM-dd HH:mm EEE", null, "America/Chicago") === "2024-03-05 08:07 Tue" && ec.l10n.format(stamp, "HH:mm EEE", null, "Asia/Tokyo") === "23:07 Tue""#,
+    );
+    // across the DST changes: the spring forward (01:59 CST is followed by 03:00 CDT) and the fall back (01:30 twice)
+    holds(
+        r#"ec.l10n.format(1710055800000, "HH:mm", null, "America/Chicago") === "01:30" && ec.l10n.format(1710059400000, "HH:mm", null, "America/Chicago") === "03:30""#,
+    );
+    holds(
+        r#"ec.l10n.format(1730615400000, "HH:mm", null, "America/Chicago") === "01:30" && ec.l10n.format(1730619000000, "HH:mm", null, "America/Chicago") === "01:30""#,
+    );
     clear_context_stack();
 }
 

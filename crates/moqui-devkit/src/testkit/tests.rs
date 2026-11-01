@@ -842,3 +842,57 @@ fn template_specs_run_with_no_entity_facade() {
     drop(_lock);
     let _ = std::fs::remove_dir_all(&runtime);
 }
+
+#[test]
+fn set_property_and_with_property_are_put_back_when_the_spec_ends() {
+    let (held, block, unfinished) = (
+        "testkit_held_property",
+        "testkit_block_property",
+        "testkit_unfinished_property",
+    );
+    moqui_lib::env::set_property(block, "before".to_string());
+    let result = run(r#"
+const read = (name) => System.getProperty(name)
+spec({
+    cleanupSpec() { if (read("testkit_held_property") !== "on") throw new Error("held through the spec") },
+})
+feature("setProperty holds for the rest of the spec", {
+    when() { setProperty("testkit_held_property", "on"); return {} },
+    then() { read("testkit_held_property") == "on" },
+})
+feature("withProperty holds only in its function, also when it sets the same one again", {
+    when() {
+        const inside = withProperty("testkit_block_property", "inner", () => {
+            setProperty("testkit_block_property", "again")
+            return read("testkit_block_property")
+        })
+        return {inside, after: read("testkit_block_property")}
+    },
+    then({inside, after}) {
+        inside == "again"
+        after == "before"
+    },
+})
+"#);
+    assert_eq!(
+        outcomes(&result).iter().filter(|(_, k)| *k == "passed").count(),
+        2,
+        "{:?}",
+        outcomes(&result)
+    );
+    assert!(result.setup_failure.is_none() && result.cleanup_failure.is_none());
+    assert_eq!(moqui_lib::env::get_property(held), None, "put back after cleanupSpec");
+    assert_eq!(moqui_lib::env::get_property(block).as_deref(), Some("before"));
+    moqui_lib::env::clear_property(block);
+    // a file that fails to load after a setProperty never reaches cleanupSpec: the run's finish puts it back
+    let result = run(r#"
+setProperty("testkit_unfinished_property", "on")
+throw new Error("the file fails")
+"#);
+    assert!(result.setup_failure.is_some());
+    assert_eq!(
+        moqui_lib::env::get_property(unfinished),
+        None,
+        "put back by the run's finish"
+    );
+}

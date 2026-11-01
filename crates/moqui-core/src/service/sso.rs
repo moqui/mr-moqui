@@ -208,9 +208,20 @@ fn login(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<
     }
     let redirect_uri = format!("{}/sso/callback", base());
     let started = crate::sso::client()?.start(&flow, &redirect_uri)?;
-    let pending = serde_json::json!({ "authFlowId": auth_flow_id, "pending": started.pending });
+    // A re-authentication (check#RecentAuth) asks an OpenID provider to sign the user in again rather than answer from
+    // its own session (OIDC `prompt=login`, and `max_age=0`, with which the ID token must carry `auth_time`); the
+    // callback checks that `auth_time` is after this request, so a provider that ignores it gives no recent sign-in.
+    let reauth = matches!(param_text(parameters, "reauth").as_str(), "true" | "Y");
+    let pending = serde_json::json!({ "authFlowId": auth_flow_id, "pending": started.pending, "reauth": reauth,
+        "startedAt": crate::user::now_millis() });
     set_session_attribute(PENDING, Some(&pending.to_string()));
-    crate::web::send_redirect(&started.authorize_url);
+    let authorize_url = if reauth && matches!(flow.kind, FlowKind::Oidc(_)) {
+        let separator = if started.authorize_url.contains('?') { '&' } else { '?' };
+        format!("{}{separator}prompt=login&max_age=0", started.authorize_url)
+    } else {
+        started.authorize_url
+    };
+    crate::web::send_redirect(&authorize_url);
     Ok(())
 }
 
@@ -251,7 +262,19 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
         .filter(|name| !name.is_empty())
         .ok_or_else(|| LibError::new(format!("AuthFlow {auth_flow_id}: the provider gave no username")))?;
     let username = sync_account(facade, &flow_row, &profile, &username)?;
-    crate::user::login_external_user(&username).map_err(|err| LibError::new(err.message()))?;
+    let reauth = stored
+        .get("reauth")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let started_at = stored.get("startedAt").and_then(serde_json::Value::as_i64);
+    let authenticated_at = sign_in_time(&flow, &profile, reauth, started_at, crate::user::now_millis());
+    if reauth && authenticated_at.is_none() {
+        tracing::warn!(
+            "SSO re-authentication of {username} through AuthFlow {auth_flow_id}: the provider did not sign the user in again \
+             (no auth_time after the request), so it is not a recent sign-in"
+        );
+    }
+    crate::user::login_external_user(&username, authenticated_at).map_err(|err| LibError::new(err.message()))?;
     set_session_attribute(EXTERNAL_LOGOUT, Some("true"));
     set_session_attribute(FLOW_ID, Some(&auth_flow_id));
     set_session_attribute(ID_TOKEN, profile.id_token.as_deref());
@@ -261,6 +284,43 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
     }
     tracing::info!("SSO login of {username} through AuthFlow {auth_flow_id}");
     Ok(())
+}
+
+/// How long before the login request an ID token's `auth_time` may be and still answer a re-authentication (clock skew
+/// between the provider and this server).
+const AUTH_TIME_SKEW_MILLIS: i64 = 60_000;
+
+/// When the provider says the user signed in, for the recent sign-in check (`check#RecentAuth`), or none when it does not
+/// prove one:
+/// - OpenID Connect: the ID token's `auth_time` (seconds), never after `now`; none without it, and for a re-authentication
+///   (`reauth`, which asked `prompt=login` and `max_age=0`) none unless it is after the request (`started_at`, less
+///   [`AUTH_TIME_SKEW_MILLIS`]), so a provider that answered from its own session does not count.
+/// - OAuth, which has no `auth_time` or `prompt`: now for a re-authentication the user asked for (the provider cannot be
+///   made to prove it signed the user in again), none for another login.
+fn sign_in_time(
+    flow: &FlowConfig,
+    profile: &SsoProfile,
+    reauth: bool,
+    started_at: Option<i64>,
+    now: i64,
+) -> Option<i64> {
+    match flow.kind {
+        FlowKind::Oauth(_) => reauth.then_some(now),
+        FlowKind::Oidc(_) => {
+            let seconds = profile
+                .attributes
+                .get("auth_time")
+                .map(to_plain_string)
+                .and_then(|text| text.trim().parse::<f64>().ok())
+                .filter(|seconds| seconds.is_finite() && *seconds > 0.0)?;
+            #[allow(clippy::cast_possible_truncation)]
+            let at = ((seconds * 1000.0) as i64).min(now);
+            if reauth && started_at.is_none_or(|started| at < started - AUTH_TIME_SKEW_MILLIS) {
+                return None;
+            }
+            Some(at)
+        }
+    }
 }
 
 /// `logout#User`: end the local login, then send the browser to the provider's end-session URL when it has one,

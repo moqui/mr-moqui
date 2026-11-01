@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls, Voicemail (plans/Comms-Framework.md §5.5 VoicemailDetail, V2; docs/interfaces/Voicemail.md): one of the user's
+    messages: a player (playing marks it heard), its transcript or the transcript's state (pending, or failed with why and
+    Retry), Mark heard or unheard, Delete (to the Trash, and from it for good) or Put back, Call back (a phone call to the
+    caller's number, org.moqui.impl.VoiceServices place#PhoneCall), Download, and what apps add (ext-action
+    slot="voicemail-actions", the item: voicemailId, fromNumber, callSessionId; such as Create from and Add to contacts). The
+    data is org.moqui.impl.VoicemailServices get#Voicemail; the audio goes only through the audio transition (get#VoicemailAudio),
+    which answers nothing for anyone but the box's owner. The services check the user themselves, so these transitions run with
+    authorization off as the call transitions do. The component is Voicemail.qvue next to this file; the terminal twin
+    (VoicemailTui) shows the transcript and the actions, with no player. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Voicemail" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="voicemailId"/>
+
+    <transition name="voicemail" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            const caps = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, voicemail: out.voicemail || null, canCall: !!caps.active})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the audio of the user's own message: inline for the player, else a download; nothing for anyone else -->
+    <transition name="audio" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailAudio').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const refused = ec.message.hasError() || !out.location
+            ec.message.clearErrors()
+            if (refused) ec.web.sendJsonResponse({})
+            else ec.web.sendResourceResponse(out.location, String(inline) === 'true')
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="mark">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+                heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, voicemail: out.voicemail || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="delete">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, trashed: !!out.trashed, deleted: !!out.deleted})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="restore">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, voicemail: out.voicemail || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="retryTranscript">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.retry#VoicemailTranscript').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, voicemail: out.voicemail || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a phone call back to the caller's number, from the user's own number (V1) -->
+    <transition name="callBack">
+        <actions><script><![CDATA[
+            const vm = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            let out = {}
+            if (vm.voicemail && vm.voicemail.fromNumber) {
+                out = ec.service.sync().name('org.moqui.impl.VoiceServices.place#PhoneCall').parameters({phoneNumber: vm.voicemail.fromNumber,
+                    idempotencyKey: idempotencyKey || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            } else if (!ec.message.hasError()) {
+                ec.message.addError(ec.l10n.localize('This caller left no number'))
+            }
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || vm.reasonCode || null, errors, callSessionId: out.callSessionId || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Calls/Voicemail.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Calls/Voicemail.tui.json" template="fancy"/></render-mode>
+    </widgets>
+</screen>

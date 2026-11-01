@@ -39,7 +39,7 @@
         labels: { statusOnline: "Online", statusAway: "Away", statusDnd: "Do not disturb", statusInvisible: "Invisible", statusOffline: "Offline",
             setStatus: "Set a status message", clearStatus: "Clear status message", statusText: "What's your status?", emoji: "Emoji",
             clearAfter: "Clear after", dontClear: "Don't clear", minutes30: "30 minutes", hour1: "1 hour", hours4: "4 hours", today: "Today",
-            thisWeek: "This week", save: "Save", cancel: "Cancel", status: "Status",
+            thisWeek: "This week", save: "Save", cancel: "Cancel", status: "Status", encryptedMessage: "Encrypted message",
             assistApprove: "Approve", assistReject: "Reject", assistFeedback: "What should the agent do instead?", assistViewRun: "View run",
             assistWaitingFor: "Waiting for {0}", assistAskedBy: "Asked by {0}", assistDecidedBy: "{0} by {1}", assistNoDecide: "This could not be decided",
             assistStates: { pending: "Waiting", approved: "Approved", rejected: "Rejected", executed: "Done", executing: "Running", failed: "Failed",
@@ -127,8 +127,10 @@
                 target.reactions = target.reactions || [];
                 let entry = target.reactions.find((reaction) => reaction.key === key);
                 if (!entry) { entry = { key, count: 0, userIds: [], mine: false }; target.reactions.push(entry); }
-                if (entry.userIds.indexOf(event.senderUserId) < 0) {
-                    entry.userIds.push(event.senderUserId);
+                // a reactor is a local user, or an external actor of a bridged room (no userId)
+                const who = event.senderUserId || event.senderActorId;
+                if (entry.userIds.indexOf(who) < 0) {
+                    entry.userIds.push(who);
                     entry.count++;
                     if (event.senderUserId === me) entry.mine = true;
                 }
@@ -140,7 +142,7 @@
                     const target = find(content.messageSeq);
                     const entry = target && (target.reactions || []).find((reaction) => reaction.key === content.key);
                     if (entry) {
-                        const index = entry.userIds.indexOf(event.senderUserId);
+                        const index = entry.userIds.indexOf(event.senderUserId || event.senderActorId);
                         if (index >= 0) { entry.userIds.splice(index, 1); entry.count--; }
                         if (event.senderUserId === me) entry.mine = false;
                         if (entry.count <= 0) target.reactions.splice(target.reactions.indexOf(entry), 1);
@@ -448,7 +450,10 @@
         },
         closeRoom(roomId) {
             if (!chat.state.openRooms[roomId]) return;
-            if (--chat.state.openRooms[roomId] <= 0) delete chat.state.openRooms[roomId];
+            if (--chat.state.openRooms[roomId] <= 0) {
+                delete chat.state.openRooms[roomId];
+                chat.releaseFiles(roomId);
+            }
         },
         // typing in a room's composer: told at most every 3 seconds, and once when it stops
         typing(roomId, typing) {
@@ -469,6 +474,198 @@
             const base = (chat.vm && chat.vm.appRootPath) || "";
             return moqui.request(base + "/chatAssistCard", { method: "POST", params: Object.assign({ chatRoomId: roomId, eventSeq }, params) })
                 .then((result) => (result && result.json) || {}, (err) => ({ error: (err && err.json && err.json.errors) || chat.labels.assistNoDecide }));
+        },
+
+        // ---- encrypted rooms (C7; moqui.crypto) ----
+        // A room whose encrypted is true takes only ciphertext: sealMessage and sealReaction encrypt before anything is sent or
+        // kept (the outbox keeps the ciphertext, and the text it shows while it waits only in this page), and openEvents and
+        // openEvent decrypt what the timeline and the pushes give, before applyEvent, into the fields a plain event has (body,
+        // bodyText, attachments, reactions, a reply's snippet). Decrypted HTML is cleaned by DOMPurify. Files are encrypted
+        // before upload (sealFile) and decrypted into blob URLs (openFile).
+
+        sealedTexts: {},
+        opened: {},
+        reactionKeys: {},
+        fileUrls: {},
+        fileRooms: {},
+        purifyLoad: null,
+        mentionsIn(html) {
+            return Array.from(new Set(Array.from(String(html || "").matchAll(/data-mention-id="([^"]*)"/g)).map((match) => match[1]).filter((id) => id)));
+        },
+        plainText(html) {
+            const doc = root.document;
+            if (!doc) return String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+            const div = doc.createElement("div");
+            div.innerHTML = String(html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|li|div|h[1-6]|blockquote|pre)>/gi, "$&\n");
+            return String(div.textContent || "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+        },
+        loadPurify() {
+            return chat.purifyLoad || (chat.purifyLoad = moqui.loadScript("/libs/dompurify/purify.min.js", null, () => !!root.DOMPurify)
+                .catch((err) => { chat.purifyLoad = null; throw err; }));
+        },
+        // Decrypted HTML as the room shows it: what the server lets into a plain room's message (allow-html="safe", ammonia's
+        // defaults and the mention and record spans) and no more. No script, style, class, id, form, frame, media, SVG or
+        // MathML, and no event attribute, so a member cannot put markup in an encrypted room that a plain room would refuse
+        // (a class of the page's own CSS could lay a link over the whole page).
+        purifyConfig: {
+            ALLOWED_TAGS: ["a", "abbr", "acronym", "article", "aside", "b", "bdi", "bdo", "blockquote", "br", "caption", "center", "cite", "code", "col",
+                "colgroup", "data", "dd", "del", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2", "h3", "h4",
+                "h5", "h6", "header", "hgroup", "hr", "i", "img", "ins", "kbd", "li", "mark", "nav", "ol", "p", "pre", "q", "rp", "rt", "rtc", "ruby",
+                "s", "samp", "small", "span", "strike", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "time",
+                "tr", "tt", "u", "ul", "var", "wbr"],
+            ALLOWED_ATTR: ["lang", "title", "href", "hreflang", "dir", "cite", "datetime", "align", "char", "charoff", "span", "size", "width", "height",
+                "alt", "src", "start", "summary", "colspan", "rowspan", "headers", "data-mention-id", "data-record-entity", "data-record-id"],
+            ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+        },
+        clean(html) {
+            return root.DOMPurify.sanitize(String(html || ""), chat.purifyConfig);
+        },
+        // the type a decrypted file's blob is made with: an image the room shows inline keeps its type, anything else is
+        // bytes to save (a blob URL is of this origin, so a decrypted page or SVG must never open as one)
+        blobType(contentType) {
+            return /^image\/(png|jpe?g|gif|webp)$/i.test(String(contentType || "")) ? String(contentType).toLowerCase() : "application/octet-stream";
+        },
+        escapeHtml(text) {
+            return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "<br>");
+        },
+        // The send parameters of an encrypted room's message (or edit): {encryptedJson, mentionUserIds}. files are the
+        // composer's uploads [{chatAttachmentId, fileName, contentType, fileSize, info}], their keys going in the ciphertext.
+        sealMessage(roomId, memberIds, html, files) {
+            const text = chat.plainText(html);
+            const list = (files || []).filter((file) => file && file.chatAttachmentId).map((file) => ({ chatAttachmentId: file.chatAttachmentId,
+                name: file.fileName || null, type: file.contentType || null, size: file.fileSize || null, file: file.info || null }));
+            const content = { msgtype: !text && list.length ? "m.file" : "m.text", body: text, format: "org.matrix.custom.html", formatted_body: html || "" };
+            if (list.length) content["io.moqui.files"] = list;
+            return moqui.crypto.encryptRoom(roomId, memberIds, "m.room.message", content).then((encrypted) => ({
+                encryptedJson: JSON.stringify(encrypted), mentionUserIds: chat.mentionsIn(html).join(",") }));
+        },
+        sealReaction(roomId, memberIds, key) {
+            return moqui.crypto.encryptRoom(roomId, memberIds, "m.reaction", { key }).then((encrypted) => JSON.stringify(encrypted));
+        },
+        // a file for an encrypted room: {blob (to upload, named encrypted), info (its key and hash, for the message)}
+        sealFile(file) { return moqui.crypto.encryptFile(file); },
+        // the blob URL of an encrypted room's file, fetched from url and decrypted (once while its room is open: the
+        // decrypted bytes go when the room closes, releaseFiles)
+        openFile(url, file, roomId) {
+            const id = file.chatAttachmentId;
+            if (roomId) chat.fileRooms[id] = roomId;
+            if (chat.fileUrls[id]) return chat.fileUrls[id];
+            chat.fileUrls[id] = root.fetch(url, { credentials: "same-origin" }).then((response) => {
+                if (!response.ok) throw new Error("status " + response.status);
+                return response.arrayBuffer();
+            }).then((data) => moqui.crypto.decryptFile(data, file.sealed)).then((bytes) => root.URL.createObjectURL(new root.Blob([bytes],
+                { type: chat.blobType(file.contentType) }))).catch((err) => { delete chat.fileUrls[id]; throw err; });
+            return chat.fileUrls[id];
+        },
+        // The decrypted files of a room let go (its blob URLs revoked, the bytes freed): all of them when the room closes
+        // (closeRoom, when no view of it is left), or the attachments ids (a message that left the page). Opened again later,
+        // a file is fetched and decrypted again.
+        releaseFiles(roomId, ids) {
+            const wanted = ids ? new Set(Array.from(ids).map(String)) : null;
+            for (const id of Object.keys(chat.fileUrls)) {
+                if (wanted ? !wanted.has(String(id)) : chat.fileRooms[id] !== roomId) continue;
+                const made = chat.fileUrls[id];
+                delete chat.fileUrls[id];
+                delete chat.fileRooms[id];
+                Promise.resolve(made).then((url) => root.URL.revokeObjectURL(url), () => null);
+            }
+        },
+        // my reaction with key to a message of a room (its eventSeq, to take it back), null when none
+        myReaction(roomId, messageSeq, key, me) {
+            const prefix = roomId + ":";
+            for (const name of Object.keys(chat.reactionKeys)) {
+                const known = chat.reactionKeys[name];
+                if (name.indexOf(prefix) === 0 && known.messageSeq === Number(messageSeq) && known.key === key && known.userId === me) return Number(name.slice(prefix.length));
+            }
+            return null;
+        },
+        // the decrypted content of an encrypted event (cached per event), or {error}
+        openSealed(roomId, eventSeq, sentDate, senderUserId, encrypted) {
+            const name = roomId + ":" + eventSeq;
+            const known = chat.opened[name];
+            if (known && !known.error) return Promise.resolve(known);
+            return moqui.crypto.decryptRoom(roomId, { eventSeq, sentDate, senderUserId, encrypted }).then((out) => {
+                chat.opened[name] = out || { error: "unreadable" };
+                return chat.opened[name];
+            }, (err) => ({ error: (err && (err.errors || err.message)) || "unreadable" }));
+        },
+        // a decrypted message's content on an event or timeline item: body (cleaned), bodyText, files and mentions
+        applyOpened(item, opened, attachmentUrl, roomId) {
+            if (!opened || opened.error) {
+                Object.assign(item, { body: null, bodyText: null, undecryptable: true });
+                return Promise.resolve(item);
+            }
+            const content = opened.content || {};
+            const html = content.formatted_body ? chat.clean(content.formatted_body) : chat.escapeHtml(content.body);
+            const files = Array.isArray(content["io.moqui.files"]) ? content["io.moqui.files"] : [];
+            const stored = Array.isArray(item.attachments) ? item.attachments : [];
+            Object.assign(item, { body: html || null, bodyText: content.body || "", undecryptable: false, verifiedSender: !!opened.verified });
+            if (files.length || stored.length) {
+                item.attachments = stored.map((file) => {
+                    const sealed = files.find((one) => one.chatAttachmentId === file.chatAttachmentId) || {};
+                    return Object.assign({}, file, { fileName: sealed.name || file.fileName || null, contentType: sealed.type || null,
+                        fileSize: sealed.size || file.fileSize || null, sealed: sealed.file || null });
+                });
+                if (!stored.length) item.attachments = files.map((one, index) => ({ chatAttachmentId: one.chatAttachmentId, attachmentSeq: index + 1,
+                    fileName: one.name || null, contentType: one.type || null, fileSize: one.size || null, sealed: one.file || null }));
+            }
+            // an image is shown from its decrypted blob
+            const images = attachmentUrl ? item.attachments.filter((file) => file.sealed && /^image\//i.test(file.contentType || "")) : [];
+            return Promise.all(images.map((file) => chat.openFile(attachmentUrl(file), file, roomId).then((url) => { file.blobUrl = url; }, () => null))).then(() => item);
+        },
+        // Decrypts the encrypted events of a page of a room's timeline in place (get#Timeline's items). Nothing for plain ones.
+        openEvents(roomId, list, attachmentUrl) {
+            const items = (list || []).filter((item) => item && (item.encrypted || (item.encryptedReactions || []).length || (item.replyTo && item.replyTo.encrypted)));
+            if (!items.length) return Promise.resolve(list);
+            return chat.loadPurify().then(() => Promise.all(items.map((item) => {
+                const work = [];
+                if (item.encrypted) work.push(chat.openSealed(roomId, item.encryptedEventSeq || item.eventSeq, item.encryptedSentDate || item.sentDate,
+                    item.senderUserId, item.encrypted).then((opened) => chat.applyOpened(item, opened, attachmentUrl, roomId)));
+                if ((item.encryptedReactions || []).length) work.push(Promise.all(item.encryptedReactions.map((reaction) =>
+                    chat.openSealed(roomId, reaction.eventSeq, reaction.sentDate, reaction.senderUserId, reaction.encrypted).then((opened) => ({ reaction, opened }))))
+                    .then((all) => {
+                        const byKey = {};
+                        for (const { reaction, opened } of all) {
+                            const key = opened && !opened.error && opened.content ? opened.content.key : null;
+                            if (!key) continue;
+                            chat.reactionKeys[roomId + ":" + reaction.eventSeq] = { key, userId: reaction.senderUserId, messageSeq: Number(item.eventSeq) };
+                            const entry = byKey[key] = byKey[key] || { key, count: 0, userIds: [], mine: false };
+                            if (entry.userIds.indexOf(reaction.senderUserId) >= 0) continue;
+                            entry.userIds.push(reaction.senderUserId);
+                            entry.count++;
+                            if (reaction.senderUserId === chat.me) entry.mine = true;
+                        }
+                        item.reactions = Object.values(byKey);
+                    }));
+                if (item.replyTo && item.replyTo.encrypted) work.push(chat.openSealed(roomId, item.replyTo.eventSeq, item.replyTo.sentDate,
+                    item.replyTo.senderUserId, item.replyTo.encrypted).then((opened) => {
+                    const text = opened && !opened.error && opened.content ? String(opened.content.body || "").replace(/\s+/g, " ").trim() : "";
+                    item.replyTo.snippet = text.length > 100 ? text.slice(0, 99) + "…" : text;
+                }));
+                return Promise.all(work);
+            }))).then(() => list, (err) => { console.error("Encrypted events not opened", err); return list; });
+        },
+        // Decrypts a pushed event of an encrypted room in place, before applyEvent: a message or an edit gets its body, a
+        // reaction its key, and the take-back of an encrypted reaction the key it had.
+        openEvent(roomId, event, attachmentUrl) {
+            if (!event) return Promise.resolve(event);
+            if (event.type === "redaction" && event.content && event.content.target === "reaction" && !event.content.key) {
+                const known = chat.reactionKeys[roomId + ":" + event.relatesToEventSeq];
+                if (known) { event.content = Object.assign({}, event.content, { key: known.key }); delete chat.reactionKeys[roomId + ":" + event.relatesToEventSeq]; }
+                return Promise.resolve(event);
+            }
+            if (!event.encrypted) return Promise.resolve(event);
+            return chat.loadPurify().then(() => chat.openSealed(roomId, event.eventSeq, event.sentDate, event.senderUserId, event.encrypted)).then((opened) => {
+                if (event.type === "reaction") {
+                    const key = opened && !opened.error && opened.content ? opened.content.key : null;
+                    if (key) {
+                        event.content = Object.assign({}, event.content, { key });
+                        chat.reactionKeys[roomId + ":" + event.eventSeq] = { key, userId: event.senderUserId, messageSeq: Number(event.relatesToEventSeq) };
+                    }
+                    return event;
+                }
+                return chat.applyOpened(event, opened, attachmentUrl, roomId);
+            }).then(() => event, (err) => { console.error("An encrypted event was not opened", err); return event; });
         },
 
         // ---- the outbox ----
@@ -521,7 +718,9 @@
         // the outbox items of a room or a thread, each with its status: sending (asked now), waiting (to try again),
         // held (until the user is signed in again) or failed (not sent: Retry or Delete)
         pendingIn(roomId, threadRoot) {
-            return chat.outboxFor(chat.state.outbox, roomId, threadRoot, Date.now()).map((item) => (chat.state.sending[item.clientRef]
+            // an encrypted room's item keeps no text: it shows the text this page sent, else that it is encrypted
+            const shown = (item) => (item.sealed ? Object.assign({}, item, { text: chat.sealedTexts[item.clientRef] || chat.labels.encryptedMessage }) : item);
+            return chat.outboxFor(chat.state.outbox, roomId, threadRoot, Date.now()).map((item) => shown(chat.state.sending[item.clientRef]
                 ? Object.assign({}, item, { status: "sending" }) : item));
         },
         // Send a message through the outbox: item {chatRoomId, url (the send transition), params (its other parameters),

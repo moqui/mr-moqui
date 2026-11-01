@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of Settings, Phone (style-guide §4.8): the user's numbers and their voicemail settings
+    (org.moqui.impl.VoicemailServices): the email notice with its attachments (off by default; mail cannot be recalled), the
+    rings, the PIN (set, changed or removed) and whether there is a greeting, which is recorded or uploaded in the browser and
+    can be removed here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Phone" default-menu-include="false">
+
+    <transition name="saveNotices">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.update#VoicemailSettings').parameters({notifyEmail: notifyEmail || '',
+                attachAudio: attachAudio === 'Y', attachTranscript: attachTranscript === 'Y', rings: rings || null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(out.warning || ec.l10n.localize('Voicemail settings saved'), out.warning ? 'warning' : 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="setPin">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.set#VoicemailPin').parameter('pin', pin || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('PIN saved'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="clearPin">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.set#VoicemailPin').parameter('clear', true)
+                .requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteGreeting">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#VoicemailGreeting').requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailSettings').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const box = out.box || {}
+        numbersText = Array.from(out.myNumberList || []).join(', ') || L('No number rings you yet; an administrator can give you one.')
+        accessText = Array.from(out.accessNumberList || []).join(', ')
+        hasPin = !!box.hasPin
+        pinText = box.hasPin ? L('Set. Call your number and press * during your greeting, then the PIN and #.') : L('Not set: no phone access to your voicemail.')
+        hasGreeting = !!box.hasGreeting
+        greetingText = box.hasGreeting ? L('Your own greeting. Record or upload a new one in the browser.') : L('The default greeting. Record or upload your own in the browser.')
+        notices = {notifyEmail: box.notifyEmail || '', attachAudio: box.attachAudio ? 'Y' : 'N', attachTranscript: box.attachTranscript ? 'Y' : 'N',
+            rings: box.rings ? String(box.rings) : ''}
+        ringOptions = [{key: '', text: ec.resource.expand('Default (${s} seconds)', '', {s: out.ringSeconds || 45})}]
+        for (let n = 1; n <= Number(out.maxRings || 10); n++) ringOptions.push({key: String(n), text: n + ' (' + n * Number(out.ringSecondsEach || 6) + ' s)'})
+        pinForm = {pin: ''}
+        pinMinDigits = Number(out.pinMinDigits || 6)
+    ]]></script></actions>
+
+    <widgets>
+        <label type="h5" text="Phone"/>
+        <label type="p" text="My numbers: ${numbersText}" style="m-muted"/>
+        <label type="p" text="Voicemail access number: ${accessText}" condition="accessText" style="m-muted"/>
+        <link url="../CallHandling" text="Call handling: forwarding, do not disturb, your mobile, caller lists" icon="sym_o_phone_forwarded"/>
+        <container-box><box-header title="Voicemail greeting"/><box-body>
+            <label type="p" text="${greetingText}"/>
+            <link url="deleteGreeting" text="Use the default greeting" icon="sym_o_delete" condition="hasGreeting" confirmation="Remove your greeting?"/>
+        </box-body></container-box>
+        <container-box><box-header title="Voicemail PIN"/><box-body>
+            <label type="p" text="${pinText}"/>
+            <form-single name="PinForm" transition="setPin" map="pinForm">
+                <field name="pin"><default-field title="New PIN (${pinMinDigits} to 12 digits)"><password size="12"/></default-field></field>
+                <field name="submitButton"><default-field title="Save PIN"><submit/></default-field></field>
+            </form-single>
+            <link url="clearPin" text="Remove the PIN" icon="sym_o_lock_open" condition="hasPin" confirmation="Remove the PIN? Your voicemail can no longer be reached by phone."/>
+        </box-body></container-box>
+        <container-box><box-header title="Voicemail notices"/><box-body>
+            <form-single name="NoticeForm" transition="saveNotices" map="notices">
+                <field name="notifyEmail"><default-field title="Email me at"><text-line size="40"/></default-field></field>
+                <field name="attachAudio"><default-field title="Attach the audio (mail cannot be recalled)"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="attachTranscript"><default-field title="Put the transcript in it (mail cannot be recalled)"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="rings"><default-field title="Rings before voicemail"><drop-down><list-options list="ringOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

@@ -277,6 +277,11 @@ pub(crate) async fn listen(
         .route("/.well-known/carddav", axum::routing::any(crate::dav_http::handle));
     #[cfg(feature = "telemetry")]
     let app = crate::monitor::routes(app);
+    // the chat bridges' webhooks and the files of their messages (src/channels.rs), when channels_webhooks_enabled
+    let app = crate::channels::routes(app);
+    // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp_domain)
+    #[cfg(feature = "xmpp")]
+    let app = crate::xmpp::routes(app, &factory);
     let app = app.fallback(dispatch_screen);
     // Every request owns its SERVER span across the asynchronous response.
     let request_telemetry = RequestTelemetry {
@@ -424,6 +429,7 @@ async fn serve(
                 limits,
                 guard,
                 closing,
+                exporter: None,
             };
             match tls {
                 None => run_connection(stream, false, serving).await,
@@ -434,7 +440,15 @@ async fn serve(
                         None => Some(handshake.await),
                     };
                     match secured {
-                        Some(Ok(stream)) => run_connection(stream, true, serving).await,
+                        Some(Ok(stream)) => {
+                            // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
+                            #[cfg(feature = "xmpp")]
+                            let serving = Serving {
+                                exporter: moqui_xmpp::conn::exporter(stream.get_ref().1).map(Arc::new),
+                                ..serving
+                            };
+                            run_connection(stream, true, serving).await
+                        }
                         Some(Err(err)) => tracing::debug!("TLS handshake with {remote} failed: {err}"),
                         None => tracing::debug!("TLS handshake with {remote} timed out"),
                     }
@@ -468,6 +482,8 @@ struct Serving {
     limits: ListenLimits,
     guard: Arc<Guard>,
     closing: tokio::sync::watch::Receiver<bool>,
+    /// The TLS session's exporter (RFC 9266), when the xmpp feature takes it at the handshake.
+    exporter: Option<Arc<Vec<u8>>>,
 }
 
 async fn run_connection<S>(stream: S, secure: bool, serving: Serving)
@@ -481,9 +497,18 @@ where
         limits,
         guard,
         mut closing,
+        exporter,
     } = serving;
     let service = hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| {
         let client = guard.client_of(remote.ip(), request.headers());
+        #[cfg(feature = "xmpp")]
+        if let Some(exporter) = &exporter {
+            request
+                .extensions_mut()
+                .insert(crate::xmpp::ws::TlsExporter(Arc::clone(exporter)));
+        }
+        #[cfg(not(feature = "xmpp"))]
+        let _ = &exporter;
         request.extensions_mut().insert(ConnectInfo(remote));
         request.extensions_mut().insert(ClientAddr(client));
         if secure {
@@ -510,10 +535,11 @@ where
             .get(axum::http::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.trim_start().to_ascii_lowercase().starts_with("multipart/"));
-        let socket = matches!(request.uri().path(), "/notws" | "/termws");
+        let socket = matches!(request.uri().path(), "/notws" | "/termws" | "/xmpp-websocket");
         let path = request.uri().path();
         let deadline = limits.request.filter(|_| {
             !socket
+                && !path.starts_with("/xmpp-upload/")
                 && !path.starts_with("/git/")
                 && !path.starts_with("/dav/")
                 && !path.starts_with("/llm/v1")

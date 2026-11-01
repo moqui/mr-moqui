@@ -254,7 +254,8 @@ impl Resolver {
                 .screen(&reference.to_name)
                 .map(|location| format!("screen:{location}")),
             ToKind::Location => {
-                let found = ["screen", "script", "data", "skill"]
+                // a widget-template-include names `<file>#<template>`
+                let found = ["screen", "script", "data", "skill", "widget-template"]
                     .iter()
                     .map(|kind| format!("{kind}:{}", reference.to_name))
                     .find(|id| self.has(id));
@@ -487,6 +488,12 @@ impl Resolver {
                 }
                 "form" | "anchor" => names.push(artifact.name.clone()),
                 "script" | "data" | "skill" => names.push(artifact.name.clone()),
+                // a widget-template-include's location: `<file>#<template>`
+                "widget-template" => {
+                    if let Some(location) = artifact.id.strip_prefix("widget-template:") {
+                        names.push(location.to_string());
+                    }
+                }
                 _ => {}
             }
         }

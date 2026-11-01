@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Ring groups (plans/Comms-Framework.md §5.3, §5.4, V3): a number routed to a ring group (Numbers) rings its members by its
+    strategy (all at once, in order, round robin), each for its ring seconds; members in do not disturb or busy are skipped;
+    with nobody answering, or outside its schedule, the fallback runs: the group's voicemail (its members share the box), another
+    group, an outside number, or the end. org.moqui.impl.CallHandlingServices find#, store#, delete#RingGroup and store#,
+    delete#RingGroupMember (the VoiceAdmin permission). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Ring groups" default-menu-index="8">
+
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition name="storeGroup">
+        <service-call name="org.moqui.impl.CallHandlingServices.store#RingGroup" in-map="{ringGroupId:ringGroupId || null, name:name || '',
+                strategyEnumId:strategyEnumId || null, ringSeconds:ringSeconds || null, fallbackTypeEnumId:fallbackTypeEnumId || null,
+                fallbackId:(fallbackTypeEnumId == 'RgfGroup' ? fallbackGroupId : fallbackNumber) || '', commsScheduleId:commsScheduleId || ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Ring group saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteGroup">
+        <service-call name="org.moqui.impl.CallHandlingServices.delete#RingGroup" in-map="{ringGroupId:ringGroupId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Ring group removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="storeMember">
+        <service-call name="org.moqui.impl.CallHandlingServices.store#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId, sequenceNum:sequenceNum || null}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteMember">
+        <service-call name="org.moqui.impl.CallHandlingServices.delete#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId}"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const call = (name, parameters) => ec.service.sync().name('org.moqui.impl.CallHandlingServices.' + name).parameters(parameters || {})
+            .requireNewTransaction(true).disableAuthz().call() || {}
+        const enums = (enumTypeId) => Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', enumTypeId).orderBy('sequenceNum')
+            .disableAuthz().list()).map((e) => ({key: e.enumId, text: L(e.description)}))
+        strategyOptions = enums('RingGroupStrategy')
+        fallbackOptions = enums('RingGroupFallback')
+        const strategyText = new Map(strategyOptions.map((o) => [o.key, o.text]))
+        const fallbackText = new Map(fallbackOptions.map((o) => [o.key, o.text]))
+        scheduleOptions = Array.from(call('find#CommsSchedules', {shared: true}).scheduleList || []).map((s) => ({key: s.commsScheduleId,
+            text: s.name + (s.timeZone ? ' (' + s.timeZone + ')' : '')}))
+        const groups = Array.from(call('find#RingGroups').groupList || [])
+        ec.message.clearErrors()
+        groupOptions = groups.map((g) => ({key: g.ringGroupId, text: g.name}))
+        groupList = groups.map((g) => Object.assign({}, g, {strategyText: strategyText.get(g.strategyEnumId) || g.strategyEnumId,
+            fallbackText: (fallbackText.get(g.fallbackTypeEnumId) || '') + (g.fallbackName ? ': ' + g.fallbackName : ''),
+            membersText: g.memberList.map((m) => m.userName).join(', ') || L('No members yet'), numbersText: g.numberList.join(', '),
+            fallbackGroupId: g.fallbackTypeEnumId === 'RgfGroup' ? g.fallbackId : null, fallbackNumber: g.fallbackTypeEnumId === 'RgfNumber' ? g.fallbackId : null}))
+        memberList = []
+        for (const g of groups) for (const m of g.memberList) memberList.push({ringGroupId: g.ringGroupId, groupName: g.name, userId: m.userId,
+            userName: m.userName, sequenceNum: m.sequenceNum})
+        newGroup = {strategyEnumId: 'RgsSimultaneous', ringSeconds: 20, fallbackTypeEnumId: 'RgfVoicemail'}
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Ring groups" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="NewGroupDialog" button-text="Add a ring group" icon="sym_o_add" width="640" title="Add a ring group" type="primary">
+                <form-single name="NewGroup" transition="storeGroup" map="newGroup" focus-field="name">
+                    <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                    <field name="strategyEnumId"><default-field title="Rings"><drop-down><list-options list="strategyOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="ringSeconds"><default-field title="Seconds each" tooltip="How long each member rings in order, or all of them at once"><text-line size="5"/></default-field></field>
+                    <field name="fallbackTypeEnumId"><default-field title="Nobody answers"><drop-down><list-options list="fallbackOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="fallbackGroupId"><default-field title="Another group"><drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="fallbackNumber"><default-field title="An outside number"><text-line size="20"/></default-field></field>
+                    <field name="commsScheduleId"><default-field title="Hours" tooltip="Outside them calls go to the fallback"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </container>
+        <container-box><box-body-nopad>
+            <form-list name="GroupList" list="groupList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Group"><display style="text-weight-medium"/></default-field></field>
+                <field name="strategyText"><default-field title="Rings"><display/></default-field></field>
+                <field name="ringSeconds"><default-field title="Seconds"><display/></default-field></field>
+                <field name="membersText"><default-field title="Members"><display/></default-field></field>
+                <field name="fallbackText"><default-field title="Nobody answers"><display/></default-field></field>
+                <field name="scheduleName"><default-field title="Hours"><display/></default-field></field>
+                <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditGroupDialog_${ringGroupId}" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${name}">
+                        <form-single name="EditGroup" transition="storeGroup">
+                            <field name="ringGroupId" from="ringGroupId"><default-field><hidden/></default-field></field>
+                            <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                            <field name="strategyEnumId" from="strategyEnumId"><default-field title="Rings"><drop-down><list-options list="strategyOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="ringSeconds" from="ringSeconds"><default-field title="Seconds each"><text-line size="5"/></default-field></field>
+                            <field name="fallbackTypeEnumId" from="fallbackTypeEnumId"><default-field title="Nobody answers"><drop-down><list-options list="fallbackOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="fallbackGroupId" from="fallbackGroupId"><default-field title="Another group"><drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="fallbackNumber" from="fallbackNumber"><default-field title="An outside number"><text-line size="20"/></default-field></field>
+                            <field name="commsScheduleId" from="commsScheduleId"><default-field title="Hours"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <container-dialog id="AddMemberDialog_${ringGroupId}" button-text="Add a member" icon="sym_o_person_add" width="520" title="Add a member to ${name}">
+                        <form-single name="AddMember" transition="storeMember">
+                            <field name="ringGroupId" from="ringGroupId"><default-field><hidden/></default-field></field>
+                            <field name="userId"><default-field title="Who"><drop-down><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                            <field name="sequenceNum"><default-field title="Order" tooltip="Empty: last"><text-line size="5"/></default-field></field>
+                            <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <link url="deleteGroup" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove the ring group ${name}?" parameter-map="{ringGroupId:ringGroupId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="name"/><field-ref name="membersText"/></column>
+                    <column><field-ref name="strategyText"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoGroups" condition="!groupList.length"><widgets>
+                <label type="p" text="No ring groups yet. Add one, its members, then route a number to it under Numbers." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="Members"/><box-body-nopad>
+            <form-list name="MemberList" list="memberList" skip-form="true" paginate="false">
+                <field name="groupName"><default-field title="Group"><display/></default-field></field>
+                <field name="userName"><default-field title="Member"><display/></default-field></field>
+                <field name="sequenceNum"><default-field title="Order"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="deleteMember" link-type="hidden-form-link" icon="sym_o_person_remove" text="" tooltip="Take out" style="m-btn-flat" btn-type="danger"
+                            confirmation="Take ${userName} out of ${groupName}?" parameter-map="{ringGroupId:ringGroupId, userId:userId}"/>
+                </default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

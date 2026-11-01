@@ -80,16 +80,14 @@ impl Located {
         )
     }
 
-    /// Read the file's artifacts and references.
+    /// Read the file's artifacts and references, its data records by `factory`'s entity model.
     ///
     /// # Errors
     ///
     /// Returns why when the file does not read or does not parse.
-    pub fn extract(&self) -> Result<(String, FileIndex), String> {
+    pub fn extract(&self, factory: &ExecutionContextFactory) -> Result<(String, FileIndex), String> {
         let text = std::fs::read_to_string(&self.path).map_err(|err| err.to_string())?;
-        let (display, mut info) = self.info();
-        info.path = &display;
-        let index = extract::extract(&info, &text)?;
+        let index = self.extract_text(factory, &text)?;
         Ok((hash_of(&text), index))
     }
 
@@ -98,10 +96,30 @@ impl Located {
     /// # Errors
     ///
     /// Returns why when the text does not parse.
-    pub fn extract_text(&self, text: &str) -> Result<FileIndex, String> {
+    pub fn extract_text(&self, factory: &ExecutionContextFactory, text: &str) -> Result<FileIndex, String> {
         let (display, mut info) = self.info();
         info.path = &display;
-        extract::extract(&info, text)
+        extract::extract_with(&info, text, &FactoryModel(factory))
+    }
+}
+
+/// The entity model of a factory, which names a data record's entity and primary key ([`extract::RecordModel`]).
+struct FactoryModel<'a>(&'a ExecutionContextFactory);
+
+impl extract::RecordModel for FactoryModel<'_> {
+    fn keys(&self, name: &str) -> Option<(String, Vec<String>)> {
+        self.0.entity()?.with_model(|model| {
+            let entity = model.entity(name).ok()?;
+            let pk = entity.pk_field_names().into_iter().map(str::to_string).collect();
+            Some((entity.full_name.clone(), pk))
+        })
+    }
+
+    fn related(&self, entity: &str, name: &str) -> Option<(String, Vec<(String, String)>)> {
+        self.0.entity()?.with_model(|model| {
+            let relationship = model.entity(entity).ok()?.relationship(name)?;
+            Some((relationship.related_entity_name.clone(), relationship.key_pairs.clone()))
+        })
     }
 }
 
@@ -128,8 +146,10 @@ pub fn locate_in(name: &str, root: &Path, path: &Path) -> Option<Located> {
     }
     let kind = super::reload::kind_of(name, relative);
     extract::file_kind(kind)?;
-    // a data directory's other files (images, documents) are no data files
-    if kind == ArtifactKind::Data && path.extension().is_none_or(|ext| ext != "xml") {
+    // a data directory's other files (images, documents) are no data files; of a template directory only the XML files
+    // (widget templates) are read
+    if matches!(kind, ArtifactKind::Data | ArtifactKind::ScreenText) && path.extension().is_none_or(|ext| ext != "xml")
+    {
         return None;
     }
     let relative = relative.to_string_lossy().replace('\\', "/");
@@ -187,9 +207,11 @@ fn canonical(path: &Path) -> PathBuf {
 pub fn hash_of(text: &str) -> String {
     use sha2::{Digest, Sha256};
     // Version the extraction rules so persisted files are read again when they change: 2 added parameter artifacts,
-    // 3 the transition anchors of a screen-extend, 4 the references' operations and origins, the bindings and the
-    // primary key mark of a field.
-    let digest = Sha256::digest(format!("4\n{text}").as_bytes());
+    // 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form fields, subscreens items,
+    // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
+    // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
+    // field.
+    let digest = Sha256::digest(format!("5\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -393,7 +415,7 @@ impl MemoryIndex {
     pub fn of_files(factory: &ExecutionContextFactory, files: &[Located]) -> Self {
         let mut index = Self::default();
         for file in files {
-            match file.extract() {
+            match file.extract(factory) {
                 Ok((hash, read)) => index.take(file.path.display().to_string(), file.location.clone(), hash, read),
                 Err(problem) => {
                     tracing::error!("Artifact index: {} not read: {problem}", file.path.display());
@@ -484,7 +506,7 @@ impl MemoryIndex {
         self.hashes.retain(|file, _| !gone.contains(file.as_str()));
         for file in files {
             let path = file.path.display().to_string();
-            match file.extract() {
+            match file.extract(factory) {
                 Ok((hash, read)) => self.take(path, file.location.clone(), hash, read),
                 Err(problem) => {
                     tracing::error!("Artifact index: {path} not read: {problem}");
@@ -635,7 +657,7 @@ impl MemoryIndex {
     /// `located`'s rows read again from `text` (an editor's buffer, saved or not) in place of the ones it had, the
     /// names resolved again; `false` when the text does not parse, and the old rows stay.
     pub fn update_text(&mut self, factory: &ExecutionContextFactory, located: &Located, text: &str) -> bool {
-        let Ok(read) = located.extract_text(text) else {
+        let Ok(read) = located.extract_text(factory, text) else {
             return false;
         };
         let path = located.path.display().to_string();
@@ -748,10 +770,11 @@ fn kind_order(kind: &str) -> u8 {
         "service" => 1,
         "screen" => 2,
         "transition" | "form" => 3,
-        "field" => 5,
+        "field" | "relationship" | "index" | "view-member" | "form-field" => 5,
         "anchor" => 6,
-        // a parameter's short name is a field's too often (`orderId`): it comes after every other kind
+        // a parameter's short name is a field's too often (`orderId`): it comes after every other kind but records
         "parameter" => 7,
+        "record" => 8,
         _ => 4,
     }
 }
@@ -979,7 +1002,7 @@ pub fn build_files(
             report.unchanged += 1;
             continue;
         }
-        changes.push(change_of(file, &text));
+        changes.push(change_of(factory, file, &text));
     }
     // the artifacts that are rows: service jobs, data documents, email templates, DbForm forms
     for source in if rows { rows::read(&facade) } else { Vec::new() } {
@@ -1043,7 +1066,7 @@ pub fn update_files(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -
             let Some(file) = locate(factory, path) else {
                 continue;
             };
-            changes.extend(read_change(&file));
+            changes.extend(read_change(factory, &file));
         } else {
             changes.push(Change::Removed(path.display().to_string()));
         }
@@ -1071,7 +1094,7 @@ pub fn update_located(factory: &Arc<ExecutionContextFactory>, files: &[Located])
     let _authz = entered.disable_authz();
     let _lifted = fence::lift();
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
-    let changes: Vec<Change> = files.iter().filter_map(read_change).collect();
+    let changes: Vec<Change> = files.iter().filter_map(|file| read_change(factory, file)).collect();
     let mut report = BuildReport {
         files: changes.len(),
         ..BuildReport::default()
@@ -1081,9 +1104,9 @@ pub fn update_located(factory: &Arc<ExecutionContextFactory>, files: &[Located])
     Ok(report)
 }
 
-fn read_change(file: &Located) -> Option<Change> {
+fn read_change(factory: &ExecutionContextFactory, file: &Located) -> Option<Change> {
     match std::fs::read_to_string(&file.path) {
-        Ok(text) => Some(change_of(file, &text)),
+        Ok(text) => Some(change_of(factory, file, &text)),
         Err(err) => {
             tracing::error!("Artifact index: {} not read: {err}", file.path.display());
             None
@@ -1105,12 +1128,9 @@ enum Change {
     Removed(String),
 }
 
-fn change_of(file: &Located, text: &str) -> Change {
-    let display = file.path.display().to_string();
-    let (_, mut info) = file.info();
-    info.path = &display;
+fn change_of(factory: &ExecutionContextFactory, file: &Located, text: &str) -> Change {
     let hash = hash_of(text);
-    match extract::extract(&info, text) {
+    match file.extract_text(factory, text) {
         Ok(index) => Change::Read {
             file: file.clone(),
             hash,
@@ -2311,6 +2331,9 @@ mod tests;
 
 #[cfg(test)]
 mod parameter_tests;
+
+#[cfg(test)]
+mod kinds_tests;
 
 #[cfg(test)]
 mod operation_tests;

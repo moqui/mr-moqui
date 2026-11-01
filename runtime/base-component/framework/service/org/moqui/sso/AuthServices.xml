@@ -25,6 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="authFlowId" required="true"/>
             <parameter name="returnTo"/>
+            <parameter name="reauth" type="Boolean"><description>A re-authentication (check#RecentAuth): an OpenID provider is asked to sign the user in again (prompt=login)</description></parameter>
         </in-parameters>
     </service>
     <service verb="handle" noun="Callback" type="rust" location="moqui_core::service::sso::handle_callback"

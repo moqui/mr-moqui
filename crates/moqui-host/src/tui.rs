@@ -1046,6 +1046,7 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
             ("trayToday", "Today"),
             ("trayChat", "Chat"),
             ("trayNotifications", "Notifications"),
+            ("trayDialer", "Dialer"),
         ] {
             let url = json_field(values, key);
             if !url.is_empty() {

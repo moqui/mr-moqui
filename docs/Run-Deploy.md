@@ -236,7 +236,36 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
 | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
+| `chat_server_name`, `chat_to_device_retention_days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
+| `chat_store_key_secret` | generated | The platform secret each crypto device's browser-store key is derived under (HMAC of user, device and revision), so no table holds the keys. A new value makes every browser's store unreadable: each makes a new device and reads older messages from the key backup ([Chat keys](interfaces/Chat-Keys.md)) |
+| `rtc_cascade_enabled` | `false` | Cascading media nodes ([WebRTC](interfaces/WebRTC.md#cascading-media-nodes)): a leg's media goes to the media node of its own socket, which relays to the call's node over both nodes' `rtc_media_port`; set it on every node |
+| `call_captions_enabled`, `call_captions_provider`, `call_captions_store` | `false`, `llm`, `false` | Live captions in calls ([WebRTC, Captions](interfaces/WebRTC.md#captions)): off unless `true`; the provider is the model bound to the `transcribe` feature (`local`, speech-local, is not built yet); `true` keeps each caption as a `CallTranscript` |
+| `call_captions_chunk_seconds`, `call_captions_queue`, `call_captions_workers`, `call_captions_timeout_seconds`, `call_captions_language` | `5`, `6`, `2`, `20`, empty | The longest chunk of speech sent, the chunks that wait (past this the oldest is dropped), how many of a call's go at once (all calls on a node together use at most half the service pool), how long one may take, and the language (empty lets the model tell) |
 | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_public_host`, `turn_auth_secret`, `turn_external_urls`, ... | empty; the secret generated | The embedded TURN server, or coturn instead ([TURN](interfaces/TURN.md)) |
+| `call_recording_enabled`, `call_recording_ack_required`, `call_recording_policy_revision` | `false`, `false`, `1` | Call recording by a call's host, with a notice to every leg, and whether each leg must acknowledge it ([Call recording](interfaces/Call-Recording.md)) |
+| `call_recording_retention_days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
+| `call_recording_queue_frames`, `call_recording_segment_mb`, `call_recording_segment_minutes`, `call_recording_max_mb` | `4096`, `64`, `30`, `2048` | The recorder's queue, when a file is cut into the next segment, and where a recording stops |
+| `call_recording_prompt_audio`, `call_captions_prompt_audio` | empty | WAV files a phone leg hears after the recording and captions tones ([SIP, Notices](interfaces/SIP.md#notices)) |
+| `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address`, `sip_tls_ca_file` | empty, `127.0.0.1`, empty, `sip_host`, `20000-20999`, `sip_host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)); off while both ports are empty, and only beside call media; the public address is what trunks are told in Contact and SDP |
+| `channels_webhooks_enabled`, `channels_webhook_max_bytes` | `false`, `262144` | The chat bridges' routes a provider calls: `POST /channels/{chatBridgeId}/webhook` (its body at most this many bytes) and `GET /channels/{chatBridgeId}/media/{token}` ([SMS](interfaces/SMS.md)) |
+| `channels_public_url`, `channels_media_key`, `channels_media_minutes` | empty, generated, `60` | The https base a provider reaches this server at, for the files of an MMS that goes out (none without it), the key their addresses are signed with, and how long one works |
+| `sip_request_rate`, `sip_request_burst`, `sip_max_transactions`, `sip_max_connections`, `sip_max_connections_per_source` | `20`, `100`, `2000`, `500`, `100` | The SIP listener's flood caps: new requests a second per source and at once, the transactions past which new requests are dropped, TCP and TLS connections at once, and from one source ([SIP, Settings](interfaces/SIP.md#settings)) |
+| `sip_registrar_enabled`, `sip_domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip_public_address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
+| `xmpp_domain`, `xmpp_rooms_domain`, `xmpp_upload_domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp_domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
+| `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host`, `xmpp_websocket_enabled` | empty, `0.0.0.0`, empty, `xmpp_host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
+| `xmpp_upload_url`, `xmpp_upload_max_bytes`, `xmpp_upload_secret` | `https://<domain>` (with `webapp_https_port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
+| `xmpp_resume_seconds`, `xmpp_fast_token_days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
+| `xmpp_upload_seconds` | `300` | The longest a PUT to an upload slot may take |
+| `xmpp_turn_enabled`, `xmpp_turn_per_hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
+| `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
+| `call_forward_max_hops`, `call_forward_ring_seconds` | `5`, `30` | The most forwards one phone call takes (a user's rules, a ring group's fallback; 1 to 10), and how long a forward to an outside number rings before the call goes on (10 to 120) ([SIP, Call handling](interfaces/SIP.md#call-handling)) |
+| `call_queue_tick_seconds`, `call_transfer_ring_seconds` | `5`, `30` | How often the SIP engine checks each call waiting in a queue (offers, the wait limit, the caller's place; 1 to 30), and how long a blind transfer's target rings before the caller goes to their voicemail (10 to 120) ([SIP, Queues](interfaces/SIP.md#queues), [Transfer and merge](interfaces/SIP.md#transfer-and-merge)) |
+| `call_hold_music_location`, `call_queue_prompt_location` | empty | Hold music for calls on hold and in queues without their own (WAV or Ogg Opus, looped; empty: a tone pattern; use only audio you may use), and a folder of `0.wav` to `9.wav` that speaks a queue caller's place (empty: pips) ([SIP, Queues](interfaces/SIP.md#queues)) |
+| `sip_registrar_min_expires`, `sip_registrar_max_expires`, `sip_registrar_default_expires`, `sip_registrar_nat_expires` | `60`, `3600`, `600`, `60` | A phone binding's expiry in seconds: its bounds, when the phone asks none, and behind a NAT without Outbound ([SIP, Registrar](interfaces/SIP.md#registrar)) |
+| `voicemail_max_seconds`, `voicemail_trash_days` | `120`, `30` | The longest voicemail message (10 to 600), and how long a deleted one waits in the trash before it and its audio go (0 keeps them) ([Voicemail](interfaces/Voicemail.md)) |
+| `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
+| `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
+| `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -414,9 +443,15 @@ external database.
 | 8444 | Cluster HTTPS, client certificate required | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
-| `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)) | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` |
+| `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `rtc_cascade_enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address`, `rtc_cascade_enabled` |
 | `rtc_media_tcp_port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `rtc_media_tcp_port` |
 | `turn_port` (UDP and TCP), `turn_tls_port`, 443 on `turn_tls443_host`; `turn_relay_ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `turn_port`, `turn_tls_port`, `turn_tls443_host`, `turn_host`, `turn_relay_ports` |
+| `sip_port` (UDP and TCP), `sip_tls_port`; `sip_rtp_ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip_registrar_enabled`; `sip_tls_port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip_port`, `sip_host`, `sip_tls_port`, `sip_tls_host`, `sip_rtp_ports`, `sip_rtp_host`, `sip_public_address` |
+| `xmpp_port` (5222), `xmpp_tls_port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp_domain`, `xmpp_port`, `xmpp_host`, `xmpp_tls_port`, `xmpp_tls_host` |
+
+XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTLS) and `_xmpps-client._tcp.<domain>`
+(5223, direct TLS, XEP-0368), both at the host's name; the certificates in `runtime/cert` must cover the domain,
+`rooms.<domain>` and `upload.<domain>` (a wildcard of the domain does). `_xmpp-server._tcp` waits for federation (C3b).
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
 
@@ -527,6 +562,39 @@ OpenSearch, and `podman/quadlet/` runs the single container as a systemd service
 
 A deploy marker for the dashboards can be posted from the upgrade script ([Monitoring](tools/Monitoring.md#deploy-markers-and-annotations)).
 
+### Chat actors
+
+The first upgrade past Comms C1 moves chat to actors ([Chat bridges](interfaces/Chat-Bridges.md#actors)): the room
+members, mentions and poll votes are keyed by actor, not by user. The table check never changes a primary key, so a
+one-time migration does it, `ChatServices.migrate#ChatActors`. It runs from `ChatBridgeSetupData.xml`, which a new
+database loads on its own; an existing one loads it once.
+
+1. **Maintenance window.** No server on the old code may write chat while it runs: stop every node of the cluster.
+2. **Back up** the database ([Upgrading](#upgrading) step 1). On MySQL the table changes are not transactional, so the
+   backup is the rollback.
+3. Unpack the new build, then load the file with the server stopped (the table check runs first and adds the new
+   columns and tables):
+
+   ```sh
+   sudo -u moqui /opt/moqui/moqui load location=runtime/base-component/framework/data/ChatBridgeSetupData.xml
+   ```
+
+   The log names each table rebuilt (`chat actors: moqui.chat.ChatRoomMember rebuilt with its new key, N of N rows`) and
+   each problem. It gives every user the chat rows name an actor (deleted accounts' history too), gives each row its
+   actor, rebuilds the three tables on their new keys with every row (all or nothing per table, the counts checked), and
+   checks that every actor a row names exists and is its user's. A table with a row it could not give an actor is not
+   rebuilt; the log says which, and the old shape keeps working for local users until it is fixed and loaded again.
+   A row is given an actor only when its user's actor was made, so a user whose actor failed holds its table back. On
+   MySQL a rebuild cut off after the new table was made leaves it empty beside its `*_PRE_C1` copy; a later load says so
+   (`... is empty and ..._PRE_C1 has N rows`) and leaves the copy for you to restore.
+4. Start the server. The chat search document gains the sender's actor and external name: reload
+   `ChatSetupData.xml` (`types=seed-initial` rows, so `location=` it) to have them in the index.
+5. **Rollback.** The old rows stay in `CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1` and `CHAT_POLL_VOTE_PRE_C1`
+   (on Postgres `chat_room_member_pre_c1` and so on). To go back to the old build, restore the backup; the copies are for
+   checking and for a manual restore. Drop them once the new build has run a while.
+
+Loading the file again does nothing.
+
 ### Optional services
 
 | Service | How |
@@ -623,7 +691,7 @@ Sessions are rows in the shared database, so any member can serve any request.
 
 ## PASS servers with a BOSS server or cluster
 
-IronStoa PASS (`mr-pass`) serves public sites: Forum, Account, Members and Sites. A PASS server can run without Mantle
+IronStone PASS (`mr-pass`) serves public sites: Forum, Account, Members and Sites. A PASS server can run without Mantle
 or BOSS. It then calls an **authority** for every read and write: a BOSS server, or cluster, holding Mantle and the
 business database. The public machines keep only sessions and their own conf.
 

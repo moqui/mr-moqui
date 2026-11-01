@@ -16,25 +16,92 @@ along with this software (see the LICENSE.md file). If not, see
     why not, when not), New call (people picked by name, a video or an audio call), the calls ringing for the user or that
     they are in (Answer, Decline or Open), and the user's call history: All, Missed, Placed and Answered (outcome), each
     call with the others in it, when, how long, and Call back (the same people, or the room's call). Opening Missed marks
-    the missed calls seen, so they no longer count on Home. Call links (W3): a link to a meeting for people with no
+    the missed calls seen, so they no longer count on Home; Recordings opens the call recordings (W5, Recordings.xml). Call links (W3): a link to a meeting for people with no
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
-    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. An app adds actions to a call with ext-action slot="call-actions" (the
-    item: callSessionId). -->
+    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
+    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; Text a number (C4-SMS): a
+    number from one of the user's numbers with messaging (org.moqui.impl.SmsServices open#PairRoom), opening the pair's room in
+    Chat; New call and a call link
+    may be end-to-end encrypted (W8); the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
+    item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
+    find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
+    in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
+    put back; Empty trash. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
 
     <parameter name="outcome"/>
     <parameter name="pageIndex"/>
+    <parameter name="folder"/>
+    <parameter name="heard"/>
+
+    <!-- voicemail (V2): each the owner's own, refused for anyone else by the services -->
+    <transition name="markVoicemail">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+                heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></error-response>
+    </transition>
+    <transition name="deleteVoicemail">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.deleted ? 'Voicemail deleted' : 'Voicemail moved to the Trash'), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></error-response>
+    </transition>
+    <transition name="restoreVoicemail">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></error-response>
+    </transition>
+    <transition name="emptyVoicemailTrash">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.empty#VoicemailTrash').requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('${n} deleted for good', '', {n: out.deletedCount || 0}), 'success')
+        ]]></script></actions>
+        <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
+        <error-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></error-response>
+    </transition>
 
     <transition name="newCall">
         <actions><script><![CDATA[
             const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
-                video: String(video) !== 'N'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'N', requireE2ee: String(encrypted) === 'Y'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- a phone number, through a SIP trunk (V1): from one of the user's numbers -->
+    <transition name="callNumber">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.place#PhoneCall').parameters({phoneNumber: phoneNumber || '',
+                fromNumber: fromNumber || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            newCallSessionId = out.callSessionId || null
+        ]]></script></actions>
+        <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- C4-SMS: the room of the pair (one of my numbers, theirs), with its texts and calls -->
+    <transition name="textNumber">
+        <actions><script><![CDATA[
+            // the form's fields are textTo and textFrom: toNumber is a name the script runtime has already
+            const out = ec.service.sync().name('org.moqui.impl.SmsServices.open#PairRoom').parameters({toNumber: textTo || '',
+                fromNumber: textFrom || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            textRoomId = out.chatRoomId || null
+        ]]></script></actions>
+        <conditional-response url="../../Chat" condition="textRoomId"><parameter name="chatRoomId" from="textRoomId"/></conditional-response>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
@@ -42,9 +109,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="callBack">
         <actions><script><![CDATA[
             const room = chatRoomId && String(isRoomCall) === 'true' ? chatRoomId : null
+            // an end-to-end encrypted call (W8) is called back encrypted, never as a plain call
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({chatRoomId: room,
                 calleeUserIdList: room ? null : String(otherUserIds || '').split(',').filter((id) => id),
-                video: String(video) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'false', requireE2ee: String(e2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -55,7 +123,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createLink">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
-                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24})
+                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24,
+                requireE2ee: String(encrypted) === 'Y'})
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (out.path) ec.message.addMessage(ec.resource.expand('Call link made: ${url} (copy it now: it is shown only this once)', '',
                 {url: ec.web.getWebappRootUrl('webroot', null, true, false) + out.path}), 'success')
@@ -116,19 +185,52 @@ along with this software (see the LICENSE.md file). If not, see
             const others = Array.from(call.participants || []).filter((p) => p.userId !== ec.user.userId).map((p) => p.displayName)
             return {callSessionId: call.callSessionId, who: others.join(', ') || L('Just you'),
                 stateText: call.myLegStatus === 'offered' ? L('Ringing') : L('In the call'),
-                kindText: call.video ? L('Video') : L('Audio'), startedText: when(call.startedDate),
+                kindText: (call.video ? L('Video') : L('Audio')) + (call.e2ee ? ' · ' + L('End-to-end encrypted') : ''), startedText: when(call.startedDate),
                 ringing: call.myLegStatus === 'offered'}
         })
-        newCall = {calleeUserIdList: [], video: 'Y'}
+        newCall = {calleeUserIdList: [], video: 'Y', encrypted: 'N'}
+        // Call a number (V1): the user's caller IDs; the full dialer is V3
+        const voice = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+        const myIds = ec.service.sync().name('org.moqui.impl.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        callerIdOptions = Array.from(myIds.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        phoneActive = !!voice.active
+        phoneReason = !voice.active ? L('Phone calls are not available here.') : !callerIdOptions.length ? L('You have no number to call from; an administrator can give you one.') : ''
+        newPhoneCall = {phoneNumber: '', fromNumber: callerIdOptions.length ? callerIdOptions[0].key : ''}
+        // Text a number (C4-SMS): the user's numbers with messaging
+        const texting = ec.service.sync().name('org.moqui.impl.SmsServices.find#MyTextNumbers').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        textNumberOptions = Array.from(texting.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        newText = {textTo: '', textFrom: textNumberOptions.length ? textNumberOptions[0].key : ''}
 
         // the history, by outcome; the Missed tab marks them seen
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
-        shownOutcome = ['missed', 'placed', 'answered'].includes(outcome) ? outcome : ''
+        shownOutcome = ['missed', 'placed', 'answered', 'voicemail'].includes(outcome) ? outcome : ''
+        // voicemail (V2): the tab's unheard count, and its list when it is the tab shown
+        const unheardOut = ec.service.sync().name('org.moqui.impl.VoicemailServices.count#UnheardVoicemails').requireNewTransaction(true).disableAuthz().call() || {}
+        voicemailText = unheardOut.unheardCount ? L('Voicemail') + ' (' + unheardOut.unheardCount + ')' : L('Voicemail')
+        shownFolder = folder === 'trash' ? 'trash' : 'inbox'
+        shownHeard = ['heard', 'unheard'].includes(heard) ? heard : ''
+        voicemailList = []
+        trashCount = 0
+        if (shownOutcome === 'voicemail') {
+            const vm = ec.service.sync().name('org.moqui.impl.VoicemailServices.find#Voicemails').parameters({folder: shownFolder,
+                heard: shownHeard || null, pageIndex: Math.max(Number(pageIndex) || 0, 0), pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            trashCount = Number(vm.trashCount || 0)
+            const seconds = (millis) => { const s = Math.round(Number(millis || 0) / 1000); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s' }
+            const TRANSCRIPTS = {pending: L('Transcribing'), done: '', failed: L('Transcript failed')}
+            voicemailList = Array.from(vm.voicemailList || []).map((v) => ({voicemailId: v.voicemailId, fromName: v.fromName,
+                fromNumber: v.fromNumber && v.fromNumber !== v.fromName ? v.fromNumber : '', whenText: when(v.receivedDate),
+                lengthText: seconds(v.durationMs), stateText: v.heard ? L('Heard') : L('New'), heard: !!v.heard,
+                note: v.status === 'audioFailed' ? L('The audio was not stored') : (v.transcriptSnippet || TRANSCRIPTS[v.transcriptStatus] || ''),
+                inTrash: shownFolder === 'trash'}))
+        }
         if (shownOutcome === 'missed') ec.service.sync().name('org.moqui.impl.CallServices.mark#MissedSeen').requireNewTransaction(true).disableAuthz().call()
         const missedOut = ec.service.sync().name('org.moqui.impl.CallServices.count#MissedCalls').requireNewTransaction(true).disableAuthz().call() || {}
         missedText = missedOut.missedCount ? L('Missed') + ' (' + missedOut.missedCount + ')' : L('Missed')
         historyPage = Math.max(Number(pageIndex) || 0, 0)
-        const found = ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
+        const found = shownOutcome === 'voicemail' ? {} : ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
             pageIndex: historyPage, pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const minutes = (seconds) => !seconds ? '' : seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
@@ -137,17 +239,18 @@ along with this software (see the LICENSE.md file). If not, see
             outcomeIcon: row.outcome === 'missed' ? 'sym_o_phone_missed' : row.role === 'caller' ? 'sym_o_call_made' : 'sym_o_call_received',
             kindText: row.video ? L('Video') : L('Audio'), whenText: when(row.startedDate), lengthText: minutes(row.durationSeconds),
             otherUserIds: Array.from(row.otherUserIdList || []).join(','), chatRoomId: row.chatRoomId, isRoomCall: row.kind === 'group' ? 'true' : 'false',
-            video: row.video ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
+            video: row.video ? 'true' : 'false', e2ee: row.e2ee ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
             unseen: !!row.unseen}))
         historyCount = Number(found.callListCount || 0)
 
         // the call links that still work, and the meetings of the next week from the apps' providers
         const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
         linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
-            policyText: link.policy === 'link' ? L('Straight in') : L('Lobby'), kindText: link.video ? L('Video') : L('Audio'),
+            policyText: link.e2ee ? L('None (end-to-end encrypted)') : link.policy === 'link' ? L('Straight in') : L('Lobby'),
+            kindText: (link.video ? L('Video') : L('Audio')) + (link.e2ee ? ' · ' + L('End-to-end encrypted') : ''),
             expiryText: when(link.expiryDate), stateText: link.callSessionId ? (link.waitingCount ? ec.resource.expand('In progress, ${n} waiting', '',
                 {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
-        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7'}
+        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7', encrypted: 'N'}
         const nowMillis = Number(ec.user.nowTimestamp)
         const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
             parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
@@ -174,11 +277,34 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="calleeUserIdList"><default-field title="Call">
                             <drop-down allow-multiple="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Only the people in the call can hear and see it: no recording, captions, phones or guests"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="submitButton"><default-field title="Call"><submit icon="sym_o_call"/></default-field></field>
                     </form-single>
                 </box-body></container-box>
             </row-col>
             <row-col lg="7" md="6">
+                <container-box><box-header title="Call a number"/><box-body>
+                    <section name="PhoneNote" condition="phoneReason"><widgets><label type="p" text="${phoneReason}" style="m-muted"/></widgets></section>
+                    <form-single name="CallNumber" transition="callNumber" map="newPhoneCall">
+                        <field name="phoneNumber"><default-field title="Number"><text-line size="20"/></default-field></field>
+                        <field name="fromNumber"><conditional-field condition="callerIdOptions.length" title="From">
+                            <drop-down><list-options list="callerIdOptions" key="${key}" text="${text}"/></drop-down></conditional-field>
+                            <default-field><hidden/></default-field></field>
+                        <field name="submitButton"><default-field title="Call"><submit icon="sym_o_dialpad"/></default-field></field>
+                        <field-layout><field-row-big><field-ref name="phoneNumber"/><field-ref name="fromNumber"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                    </form-single>
+                </box-body></container-box>
+                <section name="TextNumber" condition="textNumberOptions.length"><widgets>
+                    <container-box><box-header title="Text a number"/><box-body>
+                        <form-single name="TextNumber" transition="textNumber" map="newText">
+                            <field name="textTo"><default-field title="Number"><text-line size="20"/></default-field></field>
+                            <field name="textFrom"><default-field title="From">
+                                <drop-down><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Text"><submit icon="sym_o_sms"/></default-field></field>
+                            <field-layout><field-row-big><field-ref name="textTo"/><field-ref name="textFrom"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                        </form-single>
+                    </box-body></container-box>
+                </widgets></section>
                 <container-box><box-header title="Now"/><box-body>
                     <section name="NoCalls" condition="!callList.length"><widgets><label type="p" text="No call is ringing for you, and you are in no call." style="m-muted"/></widgets></section>
                     <form-list name="ActiveCalls" list="callList" skip-form="true">
@@ -205,8 +331,42 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Placed" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'placed'"/>
                 <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default"><parameter name="outcome" value="answered"/></link>
                 <label text="Answered" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'answered'"/>
+                <link url="." text="${voicemailText}" icon="sym_o_voicemail" condition="shownOutcome != 'voicemail'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                <label text="${voicemailText}" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'voicemail'"/>
+                <link url="../Recordings" text="Recordings" icon="sym_o_radio_button_checked" btn-type="default"/>
             </container>
-            <section name="NoHistory" condition="!historyList.length"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
+            <section name="VoicemailTab" condition="shownOutcome == 'voicemail'"><widgets>
+                <container style="q-gutter-xs q-mb-sm">
+                    <link url="." text="Inbox" condition="shownFolder != 'inbox'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                    <label text="Inbox" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'inbox'"/>
+                    <link url="." text="Trash (${trashCount})" condition="shownFolder != 'trash'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></link>
+                    <label text="Trash (${trashCount})" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'trash'"/>
+                    <link url="." text="All" condition="shownHeard" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/></link>
+                    <link url="." text="Unheard" condition="shownHeard != 'unheard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="unheard"/></link>
+                    <link url="." text="Heard" condition="shownHeard != 'heard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="heard"/></link>
+                    <link url="emptyVoicemailTrash" text="Empty trash" icon="sym_o_delete_forever" condition="shownFolder == 'trash' &amp;&amp; trashCount" btn-type="danger"
+                        confirmation="Delete everything in the voicemail trash for good?"/>
+                    <link url="../../Settings/Phone" text="Voicemail settings" icon="sym_o_settings" btn-type="default"/>
+                </container>
+                <section name="NoVoicemail" condition="!voicemailList.length"><widgets><label type="p" text="No voicemail here." style="m-muted"/></widgets></section>
+                <form-list name="VoicemailList" list="voicemailList" skip-form="true">
+                    <field name="stateText"><default-field title=""><display style="${heard ? 'm-muted' : 'text-weight-bold text-primary'}"/></default-field></field>
+                    <field name="fromName"><default-field title="From"><link url="../Voicemail" text="${fromName}" link-type="anchor"><parameter name="voicemailId"/></link></default-field></field>
+                    <field name="fromNumber"><default-field title="Number"><display/></default-field></field>
+                    <field name="whenText"><default-field title="When"><display/></default-field></field>
+                    <field name="lengthText"><default-field title="Length"><display/></default-field></field>
+                    <field name="note"><default-field title="Transcript"><display style="text-caption"/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <link url="../Voicemail" text="Play" icon="sym_o_play_arrow"><parameter name="voicemailId"/></link>
+                        <link url="markVoicemail" text="Mark heard" icon="sym_o_done" condition="!heard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="true"/></link>
+                        <link url="markVoicemail" text="Mark unheard" icon="sym_o_markunread" condition="heard &amp;&amp; !inTrash"><parameter name="voicemailId"/><parameter name="heard" value="false"/></link>
+                        <link url="restoreVoicemail" text="Put back" icon="sym_o_restore_from_trash" condition="inTrash"><parameter name="voicemailId"/></link>
+                        <link url="deleteVoicemail" text="Delete" icon="sym_o_delete" condition="!inTrash"><parameter name="voicemailId"/><parameter name="folder" value="inbox"/></link>
+                        <link url="deleteVoicemail" text="Delete for good" icon="sym_o_delete_forever" condition="inTrash" confirmation="Delete this voicemail for good?"><parameter name="voicemailId"/><parameter name="folder" value="trash"/></link>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+            <section name="NoHistory" condition="!historyList.length &amp;&amp; shownOutcome != 'voicemail'"><widgets><label type="p" text="No calls here yet." style="m-muted"/></widgets></section>
             <form-list name="CallHistory" list="historyList" skip-form="true">
                 <field name="outcomeText"><default-field title=""><display/></default-field></field>
                 <field name="who"><default-field title="With"><display/></default-field></field>
@@ -215,7 +375,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="lengthText"><default-field title="Length"><display/></default-field></field>
                 <field name="actions"><default-field title="">
                     <link url="callBack" text="Call back" icon="sym_o_call" condition="canCallBack">
-                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/></link>
+                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/>
+                        <parameter name="e2ee"/></link>
                 </default-field></field>
             </form-list>
             <link url="." text="More" condition="hasMore" btn-type="default"><parameter name="outcome" from="shownOutcome"/><parameter name="pageIndex" from="nextPage"/></link>
@@ -228,6 +389,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
                         <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Guests cannot join an encrypted meeting"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="expiryDays"><default-field title="Works for"><drop-down><option key="1" text="A day"/><option key="7" text="A week"/>
                             <option key="30" text="A month"/><option key="90" text="90 days"/></drop-down></default-field></field>
                         <field name="submitButton"><default-field title="Make a link"><submit icon="sym_o_add_link"/></default-field></field>

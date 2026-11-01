@@ -185,7 +185,9 @@ fn a_consumer_hears_a_pcm_source_through_the_hooks() {
     drop(consumer);
 
     // with no media node, the hooks say so
-    let _ = lock(super::super::media()).take().map(|tx| tx.send(Command::Stop));
+    let _ = lock(super::super::media())
+        .take()
+        .map(|tx| tx.send(Command::Stop).is_ok());
     driver.join().expect("the driver stops");
     assert_eq!(attach("CS9", Kinds::Audio, 8).err(), Some("noMedia"));
     assert_eq!(add_pcm_source("CS9", "PH").err(), Some("noMedia"));

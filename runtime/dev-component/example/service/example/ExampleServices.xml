@@ -23,6 +23,43 @@
         </actions>
     </service>
 
+    <!-- Two call-context providers of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3,
+        V5): who a phone caller is, for the ring bar and the call's screen pop (CallServices get#CallContext, as the user rung).
+        The first knows the gallery's example numbers (+1 555 0100 xxxx); the second shows a provider that fails being left out
+        (failedParts) while the others answer: it fails for +15550100666 and answers nothing for any other number. -->
+    <service verb="get" noun="GalleryCallContext">
+        <implements service="org.moqui.comms.ProviderInterfaces.call#Context"/>
+        <actions><script><![CDATA[
+            contactList = []
+            recordList = []
+            const n = String(number || '')
+            if (!n.startsWith('+15550100')) return
+            contactList = [{name: 'Gallery caller ' + n.slice(-4), kind: 'person', url: '/qapps/gallery/Widgets', detail: 'Example contact'}]
+            recordList = [{title: 'Example record for ' + n, status: 'Open', url: '/qapps/gallery/Widgets'}]
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="GalleryCallContextFailing">
+        <implements service="org.moqui.comms.ProviderInterfaces.call#Context"/>
+        <actions><script><![CDATA[
+            contactList = []
+            recordList = []
+            if (String(number || '') === '+15550100666') ec.message.addError('The example provider fails for this number on purpose')
+        ]]></script></actions>
+    </service>
+
+    <!-- A call-target provider of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3):
+        of the users the signed-in user would call, transfer a call to or add to one, it refuses those whose username ends
+        with .offlimits, as an app keeping them to the user's organizations would refuse another organization's. -->
+    <service verb="get" noun="GalleryCallTarget">
+        <implements service="org.moqui.comms.ProviderInterfaces.call#Target"/>
+        <actions><script><![CDATA[
+            const ids = Array.from(userIdList || []).map((id) => String(id))
+            refusedUserIdList = ids.length ? Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', ids)
+                .selectField('userId').selectField('username').disableAuthz().list())
+                .filter((account) => String(account.username || '').endsWith('.offlimits')).map((account) => account.userId) : []
+        ]]></script></actions>
+    </service>
+
     <!-- A palette source of the suite shell (the shell-providers of screen/Gallery.xml), run by the shellSearch transition of
         webroot.xml: enumerations whose id or description has the text, linked to the Detail gallery screen. The contract of a
         palette source is in docs/ui/Qvt-Client.md ("Shell data and providers"). -->

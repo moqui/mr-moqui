@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Fraud (plans/Comms-Framework.md §5.2): the deployment's limits (international and premium destinations, off by
+    default; calls at once and per day; failed sign-ins before a source is blocked, and for how long), each user's phone
+    permissions, and the source addresses with failed SIP sign-ins, blocked ones first, with Clear. A block is per source
+    address and never locks an account. Texts (C4-SMS): the texts a person and the users in all send in a day, the system's
+    own texts (sign-in codes) in a day, a budget the users' texts do not use, and the number they go from. org.moqui.impl.VoiceServices get# and update#VoicePolicy, find# and
+    store#VoiceUserSetting (V3: forwardEnabled, calls to them may go to outside numbers), find#AuthBlocks and clear#AuthBlock. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Fraud" default-menu-index="5">
+
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition name="updatePolicy">
+        <service-call name="org.moqui.impl.VoiceServices.update#VoicePolicy" in-map="{internationalEnabled:internationalEnabled || 'N',
+                premiumEnabled:premiumEnabled || 'N', maxConcurrentCalls:maxConcurrentCalls, maxConcurrentPerUser:maxConcurrentPerUser,
+                maxCallsPerUserPerDay:maxCallsPerUserPerDay, maxCallsPerDay:maxCallsPerDay, authFailureLimit:authFailureLimit,
+                authFailureWindowSeconds:authFailureWindowSeconds, authBlockSeconds:authBlockSeconds, homeCountryCode:homeCountryCode,
+                emergencyNumbers:emergencyNumbers, premiumPrefixes:premiumPrefixes, smsMaxPerDay:smsMaxPerDay,
+                smsMaxPerUserPerDay:smsMaxPerUserPerDay, smsSystemMaxPerDay:smsSystemMaxPerDay, smsSystemNumber:smsSystemNumber}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Limits saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="storeUserSetting">
+        <service-call name="org.moqui.impl.VoiceServices.store#VoiceUserSetting" in-map="{userId:userId, outboundEnabled:outboundEnabled || 'N',
+                internationalEnabled:internationalEnabled || 'N', premiumEnabled:premiumEnabled || 'N', forwardEnabled:forwardEnabled || 'N', emergencyLocationId:emergencyLocationId || '',
+                maxConcurrent:maxConcurrent || '', maxPerDay:maxPerDay || ''}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Phone permissions saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="clearBlock">
+        <service-call name="org.moqui.impl.VoiceServices.clear#AuthBlock" in-map="{sourceAddress:sourceAddress}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Source cleared</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        policy = call('get#VoicePolicy').policy || {}
+        // C4-SMS: the numbers with messaging, for the system's texts
+        textNumberOptions = Array.from(call('find#PhoneNumbers').numberList || []).filter((n) => n.messagingBridgeId)
+            .map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        const locations = Array.from(call('find#EmergencyLocations').locationList || [])
+        locationOptions = locations.map((l) => ({key: l.emergencyLocationId, text: l.name || l.emergencyLocationId}))
+        const locationNames = new Map(locationOptions.map((o) => [o.key, o.text]))
+        const yes = (flag) => (flag === 'Y' ? L('Yes') : L('No'))
+        settingList = Array.from(call('find#VoiceUserSettings').settingList || []).map((s) => Object.assign({}, s, {
+            outboundText: yes(s.outboundEnabled), internationalText: yes(s.internationalEnabled), premiumText: yes(s.premiumEnabled),
+            forwardText: yes(s.forwardEnabled),
+            limitsText: (s.maxConcurrent != null ? s.maxConcurrent : L('policy')) + ' / ' + (s.maxPerDay != null ? s.maxPerDay : L('policy')),
+            locationName: locationNames.get(s.emergencyLocationId) || ''}))
+        const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
+        blockList = Array.from(call('find#AuthBlocks').blockList || []).map((b) => Object.assign({}, b, {
+            stateText: b.blocked ? L('Blocked until') + ' ' + when(b.blockedUntil) : L('Not blocked'), lastText: when(b.lastFailureDate)}))
+        ec.message.clearErrors()
+        newSetting = {outboundEnabled: 'Y'}
+    ]]></script></actions>
+    <widgets>
+        <container-box><box-header title="Limits"/><box-body>
+            <label type="p" style="m-muted" text="International and premium numbers stay off until they are allowed here and for the user. The limits bound the phone calls at once and in a day; a source with too many failed sign-ins is blocked, never the account it tried."/>
+            <form-single name="Policy" transition="updatePolicy" map="policy">
+                <field name="internationalEnabled"><default-field title="International"><check><option key="Y" text="Allow international calls"/></check></default-field></field>
+                <field name="premiumEnabled"><default-field title="Premium"><check><option key="Y" text="Allow premium numbers"/></check></default-field></field>
+                <field name="maxConcurrentCalls"><default-field title="Calls at once"><text-line size="6"/></default-field></field>
+                <field name="maxConcurrentPerUser"><default-field title="Calls at once per person"><text-line size="6"/></default-field></field>
+                <field name="maxCallsPerDay"><default-field title="Calls in a day"><text-line size="6"/></default-field></field>
+                <field name="maxCallsPerUserPerDay"><default-field title="Calls in a day per person"><text-line size="6"/></default-field></field>
+                <field name="authFailureLimit"><default-field title="Failed sign-ins before a block"><text-line size="6"/></default-field></field>
+                <field name="authFailureWindowSeconds"><default-field title="Within (seconds)"><text-line size="6"/></default-field></field>
+                <field name="authBlockSeconds"><default-field title="Block for (seconds)"><text-line size="6"/></default-field></field>
+                <field name="homeCountryCode"><default-field title="Country code" tooltip="Numbers dialed without one are in this country"><text-line size="4"/></default-field></field>
+                <field name="emergencyNumbers"><default-field title="Emergency numbers" tooltip="Comma separated"><text-line size="20"/></default-field></field>
+                <field name="premiumPrefixes"><default-field title="Premium prefixes" tooltip="E.164 prefixes, comma separated"><text-line size="40"/></default-field></field>
+                <field name="smsMaxPerDay"><default-field title="Texts in a day, everyone" tooltip="International and premium numbers above apply to texts too"><text-line size="6"/></default-field></field>
+                <field name="smsMaxPerUserPerDay"><default-field title="Texts in a day per person"><text-line size="6"/></default-field></field>
+                <field name="smsSystemMaxPerDay"><default-field title="System texts in a day" tooltip="Sign-in codes and other texts of the system: a budget of their own, which people's texts do not use"><text-line size="6"/></default-field></field>
+                <field name="smsSystemNumber"><default-field title="System texts from" tooltip="Sign-in codes and other texts of the system go from this number">
+                    <drop-down allow-empty="true"><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title="Save limits"><submit/></default-field></field>
+                <field-layout>
+                    <field-row><field-ref name="internationalEnabled"/><field-ref name="premiumEnabled"/></field-row>
+                    <field-row><field-ref name="maxConcurrentCalls"/><field-ref name="maxConcurrentPerUser"/></field-row>
+                    <field-row><field-ref name="maxCallsPerDay"/><field-ref name="maxCallsPerUserPerDay"/></field-row>
+                    <field-row><field-ref name="authFailureLimit"/><field-ref name="authFailureWindowSeconds"/></field-row>
+                    <field-row><field-ref name="authBlockSeconds"/><field-ref name="homeCountryCode"/></field-row>
+                    <field-row><field-ref name="emergencyNumbers"/><field-ref name="premiumPrefixes"/></field-row>
+                    <field-row><field-ref name="smsMaxPerDay"/><field-ref name="smsMaxPerUserPerDay"/></field-row>
+                    <field-row><field-ref name="smsSystemMaxPerDay"/><field-ref name="smsSystemNumber"/></field-row>
+                    <field-ref name="submitButton"/>
+                </field-layout>
+            </form-single>
+        </box-body></container-box>
+
+        <container-box><box-header title="People"/><box-toolbar>
+            <container-dialog id="NewSettingDialog" button-text="Set someone's permissions" icon="sym_o_add" width="640" title="Set someone's phone permissions">
+                <form-single name="NewSetting" transition="storeUserSetting" map="newSetting">
+                    <field name="userId"><default-field title="Who"><drop-down><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                    <field name="outboundEnabled"><default-field title="Calls out"><check><option key="Y" text="May place phone calls"/></check></default-field></field>
+                    <field name="internationalEnabled"><default-field title="International"><check><option key="Y" text="May call abroad"/></check></default-field></field>
+                    <field name="premiumEnabled"><default-field title="Premium"><check><option key="Y" text="May call premium numbers"/></check></default-field></field>
+                    <field name="forwardEnabled"><default-field title="Forwards" tooltip="Their calls may go on to outside numbers: their mobile, their forwarding rules"><check><option key="Y" text="Calls to them may go to outside numbers"/></check></default-field></field>
+                    <field name="maxConcurrent"><default-field title="Calls at once" tooltip="Empty: the limit above"><text-line size="6"/></default-field></field>
+                    <field name="maxPerDay"><default-field title="Calls in a day" tooltip="Empty: the limit above"><text-line size="6"/></default-field></field>
+                    <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body-nopad>
+            <form-list name="SettingList" list="settingList" skip-form="true" paginate="false">
+                <field name="userName"><default-field title="Who"><display style="text-weight-medium"/></default-field></field>
+                <field name="outboundText"><default-field title="Calls out"><display/></default-field></field>
+                <field name="internationalText"><default-field title="International"><display/></default-field></field>
+                <field name="premiumText"><default-field title="Premium"><display/></default-field></field>
+                <field name="forwardText"><default-field title="Forwards"><display/></default-field></field>
+                <field name="limitsText"><default-field title="At once / a day"><display/></default-field></field>
+                <field name="locationName"><default-field title="Emergency location"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditSettingDialog_${userId}" button-text="Edit" icon="sym_o_edit" width="640" title="Phone permissions of ${userName}">
+                        <form-single name="EditSetting" transition="storeUserSetting">
+                            <field name="userId" from="userId"><default-field><hidden/></default-field></field>
+                            <field name="outboundEnabled" from="outboundEnabled"><default-field title="Calls out"><check><option key="Y" text="May place phone calls"/></check></default-field></field>
+                            <field name="internationalEnabled" from="internationalEnabled"><default-field title="International"><check><option key="Y" text="May call abroad"/></check></default-field></field>
+                            <field name="premiumEnabled" from="premiumEnabled"><default-field title="Premium"><check><option key="Y" text="May call premium numbers"/></check></default-field></field>
+                            <field name="forwardEnabled" from="forwardEnabled"><default-field title="Forwards"><check><option key="Y" text="Calls to them may go to outside numbers"/></check></default-field></field>
+                            <field name="maxConcurrent" from="maxConcurrent"><default-field title="Calls at once"><text-line size="6"/></default-field></field>
+                            <field name="maxPerDay" from="maxPerDay"><default-field title="Calls in a day"><text-line size="6"/></default-field></field>
+                            <field name="emergencyLocationId" from="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="userName"/><field-ref name="outboundText"/></column>
+                    <column><field-ref name="limitsText"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoSettings" condition="!settingList.length"><widgets>
+                <label type="p" text="Nobody may place phone calls yet." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+
+        <container-box><box-header title="Failed SIP sign-ins"/><box-body-nopad>
+            <form-list name="BlockList" list="blockList" skip-form="true" paginate="false">
+                <field name="sourceAddress"><default-field title="Source"><display style="text-weight-medium"/></default-field></field>
+                <field name="failureCount"><default-field title="Failures"><display/></default-field></field>
+                <field name="lastUsername"><default-field title="Last tried as"><display/></default-field></field>
+                <field name="lastText"><default-field title="Last"><display/></default-field></field>
+                <field name="stateText"><default-field title="State"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="clearBlock" link-type="hidden-form-link" icon="sym_o_lock_open" text="Clear" style="m-btn-flat"
+                            confirmation="Forget the failures of ${sourceAddress} and lift its block?" parameter-map="{sourceAddress:sourceAddress}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="sourceAddress"/><field-ref name="stateText"/></column>
+                    <column><field-ref name="failureCount"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoBlocks" condition="!blockList.length"><widgets>
+                <label type="p" text="No failed SIP sign-ins." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

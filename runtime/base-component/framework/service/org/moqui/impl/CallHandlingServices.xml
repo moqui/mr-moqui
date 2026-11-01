@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Call handling (plans/Comms-Framework.md §5.3, §5.4, V3; docs/interfaces/SIP.md "Call handling"): a user's rules, caller
+    lists and phone settings, the ring groups and schedules, how an inbound phone call is handled, and the dialer's search.
+    The model is the V3 block of framework/entity/VoiceEntities.xml; the logic is CallHandling.js beside this file.
+
+    Access. The user's services act on the signed-in user's own rules, lists, schedules and settings; another user's are
+    "not found", the same answer as for an id that does not exist. The ring groups and the deployment's schedules need the
+    VoiceAdmin permission (notAllowed otherwise). inbound#PhoneCall and advance#CallRoute are internal (the voice services
+    and the SIP engine, through receive#PhoneCall and begin#Voicemail); evaluate#CallHandling is internal too: the plan a
+    call would get, at atMs, without placing it. No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== Inbound calls (internal) ========== -->
+
+    <service verb="inbound" noun="PhoneCall" authenticate="false" allow-remote="false">
+        <description>Internal (VoiceServices receive#PhoneCall): a call to a user (userId) or a ring group
+            (ringGroupId) from fromNumber (E.164; empty for an anonymous caller, rawFrom what the trunk gave). Its plan is made
+            (the user's rules, or the group's strategy and fallback, at atMs or now), kept in CallRoute, and its first step run.
+            Answers receive#PhoneCall's: callSessionId and callLegId, voicemail busy (straight to voicemail) or
+            voicemailSeconds (how long the step rings), or reasonCode anonymous (433), declined (603), notFound or
+            unavailable.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="ringGroupId"/>
+            <parameter name="toNumber"/>
+            <parameter name="fromNumber"/>
+            <parameter name="rawFrom"/>
+            <parameter name="displayName"/>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="voicemail"/>
+            <parameter name="voicemailSeconds" type="Integer"/>
+            <parameter name="stepToken"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('inbound', context))</script></actions>
+    </service>
+
+    <service verb="advance" noun="CallRoute" authenticate="false" allow-remote="false">
+        <description>Internal (VoicemailServices.begin#Voicemail): the call's current step is over (reason
+            noAnswer: its ring timer, or a forward that failed; declined: everyone rung declined) or it goes to voicemail now
+            (busy). handled false for a call with no plan. Else mode ring (the next step rings for ringSeconds) or voicemail
+            (voicemailBoxId), or reasonCode answered, callEnded, noRoute, or stale (stepToken is not the current step's:
+            nothing changes). A ring answer carries the new step's stepToken.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"/>
+            <parameter name="reason"/>
+            <parameter name="stepToken"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="handled" type="Boolean"/>
+            <parameter name="mode"/>
+            <parameter name="ringSeconds" type="Integer"/>
+            <parameter name="stepToken"/>
+            <parameter name="voicemailBoxId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('advance', context))</script></actions>
+    </service>
+
+    <service verb="evaluate" noun="CallHandling" allow-remote="false">
+        <description>Internal: the plan a call to userId or ringGroupId from fromNumber would get at atMs
+            (epoch milliseconds; now when empty), without placing it: stepList, each {type: ring (users, numbers, seconds,
+            role), voicemail (userId or ringGroupId), reject (reasonCode) or end}, and traceList, why.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="ringGroupId"/>
+            <parameter name="fromNumber"/>
+            <parameter name="rawFrom"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="stepList" type="List"/>
+            <parameter name="traceList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('evaluate', context))</script></actions>
+    </service>
+
+    <!-- ========== The user's call handling (Settings, Call handling) ========== -->
+
+    <service verb="get" noun="CallHandling">
+        <description>The signed-in user's call handling: their rules in order (ruleList: kind, target and its
+            name, caller list, schedule and whether it applies while open or closed), their caller lists with their entries,
+            the schedules they may use (their own and the deployment's), the ring groups they may forward to, settings
+            (callWaiting, mobileNumber, ringMobile, mobileScheduleId, hideCallerId, dnd, and forwardEnabled: whether an
+            administrator lets their calls go to outside numbers), and the kinds and targets with their labels.</description>
+        <out-parameters>
+            <parameter name="ruleList" type="List"/>
+            <parameter name="callerListList" type="List"/>
+            <parameter name="scheduleList" type="List"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="settings" type="Map"/>
+            <parameter name="kindList" type="List"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('getSettings', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="CallHandlingSetting">
+        <description>The signed-in user's phone settings: callWaiting (a call while they are in one rings
+            them too), mobileNumber and ringMobile (rung with them, under mobileScheduleId when set), hideCallerId (their
+            outbound calls withhold their number), dnd (do not disturb, their UserStatus: calls go to voicemail). A parameter
+            not given stays. warning when the mobile cannot ring for want of the forward permission.</description>
+        <in-parameters>
+            <parameter name="callWaiting"/>
+            <parameter name="mobileNumber"/>
+            <parameter name="ringMobile"/>
+            <parameter name="mobileScheduleId"/>
+            <parameter name="hideCallerId"/>
+            <parameter name="dnd"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="warning"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('updateSettings', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CallHandlingRule">
+        <description>Add or change one of the signed-in user's rules: kindEnumId (CallHandlingKind),
+            targetTypeEnumId and targetId (an outside number in E.164, never an emergency number; another user; a ring group;
+            voicemail; reject), callerListId (their own list, for the selective kinds), commsScheduleId and scheduleWhen (open
+            or closed), sequenceNum, disabled. Refusals: notSignedIn, notFound, badRule, badNumber, tooMany.</description>
+        <in-parameters>
+            <parameter name="callHandlingRuleId"/>
+            <parameter name="kindEnumId"/>
+            <parameter name="targetTypeEnumId"/>
+            <parameter name="targetId"/>
+            <parameter name="callerListId"/>
+            <parameter name="commsScheduleId"/>
+            <parameter name="scheduleWhen"/>
+            <parameter name="sequenceNum" type="Integer"/>
+            <parameter name="disabled"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callHandlingRuleId"/>
+            <parameter name="rule" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeRule', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CallHandlingRule">
+        <description>Remove one of the signed-in user's rules.</description>
+        <in-parameters>
+            <parameter name="callHandlingRuleId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteRule', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CallerList">
+        <description>Add a caller list for the signed-in user, or rename one of theirs (callerListId).</description>
+        <in-parameters>
+            <parameter name="callerListId"/>
+            <parameter name="name"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callerListId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeList', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CallerList">
+        <description>Remove one of the signed-in user's caller lists that no rule uses, with its entries.</description>
+        <in-parameters>
+            <parameter name="callerListId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteList', context))</script></actions>
+    </service>
+
+    <service verb="add" noun="CallerListEntry">
+        <description>Put a number (made E.164) or a prefix (+ and digits ending in *) on one of the signed-in
+            user's lists, with a note (name).</description>
+        <in-parameters>
+            <parameter name="callerListId" required="true"/>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="name"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="phoneNumber"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('addEntry', context))</script></actions>
+    </service>
+
+    <service verb="remove" noun="CallerListEntry">
+        <description>Take a number off one of the signed-in user's lists.</description>
+        <in-parameters>
+            <parameter name="callerListId" required="true"/>
+            <parameter name="phoneNumber" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('removeEntry', context))</script></actions>
+    </service>
+
+    <!-- ========== Schedules (the user's own; the deployment's for voice admins) ========== -->
+
+    <service verb="find" noun="CommsSchedules">
+        <description>The schedules the signed-in user may use (their own and the deployment's), each with
+            its rules; with shared, the deployment's only, for a voice admin.</description>
+        <in-parameters>
+            <parameter name="shared" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="scheduleList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('findSchedules', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CommsSchedule">
+        <description>Add or change a schedule: name, timeZone (an IANA name; empty: the server's),
+            description. A new one is the user's own, or with shared the deployment's (a voice admin's).</description>
+        <in-parameters>
+            <parameter name="commsScheduleId"/>
+            <parameter name="name"/>
+            <parameter name="timeZone"/>
+            <parameter name="description"/>
+            <parameter name="shared" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="commsScheduleId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeSchedule', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CommsSchedule">
+        <description>Remove a schedule no rule, ring group or mobile setting uses, with its rules.</description>
+        <in-parameters>
+            <parameter name="commsScheduleId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteSchedule', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CommsScheduleRule">
+        <description>Add or change a schedule's rule: CsrWeekly (dayOfWeek 1 Monday to 7 Sunday, fromTime
+            and thruTime HH:mm), CsrDate (onDate through thruDate, yyyy-MM-dd, with hours or all day) or CsrHoliday (closed on
+            onDate through thruDate); repeatYearly for each year's dates.</description>
+        <in-parameters>
+            <parameter name="commsScheduleId" required="true"/>
+            <parameter name="ruleSeqId"/>
+            <parameter name="ruleTypeEnumId"/>
+            <parameter name="dayOfWeek" type="Integer"/>
+            <parameter name="fromTime"/>
+            <parameter name="thruTime"/>
+            <parameter name="onDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="repeatYearly"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ruleSeqId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeScheduleRule', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CommsScheduleRule">
+        <description>Remove a schedule's rule.</description>
+        <in-parameters>
+            <parameter name="commsScheduleId" required="true"/>
+            <parameter name="ruleSeqId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteScheduleRule', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="CommsSchedule">
+        <description>Whether a schedule is open at atMs (now when empty), and the local date, minute of the
+            day and day of the week it is read at, in its time zone.</description>
+        <in-parameters>
+            <parameter name="commsScheduleId" required="true"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="open" type="Boolean"/>
+            <parameter name="localDate"/>
+            <parameter name="localMinutes" type="Integer"/>
+            <parameter name="dayOfWeek" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('checkSchedule', context))</script></actions>
+    </service>
+
+    <!-- ========== Ring groups (voice admins) ========== -->
+
+    <service verb="find" noun="RingGroups">
+        <description>The ring groups, each with its strategy, ring seconds, fallback, schedule, members in order
+            and the numbers routed to it.</description>
+        <out-parameters>
+            <parameter name="groupList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('findGroups', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="RingGroup">
+        <description>Add or change a ring group: name, strategyEnumId (RgsSimultaneous, RgsInOrder,
+            RgsRoundRobin), ringSeconds (5 to 300, each member's for the in-order strategies, all's at once), fallbackTypeEnumId
+            (RgfVoicemail, RgfGroup with fallbackId a group, RgfNumber with fallbackId an outside number, RgfNone) and
+            commsScheduleId (a deployment schedule: outside it calls go to the fallback).</description>
+        <in-parameters>
+            <parameter name="ringGroupId"/>
+            <parameter name="name"/>
+            <parameter name="strategyEnumId"/>
+            <parameter name="ringSeconds" type="Integer"/>
+            <parameter name="fallbackTypeEnumId"/>
+            <parameter name="fallbackId"/>
+            <parameter name="commsScheduleId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ringGroupId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeGroup', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="RingGroup">
+        <description>Remove a ring group no number, group or rule sends calls to (its box and messages stay).</description>
+        <in-parameters>
+            <parameter name="ringGroupId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteGroup', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="RingGroupMember">
+        <description>Add a user to a ring group, or change their place in its order (sequenceNum).</description>
+        <in-parameters>
+            <parameter name="ringGroupId" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="sequenceNum" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('storeMember', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="RingGroupMember">
+        <description>Take a user out of a ring group.</description>
+        <in-parameters>
+            <parameter name="ringGroupId" required="true"/>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('deleteMember', context))</script></actions>
+    </service>
+
+    <!-- ========== The dialer ========== -->
+
+    <service verb="get" noun="DialerData">
+        <description>The dialer's data for the signed-in user: callerIdList (their numbers and their ring
+            groups', VoiceServices find#MyCallerIds), hideCallerId (their setting), recentList (the numbers of their latest
+            phone calls), phoneActive and the deployment's homeCountryCode.</description>
+        <out-parameters>
+            <parameter name="callerIdList" type="List"/>
+            <parameter name="hideCallerId" type="Boolean"/>
+            <parameter name="recentList" type="List"/>
+            <parameter name="phoneActive" type="Boolean"/>
+            <parameter name="homeCountryCode"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('dialerData', context))</script></actions>
+    </service>
+
+    <service verb="search" noun="Dialable">
+        <description>People and numbers to call for text: the recipient-source providers' recipients that have
+            numbers (ShellServices.call#Providers, kinds phone; each {sourceId, itemId, name, kind, phoneList [{number,
+            label}]}, each source its own page), or with no provider the framework's users that one of our numbers rings; and
+            number, what was typed made E.164 when it is a number. failedParts lists the providers that failed.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="limit" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="resultList" type="List"/>
+            <parameter name="number"/>
+            <parameter name="failedParts" type="List"/>
+            <parameter name="providersAvailable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('searchDialable', context))</script></actions>
+    </service>
+
+    <service verb="normalize" noun="PhoneNumber">
+        <description>A dialed number in E.164 by the deployment's rules (VoicePolicy homeCountryCode),
+            and its destinationClass (domestic, international, premium, emergency); number null when it is not one.</description>
+        <in-parameters>
+            <parameter name="phoneNumber"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="number"/>
+            <parameter name="destinationClass"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallHandling.js').execute('normalize', context))</script></actions>
+    </service>
+</services>

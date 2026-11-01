@@ -14,7 +14,9 @@
 
 //! One leg's peer: its str0m [`Rtc`], the tracks it publishes ([`TrackIn`]), the tracks it is sent ([`TrackOut`]) with
 //! their negotiation state and simulcast layer, and its TWCC estimate. Modelled on str0m's `examples/chat.rs`, with the
-//! signaling over the caller's connection instead of a data channel.
+//! signaling over the caller's connection instead of a data channel. A peer may instead be a relay link to another media
+//! node ([`Relay`], W7): its tracks in are other legs' tracks, from that node, and its tracks out carry every layer up to
+//! the one the other node asks for.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -24,9 +26,13 @@ use std::time::{Duration, Instant};
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::format::Codec;
-use str0m::media::{Direction, KeyframeRequest, KeyframeRequestKind, MediaData, MediaKind, MediaTime, Mid, Rid};
+use str0m::media::{
+    Direction, KeyframeRequest, KeyframeRequestKind, MediaData, MediaKind, MediaTime, Mid, Rid, Rids, Simulcast,
+    SimulcastLayer,
+};
 use str0m::{Event, IceConnectionState, Input, Output, Rtc};
 
+use super::relay::{Relay, RelayMessage, RelayTrack};
 use super::{Layer, LegKey, PeerId, Proto, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, Transmit};
 use crate::tap::Kind;
 
@@ -52,10 +58,12 @@ pub(super) struct TrackIn {
     kind: MediaKind,
     source: AtomicU8,
     pub injected: bool,
+    /// Sent in simulcast layers (rids `l`, `m`, `h`).
+    pub simulcast: bool,
 }
 
 impl TrackIn {
-    fn new(origin: PeerId, leg: Arc<str>, mid: Mid, kind: MediaKind, source: Source) -> Self {
+    fn new(origin: PeerId, leg: Arc<str>, mid: Mid, kind: MediaKind, source: Source, simulcast: bool) -> Self {
         TrackIn {
             origin,
             leg,
@@ -63,6 +71,7 @@ impl TrackIn {
             kind,
             source: AtomicU8::new(source_code(source)),
             injected: false,
+            simulcast,
         }
     }
 
@@ -75,6 +84,7 @@ impl TrackIn {
             kind: MediaKind::Audio,
             source: AtomicU8::new(source_code(Source::Phone)),
             injected: true,
+            simulcast: false,
         }
     }
 
@@ -89,7 +99,7 @@ impl TrackIn {
         source_of(self.source.load(Ordering::Relaxed))
     }
 
-    fn set_source(&self, source: Source) {
+    pub(super) fn set_source(&self, source: Source) {
         self.source.store(source_code(source), Ordering::Relaxed);
     }
 }
@@ -206,10 +216,11 @@ pub(super) struct Peer {
     reported_kbps: Option<u64>,
     last_layers: Instant,
     events: Vec<SfuEvent>,
-    /// The smoothed loudness of the leg's microphone (127 plus the audio level, which is in negative dBov: higher is
-    /// louder), and when it was last heard.
-    loudness: f32,
-    heard: Option<Instant>,
+    /// The smoothed loudness of each leg's microphone this peer publishes (127 plus the audio level, which is in negative
+    /// dBov: higher is louder), and when it was last heard: the leg's own, or for a relay each relayed leg's.
+    loudness: HashMap<Arc<str>, (f32, Instant)>,
+    /// A relay link to another media node, not a leg (W7).
+    pub relay: Option<Relay>,
 }
 
 impl Peer {
@@ -229,17 +240,127 @@ impl Peer {
             reported_kbps: None,
             last_layers: now,
             events: Vec::new(),
-            loudness: 0.0,
-            heard: None,
+            loudness: HashMap::new(),
+            relay: None,
         }
     }
 
-    /// How loud the leg's microphone is now; 0 when it has not been heard for a second.
-    pub fn loudness(&self, now: Instant) -> f32 {
-        match self.heard {
-            Some(at) if now.saturating_duration_since(at) < LOUDNESS_STALE => self.loudness,
-            _ => 0.0,
+    /// How loud each leg's microphone is now; a leg not heard for a second is left out.
+    pub fn loudness(&self, now: Instant) -> impl Iterator<Item = (&Arc<str>, f32)> {
+        self.loudness
+            .iter()
+            .filter(move |(_, (_, at))| now.saturating_duration_since(*at) < LOUDNESS_STALE)
+            .map(|(leg, (loud, _))| (leg, *loud))
+    }
+
+    /// What a subscriber wants of a publisher's video: a leg by its tile size (high unless it said), a relay what the other
+    /// node asked for (nothing until it does).
+    pub fn wanted_of(&self, publisher: &str) -> Option<Layer> {
+        match (&self.relay, self.wanted.get(publisher)) {
+            (_, Some(layer)) => *layer,
+            (Some(_), None) => None,
+            (None, None) => Some(Layer::High),
         }
+    }
+
+    /// The room's event of a published track, under the leg that publishes it (a relayed leg's, not the relay's).
+    fn track_event(&self, track: &TrackIn, open: bool) -> SfuEvent {
+        SfuEvent::Track {
+            key: LegKey {
+                room: self.key.room.clone(),
+                leg: track.leg.clone(),
+            },
+            mid: track.mid.to_string(),
+            kind: track.kind(),
+            source: track.source(),
+            open,
+        }
+    }
+
+    /// A track this peer starts receiving: a leg's own, or for a relay the other node's, as its last offer named it.
+    fn open_track_in(
+        &mut self,
+        mid: Mid,
+        kind: MediaKind,
+        simulcast: bool,
+        out: &mut VecDeque<SfuOutput>,
+        propagated: &mut Vec<Propagated>,
+    ) {
+        let (leg, source) = match &self.relay {
+            Some(relay) => {
+                let named = relay.remote.get(&mid.to_string());
+                let leg = named.map(|t| t.leg.clone()).or_else(|| {
+                    self.rtc
+                        .media(mid)
+                        .map(|m| m.stream_id().to_string())
+                        .filter(|s| !s.is_empty())
+                });
+                let Some(leg) = leg else {
+                    tracing::warn!(
+                        "call {}: relayed track {mid} names no leg, not forwarded",
+                        self.key.room
+                    );
+                    return;
+                };
+                let source = named
+                    .and_then(|t| Source::parse(&t.source))
+                    .unwrap_or_else(|| Source::default_for(kind));
+                (Arc::<str>::from(leg), source)
+            }
+            None => (
+                self.key.leg.clone(),
+                self.sources
+                    .get(&mid)
+                    .copied()
+                    .unwrap_or_else(|| Source::default_for(kind)),
+            ),
+        };
+        let track = Arc::new(TrackIn::new(self.id, leg, mid, kind, source, simulcast));
+        propagated.push(Propagated::TrackOpen(self.id, Arc::downgrade(&track)));
+        out.push_back(SfuOutput::Event(self.track_event(&track, true)));
+        self.tracks_in.push(TrackInEntry {
+            track,
+            last_keyframe_request: HashMap::new(),
+        });
+    }
+
+    /// A relay's tracks in that the other node's last offer no longer names end.
+    pub fn drop_unnamed_tracks(&mut self, out: &mut VecDeque<SfuOutput>) {
+        let Some(relay) = &self.relay else { return };
+        let gone: Vec<usize> = self
+            .tracks_in
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !relay.remote.contains_key(&t.track.mid.to_string()))
+            .map(|(i, _)| i)
+            .collect();
+        for at in gone.into_iter().rev() {
+            let track = self.tracks_in.remove(at).track;
+            out.push_back(SfuOutput::Event(self.track_event(&track, false)));
+        }
+    }
+
+    /// The other node changed what its relayed tracks carry (a camera became a screen share).
+    pub fn rename_tracks(&mut self, out: &mut VecDeque<SfuOutput>) {
+        let Some(relay) = &self.relay else { return };
+        let mut events = Vec::new();
+        for t in &self.tracks_in {
+            let Some(named) = relay.remote.get(&t.track.mid.to_string()) else {
+                continue;
+            };
+            if let Some(source) = Source::parse(&named.source) {
+                if t.track.source() != source {
+                    t.track.set_source(source);
+                    events.push(self.track_event(&t.track, true));
+                }
+            }
+        }
+        out.extend(events.into_iter().map(SfuOutput::Event));
+    }
+
+    /// An offer of this side's is waiting for its answer.
+    pub fn has_pending_offer(&self) -> bool {
+        self.pending.is_some()
     }
 
     pub fn tracks_in(&self) -> impl Iterator<Item = &Arc<TrackIn>> {
@@ -309,31 +430,23 @@ impl Peer {
         propagated: &mut Vec<Propagated>,
     ) {
         match e {
-            Event::Connected => out.push_back(SfuOutput::Event(SfuEvent::Connected {
-                key: self.key.clone(),
-                generation: self.generation,
-            })),
+            Event::Connected => match &mut self.relay {
+                Some(relay) => {
+                    relay.connected = true;
+                    out.push_back(SfuOutput::Event(SfuEvent::RelayUp {
+                        room: self.key.room.clone(),
+                        node: relay.node.clone(),
+                    }));
+                }
+                None => out.push_back(SfuOutput::Event(SfuEvent::Connected {
+                    key: self.key.clone(),
+                    generation: self.generation,
+                })),
+            },
             Event::IceConnectionStateChange(IceConnectionState::Disconnected) => self.rtc.disconnect(),
             Event::MediaAdded(m) => {
                 if m.direction.is_receiving() && !self.tracks_in.iter().any(|t| t.track.mid == m.mid) {
-                    let source = self
-                        .sources
-                        .get(&m.mid)
-                        .copied()
-                        .unwrap_or_else(|| Source::default_for(m.kind));
-                    let track = Arc::new(TrackIn::new(self.id, self.key.leg.clone(), m.mid, m.kind, source));
-                    propagated.push(Propagated::TrackOpen(self.id, Arc::downgrade(&track)));
-                    out.push_back(SfuOutput::Event(SfuEvent::Track {
-                        key: self.key.clone(),
-                        mid: m.mid.to_string(),
-                        kind: track.kind(),
-                        source,
-                        open: true,
-                    }));
-                    self.tracks_in.push(TrackInEntry {
-                        track,
-                        last_keyframe_request: HashMap::new(),
-                    });
+                    self.open_track_in(m.mid, m.kind, m.simulcast.is_some(), out, propagated);
                 }
             }
             Event::MediaData(data) => {
@@ -347,13 +460,12 @@ impl Peer {
                 if track.kind == MediaKind::Audio && track.source() == Source::Microphone {
                     if let Some(level) = data.ext_vals.audio_level {
                         let sample = f32::from(127_i8.saturating_add(level.clamp(-127, 0)));
-                        let prior = if self.loudness(now) > 0.0 {
-                            self.loudness
-                        } else {
-                            sample
+                        let prior = match self.loudness.get(&track.leg) {
+                            Some((loud, at)) if now.saturating_duration_since(*at) < LOUDNESS_STALE => *loud,
+                            _ => sample,
                         };
-                        self.loudness = prior + (sample - prior) * LOUDNESS_WEIGHT;
-                        self.heard = Some(now);
+                        self.loudness
+                            .insert(track.leg.clone(), (prior + (sample - prior) * LOUDNESS_WEIGHT, now));
                     }
                 }
                 propagated.push(Propagated::MediaData(self.id, Box::new(data), track));
@@ -366,38 +478,15 @@ impl Peer {
                 match (held, m.direction.is_receiving()) {
                     (Some(at), false) => {
                         let gone = self.tracks_in.remove(at).track;
-                        out.push_back(SfuOutput::Event(SfuEvent::Track {
-                            key: self.key.clone(),
-                            mid: gone.mid.to_string(),
-                            kind: gone.kind(),
-                            source: gone.source(),
-                            open: false,
-                        }));
+                        out.push_back(SfuOutput::Event(self.track_event(&gone, false)));
                     }
                     (None, true) => {
-                        let kind = self
+                        let (kind, simulcast) = self
                             .rtc
                             .media(m.mid)
-                            .map(|media| media.kind())
-                            .unwrap_or(MediaKind::Video);
-                        let source = self
-                            .sources
-                            .get(&m.mid)
-                            .copied()
-                            .unwrap_or_else(|| Source::default_for(kind));
-                        let track = Arc::new(TrackIn::new(self.id, self.key.leg.clone(), m.mid, kind, source));
-                        propagated.push(Propagated::TrackOpen(self.id, Arc::downgrade(&track)));
-                        out.push_back(SfuOutput::Event(SfuEvent::Track {
-                            key: self.key.clone(),
-                            mid: m.mid.to_string(),
-                            kind: track.kind(),
-                            source,
-                            open: true,
-                        }));
-                        self.tracks_in.push(TrackInEntry {
-                            track,
-                            last_keyframe_request: HashMap::new(),
-                        });
+                            .map(|media| (media.kind(), matches!(media.rids_rx(), Rids::Specific(_))))
+                            .unwrap_or((MediaKind::Video, false));
+                        self.open_track_in(m.mid, kind, simulcast, out, propagated);
                     }
                     _ => {}
                 }
@@ -450,6 +539,10 @@ impl Peer {
     /// Picks each video track's layer: the highest the subscriber wants that fits its share of the estimate.
     pub fn choose_layers(&mut self, config: &SfuConfig, now: Instant) {
         self.last_layers = now;
+        if self.relay.is_some() {
+            self.choose_relay_caps();
+            return;
+        }
         let estimate = self.estimate_kbps.unwrap_or(config.initial_kbps);
         let mut audio = 0u64;
         let mut video = 0u64;
@@ -523,8 +616,78 @@ impl Peer {
         });
     }
 
+    /// A relay forwards each video track's layers up to the one the other node asked for (its cap); it does not share out
+    /// an estimate, since the link between nodes is not a subscriber's last mile.
+    fn choose_relay_caps(&mut self) {
+        for o in &mut self.tracks_out {
+            let Some(t) = o.track_in.upgrade() else { continue };
+            if t.kind != MediaKind::Video {
+                continue;
+            }
+            let cap = self.wanted.get(&t.leg).copied().flatten();
+            if cap != o.target {
+                o.target = cap;
+                if cap.is_none() {
+                    o.current = None;
+                }
+            }
+        }
+    }
+
+    /// Forwards a frame to the other node over a relay: every layer up to the cap, each with its own rid and time.
+    fn relay_media_data_out(&mut self, track: &Arc<TrackIn>, data: &MediaData) {
+        let Some(o) = self
+            .tracks_out
+            .iter_mut()
+            .find(|o| o.track_in.as_ptr() == Arc::as_ptr(track))
+        else {
+            return;
+        };
+        let Some(mid) = o.open_mid() else { return };
+        let layer = data.rid.as_ref().and_then(|r| Layer::from_rid(r));
+        if track.kind == MediaKind::Video {
+            let forward = match (layer, o.target) {
+                (_, None) => false,
+                (None, Some(_)) => true,
+                (Some(l), Some(cap)) => l <= cap,
+            };
+            if !forward {
+                return;
+            }
+        }
+        let Some(writer) = self.rtc.writer(mid) else { return };
+        let Some(pt) = writer.match_params(data.params) else {
+            return;
+        };
+        let writer = match data.ext_vals.audio_level {
+            Some(level) => writer.audio_level(level, data.ext_vals.voice_activity.unwrap_or(false)),
+            None => writer,
+        };
+        let writer = match (track.simulcast, data.rid) {
+            (true, Some(rid)) => writer.rid(rid),
+            _ => writer,
+        };
+        if let Err(e) = writer.write(pt, data.network_time, data.time, data.data.clone()) {
+            tracing::warn!("call {}: relaying failed, the relay is closed: {e}", self.key.room);
+            self.rtc.disconnect();
+            return;
+        }
+        if let Some(relay) = &mut self.relay {
+            let slot = match (track.kind, layer) {
+                (MediaKind::Audio, _) => 0,
+                (MediaKind::Video, None) => 1,
+                (MediaKind::Video, Some(l)) => 2 + l.index(),
+            };
+            relay.sent[slot] += 1;
+        }
+    }
+
     /// Forwards a frame another peer published to this subscriber, choosing the simulcast layer.
     pub fn handle_media_data_out(&mut self, config: &SfuConfig, track: &Arc<TrackIn>, data: &MediaData, now: Instant) {
+        if self.relay.is_some() {
+            self.relay_media_data_out(track, data);
+            return;
+        }
         let Some(o) = self
             .tracks_out
             .iter_mut()
@@ -645,6 +808,24 @@ impl Peer {
         }
     }
 
+    /// Asks this peer for a keyframe of each video track it publishes, every layer it sends (a room's consumer that
+    /// starts a file, the recorder). Each layer keeps its [`KEYFRAME_INTERVAL`].
+    pub fn request_video_keyframes(&mut self, now: Instant) {
+        let mids: Vec<Mid> = self
+            .tracks_in
+            .iter()
+            .filter(|t| t.track.kind == MediaKind::Video && !t.track.injected)
+            .map(|t| t.track.mid)
+            .collect();
+        for mid in mids {
+            // a layer the browser does not send is no stream: str0m refuses that request, and nothing goes out
+            let layers = Layer::ALL.iter().map(|l| Some(Rid::from(l.rid())));
+            for rid in std::iter::once(None).chain(layers) {
+                self.request_keyframe(mid, rid, KeyframeRequestKind::Pli, now);
+            }
+        }
+    }
+
     /// A subscriber's PLI or FIR goes to the publisher, for the layer the subscriber gets.
     fn keyframe_request_from_remote(&mut self, req: KeyframeRequest, propagated: &mut Vec<Propagated>) {
         let Some(o) = self.tracks_out.iter().find(|o| o.mid() == Some(req.mid)) else {
@@ -654,11 +835,15 @@ impl Peer {
         if t.injected {
             return;
         }
-        let rid = o
-            .current
-            .or(o.target)
-            .filter(|_| o.simulcast())
-            .map(|l| Rid::from(l.rid()));
+        // a relay passes on the layer the other node's subscriber asked for
+        let rid = if self.relay.is_some() {
+            req.rid
+        } else {
+            o.current
+                .or(o.target)
+                .filter(|_| o.simulcast())
+                .map(|l| Rid::from(l.rid()))
+        };
         propagated.push(Propagated::KeyframeRequest {
             from: self.id,
             to: t.origin,
@@ -670,8 +855,14 @@ impl Peer {
 
     /// The keyframes this subscriber's layer choices need.
     fn keyframe_requests(&mut self, now: Instant, propagated: &mut Vec<Propagated>) {
+        // a relay's tracks are asked for by the other node's subscribers, each for its own layer
+        let relay = self.relay.is_some();
         for o in &mut self.tracks_out {
             if !o.need_keyframe {
+                continue;
+            }
+            if relay {
+                o.need_keyframe = false;
                 continue;
             }
             if o.last_keyframe_request
@@ -711,18 +902,32 @@ impl Peer {
         }
         self.tracks_out
             .retain(|o| !(o.state == OutState::ToOpen && o.track_in.upgrade().is_none()));
+        let relay = self.relay.is_some();
         let mut change = self.rtc.sdp_api();
+        if let Some(r) = self.relay.as_mut().filter(|r| r.needs_channel) {
+            // a link with no track yet still connects, so the first track does not wait for ICE and DTLS
+            change.add_channel("moqui-relay".to_string());
+            r.needs_channel = false;
+        }
         for o in &mut self.tracks_out {
             match o.state {
                 OutState::ToOpen => {
                     if let Some(t) = o.track_in.upgrade() {
                         let track_id = format!("{}:{}", t.leg, t.mid);
+                        // a relay passes a simulcast track on in its layers, for the other node's subscribers to choose
+                        let layers = (relay && t.simulcast && t.kind == MediaKind::Video).then(|| {
+                            let mut s = Simulcast::new();
+                            for l in Layer::ALL {
+                                s.add_send_layer(SimulcastLayer::new(l.rid()));
+                            }
+                            s
+                        });
                         let mid = change.add_media(
                             t.kind,
                             Direction::SendOnly,
                             Some(t.leg.to_string()),
                             Some(track_id),
-                            None,
+                            layers,
                         );
                         o.state = OutState::Negotiating(mid);
                     }
@@ -743,6 +948,25 @@ impl Peer {
         let offer_id = self.next_offer_id;
         self.next_offer_id += 1;
         self.pending = Some((offer_id, pending));
+        if self.relay.is_some() {
+            let tracks = self.relay_tracks();
+            let Some(relay) = self.relay.as_mut() else { return true };
+            // what the offer names each track as, so a later change of its source is told ([`RelayMessage::Tracks`])
+            for t in &tracks {
+                relay.named.insert(t.mid.clone(), t.source.clone());
+            }
+            out.push_back(SfuOutput::Event(SfuEvent::Relay {
+                room: self.key.room.clone(),
+                node: relay.node.clone(),
+                message: RelayMessage::Offer {
+                    link: relay.link,
+                    offer_id,
+                    sdp: offer.to_sdp_string(),
+                    tracks,
+                },
+            }));
+            return true;
+        }
         out.push_back(SfuOutput::Event(SfuEvent::Offer {
             key: self.key.clone(),
             generation: self.generation,
@@ -750,6 +974,24 @@ impl Peer {
             sdp: offer.to_sdp_string(),
         }));
         true
+    }
+
+    /// What a relay sends the other node: each track being offered or open, by its mid here.
+    pub fn relay_tracks(&self) -> Vec<RelayTrack> {
+        self.tracks_out
+            .iter()
+            .filter(|o| matches!(o.state, OutState::Negotiating(_) | OutState::Open(_)))
+            .filter_map(|o| {
+                let t = o.track_in.upgrade()?;
+                Some(RelayTrack {
+                    mid: o.mid()?.to_string(),
+                    leg: t.leg.to_string(),
+                    kind: if t.kind == MediaKind::Audio { "audio" } else { "video" }.to_string(),
+                    source: t.source().as_str().to_string(),
+                    simulcast: t.simulcast && t.kind == MediaKind::Video,
+                })
+            })
+            .collect()
     }
 
     pub fn handle_answer(&mut self, offer_id: u64, answer: SdpAnswer) -> Result<(), SfuError> {

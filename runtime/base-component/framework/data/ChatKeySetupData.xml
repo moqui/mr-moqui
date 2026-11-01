@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat devices and keys (framework/entity/ChatKeyEntities.xml, org.moqui.impl.ChatKeyServices, C7 core): the cleanup job. -->
+<entity-facade-xml type="seed-initial">
+    <!-- To-device messages a device has not acknowledged in chat_to_device_retention_days, and one-time keys claimed over a
+        day ago. Each part is on its own. -->
+    <moqui.service.job.ServiceJob jobName="clean_ChatToDevice_daily" description="Delete old to-device messages and claimed one-time keys"
+            serviceName="org.moqui.impl.ChatKeyServices.clean#ChatToDevice" cronExpression="0 23 4 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+</entity-facade-xml>

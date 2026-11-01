@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of the dialer (plans/Comms-Framework.md §5.5, V3), shared by Calls/Dialer and the tray's Panel/Dialer, each
+    included by name: dialerData (the user's caller IDs, their own numbers and their ring groups', whether their number is
+    hidden, their recent numbers; CallHandlingServices get#DialerData), dialSearch (people and numbers for a text through the
+    recipient-source providers, or the framework's users that a number rings; search#Dialable) and dialNumber
+    (VoiceServices place#PhoneCall: the full fraud policy, the caller-ID grant, the emergency path). Each runs in its own
+    transaction as the call transitions do, so a refusal is an answer with reasonCode and errors. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="dialerData" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#DialerData').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, callerIdList: out.callerIdList || [], hideCallerId: !!out.hideCallerId, recentList: out.recentList || [],
+                phoneActive: !!out.phoneActive, homeCountryCode: out.homeCountryCode || '1'})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="dialSearch" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.search#Dialable').parameters({text: text || '', limit: 10})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({resultList: out.resultList || [], number: out.number || null, failedCount: Array.from(out.failedParts || []).length})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="dialNumber">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.place#PhoneCall').parameters({phoneNumber: phoneNumber || '',
+                fromNumber: fromNumber || null, hideCallerId: hideCallerId == null || hideCallerId === '' ? null : String(hideCallerId) === 'true',
+                idempotencyKey: idempotencyKey || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, callSessionId: out.callSessionId || null, callLegId: out.callLegId || null,
+                call: out.call || null, missing: out.missing || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

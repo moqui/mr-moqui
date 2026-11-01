@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of Devices (style-guide §4.8): the browsers that hold the user's encryption keys, with Rename and
+    Remove (org.moqui.impl.ChatKeyServices). The terminal has no crypto device of its own, so verification and the key
+    backup (C7) are the browser's; it says so. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="My devices" default-menu-include="false">
+
+    <transition name="rename">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.ChatKeyServices.update#ChatDevice').parameters({deviceId: deviceId || '',
+                displayName: displayName || ''}).requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Device renamed'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="revoke">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.ChatKeyServices.revoke#ChatDevice').parameter('deviceId', deviceId || '')
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Device removed'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- removing a device with keys needs a sign-in in the last five minutes: the password (and the code of a second factor) -->
+    <transition name="reauth">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.reauthenticate#User').parameters({password: password || '',
+                code: code || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) {
+                if (out.reauthenticated) ec.message.addMessage(ec.l10n.localize('Confirmed: you may remove a device for the next five minutes'), 'success')
+                else if (out.codeNeeded) ec.message.addMessage(out.codeText || ec.l10n.localize('Enter the authentication code'), 'warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.find#ChatDevices').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
+        const fingerprint = (key) => key ? String(key).replace(/(.{4})/g, '$1 ').trim() : ''
+        deviceList = Array.from(out.deviceList || []).map((d) => ({deviceId: d.deviceId, displayName: d.displayName || d.deviceId,
+            addedText: when(d.createdDate), lastSeenText: when(d.lastSeenDate), fingerprintText: fingerprint(d.ed25519Key)}))
+    ]]></script></actions>
+
+    <widgets>
+        <label type="p" text="The browsers that hold your encryption keys, for encrypted calls. Remove one you no longer use: it gets no new keys, and others stop encrypting to it." style="m-muted"/>
+        <label type="p" text="Verifying a device, the key backup and its recovery key are done in a browser, which holds the keys." style="m-muted"/>
+        <section name="NoDevices" condition="!deviceList.length"><widgets><label type="p" text="No devices yet: a browser gets one the first time it needs encryption."/></widgets></section>
+        <form-list name="DeviceList" list="deviceList" skip-form="true">
+            <field name="displayName"><default-field title="Device"><display/></default-field></field>
+            <field name="deviceId"><default-field title="ID"><display/></default-field></field>
+            <field name="addedText"><default-field title="Added"><display/></default-field></field>
+            <field name="lastSeenText"><default-field title="Last seen"><display/></default-field></field>
+            <field name="fingerprintText"><default-field title="Key"><display/></default-field></field>
+            <field name="actions"><default-field title="">
+                <link url="revoke" text="Remove" icon="sym_o_delete" confirmation="Remove this device? It gets no new keys, and others stop encrypting to it.">
+                    <parameter name="deviceId"/></link>
+            </default-field></field>
+        </form-list>
+        <form-single name="RenameDevice" transition="rename">
+            <field name="deviceId"><default-field title="Device"><drop-down>
+                <list-options list="deviceList" key="${deviceId}" text="${displayName}"/></drop-down></default-field></field>
+            <field name="displayName"><default-field title="New name"><text-line size="30"/></default-field></field>
+            <field name="submitButton"><default-field title="Rename"><submit/></default-field></field>
+        </form-single>
+        <label type="p" text="Removing a device that has keys asks you to confirm it is you when you signed in more than five minutes ago." style="m-muted"/>
+        <form-single name="ConfirmItIsYou" transition="reauth">
+            <field name="password"><default-field title="Password"><password size="30"/></default-field></field>
+            <field name="code"><default-field title="Authentication code" tooltip="Only for an account with a second factor"><text-line size="10"/></default-field></field>
+            <field name="submitButton"><default-field title="Confirm it is you"><submit/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

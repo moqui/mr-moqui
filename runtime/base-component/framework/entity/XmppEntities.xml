@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- XMPP for local users (plans/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what the XMPP server keeps of its
+    own beside Moqui chat. Rooms, membership, messages and presence are ChatRoom, ChatRoomMember, ChatEvent and UserStatus;
+    these hold the sign-in tokens, PEP, blocking, push registrations and uploads. The services are
+    org.moqui.impl.XmppServices, called by crates/moqui-xmpp as the signed-in user (the sign-in lookups as internal work).
+    No Java counterpart. These are moqui.* entities, which entity filters never apply to. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="XmppFastToken" package="moqui.xmpp" use="transactional" cache="never">
+        <description>A FAST token (XEP-0484) of a user's client (userAgentId, the client's own stable id), asked for at a
+            SASL2 sign-in and good until expireDate. The token is kept encrypted: the HMAC it signs in with needs it.
+            lastCount is the highest count used without channel binding (HT-SHA-256-NONE), so a captured exchange cannot
+            be replayed. A new token for the same client replaces the one before. appPasswordId is the app password the
+            client signed in with when it asked: revoking it refuses the token.</description>
+        <field name="fastTokenId" type="id" is-pk="true"/>
+        <field name="userId" type="id" not-null="true"/>
+        <field name="appPasswordId" type="id" not-null="true"/>
+        <field name="userAgentId" type="text-medium"/>
+        <field name="mechanism" type="text-short"/>
+        <field name="token" type="text-medium" encrypt="true"/>
+        <field name="lastCount" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="XMPP_FAST_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="XmppPepNode" package="moqui.xmpp" use="transactional" cache="never">
+        <description>A user's PEP node (XEP-0163): avatars, bookmarks, OMEMO device lists and bundles. accessModel open
+            (any user of this server), presence (the people the user shares a room with) or whitelist (the user alone);
+            maxItems keeps that many items, newest first (0 or empty: no limit).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="node" type="text-medium" is-pk="true"/>
+        <field name="accessModel" type="text-short"/>
+        <field name="maxItems" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="XmppPepItem" package="moqui.xmpp" use="transactional" cache="never">
+        <description>An item of a PEP node: its payload as the client published it (an OMEMO bundle holds public keys
+            only).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="node" type="text-medium" is-pk="true"/>
+        <field name="itemId" type="text-medium" is-pk="true"/>
+        <field name="payloadXml" type="text-very-long"/>
+        <field name="publishedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="XmppBlockedJid" package="moqui.xmpp" use="transactional" cache="never">
+        <description>A JID a user blocked (XEP-0191): its messages and presence do not reach the user's XMPP
+            sessions.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="jid" type="text-medium" is-pk="true"/>
+        <field name="createdDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="XmppPushRegistration" package="moqui.xmpp" use="transactional" cache="never">
+        <description>A client's push registration (XEP-0357): its app server (pushJid) and node, and the options of its
+            enable form (with the app server's secret), encrypted. A notification says only that something waits: no
+            sender or text.</description>
+        <field name="pushRegistrationId" type="id" is-pk="true"/>
+        <field name="userId" type="id" not-null="true"/>
+        <field name="resource" type="text-medium"/>
+        <field name="pushJid" type="text-medium"/>
+        <field name="node" type="text-medium"/>
+        <field name="optionsJson" type="text-long" encrypt="true"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSentDate" type="date-time"/>
+        <field name="lastErrorText" type="text-medium"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="XMPP_PUSH_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="XmppUpload" package="moqui.xmpp" use="transactional" cache="never">
+        <description>A file shared by URL (XEP-0363): an upload slot a user asked for (PUT, then GET at the same URL), or a
+            chat file of a room an XMPP client is sent (chatAttachmentId). tokenHash is the hash of the URL's token: the
+            URL is the capability to read the file, as XEP-0363 has it. An upload is put once, at the size asked for; a
+            slot not put within an hour goes (clean#Uploads).</description>
+        <field name="xmppUploadId" type="id" is-pk="true"/>
+        <field name="tokenHash" type="text-medium" not-null="true"/>
+        <field name="userId" type="id"/>
+        <field name="fileName" type="text-medium"/>
+        <field name="contentType" type="text-medium"/>
+        <field name="fileSize" type="number-integer"/>
+        <field name="location" type="text-medium"/>
+        <field name="chatAttachmentId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="completedDate" type="date-time"/>
+        <index name="XMPP_UPLOAD_TOKEN" unique="true"><index-field name="tokenHash"/></index>
+        <index name="XMPP_UPLOAD_ATTACH"><index-field name="chatAttachmentId"/></index>
+    </entity>
+</entities>

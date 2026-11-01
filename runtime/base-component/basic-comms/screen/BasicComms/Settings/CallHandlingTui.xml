@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of Call handling (style-guide §4.8): do not disturb, call waiting, the mobile that rings too and Hide my
+    number; the rules in order with Turn on or off and Remove, Add a rule; the caller lists with their numbers
+    (org.moqui.impl.CallHandlingServices, the signed-in user's own). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Call handling" default-menu-include="false">
+
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition name="saveSettings">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.update#CallHandlingSetting').parameters({dnd: dnd === 'Y',
+                callWaiting: callWaiting === 'Y', hideCallerId: hideCallerId === 'Y', ringMobile: ringMobile === 'Y', mobileNumber: mobileNumber || '',
+                mobileScheduleId: mobileScheduleId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(out.warning || ec.l10n.localize('Call handling saved'), out.warning ? 'warning' : 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeRule">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallHandlingRule').parameters({kindEnumId: kindEnumId || '',
+                targetTypeEnumId: targetTypeEnumId || '', targetId: (targetTypeEnumId === 'ChtUser' ? targetUserId : targetTypeEnumId === 'ChtGroup' ? targetGroupId : targetNumber) || '',
+                callerListId: callerListId || '', commsScheduleId: commsScheduleId || '', scheduleWhen: scheduleWhen || 'open'})
+                .requireNewTransaction(true).disableAuthz().call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Rule saved'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="toggleRule">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallHandlingRule').parameters({callHandlingRuleId: callHandlingRuleId || '',
+                disabled: disabled === 'Y'}).requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteRule">
+        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.delete#CallHandlingRule').parameter('callHandlingRuleId', callHandlingRuleId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeList">
+        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallerList').parameter('name', name || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteList">
+        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.delete#CallerList').parameter('callerListId', callerListId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="addEntry">
+        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.add#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeEntry">
+        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.remove#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (s) => ec.l10n.localize(s)
+        const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#CallHandling').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const s = out.settings || {}
+        const yn = (b) => (b ? 'Y' : 'N')
+        settings = {dnd: yn(s.dnd), callWaiting: yn(s.callWaiting), hideCallerId: yn(s.hideCallerId), ringMobile: yn(s.ringMobile),
+            mobileNumber: s.mobileNumber || '', mobileScheduleId: s.mobileScheduleId || ''}
+        forwardNote = s.forwardEnabled ? '' : L('Calls go to outside numbers (your mobile, a forward) only when an administrator allows it for you.')
+        const kinds = {}
+        kindOptions = Array.from(out.kindList || []).map((k) => { kinds[k.enumId] = k.description; return {key: k.enumId, text: k.description} })
+        const targets = {}
+        targetOptions = Array.from(out.targetList || []).map((k) => { targets[k.enumId] = k.description; return {key: k.enumId, text: k.description} })
+        listOptions = Array.from(out.callerListList || []).map((l) => ({key: l.callerListId, text: l.name}))
+        groupOptions = Array.from(out.groupList || []).map((g) => ({key: g.ringGroupId, text: g.name}))
+        scheduleOptions = Array.from(out.scheduleList || []).map((x) => ({key: x.commsScheduleId, text: x.name + (x.timeZone ? ' (' + x.timeZone + ')' : '')}))
+        ruleList = Array.from(out.ruleList || []).map((r) => ({callHandlingRuleId: r.callHandlingRuleId,
+            whatText: (kinds[r.kindEnumId] || r.kindEnumId) + (r.callerListName ? ' · ' + r.callerListName : ''),
+            whereText: r.targetTypeEnumId ? (targets[r.targetTypeEnumId] || '') + (r.targetName ? ': ' + r.targetName : '') : L('Refused'),
+            whenText: r.scheduleName ? (r.scheduleWhen === 'closed' ? L('while closed') : L('while open')) + ': ' + r.scheduleName : L('Always'),
+            stateText: r.disabled ? L('Off') : L('On'), toggleTo: r.disabled ? 'N' : 'Y', toggleText: r.disabled ? L('Turn on') : L('Turn off')}))
+        callerLists = Array.from(out.callerListList || []).map((l) => ({callerListId: l.callerListId, name: l.name,
+            numbersText: Array.from(l.entryList || []).map((e) => e.phoneNumber).join(', ') || L('No numbers yet.')}))
+        entryList = []
+        for (const l of Array.from(out.callerListList || [])) for (const e of Array.from(l.entryList || []))
+            entryList.push({callerListId: l.callerListId, listName: l.name, phoneNumber: e.phoneNumber})
+        newRule = {kindEnumId: 'ChrNoAnswer', targetTypeEnumId: 'ChtVoicemail', scheduleWhen: 'open'}
+    ]]></script></actions>
+
+    <widgets>
+        <label type="h5" text="Call handling"/>
+        <container-box><box-header title="Settings"/><box-body>
+            <form-single name="HandlingSettings" transition="saveSettings" map="settings">
+                <field name="dnd"><default-field title="Do not disturb (calls go to voicemail)"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="callWaiting"><default-field title="Call waiting"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="hideCallerId"><default-field title="Hide my number"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="ringMobile"><default-field title="Ring my mobile too"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
+                <field name="mobileNumber"><default-field title="Mobile number"><text-line size="20"/></default-field></field>
+                <field name="mobileScheduleId"><default-field title="Only while open"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+            <label type="p" text="${forwardNote}" condition="forwardNote" style="m-muted"/>
+        </box-body></container-box>
+        <container-box><box-header title="Rules"/><box-body>
+            <label type="p" text="Read in this order for each call; the first that applies decides. Without one, calls ring you, then go to voicemail." style="m-muted"/>
+            <section name="NoRules" condition="!ruleList.length"><widgets><label type="p" text="No rules yet."/></widgets></section>
+            <form-list name="Rules" list="ruleList" skip-form="true" paginate="false">
+                <field name="whatText"><default-field title="What"><display/></default-field></field>
+                <field name="whereText"><default-field title="Where"><display/></default-field></field>
+                <field name="whenText"><default-field title="When"><display/></default-field></field>
+                <field name="stateText"><default-field title=""><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="toggleRule" text="${toggleText}" parameter-map="{callHandlingRuleId: callHandlingRuleId, disabled: toggleTo}"/>
+                    <link url="deleteRule" text="Remove" icon="sym_o_delete" confirmation="Remove this rule?"><parameter name="callHandlingRuleId"/></link>
+                </default-field></field>
+            </form-list>
+            <form-single name="NewRule" transition="storeRule" map="newRule">
+                <field name="kindEnumId"><default-field title="What"><drop-down><list-options list="kindOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="callerListId"><default-field title="Callers on (a list, for the selective rules)"><drop-down allow-empty="true"><list-options list="listOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="targetTypeEnumId"><default-field title="Where they go"><drop-down allow-empty="true"><list-options list="targetOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="targetNumber"><default-field title="Number"><text-line size="20"/></default-field></field>
+                <field name="targetUserId"><default-field title="Person"><drop-down allow-empty="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down></default-field></field>
+                <field name="targetGroupId"><default-field title="Ring group"><drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="commsScheduleId"><default-field title="Schedule"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="scheduleWhen"><default-field title="Applies"><radio><option key="open" text="While open"/><option key="closed" text="While closed"/></radio></default-field></field>
+                <field name="submitButton"><default-field title="Add a rule"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Caller lists"/><box-body>
+            <form-list name="Lists" list="callerLists" skip-form="true" paginate="false">
+                <field name="name"><default-field title="List"><display/></default-field></field>
+                <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="deleteList" text="Remove" icon="sym_o_delete" confirmation="Remove this list?"><parameter name="callerListId"/></link>
+                </default-field></field>
+            </form-list>
+            <form-list name="Entries" list="entryList" skip-form="true" paginate="false">
+                <field name="listName"><default-field title="List"><display/></default-field></field>
+                <field name="phoneNumber"><default-field title="Number"><display/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <link url="removeEntry" text="Take off" icon="sym_o_close"><parameter name="callerListId"/><parameter name="phoneNumber"/></link>
+                </default-field></field>
+            </form-list>
+            <form-single name="NewList" transition="storeList">
+                <field name="name"><default-field title="New list"><text-line size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Add the list"><submit/></default-field></field>
+            </form-single>
+            <form-single name="NewEntry" transition="addEntry">
+                <field name="callerListId"><default-field title="List"><drop-down><list-options list="listOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="phoneNumber"><default-field title="Number, or a prefix ending in *"><text-line size="20"/></default-field></field>
+                <field name="submitButton"><default-field title="Add the number"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

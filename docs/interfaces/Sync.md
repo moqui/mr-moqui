@@ -98,11 +98,13 @@ refused: collections are made in the app.
 **Mantle's adapters.** CalDAV (`mantle.work.CalendarDavServices`): each calendar the user may view, not free/busy only (read
 only below edit permission and for a subscription); an event series is one object with its changed instances, written as a
 calendar object (no METHOD, the user's reminders as alarms) by the ICalendar tool from `get#EventIcsMaps`; a PUT goes
-through `store#CalendarFeedEvents` by its UID, the name the client used kept in `CalendarWorkEffort.davName`; a DELETE
-cancels the event, or only takes it out of the calendar when it is in another. The **Tasks** collection (`tasks`, VTODO) is
-the user's assigned `WetTask` work efforts (completed ones for 30 days): a new to-do is `create#SimpleTask` assigned to the
-user, a change sets the name, description, status, priority, percent, start, due and completion, and a delete ends the user's
-assignment. Not carried: attendees a client writes, and the instances a client removes from a series. CardDAV
+through `store#CalendarFeedEvents` by its UID, the name the client used kept in `CalendarWorkEffort.davName`, after a new
+time of an event that holds a room or equipment is checked as a move in the app is (`check#ResourceBookings`: a clash with
+another booking is refused with 409); a DELETE cancels the event, or only takes it out of the calendar when it is in
+another. The **Tasks** collection (`tasks`, VTODO) is the user's assigned `WetTask` work efforts (completed ones for 30
+days): a new to-do is `create#SimpleTask` assigned to the user, a change goes through `update#Task` (name, description,
+priority, percent, start, due) and `set#TaskStatus` along the task's status flow (a move the flow has not is refused with
+409; a reopened to-do goes to the first open status the flow allows), and a delete ends the user's assignment. Not carried: attendees a client writes, and the instances a client removes from a series. CardDAV
 (`mantle.party.ContactDavServices`): each contact book the user may view, as vCard 3.0 from `export#Contacts`; a personal
 book is written (a new card a personal contact through `import#ContactRow`, a changed card replaces the names and the
 emails, phones, addresses and websites, a deleted card leaves the book and is deleted when it is in no other of the user's

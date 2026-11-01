@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions the System Voice screens share (screen/System/Voice/*, plans/Comms-Framework.md §5.5, D-A6), each included by
+    name: searchUsers, the users a number rings, a caller-ID grant names or a setting is for, by name or username, with the
+    label of a selected one that is not in the page; searchTargets (V5), the targets of IVR options and queue fallbacks. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="searchUsers" read-only="true">
+        <actions><script><![CDATA[
+            const term = String(ec.web.parameters.term || '').trim()
+            const selected = String(ec.web.parameters.value || '').trim()
+            let out = []
+            if (selected && !term) {
+                const account = ec.entity.find('moqui.security.UserAccount').condition('userId', selected).disableAuthz().one()
+                if (account) out = [{value: account.userId, label: account.userFullName || account.username}]
+            } else {
+                const found = ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term, limit: 20}).call() || {}
+                out = Array.from(found.userList || []).map((user) => ({value: user.value, label: user.label}))
+            }
+            ec.web.sendJsonResponse(out)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- V5: where an IVR option, a menu's invalid, timeout or closed target, or a queue's fallback goes, as one value
+        "type:id" (CtgUser:id, CtgGroup:id, CtgQueue:id, CtgMenu:id, CtgVoicemail:id, CtgRepeat:, CtgEnd:); an outside number is
+        its own field. targetOf(target, number) in the screens' transitions reads them back. -->
+    <transition name="searchTargets" read-only="true">
+        <actions><script><![CDATA[
+            const term = String(ec.web.parameters.term || '').trim().toLowerCase()
+            const selected = String(ec.web.parameters.value || '').trim()
+            const L = (text) => ec.l10n.localize(text)
+            const options = ec.service.sync().name('org.moqui.impl.IvrServices.get#CallTargetOptions').requireNewTransaction(true).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            let out = [{value: 'CtgEnd:', label: L('End the call')}, {value: 'CtgRepeat:', label: L('This menu again')}]
+            const add = (type, prefix, list) => { for (const o of Array.from(list || [])) out.push({value: type + ':' + o.key, label: L(prefix) + ': ' + o.text}) }
+            add('CtgMenu', 'Menu', options.menuList)
+            add('CtgQueue', 'Queue', options.queueList)
+            add('CtgGroup', 'Ring group', options.groupList)
+            add('CtgVoicemail', 'Voicemail', options.boxList)
+            if (selected && !term && selected.startsWith('CtgUser:')) {
+                const account = ec.entity.find('moqui.security.UserAccount').condition('userId', selected.slice(8)).disableAuthz().one()
+                if (account) out.push({value: selected, label: L('User') + ': ' + (account.userFullName || account.username)})
+            } else if (term) {
+                const found = ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term, limit: 20}).call() || {}
+                for (const user of Array.from(found.userList || [])) out.push({value: 'CtgUser:' + user.value, label: L('User') + ': ' + user.label})
+            }
+            if (selected && !term) out = out.filter((o) => o.value === selected)
+            else if (term) out = out.filter((o) => o.label.toLowerCase().includes(term))
+            ec.web.sendJsonResponse(out.slice(0, 60))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

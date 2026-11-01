@@ -53,13 +53,15 @@ const MAX_LIMIT: usize = 50;
 /// The `shell` keys and the theme value types of the user's qapps theme behind them. A screen path (true) goes to the
 /// client as a link the user may open, or null; a subscreen name (false) as it is written, and per app as a
 /// `recordScreens` entry ([`RECORD_SCREENS`]).
-const SHELL_VALUES: [(&str, &str, bool); 8] = [
+const SHELL_VALUES: [(&str, &str, bool); 10] = [
     ("trayToday", "STRT_TRAY_TODAY", true),
     ("trayChat", "STRT_TRAY_CHAT", true),
     ("trayNotifications", "STRT_TRAY_NOTIFICATIONS", true),
+    ("trayDialer", "STRT_TRAY_DIALER", true),
     ("quickCreate", "STRT_QUICK_CREATE", true),
     ("mailScreen", "STRT_MAIL_SCREEN", true),
     ("messagesScreen", "STRT_MESSAGES_SCREEN", true),
+    ("callsScreen", "STRT_CALLS_SCREEN", true),
     ("chatterScreen", "STRT_CHATTER_SCREEN", false),
     ("recordFilesScreen", "STRT_RECORD_FILES_SCREEN", false),
 ];
@@ -165,7 +167,7 @@ pub struct PageAction {
 /// The provider hooks an app root's `shell-providers` may declare (plans/Comms-Framework.md §3.3): services the framework
 /// calls through [`crate::service`]'s `call#Providers` and combines, so several apps answer one hook. Each is declared
 /// with a provider-qualified `name`, a `service` and a `sequence`, and merged by `name` in a screen-extend.
-pub const PROVIDER_HOOKS: [&str; 11] = [
+pub const PROVIDER_HOOKS: [&str; 13] = [
     "inbox-source",
     "recipient-source",
     "record-lookup",
@@ -177,6 +179,10 @@ pub const PROVIDER_HOOKS: [&str; 11] = [
     "call-context",
     "home-source",
     "external-conversation",
+    // C4-SMS: whether a promotional text may go to a number (SmsServices check#SmsSend)
+    "sms-consent",
+    // whether the current user may call, transfer a call to or add a user (CallTransfers.js, Calls.js refusedTargets)
+    "call-target",
 ];
 
 /// A provider of one of the [`PROVIDER_HOOKS`].

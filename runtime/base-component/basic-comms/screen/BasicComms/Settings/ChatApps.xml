@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat apps (XMPP for local users, C3a; docs/interfaces/XMPP.md): what the user enters in an XMPP app (Conversations, Monal,
+    Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. Each app password says whether
+    it works with XMPP: one made before XMPP sign-in has no SCRAM verifiers, so most apps refuse it; NewXmppPassword makes a
+    new one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.impl.XmppServices.get#ClientSettings,
+    org.moqui.impl.UserServices create# and revoke#UserAppPassword. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Chat apps" default-menu-index="11" server-static="qvt" menu-image="sym_o_forum" menu-image-type="icon">
+
+    <transition name="createXmppPassword">
+        <service-call name="org.moqui.impl.UserServices.create#UserAppPassword" in-map="{name:name}" out-map="passwordOut"/>
+        <actions><!-- shown once, after the redirect -->
+            <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newXmppPassword = passwordOut.password ?? ''; ec.web.sessionAttributes.newXmppPasswordName = name ?? '' }</script></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="revokeAppPassword">
+        <service-call name="org.moqui.impl.UserServices.revoke#UserAppPassword" in-map="{appPasswordId:appPasswordId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Revoked: the app using it is signed out</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="newXmppPassword" from="ec.web.sessionAttributes.remove('newXmppPassword') || null"/>
+        <set field="newXmppPasswordName" from="ec.web.sessionAttributes.remove('newXmppPasswordName') || ''"/>
+        <service-call name="org.moqui.impl.XmppServices.get#ClientSettings" out-map="xmpp"/>
+        <script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const when = (value) => value == null ? '' : ec.l10n.format(value, 'MMM d, yyyy h:mm a')
+            xmppEnabled = xmpp?.enabled === true
+            passwordList = Array.from(xmpp?.appPasswordList || []).map((row) => Object.assign({}, row, {
+                createdText: when(row.createdDate),
+                lastUsedText: row.lastUsedDate ? when(row.lastUsedDate) : L('Not used yet'),
+                xmppText: row.xmppReady === true ? L('Works with XMPP apps') : L('Made before XMPP sign-in: most XMPP apps refuse it; make a new one'),
+                xmppStyle: row.xmppReady === true ? 'text-positive' : 'text-warning'}))
+            const olderCount = passwordList.filter((row) => row.xmppReady !== true).length
+            showOlder = olderCount > 0 && !newXmppPassword
+            olderText = olderCount === 1
+                ? L('One of your app passwords was made before XMPP sign-in: most XMPP apps refuse it. Make a new app password for XMPP.')
+                : ec.resource.expand('${n} of your app passwords were made before XMPP sign-in: most XMPP apps refuse them. Make a new app password for XMPP.', '', {n: olderCount})
+            xmppJid = xmpp?.jid || ''
+            settingRows = [
+                {what: L('Address (JID)'), value: xmpp?.jid || '', use: L('Your chat address, also what the app asks as the account')},
+                {what: L('Password'), value: L('An app password below, never your own password'), use: L('One for each app, so that losing one means revoking only its password')},
+                {what: L('Server'), value: xmpp?.server || '', use: L('Most apps find it from your address')},
+                {what: L('Port (STARTTLS)'), value: xmpp?.port || L('Not served here'), use: ''},
+                {what: L('Port (direct TLS)'), value: xmpp?.tlsPort || L('Not served here'), use: ''},
+                {what: L('WebSocket'), value: xmpp?.websocketUrl || L('Not served here'), use: L('For a chat app in a browser')}]
+        ]]></script>
+    </actions>
+
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h5" text="Chat apps" style="q-my-none"/>
+            <container style="col"/>
+            <section name="NewDialog" condition="xmppEnabled"><widgets>
+                <container-dialog id="NewXmppPasswordDialog" button-text="New app password for XMPP" icon="sym_o_add" width="480" title="New app password for XMPP">
+                    <label type="p" text="Make one for each phone, computer or chat app. You see the password once, when it is made." style="m-muted"/>
+                    <form-single name="NewXmppPassword" transition="createXmppPassword" focus-field="name">
+                        <field name="name"><default-field title="App or device"><text-line size="40" default-value="XMPP"/></default-field></field>
+                        <field name="submitButton"><default-field title="Make the password"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </widgets></section>
+        </container>
+
+        <section name="NotServed" condition="!xmppEnabled"><widgets>
+            <container-box type="info"><box-body>
+                <label type="p" text="XMPP apps are not set up on this server. Chat here, in the browser, or ask your administrator."/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="Served" condition="xmppEnabled"><widgets>
+            <label type="p" text="An XMPP app (Conversations or Monal on a phone, Dino or Gajim on a computer) shows your chat rooms and direct messages here, signed in with your address and an app password." style="m-muted"/>
+
+            <section name="NewPassword" condition="newXmppPassword"><widgets>
+                <container-box type="success"><box-header title="App password for ${newXmppPasswordName}"/><box-body>
+                    <label type="p" text="Enter it in the app now, with your address ${xmppJid}. It is shown only this once; make another if you lose it."/>
+                    <label type="pre" text="${newXmppPassword}" style="text-h6"/>
+                </box-body></container-box>
+            </widgets></section>
+
+            <section name="OlderPasswords" condition="showOlder"><widgets>
+                <container-box type="warning"><box-body>
+                    <label type="p" text="${olderText}"/>
+                </box-body></container-box>
+            </widgets></section>
+
+            <container-box><box-header title="Settings for the app"/><box-body-nopad>
+                <form-list name="XmppSettings" list="settingRows" skip-form="true" paginate="false">
+                    <field name="what"><default-field title=""><display style="text-weight-medium"/></default-field></field>
+                    <field name="value"><default-field title=""><display/></default-field></field>
+                    <field name="use"><default-field title=""><display style="m-muted"/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+
+            <container-box><box-header title="App passwords"/><box-body-nopad>
+                <form-list name="AppPasswords" list="passwordList" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="App or device"><display/></default-field></field>
+                    <field name="xmppText"><default-field title="XMPP"><display style="${xmppStyle}"/></default-field></field>
+                    <field name="createdText"><default-field title="Made"><display/></default-field></field>
+                    <field name="lastUsedText"><default-field title="Last used"><display/></default-field></field>
+                    <field name="revoke" align="right"><default-field title="">
+                        <link url="revokeAppPassword" link-type="hidden-form-link" icon="sym_o_block" text="Revoke" style="m-btn-flat"
+                                confirmation="Revoke the app password of ${name}? Every app using it is signed out until it gets a new one." parameter-map="{appPasswordId:appPasswordId}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="name"/><field-ref name="xmppText"/></column>
+                        <column><field-ref name="lastUsedText"/><field-ref name="revoke"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoPasswords" condition="!passwordList.length"><widgets>
+                    <label type="p" text="No app passwords yet · Make one for your first XMPP app" style="m-muted q-pa-sm q-mb-none"/>
+                </widgets></section>
+            </box-body-nopad></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

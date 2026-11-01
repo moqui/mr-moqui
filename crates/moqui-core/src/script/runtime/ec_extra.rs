@@ -333,7 +333,15 @@ fn l10n_localize(ctx: Ctx<'_>, original: JsValue<'_>, locale: Opt<JsValue<'_>>) 
     })
 }
 
-fn l10n_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<JsValue<'_>>) -> rquickjs::Result<String> {
+/// `ec.l10n.format(value, pattern)`, and Java's `format(value, pattern, locale, timeZone)`: a time stamp in the named
+/// zone (an IANA name; empty or null is the session's), as the call handling schedules read a local time.
+fn l10n_format(
+    ctx: Ctx<'_>,
+    value: JsValue<'_>,
+    pattern: Opt<JsValue<'_>>,
+    _locale: Opt<JsValue<'_>>,
+    zone: Opt<JsValue<'_>>,
+) -> rquickjs::Result<String> {
     host_guard(&ctx, || {
         let host = js_to_host(&ctx, &value)?;
         let pattern = match pattern.0.as_ref() {
@@ -355,6 +363,17 @@ fn l10n_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<JsValue<'_>>) -> r
             },
             _ => host,
         };
+        let zone = optional_text(&ctx, zone.0.as_ref())?.filter(|zone| !zone.trim().is_empty());
+        if let (Some(zone), Value::Timestamp(stamp)) = (zone.as_deref(), &host) {
+            let zone = jiff::tz::TimeZone::get(zone.trim())
+                .map_err(|_| throw_error(&ctx, &Error::new(format!("Time zone {zone} is not known"))))?;
+            let pattern = pattern
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .unwrap_or("yyyy-MM-dd HH:mm");
+            return moqui_lib::format::format_timestamp(*stamp, Some(pattern), &zone)
+                .map_err(|err| throw_error(&ctx, &Error::new(err.message())));
+        }
         l10n::format_value(&host, pattern.as_deref()).map_err(|err| throw_error(&ctx, &Error::new(err.message())))
     })
 }
