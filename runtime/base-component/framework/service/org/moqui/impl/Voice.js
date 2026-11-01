@@ -396,6 +396,12 @@ function pairRoom(ours, theirs) {
   return ec.resource.script(SMS).execute('pairRoomFor', { ourNumber: ours, theirNumber: theirs })?.chatRoomId || null
 }
 
+/** C4-SMS: the users phoneNumber no longer reaches are taken out of its pair rooms (Sms.js syncNumberRooms). */
+function syncPairRooms(phoneNumber, deleted) {
+  if (!phoneNumber) return
+  ec.resource.script(SMS).execute('syncNumberRooms', { phoneNumber, deleted: deleted === true })
+}
+
 function receive(p) {
   const pol = policy()
   const to = toE164(p.toNumber, pol.homeCountryCode)
@@ -929,6 +935,8 @@ function storeNumber(p) {
     created.setFields(Object.assign({ phoneNumber }, fields), true, null, null)
     created.create()
   }
+  // its route or its bridge may have changed: who its texts reach
+  if (row) syncPairRooms(phoneNumber)
   return { phoneNumber }
 }
 
@@ -938,6 +946,7 @@ function deleteNumber(p) {
   const row = one(NUMBER, { phoneNumber: p.phoneNumber })
   if (!row) return refuse('notFound', 'Number not found')
   find(GRANT).condition('phoneNumber', row.phoneNumber).deleteAll()
+  syncPairRooms(row.phoneNumber, true)
   row.delete()
   return {}
 }
@@ -978,6 +987,7 @@ function revokeCallerId(p) {
     g.update()
     revoked++
   }
+  if (revoked) syncPairRooms(p.phoneNumber)
   return { revokedCount: revoked }
 }
 
@@ -1174,7 +1184,7 @@ const operations = {
   place: (p) => place(p), receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
   // a registered phone's call (SipDevices.js receiveDeviceCall), on its own SIP engine's node; not a service
   placeFromDevice: (p) => place(p, p.instanceId || null),
-  myCallerIds, registerNode,
+  myCallerIds, registerNode, syncPairRooms: (p) => { syncPairRooms(p.phoneNumber, p.deleted === true); return {} },
   // V3 (CallHandling.js): forwards, and the dialer's country code
   forwardCheck, dialForward, grants: (p) => ({ numberList: grantsOf(p.userId) }), homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig,
   // C4-SMS (Sms.js): the policy, and a number's class and E.164 form by the same rules as a call's

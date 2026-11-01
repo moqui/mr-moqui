@@ -257,18 +257,31 @@ impl ChatBridgeAdapter for TelnyxSms {
             return failed("badMapping", "The room's mapping is not a pair of numbers");
         };
         let config = Config::of(&bridge.config);
-        // a direct send (send#BridgeDirect) has no room: its caller checked it
+        // a direct send (send#BridgeDirect) has no room: its caller checked it and holds its place in the day's count
         let in_room = !request.chat_room_id.is_empty();
+        // the day's count this send holds (check#SmsSend reserve), let go when it does not reach the provider
+        let mut reserved: Option<BTreeMap<String, Value>> = None;
         if in_room {
-            let mut parameters = BTreeMap::from([
+            // a text in a room goes from a user granted our number, never as the system
+            let Some(user) = request.sender_user_id.as_deref().filter(|user| !user.is_empty()) else {
+                return failed("numberNotGranted", "A text goes from a user granted the number");
+            };
+            let parameters = BTreeMap::from([
                 ("fromNumber".to_string(), Value::string(&ours)),
                 ("toNumber".to_string(), Value::string(&theirs)),
+                ("userId".to_string(), Value::string(user)),
+                ("reserve".to_string(), Value::Bool(true)),
             ]);
-            if let Some(user) = &request.sender_user_id {
-                parameters.insert("userId".to_string(), Value::string(user));
-            }
             match crate::call("org.moqui.impl.SmsServices.check#SmsSend", parameters) {
-                Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {}
+                Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
+                    reserved = Some(BTreeMap::from([
+                        ("userId".to_string(), Value::string(user)),
+                        (
+                            "counterDay".to_string(),
+                            out.get("counterDay").cloned().unwrap_or(Value::Null),
+                        ),
+                    ]));
+                }
                 Ok(out) => {
                     let text = |key: &str| out.get(key).map(moqui_lib::object::to_plain_string).unwrap_or_default();
                     return failed(&text("reasonCode"), text("message"));
@@ -281,6 +294,40 @@ impl ChatBridgeAdapter for TelnyxSms {
                 }
             }
         }
+        let outcome = self.send(bridge, request, &config, &ours, &theirs);
+        // not sent (refused here or by the provider, or to be tried again): its place in the day's count goes back
+        if let Some(parameters) = reserved {
+            if matches!(outcome, DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. }) {
+                if let Err(error) = crate::call("org.moqui.impl.SmsServices.release#SmsSend", parameters) {
+                    tracing::warn!(
+                        "a text of bridge {} was not taken off the day's count: {error}",
+                        bridge.chat_bridge_id
+                    );
+                }
+            }
+        }
+        outcome
+    }
+
+    fn webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
+        crate::webhook::handle(self, bridge, &Config::of(&bridge.config), request)
+    }
+
+    fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
+        self.fetch(bridge, url, max_bytes)
+    }
+}
+
+impl TelnyxSms {
+    /// A checked text, to the provider.
+    fn send(
+        &self,
+        bridge: &BridgeInfo,
+        request: &DeliveryRequest,
+        config: &Config,
+        ours: &str,
+        theirs: &str,
+    ) -> DeliveryOutcome {
         let text = request.text.clone().unwrap_or_default();
         if text.chars().count() > config.max_text_length {
             return failed(
@@ -334,7 +381,7 @@ impl ChatBridgeAdapter for TelnyxSms {
             .header("idempotency-key", request.idempotency_key.clone())
             .json(&body)
             .send(false);
-        let outcome = match sent {
+        match sent {
             Err(error) if never_sent(&error) => DeliveryOutcome::Retry {
                 error: format!("Telnyx could not be reached: {}", error.message()),
                 not_connected: true,
@@ -378,29 +425,10 @@ impl ChatBridgeAdapter for TelnyxSms {
                     },
                 }
             }
-        };
-        if in_room
-            && matches!(
-                outcome,
-                DeliveryOutcome::Accepted { .. } | DeliveryOutcome::Uncertain { .. }
-            )
-        {
-            let mut parameters = BTreeMap::new();
-            if let Some(user) = &request.sender_user_id {
-                parameters.insert("userId".to_string(), Value::string(user));
-            }
-            if let Err(error) = crate::call("org.moqui.impl.SmsServices.note#SmsSent", parameters) {
-                tracing::warn!("a text of bridge {} was not counted: {error}", bridge.chat_bridge_id);
-            }
         }
-        outcome
     }
 
-    fn webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
-        crate::webhook::handle(self, bridge, &Config::of(&bridge.config), request)
-    }
-
-    fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
+    fn fetch(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
         let config = Config::of(&bridge.config);
         let max = max_bytes.min(config.max_inbound_media_bytes);
         let response = self

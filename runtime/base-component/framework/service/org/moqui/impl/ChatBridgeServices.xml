@@ -50,7 +50,8 @@ along with this software (see the LICENSE.md file). If not, see
             (millis), relatesToExternalEventId (an edit's, reaction's or delete's target), key (a reaction), replyToExternalEventId,
             metadata (a map kept beside the event), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
             fetched by the bridge's adapter when the item is worked, store#BridgeMedia)}. transportVerified: the bridge's adapter
-            checked the request's signature itself (its webhook, ChatBridgeAdapter::webhook), so no token is needed. A security failure rejects the whole batch (reasonCode unknownBridge,
+            checked the request's signature itself (its webhook, ChatBridgeAdapter::webhook), so no token is needed; honored
+            only inside that bridge's webhook (chat_bridge::webhook marks the context), else badToken. A security failure rejects the whole batch (reasonCode unknownBridge,
             bridgeDisabled, badToken, badTransaction, batchTooLarge or localIdentity; an error, nothing stored). Else the
             batch is stored before this answers: accepted true, duplicate when the transaction id was sent before, and
             outcomeList [{itemId, outcome (accepted, duplicate, echo, waiting, stale, rejected), reasonCode, message, eventSeq}].</description>
@@ -74,7 +75,9 @@ along with this software (see the LICENSE.md file). If not, see
             const bridge = ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).one()
             if (!bridge) { refuse('unknownBridge', 'Unknown chat bridge'); return }
             if (bridge.statusId === 'CbsDisabled') { refuse('bridgeDisabled', 'The chat bridge is disabled'); return }
-            // an adapter that checked the network's signature over the raw request (its webhook) needs no token
+            // an adapter that checked the network's signature over the raw request (its webhook) needs no token; it holds only
+            // inside that bridge's webhook (chat_bridge::webhook marks the context), never from a parameter alone
+            if (transportVerified === true && ec.context.sharedMap._chatBridgeWebhook !== chatBridgeId) { refuse('badToken', 'The chat bridge token does not match'); return }
             if (transportVerified !== true) {
                 const check = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.check#BridgeToken')
                         .parameters({chatBridgeId: chatBridgeId, token: token || ''}).call()

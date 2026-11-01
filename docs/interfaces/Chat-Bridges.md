@@ -75,7 +75,8 @@ contract:
 
 1. **Security first, for the whole batch.** An unknown or disabled bridge, a token that does not match the bridge's
    `inboundTokenHash` (SHA-256, compared in constant time; not asked with `transportVerified`, which only an adapter that
-   checked the network's signature itself sets, from its webhook), a malformed transaction id, a batch over 200 items or 1 MB, or
+   checked the network's signature itself sets, from its webhook, and which holds only while `chat_bridge::webhook` is
+   working that bridge's request), a malformed transaction id, a batch over 200 items or 1 MB, or
    an item that names a local user (`userId`, `senderUserId`, `localUserId`, `chatActorId`, `senderActorId`) refuses the
    batch with its reason code before anything is stored.
 2. **Stored before it is acknowledged.** The batch is a `ChatBridgeInbound` row, unique on the bridge and transaction

@@ -1181,6 +1181,8 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 if (!access.isMember) { ec.message.addError(ec.l10n.localize('Join the room before adding others')); return }
                 if (room.roomTypeEnumId === 'CrtDirect') { ec.message.addError(ec.l10n.localize('A direct room has fixed members: start a new direct message')); return }
+                // C4-SMS: a number pair's room has the users its number reaches (SmsServices ensure#PairRoom), nobody else
+                if (room.roomTypeEnumId === 'CrtExternal') { ec.message.addError(ec.l10n.localize('A conversation with a phone number has the members its number reaches')); return }
                 if (!Object.values(ROLES).includes(role)) { ec.message.addError(`Unknown member role ${roleEnumId}`); return }
                 if ((role !== 'CmrMember' || agentRef) && !access.canModerate) { ec.message.addError(ec.l10n.localize('Only a moderator or owner may give a role')); return }
                 if (role === 'CmrOwner' && !access.isOwner) { ec.message.addError(ec.l10n.localize('Only an owner may add an owner')); return }

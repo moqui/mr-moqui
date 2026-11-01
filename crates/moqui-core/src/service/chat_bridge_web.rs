@@ -80,6 +80,10 @@ const SAFE_TYPES: &[&str] = &[
 
 // ---- the webhook ----
 
+/// The shared-map key that names the bridge whose webhook the current context is working (`ingest#Event`
+/// `transportVerified` checks it).
+pub const WEBHOOK_MARK: &str = "_chatBridgeWebhook";
+
 /// A request to a bridge's webhook route.
 #[derive(Clone, Debug, Default)]
 pub struct WebhookRequest {
@@ -171,7 +175,18 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     if text_of(&row, "statusId").as_deref() == Some("CbsDisabled") {
         return WebhookResponse::text(503, "the bridge is disabled");
     }
-    match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook(&info, request))) {
+    // what `ingest#Event` `transportVerified` asks for: only a batch of the bridge whose webhook this context is working
+    // goes in without a token (a parameter alone, from any caller, is refused)
+    let marked = crate::context::ExecutionContext::with_current(|ec| {
+        ec.shared_map()
+            .insert(WEBHOOK_MARK.to_string(), Value::string(bridge_id));
+    })
+    .is_some();
+    let answer = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook(&info, request)));
+    if marked {
+        let _ = crate::context::ExecutionContext::with_current(|ec| ec.shared_map().shift_remove(WEBHOOK_MARK));
+    }
+    match answer {
         Ok(response) => response,
         Err(_) => {
             tracing::error!(

@@ -151,6 +151,39 @@ function ensurePairRoom(p) {
   return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created }
 }
 
+/**
+ * Internal (Voice.js and CallHandling.js, in the caller's transaction, when a grant ends or a number's route, bridge or ring
+ * group changes): the users no longer reached by phoneNumber are taken out of its pair rooms, so the pair's texts are not
+ * seen by them from then on. Their rows go (not a leftDate), so one reached again is put back by ensure#PairRoom. Users
+ * newly reached join at the pair's next text or call. Out: removedCount.
+ */
+function syncNumberRooms(p) {
+  const phoneNumber = p.phoneNumber
+  if (blank(phoneNumber)) return { removedCount: 0 }
+  const number = one(NUMBER, { phoneNumber })
+  const users = new Set(number && !blank(number.messagingBridgeId) && !p.deleted ? usersOf(number) : [])
+  const mappings = Array.from(find(MAPPING).condition('externalRoomId', 'like', phoneNumber + '/%').list())
+  const roomIds = Array.from(new Set(mappings.filter((m) => m.externalRoomId.startsWith(phoneNumber + '/')).map((m) => m.chatRoomId)))
+  let removedCount = 0
+  const removedUsers = new Set()
+  for (const chatRoomId of roomIds) {
+    const room = one(ROOM, { chatRoomId })
+    if (!room || room.roomTypeEnumId !== 'CrtExternal') continue
+    for (const member of rows(MEMBER, { chatRoomId })) {
+      if (!member.userId || users.has(member.userId)) continue
+      member.delete()
+      removedCount++
+      removedUsers.add(member.userId)
+      ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({ topic: 'chatUser:' + member.userId, userIdList: [member.userId],
+        message: { kind: 'room', action: 'left', chatRoomId } }).disableAuthz().call()
+    }
+  }
+  if (removedUsers.size) {
+    ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(removedUsers)).disableAuthz().call()
+  }
+  return { removedCount }
+}
+
 /** The pair room of a call or a voicemail (Voice.js, CallHandling.js), in a transaction of its own; null when our number has no messaging. */
 function pairRoomFor(p) {
   if (blank(p.ourNumber) || blank(p.theirNumber)) return {}
@@ -224,8 +257,8 @@ function today() {
   return new Date(nowMs()).toISOString().slice(0, 10)
 }
 
-function sentToday(counterKey) {
-  const row = one(COUNT, { counterKey, dayDate: today() })
+function sentToday(counterKey, day) {
+  const row = one(COUNT, { counterKey, dayDate: day || today() })
   return row ? Number(row.sentCount || 0) : 0
 }
 
@@ -272,27 +305,49 @@ function checkSend(p) {
     if (!consented(from, dest.number)) return no('consentRequired', 'A promotional text needs the person\'s consent, and none is recorded')
   }
   const limits = smsPolicy()
-  if (sentToday(userId ? 'user:' + userId : 'system') >= (userId ? limits.smsMaxPerUserPerDay : limits.smsMaxPerDay)
-    || sentToday('all') >= limits.smsMaxPerDay) {
+  const reserve = p.reserve === true || p.reserve === 'true' || p.reserve === 'Y'
+  const userKey = userId ? 'user:' + userId : 'system'
+  const day = today()
+  // reserve: the check and the count are one step, under the lock of the day's deployment count (made at 0 when there is
+  // none yet), so sends at once cannot pass a limit together; the caller lets the count go (release#SmsSend) when the text
+  // does not reach the provider
+  if (reserve && !find(COUNT).condition({ counterKey: 'all', dayDate: day }).forUpdate(true).one()) {
+    const first = ec.entity.makeValue(COUNT)
+    first.setFields({ counterKey: 'all', dayDate: day, sentCount: 0 }, true, null, null)
+    first.create()
+  }
+  if (sentToday(userKey, day) >= (userId ? limits.smsMaxPerUserPerDay : limits.smsMaxPerDay) || sentToday('all', day) >= limits.smsMaxPerDay) {
     return no('dailyLimit', 'The limit of texts for a day is reached')
   }
-  return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass }
+  if (reserve) countSent(userKey, day, 1)
+  return { allowed: true, ourNumber: from, theirNumber: dest.number, chatBridgeId: number.messagingBridgeId, destinationClass: dest.destinationClass,
+    counterDay: reserve ? day : null }
+}
+
+/** Add delta to the day's counts of counterKey and of the deployment (all), never below 0. */
+function countSent(userKey, day, delta) {
+  for (const counterKey of [userKey, 'all']) {
+    const row = find(COUNT).condition({ counterKey, dayDate: day }).forUpdate(true).one()
+    if (row) {
+      row.setFields({ sentCount: Math.max(0, Number(row.sentCount || 0) + delta), lastSentDate: ec.user.nowTimestamp }, true, null, null)
+      row.update()
+    } else if (delta > 0) {
+      const created = ec.entity.makeValue(COUNT)
+      created.setFields({ counterKey, dayDate: day, sentCount: delta, lastSentDate: ec.user.nowTimestamp }, true, null, null)
+      created.create()
+    }
+  }
 }
 
 /** Internal: a text went to the provider (taken, or not known): it counts for the sender's and the deployment's day. */
 function noteSent(p) {
-  const day = today()
-  for (const counterKey of [blank(p.userId) ? 'system' : 'user:' + p.userId, 'all']) {
-    const row = find(COUNT).condition({ counterKey, dayDate: day }).forUpdate(true).one()
-    if (row) {
-      row.setFields({ sentCount: Number(row.sentCount || 0) + 1, lastSentDate: ec.user.nowTimestamp }, true, null, null)
-      row.update()
-    } else {
-      const created = ec.entity.makeValue(COUNT)
-      created.setFields({ counterKey, dayDate: day, sentCount: 1, lastSentDate: ec.user.nowTimestamp }, true, null, null)
-      created.create()
-    }
-  }
+  countSent(blank(p.userId) ? 'system' : 'user:' + p.userId, today(), 1)
+  return {}
+}
+
+/** Internal: a text check#SmsSend reserved (counted) on counterDay did not reach the provider: it no longer counts. */
+function releaseSend(p) {
+  countSent(blank(p.userId) ? 'system' : 'user:' + p.userId, blank(p.counterDay) ? today() : String(p.counterDay), -1)
   return {}
 }
 
@@ -352,7 +407,7 @@ function receive(p) {
       maxBytes: file.maxBytes != null ? Number(file.maxBytes) : null })) }
   if (keyword) item.metadata = { keyword }
   const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.ingest#Event').parameters({ chatBridgeId: p.chatBridgeId,
-    transactionId: String(p.eventId), transportVerified: true, itemList: [item] }).call() || {}
+    transactionId: String(p.eventId), transportVerified: true, itemList: [item] }).disableAuthz().call() || {}
   if (ec.message.hasError()) return { outcome: 'failed', reasonCode: out.reasonCode || 'failed' }
   const first = Array.from(out.outcomeList || [])[0] || {}
   if (first.outcome === 'rejected') ec.logger.warn(`SMS ${p.messageId} on ${p.chatBridgeId} was rejected: ${first.reasonCode} ${first.message || ''}`)
@@ -384,13 +439,16 @@ function sendMessage(p) {
   }
   const fromNumber = blank(p.fromNumber) ? smsPolicy().smsSystemNumber : p.fromNumber
   if (blank(fromNumber)) return fail('noMessaging', ec.l10n.localize('No number to send texts from: set the system number in Voice, Fraud'))
-  const check = checkSend({ fromNumber, toNumber: contactOf(p), userId: p.userId || null, isPromotional: p.isPromotional })
+  // checked and counted in a transaction of its own (its lock is not held while the provider answers)
+  const check = ec.service.sync().name('org.moqui.impl.SmsServices.check#SmsSend').parameters({ fromNumber, toNumber: contactOf(p),
+    userId: p.userId || null, isPromotional: p.isPromotional, reserve: true }).requireNewTransaction(true).disableAuthz().call() || {}
+  if (ec.message.hasError()) return fail('failed', ec.message.errorsString)
   if (!check.allowed) return fail(check.reasonCode, check.message)
   const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.send#BridgeDirect').parameters({ chatBridgeId: check.chatBridgeId,
     externalRoomId: pairKey(check.ourNumber, check.theirNumber), text: String(p.message || ''), senderUserId: p.userId || null }).disableAuthz().call() || {}
-  if (out.outcome === 'accepted' || out.outcome === 'uncertain') {
-    ec.service.sync().name('org.moqui.impl.SmsServices.note#SmsSent').parameter('userId', p.userId || null).requireNewTransaction(true)
-      .disableAuthz().call()
+  if (out.outcome !== 'accepted' && out.outcome !== 'uncertain') {
+    ec.service.sync().name('org.moqui.impl.SmsServices.release#SmsSend').parameters({ userId: p.userId || null, counterDay: check.counterDay })
+      .requireNewTransaction(true).disableAuthz().call()
   }
   if (out.outcome === 'accepted') return { successful: true, messageId: out.remoteEventId || null, errorMessage: null, reasonCode: null }
   ec.logger.warn(`A text to ${check.theirNumber} was not sent: ${out.reasonCode || out.outcome} ${out.error || ''}`)
@@ -408,7 +466,8 @@ function myTextNumbers() {
 }
 
 const operations = {
-  ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, noteKeyword, receive, sendMessage, myTextNumbers,
+  ensurePairRoom, pairRoomFor, openPairRoom, checkSend, noteSent, releaseSend, noteKeyword, receive, sendMessage, myTextNumbers,
+  syncNumberRooms,
   keyword: (p) => ({ keyword: keywordOf(p.text) }),
 }
 

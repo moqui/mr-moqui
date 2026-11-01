@@ -555,10 +555,21 @@ fn signed_texts_come_in_once_and_bad_or_replayed_ones_are_refused() {
     assert_eq!(bed.messages(&room).len(), 1);
     assert_eq!(bed.messages(&room)[0].1, "Hello there");
 
-    // the same request again is a replay
+    // the same request again is a replay: answered as done, not worked again, and not counted against the provider's
+    // address (its signature is good)
     let replay = bed.hook(&request);
-    assert_eq!(status(&replay), 409);
-    assert!(replay.auth_failure);
+    assert_eq!(status(&replay), 200);
+    assert_eq!(body_json(&replay)["outcome"], "duplicate");
+    assert!(!replay.auth_failure);
+    // a timestamp past what a time can be is refused, not a panic
+    let mut huge = request.clone();
+    for (name, value) in &mut huge.headers {
+        if name == "telnyx-timestamp" {
+            *value = i64::MAX.to_string();
+        }
+    }
+    let refused_huge = bed.hook(&huge);
+    assert_eq!(status(&refused_huge), 401);
     // a changed body under the same signature, a wrong key's signature, no signature, a time out of the window
     let mut tampered = request.clone();
     tampered.body = event.to_string().replace("Hello there", "Send money").into_bytes();
@@ -812,6 +823,16 @@ fn an_uncertain_send_is_not_sent_again() {
         bed.one("moqui.chat.ChatBridge", &[("chatBridgeId", text(BRIDGE))])["statusId"],
         "CbsNotConnected"
     );
+    // the day's count holds what reached the provider (the uncertain one and the one taken after its 503), not the
+    // refused, the retried or the unreachable attempts
+    let today = &jiff::Timestamp::now().to_string()[..10];
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsSendCount",
+            &[("counterKey", text("user:alice")), ("dayDate", text(today))]
+        )["sentCount"],
+        "2"
+    );
 }
 
 #[test]
@@ -993,4 +1014,107 @@ fn a_sign_in_code_goes_through_the_real_sender() {
         bed.count("moqui.call.SmsSendCount", &[("counterKey", text("system"))]),
         1
     );
+}
+
+#[test]
+fn the_pair_room_keeps_only_the_users_the_number_reaches() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    bed.text_in(THEIRS, "Hello", json!([]));
+    let room = bed.room(THEIRS).unwrap();
+    let member = |user: &str| {
+        bed.count(
+            "moqui.chat.ChatRoomMember",
+            &[("chatRoomId", text(&room)), ("userId", text(user))],
+        )
+    };
+    assert_eq!((member("alice"), member("bob")), (1, 1));
+
+    // a member may not add someone the number does not reach; the same parameters as for a room of their own
+    login("alice");
+    call(
+        "org.moqui.impl.ChatServices.add#Member",
+        &[("chatRoomId", text(&room)), ("userId", text("carol"))],
+    );
+    assert!(errors().contains("members its number reaches"));
+    assert_eq!(member("carol"), 0);
+
+    // bob's grant ends: he is out of the pair's room, and does not see its next text
+    ec_revoke(&bed, "bob");
+    assert_eq!((member("alice"), member("bob")), (1, 0));
+    bed.text_in(THEIRS, "Still there?", json!([]));
+    assert_eq!(
+        member("bob"),
+        0,
+        "a text does not bring back a user the number no longer reaches"
+    );
+    // granted again, he is back at the pair's next text
+    row(
+        &bed.facade,
+        "moqui.call.PhoneNumberUser",
+        &[
+            ("phoneNumber", text(OURS)),
+            ("userId", text("bob")),
+            ("fromDate", Value::I64(now() - 1_000)),
+        ],
+    );
+    bed.text_in(THEIRS, "Hello again", json!([]));
+    assert_eq!(member("bob"), 1);
+
+    // a caller with authorization on cannot say a batch's transport was checked
+    login("alice");
+    let out = call(
+        "org.moqui.impl.ChatBridgeServices.ingest#Event",
+        &[
+            ("chatBridgeId", text(BRIDGE)),
+            ("transactionId", text("forged-1")),
+            ("transportVerified", Value::Bool(true)),
+            (
+                "itemList",
+                Value::List(vec![moqui_lib::json::from_json(
+                    &json!({"itemId": "1", "type": "message",
+                    "externalRoomId": format!("{OURS}/{THEIRS}"), "externalEventId": "forged-ev",
+                    "externalUserId": THEIRS, "text": "Forged"}),
+                )]),
+            ),
+        ],
+    );
+    let refused = errors();
+    assert!(refused.contains("token does not match"), "{out:?} {refused}");
+    assert!(!bed.messages(&room).iter().any(|(_, body)| body == "Forged"));
+}
+
+/// Revoke `user`'s grant of our number as a voice administrator does (VoiceServices.revoke#CallerId).
+fn ec_revoke(bed: &Bed, user: &str) {
+    for (entity, fields) in [
+        (
+            "moqui.security.UserAccount",
+            vec![("userId", text("voiceadmin")), ("username", text("voiceadmin"))],
+        ),
+        ("moqui.security.UserGroup", vec![("userGroupId", text("VADMIN"))]),
+        (
+            "moqui.security.UserGroupMember",
+            vec![
+                ("userGroupId", text("VADMIN")),
+                ("userId", text("voiceadmin")),
+                ("fromDate", Value::I64(0)),
+            ],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            vec![
+                ("userGroupId", text("VADMIN")),
+                ("userPermissionId", text("VoiceAdmin")),
+                ("fromDate", Value::I64(0)),
+            ],
+        ),
+    ] {
+        row(&bed.facade, entity, &fields);
+    }
+    login("voiceadmin");
+    let out = ok(
+        "org.moqui.impl.VoiceServices.revoke#CallerId",
+        &[("phoneNumber", text(OURS)), ("userId", text(user))],
+    );
+    assert_eq!(out_text(&out, "revokedCount"), "1", "{out:?}");
 }

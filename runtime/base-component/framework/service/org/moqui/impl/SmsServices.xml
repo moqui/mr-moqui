@@ -75,9 +75,13 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="toNumber" required="true"/>
             <parameter name="userId"/>
             <parameter name="isPromotional" type="Boolean" default="false"/>
+            <parameter name="reserve" type="Boolean" default="false"><description>Count the text for the day's limits when
+                it is allowed, in the same step as the check under the lock of the day's deployment count (sends at once cannot pass a limit
+                together); release#SmsSend takes it back when the text does not reach the provider</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="allowed" type="Boolean"/>
+            <parameter name="counterDay"><description>With reserve, the day it was counted on (for release#SmsSend)</description></parameter>
             <parameter name="reasonCode"/>
             <parameter name="message"/>
             <parameter name="ourNumber"><description>fromNumber in E.164</description></parameter>
@@ -93,6 +97,16 @@ along with this software (see the LICENSE.md file). If not, see
             system's) and of the deployment (SmsSendCount).</description>
         <in-parameters><parameter name="userId"/></in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Sms.js').execute('noteSent', context))</script></actions>
+    </service>
+
+    <service verb="release" noun="SmsSend" allow-remote="false">
+        <description>Internal: a text check#SmsSend reserved on counterDay (today when empty) for userId (empty: the system)
+            did not reach the provider (refused, or to be tried again): it no longer counts.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="counterDay"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Sms.js').execute('releaseSend', context))</script></actions>
     </service>
 
     <service verb="note" noun="SmsKeyword" allow-remote="false">

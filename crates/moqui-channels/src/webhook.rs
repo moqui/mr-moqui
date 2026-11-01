@@ -18,10 +18,12 @@
 //!    under the account's public key (the bridge's `publicKey`), checked with aws-lc-rs. A missing or wrong signature, or a
 //!    bridge with no key, is refused (401, counted by the host's web protection).
 //! 2. **The replay window.** The timestamp must be within `webhookToleranceSeconds` (300) of now, and a signature seen
-//!    before in that window is refused (409): a request worked once is not worked again from a copy. A signature is
-//!    remembered only once its request was worked (2xx), so the provider's retry of one that failed goes through. The
-//!    cache is this node's; another node's copy is still deduped by the event's ids (`ingest#Event`'s transaction id,
-//!    and `ChatEventExternal`).
+//!    before in that window is not worked again: a copy of one worked is answered 200 (`duplicate`), one still being
+//!    worked on another worker 409 (so the provider tries again later). Neither counts as a refused signature: the
+//!    signature is the provider's, and counting it could block the provider's own address. A signature is held from
+//!    the moment its request is taken and let go when it was not worked (not 2xx), so the provider's retry of one that
+//!    failed goes through. The cache is this node's; another node's copy is still deduped by the event's ids
+//!    (`ingest#Event`'s transaction id, and `ChatEventExternal`).
 //! 3. **The event.** `message.received` goes to `SmsServices.receive#Sms` (the pair room, then `ingest#Event`, stored
 //!    before this answers); `message.sent` and `message.finalized` to `ChatBridgeServices.note#DeliveryReceipt`. Others are
 //!    answered 200 and left. A failure of the server's own is 500, so the provider tries again.
@@ -40,30 +42,56 @@ use crate::telnyx::{Config, TelnyxSms};
 /// Signatures kept per bridge at most; the oldest go first.
 const REPLAY_CAP: usize = 20_000;
 
-/// The signatures of requests worked within the replay window, per bridge.
+/// What the replay cache knows of a signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Replay {
+    /// Not seen in the window: it is now held for this request.
+    New,
+    /// Taken by another request that is still being worked.
+    Working,
+    /// Its request was worked.
+    Done,
+}
+
+/// The signatures of requests taken within the replay window, per bridge: (when, signature, worked).
 #[derive(Default)]
 pub struct ReplayCache {
-    seen: HashMap<String, VecDeque<(i64, String)>>,
+    seen: HashMap<String, VecDeque<(i64, String, bool)>>,
 }
 
 impl ReplayCache {
-    fn prune(&mut self, bridge: &str, now: i64, window: i64) -> &mut VecDeque<(i64, String)> {
+    fn prune(&mut self, bridge: &str, now: i64, window: i64) -> &mut VecDeque<(i64, String, bool)> {
         let list = self.seen.entry(bridge.to_string()).or_default();
-        while list.front().is_some_and(|(at, _)| now - at > window) || list.len() > REPLAY_CAP {
+        while list.front().is_some_and(|(at, _, _)| now.saturating_sub(*at) > window) || list.len() > REPLAY_CAP {
             list.pop_front();
         }
         list
     }
 
-    /// Whether `signature` was worked on bridge `bridge` within the window.
-    pub fn seen(&mut self, bridge: &str, signature: &str, now: i64, window: i64) -> bool {
-        self.prune(bridge, now, window)
-            .iter()
-            .any(|(_, known)| known == signature)
+    /// Whether `signature` was taken on bridge `bridge` within the window; when not, it is held from now (one check and
+    /// hold under the caller's lock, so two copies at once are not both worked).
+    pub fn take(&mut self, bridge: &str, signature: &str, now: i64, window: i64) -> Replay {
+        let list = self.prune(bridge, now, window);
+        match list.iter().find(|(_, known, _)| known == signature) {
+            Some((_, _, true)) => Replay::Done,
+            Some((_, _, false)) => Replay::Working,
+            None => {
+                list.push_back((now, signature.to_string(), false));
+                Replay::New
+            }
+        }
     }
 
-    pub fn remember(&mut self, bridge: &str, signature: &str, now: i64, window: i64) {
-        self.prune(bridge, now, window).push_back((now, signature.to_string()));
+    /// The request of `signature` was worked (`true`: kept as done) or not (`false`: let go, so a retry goes through).
+    pub fn finish(&mut self, bridge: &str, signature: &str, worked: bool) {
+        let Some(list) = self.seen.get_mut(bridge) else { return };
+        if worked {
+            if let Some(entry) = list.iter_mut().find(|(_, known, _)| known == signature) {
+                entry.2 = true;
+            }
+        } else {
+            list.retain(|(_, known, _)| known != signature);
+        }
     }
 }
 
@@ -108,27 +136,38 @@ pub(crate) fn handle(
     ) else {
         return WebhookResponse::refused(401, "not signed");
     };
-    let window = config.tolerance_seconds * 1000;
-    let Some(stamp) = timestamp.trim().parse::<i64>().ok().map(|seconds| seconds * 1000) else {
+    let window = config.tolerance_seconds.saturating_mul(1000);
+    let Some(stamp) = timestamp
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1000))
+    else {
         return WebhookResponse::refused(401, "not signed");
     };
-    if (request.now_millis - stamp).abs() > window {
+    if request.now_millis.abs_diff(stamp) > window.unsigned_abs() {
         return WebhookResponse::refused(401, "the signature's time is out of its window");
     }
     if !signature_valid(public_key, timestamp.trim(), &request.body, signature) {
         return WebhookResponse::refused(401, "the signature does not match");
     }
     let replay_key = signature.trim().to_string();
-    if lock(&adapter.replays).seen(&bridge.chat_bridge_id, &replay_key, request.now_millis, window) {
-        return WebhookResponse::refused(409, "this request was taken before");
+    let taken = lock(&adapter.replays).take(&bridge.chat_bridge_id, &replay_key, request.now_millis, window);
+    match taken {
+        Replay::Done => return WebhookResponse::json(200, &json!({"outcome": "duplicate"})),
+        Replay::Working => return WebhookResponse::text(409, "this request is being worked"),
+        Replay::New => {}
     }
-    let Ok(event) = serde_json::from_slice::<Json>(&request.body) else {
-        return WebhookResponse::text(400, "the body is not JSON");
+    let response = match serde_json::from_slice::<Json>(&request.body) {
+        Ok(event) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(bridge, config, &event)))
+            .unwrap_or_else(|_| WebhookResponse::text(500, "the request failed")),
+        Err(_) => WebhookResponse::text(400, "the body is not JSON"),
     };
-    let response = work(bridge, config, &event);
-    if (200..300).contains(&response.status) {
-        lock(&adapter.replays).remember(&bridge.chat_bridge_id, &replay_key, request.now_millis, window);
-    }
+    lock(&adapter.replays).finish(
+        &bridge.chat_bridge_id,
+        &replay_key,
+        (200..300).contains(&response.status),
+    );
     response
 }
 

@@ -978,6 +978,10 @@ function deleteMember(p) {
   const member = one(MEMBER, { ringGroupId: p.ringGroupId, userId: p.userId })
   if (!member) return refuse('notFound', 'Member not found')
   member.delete()
+  // C4-SMS: the texts of the group's numbers are no longer theirs
+  for (const number of find(NUMBER).condition('routeTypeEnumId', 'PnrRingGroup').condition('routeId', p.ringGroupId).list()) {
+    ec.resource.script(VOICE).execute('syncPairRooms', { phoneNumber: number.phoneNumber })
+  }
   return {}
 }
 

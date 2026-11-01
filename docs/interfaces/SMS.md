@@ -57,8 +57,12 @@ One room for each pair (our number, their number): `ChatRoom` type `CrtExternal`
 members only, mapped to our number's messaging bridge by a `ChatRoomBridge` whose `externalRoomId` is `ours/theirs`.
 `SmsServices.ensure#PairRoom` finds or makes it under the number's row lock, in a transaction of its own, before a text
 is taken in (`ingest#Event` refuses an unmapped room) and before a call links to it, and adds as members the users the
-number reaches; a user who left stays out until they open it again (Text a number). The outside person is an external
-actor of the bridge (`ChatExternalUser` keyed by their number).
+number reaches; a user who left stays out until they open it again (Text a number). Its members are the number's
+users and nobody else: no member adds another (`add#Member` refuses in a `CrtExternal` room), and when a grant ends or
+the number's route, bridge or ring group changes (`revoke#CallerId`, `store#PhoneNumber`, `delete#PhoneNumber`,
+`delete#RingGroupMember`), the users it no longer reaches are taken out of its pair rooms at once (`Sms.js`
+`syncNumberRooms`), so they see none of the pair's later texts; one reached again is back at the pair's next text or
+call. The outside person is an external actor of the bridge (`ChatExternalUser` keyed by their number).
 
 - **Calls.** A phone call to or from the pair (`receive#PhoneCall` for a user or a ring group, `place#PhoneCall`) is in
   the room: `CallSession.chatRoomId` is set and its start and end are `CetCall` events there. Nothing else about the call
@@ -80,12 +84,15 @@ actor of the bridge (`ChatExternalUser` keyed by their number).
 2. The adapter checks `telnyx-signature-ed25519`, the Ed25519 signature of `{telnyx-timestamp}|{raw body}` under the
    bridge's `publicKey` (aws-lc-rs, the crypto provider rustls already links), before it parses anything. A missing or
    wrong signature, or one whose timestamp is more than `webhookToleranceSeconds` from now, is 401 and counts for web
-   protection as a refused login. A signature already worked within the window is 409 (a replay); it is remembered only
-   once its request was worked, so the provider's retry of one that failed goes through. The cache is the node's;
-   another node's copy is deduped by the ids below.
+   protection as a refused login. A signature already worked within the window is answered 200 `duplicate` and not
+   worked again, one still being worked on another worker 409; neither counts for web protection (the signature is
+   the provider's, and counting it could block the provider's address). A signature is held from when its request is
+   taken and let go when it was not worked (not 2xx), so the provider's retry of one that failed goes through. The
+   cache is the node's; another node's copy is deduped by the ids below.
 3. `message.received`: `SmsServices.receive#Sms` checks that our number's messaging bridge is this one (else 200,
    `ignored`), keeps a STOP, START or HELP (below), finds or makes the pair room, and hands the text to `ingest#Event`
-   (`transportVerified`: no inbound token) as transaction the webhook's event id, item the message id. A webhook sent
+   (`transportVerified`: no inbound token, honored only inside that bridge's webhook, which `chat_bridge::webhook` marks
+   on the context; a caller passing the parameter alone gets `badToken`) as transaction the webhook's event id, item the message id. A webhook sent
    again is a `duplicate` and does nothing; so is the same message under a new event id (`ChatEventExternal`). Its files
    (`media`) are fetched by the adapter, each on its own, within `maxInboundMediaBytes`, and kept as `ChatAttachment`
    rows of the room with no uploader (`store#BridgeMedia`): a type outside images, audio, video, vCard, plain text and
@@ -104,12 +111,12 @@ A user writes in the pair's room; the delivery layer sends it. Before the provid
 
 | Reason | When |
 | --- | --- |
-| `numberNotGranted` | The sender is not granted our number (a member through its route alone reads but does not send) |
+| `numberNotGranted` | The sender is not granted our number (a member through its route alone reads but does not send), or the message has no sending user (a text in a room never goes as the system) |
 | `internationalNotEnabled`, `premiumNotEnabled` | The destination's class (Voice.js `classify`, as for a call) is not enabled for the deployment and the user (VoicePolicy, VoiceUserSetting) |
 | `emergency` | An emergency number: texts to them are not sent from here |
 | `optedOut` | The person sent STOP to our number and not START since |
 | `consentRequired` | A promotional text (`send#SmsMessage` `isPromotional`) with no `sms-consent` provider saying yes |
-| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or the deployment's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount` |
+| `dailyLimit` | The sender's (`smsMaxPerUserPerDay`, 200) or the deployment's (`smsMaxPerDay`, 2000) texts of the day, counted in `SmsSendCount`. The check and the count are one step (`reserve`) under the lock of the day's deployment count, so sends at once cannot pass a limit together; a text that does not reach the provider (refused, retried, unreachable) is taken off again (`release#SmsSend`), and one whose answer was lost still counts |
 | `textTooLong`, `tooManyFiles`, `mediaTooLarge`, `mediaUnreachable` | The bridge's limits, or no `channels_public_url` for a file |
 
 The text goes to `POST /v2/messages` with the delivery's idempotency key in `Idempotency-Key`; Telnyx does not dedupe
