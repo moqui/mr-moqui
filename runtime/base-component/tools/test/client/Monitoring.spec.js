@@ -394,7 +394,7 @@ feature('the dashboard time picker, panel menu and an embed work against the ser
         const shipped=page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'none'})
         shipped.items.includes('Explore') && shipped.items.includes('Share') && !shipped.items.includes('Remove')
         page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'Explore'}).clicked
-        page.waitFor(()=>!window.monitoringMenuClicked && location.pathname.endsWith('/dashboards/Explore') && !!new URL(location.href).searchParams.get('datasetId'))
+        page.waitFor(()=>!window.monitoringMenuClicked && location.pathname.endsWith('/dashboards/Explore') && !!new URL(location.href).searchParams.get('datasetId') && !!document.querySelector('input[aria-label="Search query"]'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
         const id='browser-menu-'+Date.now().toString(36)
         page.evaluate(monitoringCopyOverview,{id})
