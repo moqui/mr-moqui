@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Settings, My devices (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the browsers that hold
+    the user's encryption keys (crypto devices, made the first time a browser needs one), each with its name, when it was
+    added and last seen, its browser and its key's fingerprint (to compare with what the device shows), this browser
+    marked; Rename and Remove (revoke: it gets no new keys or messages, and others stop encrypting to it). All through
+    org.moqui.impl.ChatKeyServices, which acts only on the user's own devices, so these transitions run with authorization
+    off as the call transitions do. The component is Devices.qvue next to this file; the terminal twin is DevicesTui. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="My devices" default-menu-index="10" menu-image="sym_o_devices" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <transition name="devices" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.find#ChatDevices').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, deviceList: out.deviceList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="rename">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.update#ChatDevice').parameters({deviceId: deviceId || '',
+                displayName: displayName || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, reasonCode: out.reasonCode || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revoke">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.revoke#ChatDevice').parameter('deviceId', deviceId || '')
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, reasonCode: out.reasonCode || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Settings/Devices.qvue" template="false"/>
+            <text type="tui" location="component://basic-comms/screen/BasicComms/Settings/Devices.tui.json" template="fancy"/></render-mode>
+    </widgets>
+</screen>

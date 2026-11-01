@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The Comms settings index (mr-boss design-drawers-commons.md §17 Settings; style-guide §3.9 Settings): a card per settings group with
     a line about it and the links into its pages: Mail accounts (how many, and how many need attention), Identities and
-    signatures, Rules, Out of office (on or off), Text blocks, Chat and Desk and soft phones. An app that mounts Settings adds its own cards to the
+    signatures, Rules, Out of office (on or off), Text blocks, Chat, Desk and soft phones and My devices. An app that mounts Settings adds its own cards to the
     SettingsCards row with a screen-extend (widgets-extend where="append"). The counts are failure tolerant: a part that
     fails leaves its line out. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -79,6 +79,10 @@ along with this software (see the LICENSE.md file). If not, see
             <row-col md="4" sm="6"><container-box><box-header title="Desk and soft phones"/><box-body>
                 <label type="p" text="A desk phone or a phone app that rings with your calls, with voicemail after it as set in Phone, and calls out as you; its password is shown once." style="m-muted"/>
                 <link url="../PhoneDevices" text="Desk and soft phones" icon="sym_o_deskphone"/>
+            </box-body></container-box></row-col>
+            <row-col md="4" sm="6"><container-box><box-header title="My devices"/><box-body>
+                <label type="p" text="The browsers that hold your encryption keys, for encrypted calls; remove one you no longer use." style="m-muted"/>
+                <link url="../Devices" text="My devices" icon="sym_o_devices"/>
             </box-body></container-box></row-col>
         </container-row>
     </widgets>

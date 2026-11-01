@@ -49,6 +49,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [WebRTC.md](interfaces/WebRTC.md) | Calls: the media port and the SFU, signaling on the notification socket, guests by link, the cluster |
 | [TURN.md](interfaces/TURN.md) | ICE-TCP and the embedded TURN server for browsers behind NAT and firewalls; coturn instead |
 | [SIP.md](interfaces/SIP.md) | Phone calls through SIP trunks: the settings, provider profiles (Telnyx), fraud controls, emergency readiness |
+| [Chat-Keys.md](interfaces/Chat-Keys.md) | Browsers' crypto devices for end-to-end encryption: devices, keys and Olm to-device messages with Matrix's payloads, who reaches whom, revocation, the browser API |
 | [Voicemail.md](interfaces/Voicemail.md) | Voicemail on the SIP engine: when a call goes there, the greeting and recording, phone access with a PIN and its limits, notices, transcription, the prompts an admin supplies |
 | [Chat-Bridges.md](interfaces/Chat-Bridges.md) | Chat actors and the bridge layer: the adapter contract, input stored before it is acknowledged, durable delivery with leases and idempotency keys, the C1 migration |
 

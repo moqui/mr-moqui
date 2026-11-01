@@ -119,6 +119,11 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
   until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
   [SIP, Registrar](../interfaces/SIP.md#registrar).
+- <a id="my-devices"></a>**My devices.** Settings, My devices lists the browsers that hold your encryption keys, for
+  encrypted calls. A browser gets its device the first time it needs one; this browser is marked. Each shows when it was
+  added and last seen, its browser and its key's fingerprint. Rename names one; Remove revokes it: it gets no new keys,
+  and others stop encrypting to it (removing this browser's own also deletes its keys here, and it gets a new device next
+  time). Removing a device does not sign that browser out. See [Chat keys](../interfaces/Chat-Keys.md).
 - <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
   whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
   provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
@@ -210,5 +215,7 @@ and its limits, notices, transcription and its retry, and the trash. `./moq test
 soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
 after the tabs and phones ring or a phone declines, a phone's own call). `./moq test framework --spec CallHandling,RingGroup`:
 the rules, schedules across a time zone, forward loops and permissions, do not disturb and call waiting, simultaneous ring,
-the strategies, the shared box, and the first answer winning. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
+their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
+Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

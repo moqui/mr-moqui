@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat devices and keys (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the server side of the
+    browser's end-to-end encryption, Matrix-style. A device is one browser's crypto store (OlmMachine of
+    matrix-sdk-crypto, js/WebrootCrypto.js) and belongs to a user, not a chat actor. The server keeps only public keys,
+    ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are
+    org.moqui.impl.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
+
+    These are moqui.* entities, which entity filters never apply to: screens reach them only through ChatKeyServices. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatDevice" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's crypto device (one browser's store), deviceId unique within the user as in Matrix. Its public
+            identity keys (curve25519Key, ed25519Key) and the signed device_keys object as the device uploaded it
+            (deviceKeysJson), which is answered as it is so others can check its signature; the keys cannot change once
+            set. listRevision goes up and listChangedDate is set at each change others should see (keys set, renamed,
+            revoked): a sync answers the users whose devices changed. lastToDevicePos is the stream position of the newest
+            to-device message queued to it (each one queued takes the next). A revoked device (revokedDate) gets no new
+            messages or keys and is left out of queries; it cannot be used again. verifiedDate is what the user's other
+            device said of it (a later C7 pass): trust is held by clients, and this flag establishes none.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="curve25519Key" type="text-medium"/>
+        <field name="ed25519Key" type="text-medium"/>
+        <field name="deviceKeysJson" type="text-very-long"/>
+        <field name="userAgent" type="text-medium"><description>Of the request that made the device, to tell devices apart in My devices</description></field>
+        <field name="listRevision" type="number-integer" default="1"/>
+        <field name="listChangedDate" type="date-time"/>
+        <field name="lastToDevicePos" type="number-integer" default="0"/>
+        <field name="ackedToDevicePos" type="number-integer" default="0"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"/>
+        <field name="verifiedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="many" related="moqui.chat.ChatDeviceKey" short-alias="keys">
+            <key-map field-name="userId"/><key-map field-name="deviceId"/></relationship>
+        <index name="CHAT_DEVICE_CHANGED"><index-field name="listChangedDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatDeviceKey" package="moqui.chat" use="transactional" cache="never">
+        <description>A device's signed one-time key (isFallback N) or fallback key (Y), keyId as Matrix names it
+            (signed_curve25519:AAAAHg), keyJson the signed key object as uploaded. A one-time key is handed out once: the
+            claim locks the device's row, takes the oldest unclaimed key and sets claimedDate, so two claims at once never
+            get the same key; a claimed one-time key is deleted by the cleanup job. A fallback key is handed out when no
+            one-time key is left and stays (claimedDate marks it used); an upload of a new one replaces it.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="keyId" type="text-short" is-pk="true"/>
+        <field name="algorithm" type="text-short"/>
+        <field name="keyJson" type="text-long"/>
+        <field name="isFallback" type="text-indicator"/>
+        <field name="uploadedDate" type="date-time"/>
+        <field name="claimedDate" type="date-time"/>
+        <field name="claimedByUserId" type="id"/>
+        <relationship type="one" related="moqui.chat.ChatDevice" short-alias="device"/>
+        <index name="CHAT_DEVKEY_AVAILABLE"><index-field name="userId"/><index-field name="deviceId"/>
+            <index-field name="algorithm"/><index-field name="claimedDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatToDevice" package="moqui.chat" use="transactional" cache="never">
+        <description>A to-device message queued to one device (userId, deviceId) at its stream position (streamPos, the
+            device's lastToDevicePos when it was queued, so a device reads its messages in the order they were queued). Kept
+            until the device acknowledges it: a sync from a position deletes everything up to it. contentJson is the event
+            content as the sending browser gave it (Olm ciphertext for an encrypted event); the server does not read it.
+            txnId is the sender's transaction, so a send retried while its first copy is still queued is not queued
+            again.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="streamPos" type="number-integer" is-pk="true"/>
+        <field name="eventType" type="text-medium"/>
+        <field name="senderUserId" type="id"/>
+        <field name="senderDeviceId" type="id"/>
+        <field name="txnId" type="text-medium"/>
+        <field name="contentJson" type="text-very-long"/>
+        <field name="queuedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatDevice" short-alias="device"/>
+        <index name="CHAT_TODEV_TXN"><index-field name="senderUserId"/><index-field name="senderDeviceId"/><index-field name="txnId"/></index>
+        <index name="CHAT_TODEV_QUEUED"><index-field name="queuedDate"/></index>
+    </entity>
+</entities>

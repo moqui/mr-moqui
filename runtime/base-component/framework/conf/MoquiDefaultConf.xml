@@ -130,6 +130,13 @@
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
 
+    <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
+        user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
+        new (the Matrix client API, C6a, needs it to be the domain). chat_to_device_retention_days: how long a to-device
+        message waits for a device that does not acknowledge it. -->
+    <default-property name="chat_server_name" value="localhost"/>
+    <default-property name="chat_to_device_retention_days" value="30"/>
+
     <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
         rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
@@ -1136,6 +1143,7 @@
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1154,6 +1162,7 @@
         <load-data location="component://framework/data/ChatBridgeSetupData.xml"/>
         <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/VoiceSetupData.xml"/>
+        <load-data location="component://framework/data/ChatKeySetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

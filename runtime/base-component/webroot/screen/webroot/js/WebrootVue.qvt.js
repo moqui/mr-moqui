@@ -9091,12 +9091,14 @@
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this
-            // user's pushes; bounded by moqui.push.beforeLogout.
+            // user's pushes; bounded by moqui.push.beforeLogout. It closes the page's crypto store too (WebrootCrypto.js).
             logoutClick(event) {
-                if (!moqui.push || event.defaultPrevented) return;
+                if ((!moqui.push && !moqui.crypto) || event.defaultPrevented) return;
                 event.preventDefault();
                 const href = this.shell.logoutUrl;
-                moqui.push.beforeLogout().then(() => { root.location.href = href; });
+                const crypto = moqui.crypto ? moqui.crypto.close().catch(() => null) : Promise.resolve();
+                const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
+                Promise.all([crypto, push]).then(() => { root.location.href = href; });
             },
             switchDarkLight() {
                 this.$q.dark.toggle();
