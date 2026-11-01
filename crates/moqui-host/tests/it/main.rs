@@ -45,6 +45,7 @@ mod collab;
 mod component_load;
 mod create_or_update_race;
 mod devaide;
+mod edge_link;
 mod elfinder;
 mod entity_cache;
 mod entity_db;

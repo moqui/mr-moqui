@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The edge link (plans/Edge-Node.md §5.1, §5.7): what an edge node keeps of the local nodes paired with it. Every row
+    that belongs to one local node is keyed by its pairedNodeId, the local node's instance id (decision 1), so several
+    local nodes on one edge node can come later. A local node keeps its own side (the URL, its key and the edge node's
+    pin) in runtime/.env, not here. The services are org.moqui.impl.EdgeServices; the link is
+    crates/moqui-host/src/edge_link/. No Java counterpart. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="EdgePairingCode" package="moqui.edge" use="transactional" cache="never">
+        <description>A one-use pairing code an edge node's operator made (System › Edge Clients), good until expireDate
+            (an hour by default). Only its hash is kept (codeHash, as other single-use codes). Pairing sets usedDate and
+            the pairedNodeId it paired; a used or expired code pairs nothing.</description>
+        <field name="pairingCodeId" type="id" is-pk="true"/>
+        <field name="codeHash" type="text-medium" not-null="true"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="usedDate" type="date-time"/>
+        <field name="pairedNodeId" type="id"/>
+        <index name="EDGE_PAIR_CODE_HASH" unique="true"><index-field name="codeHash"/></index>
+    </entity>
+
+    <entity entity-name="EdgeClient" package="moqui.edge" use="transactional" cache="never">
+        <description>A local node paired with this edge node, by its instance id. keyFingerprint is the SHA-256 of the
+            public key of the client certificate it paired with (hex): a link is taken only from that key, while statusId
+            is EdgeClientActive. linkGeneration goes up by one with each new up connection; a connection of an older
+            generation is closed and can no longer answer or acknowledge. The versions and features are the ones its last
+            Hello said.</description>
+        <field name="pairedNodeId" type="id" is-pk="true"/>
+        <field name="keyFingerprint" type="text-medium" not-null="true"/>
+        <field name="statusId" type="id"/>
+        <field name="pairedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <field name="lastConnectDate" type="date-time"/>
+        <field name="lastAddress" type="text-short"/>
+        <field name="linkGeneration" type="number-integer"/>
+        <field name="binaryVersion" type="text-short"/>
+        <field name="linkVersion" type="number-integer"/>
+        <field name="features" type="text-medium"/>
+        <field name="nodeName" type="text-medium"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="EDGE_CLIENT_KEY"><index-field name="keyFingerprint"/></index>
+    </entity>
+</entities>

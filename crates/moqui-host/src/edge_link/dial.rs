@@ -1,0 +1,559 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The local node's dialer (plans/Edge-Node.md §5.1): it opens the up connection (this node the HTTP/2 client, Hello
+//! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`]), keeps them alive with HTTP/2
+//! PINGs and a Ping that measures the round trip, and dials again with a backoff when either drops. A panic in one
+//! attempt is caught and logged, and the loop goes on (docs/dev/Practices-Rust.md §8).
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use moqui_core::edge::{EdgeInfo, LinkState, LinkStatus};
+use moqui_core::telemetry::Telemetry;
+use moqui_lib::sync::lock;
+use tokio::io::AsyncWriteExt as _;
+use tokio::sync::watch;
+use tonic::{Request, Response, Status};
+
+use super::pair::{client_config, dial_tls, parse_url, Identity, ServerTrust};
+use super::proto::link_client::LinkClient;
+use super::proto::local_link_server::{LocalLink, LocalLinkServer};
+use super::proto::{HelloRequest, LocalHelloReply, LocalHelloRequest, PingReply, PingRequest, UnpairRequest};
+use super::{
+    check_versions, edge_info, hello, jitter, read_answer, Answer, H2Channel, LinkError, LocalConfig, LINK_VERSION,
+    ROLE_DOWN, ROLE_UP,
+};
+use crate::tls_pin::parse_hex;
+
+/// An open up connection with its Hello done: the edge node's gRPC client, and the generation the edge node gave it.
+/// Dropping it closes the connection.
+pub struct UpLink {
+    client: LinkClient<H2Channel>,
+    pub generation: u64,
+    /// The edge node, as its Hello said.
+    pub edge: EdgeInfo,
+    ended: watch::Receiver<bool>,
+    driver: tokio::task::JoinHandle<()>,
+    timeout: Duration,
+}
+
+impl Drop for UpLink {
+    fn drop(&mut self) {
+        self.driver.abort();
+    }
+}
+
+impl UpLink {
+    /// A Ping on the up connection: its round trip.
+    pub async fn ping(&self) -> Result<Duration, String> {
+        let started = Instant::now();
+        let mut client = self.client.clone();
+        let request = PingRequest {
+            generation: self.generation,
+        };
+        match tokio::time::timeout(self.timeout, client.ping(request)).await {
+            Ok(Ok(_)) => Ok(started.elapsed()),
+            Ok(Err(status)) => Err(format!("Ping: {}", status.message())),
+            Err(_) => Err("the edge node did not answer Ping in time".to_string()),
+        }
+    }
+
+    /// Ask the edge node to revoke this node's key.
+    pub async fn unpair(&self) -> Result<(), String> {
+        let mut client = self.client.clone();
+        match tokio::time::timeout(self.timeout, client.unpair(UnpairRequest {})).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(status)) => Err(format!("Unpair: {}", status.message())),
+            Err(_) => Err("the edge node did not answer Unpair in time".to_string()),
+        }
+    }
+
+    /// Wait until the connection has closed.
+    pub async fn closed(&self) {
+        let mut ended = self.ended.clone();
+        let _ = ended.wait_for(|ended| *ended).await;
+    }
+}
+
+/// The parts of [`LocalConfig`] a connection needs, checked once.
+struct Prepared {
+    url: super::pair::EdgeUrl,
+    tls: Arc<rustls::ClientConfig>,
+}
+
+fn prepare(config: &LocalConfig) -> Result<Prepared, String> {
+    let url = parse_url(&config.url)?;
+    let pin = parse_hex(&config.pin).ok_or_else(|| "edge_node_pin is not a SHA-256 fingerprint".to_string())?;
+    let identity = Identity::from_key(&config.key, &config.instance_id)?;
+    let tls = client_config(&ServerTrust::Pinned(pin), Some(&identity))?;
+    Ok(Prepared { url, tls })
+}
+
+/// Dial the edge node with `role` (and its trailing bytes) and read the answer.
+async fn dial_role(
+    prepared: &Prepared,
+    timeout: Duration,
+    role: &[u8],
+) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, LinkError> {
+    let mut stream = dial_tls(&prepared.url, Arc::clone(&prepared.tls), timeout).await?;
+    let roled = async {
+        stream.write_all(role).await?;
+        stream.flush().await?;
+        read_answer(&mut stream).await
+    };
+    let (answer, message) = tokio::time::timeout(timeout, roled)
+        .await
+        .map_err(|_| LinkError::Failed("the edge node did not answer in time".to_string()))?
+        .map_err(|err| LinkError::Failed(format!("the edge node closed the connection: {err}")))?;
+    match answer {
+        Answer::Ok => Ok(stream),
+        Answer::Refused => Err(LinkError::Refused(message)),
+        Answer::Stale | Answer::Failed => Err(LinkError::Failed(message)),
+    }
+}
+
+/// Open an up connection and say Hello: the link's generation is in the answer.
+pub async fn connect_up(config: &LocalConfig) -> Result<UpLink, LinkError> {
+    let prepared = prepare(config).map_err(LinkError::Failed)?;
+    connect_up_with(config, &prepared).await
+}
+
+/// Dial a down connection of `generation` and read the edge node's answer, then close it: for a test of the edge node's
+/// generation check.
+#[doc(hidden)]
+pub async fn try_down(config: &LocalConfig, generation: u64) -> Result<(), LinkError> {
+    let prepared = prepare(config).map_err(LinkError::Failed)?;
+    let mut role = vec![ROLE_DOWN];
+    role.extend_from_slice(&generation.to_be_bytes());
+    dial_role(&prepared, config.connect_timeout, &role).await.map(drop)
+}
+
+async fn connect_up_with(config: &LocalConfig, prepared: &Prepared) -> Result<UpLink, LinkError> {
+    let stream = dial_role(prepared, config.connect_timeout, &[ROLE_UP]).await?;
+    let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+        .timer(hyper_util::rt::TokioTimer::new())
+        .keep_alive_interval(config.keepalive)
+        .keep_alive_timeout(config.keepalive)
+        .keep_alive_while_idle(true)
+        .handshake(hyper_util::rt::TokioIo::new(stream))
+        .await
+        .map_err(|err| LinkError::Failed(format!("HTTP/2 with the edge node failed: {err}")))?;
+    let (ended_tx, ended) = watch::channel(false);
+    let driver = tokio::spawn(async move {
+        if let Err(err) = connection.await {
+            tracing::debug!("edge link up connection ended: {err}");
+        }
+        let _ = ended_tx.send(true);
+    });
+    let mut client = LinkClient::with_origin(H2Channel(send), super::origin());
+    let request = HelloRequest {
+        hello: Some(hello(&config.instance_id, &config.node_name, &[], &[])),
+    };
+    let reply = match tokio::time::timeout(config.connect_timeout, client.hello(request)).await {
+        Ok(Ok(reply)) => reply.into_inner(),
+        Ok(Err(status)) => {
+            driver.abort();
+            return Err(match status.code() {
+                tonic::Code::FailedPrecondition | tonic::Code::PermissionDenied => {
+                    LinkError::Refused(status.message().to_string())
+                }
+                _ => LinkError::Failed(format!("Hello: {}", status.message())),
+            });
+        }
+        Err(_) => {
+            driver.abort();
+            return Err(LinkError::Failed(
+                "the edge node did not answer Hello in time".to_string(),
+            ));
+        }
+    };
+    let edge_hello = reply.hello.unwrap_or_default();
+    if let Err(message) = check_versions(LINK_VERSION, edge_hello.link_version, "edge node") {
+        driver.abort();
+        return Err(LinkError::Refused(message));
+    }
+    Ok(UpLink {
+        client,
+        generation: reply.generation,
+        edge: edge_info(&edge_hello, &config.pin),
+        ended,
+        driver,
+        timeout: config.connect_timeout,
+    })
+}
+
+/// The local node's side of the down connection: the edge node's calls. A call of a generation other than the current
+/// up connection's is refused.
+struct LocalService {
+    current: Arc<AtomicU64>,
+    hello: super::proto::Hello,
+}
+
+#[tonic::async_trait]
+impl LocalLink for LocalService {
+    async fn hello(&self, request: Request<LocalHelloRequest>) -> Result<Response<LocalHelloReply>, Status> {
+        let request = request.into_inner();
+        self.fenced(request.generation)?;
+        let edge = request.hello.unwrap_or_default();
+        check_versions(LINK_VERSION, edge.link_version, "edge node").map_err(Status::failed_precondition)?;
+        Ok(Response::new(LocalHelloReply {
+            hello: Some(self.hello.clone()),
+        }))
+    }
+
+    async fn ping(&self, request: Request<PingRequest>) -> Result<Response<PingReply>, Status> {
+        let generation = request.into_inner().generation;
+        self.fenced(generation)?;
+        Ok(Response::new(PingReply { generation }))
+    }
+}
+
+impl LocalService {
+    fn fenced(&self, generation: u64) -> Result<(), Status> {
+        if generation == self.current.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(Status::failed_precondition("stale link generation"))
+        }
+    }
+}
+
+/// An open down connection, served until it closes or is dropped.
+struct DownLink {
+    ended: watch::Receiver<bool>,
+    driver: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for DownLink {
+    fn drop(&mut self) {
+        self.driver.abort();
+    }
+}
+
+async fn connect_down(
+    config: &LocalConfig,
+    prepared: &Prepared,
+    generation: u64,
+    current: &Arc<AtomicU64>,
+) -> Result<DownLink, LinkError> {
+    let mut role = vec![ROLE_DOWN];
+    role.extend_from_slice(&generation.to_be_bytes());
+    let stream = dial_role(prepared, config.connect_timeout, &role).await?;
+    let service = LocalLinkServer::new(LocalService {
+        current: Arc::clone(current),
+        hello: hello(&config.instance_id, &config.node_name, &[], &[]),
+    });
+    let mut builder = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new());
+    builder
+        .timer(hyper_util::rt::TokioTimer::new())
+        .keep_alive_interval(config.keepalive)
+        .keep_alive_timeout(config.keepalive);
+    let (ended_tx, ended) = watch::channel(false);
+    let driver = tokio::spawn(async move {
+        let served = builder
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(stream),
+                hyper_util::service::TowerToHyperService::new(service),
+            )
+            .await;
+        if let Err(err) = served {
+            tracing::debug!("edge link down connection ended: {err}");
+        }
+        let _ = ended_tx.send(true);
+    });
+    Ok(DownLink { ended, driver })
+}
+
+/// What the dialer shares with its handle: the status, and the up connection's client for Unpair.
+struct Shared {
+    status: Mutex<LinkStatus>,
+    /// The current up connection's generation, which the down connection's calls must name.
+    current: Arc<AtomicU64>,
+    up: Mutex<Option<LinkClient<H2Channel>>>,
+}
+
+impl Shared {
+    fn update(&self, change: impl FnOnce(&mut LinkStatus)) {
+        change(&mut lock(&self.status));
+    }
+}
+
+/// The running dialer of a paired local node. Dropping it, or [`Dialer::stop`], closes the link.
+pub struct Dialer {
+    shared: Arc<Shared>,
+    stop: watch::Sender<bool>,
+    timeout: Duration,
+}
+
+impl Drop for Dialer {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+    }
+}
+
+impl Dialer {
+    /// Start dialing on `runtime`, until [`Dialer::stop`], a drop, or `shutdown` turns true. `telemetry` gets the link's
+    /// round trips and reconnects (`moqui.edgelink.*`).
+    pub fn start(
+        config: LocalConfig,
+        runtime: &tokio::runtime::Handle,
+        shutdown: watch::Receiver<bool>,
+        telemetry: Option<Arc<Telemetry>>,
+    ) -> Result<Self, String> {
+        let prepared = Arc::new(prepare(&config)?);
+        let shared = Arc::new(Shared {
+            status: Mutex::new(LinkStatus {
+                state: LinkState::Connecting,
+                url: config.url.clone(),
+                peer: EdgeInfo {
+                    fingerprint: config.pin.clone(),
+                    ..EdgeInfo::default()
+                },
+                ..LinkStatus::default()
+            }),
+            current: Arc::new(AtomicU64::new(0)),
+            up: Mutex::new(None),
+        });
+        let (stop, stop_rx) = watch::channel(false);
+        let timeout = config.connect_timeout;
+        runtime.spawn(run(config, prepared, Arc::clone(&shared), stop_rx, shutdown, telemetry));
+        Ok(Self { shared, stop, timeout })
+    }
+
+    pub fn status(&self) -> LinkStatus {
+        lock(&self.shared.status).clone()
+    }
+
+    /// Stop dialing and close the link.
+    pub fn stop(&self) {
+        let _ = self.stop.send(true);
+    }
+
+    /// Ask the edge node to revoke this node's key on the up connection, then stop. The dialer stops also when the edge
+    /// node cannot be reached; the error says so.
+    pub async fn unpair(&self) -> Result<(), String> {
+        let client = lock(&self.shared.up).clone();
+        let outcome = match client {
+            Some(mut client) => match tokio::time::timeout(self.timeout, client.unpair(UnpairRequest {})).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(status)) => Err(format!("the edge node did not unpair: {}", status.message())),
+                Err(_) => Err("the edge node did not answer Unpair in time".to_string()),
+            },
+            None => Err("the link is not up, so the edge node was not told; revoke this node there".to_string()),
+        };
+        self.stop();
+        outcome
+    }
+}
+
+/// How one attempt ended.
+enum Ended {
+    /// Stopped on purpose.
+    Stopped,
+    /// Lost after it was up (or failed before), with why.
+    Lost { linked: bool, error: String },
+    /// Refused by the edge node.
+    Refused(String),
+}
+
+async fn run(
+    config: LocalConfig,
+    prepared: Arc<Prepared>,
+    shared: Arc<Shared>,
+    mut stop: watch::Receiver<bool>,
+    mut shutdown: watch::Receiver<bool>,
+    telemetry: Option<Arc<Telemetry>>,
+) {
+    let mut attempt: u32 = 0;
+    let mut refusals: u32 = 0;
+    loop {
+        if *stop.borrow() || *shutdown.borrow() {
+            break;
+        }
+        // a refusal stays shown while the dialer tries again
+        shared.update(|status| {
+            if status.state != LinkState::Refused {
+                status.state = LinkState::Connecting;
+            }
+        });
+        let once = tokio::spawn(link_once(
+            config.clone(),
+            Arc::clone(&prepared),
+            Arc::clone(&shared),
+            stop.clone(),
+            shutdown.clone(),
+            telemetry.clone(),
+        ));
+        let ended = match once.await {
+            Ok(ended) => ended,
+            Err(err) if err.is_panic() => {
+                tracing::error!("the edge link to {} panicked; dialing again", config.url);
+                Ended::Lost {
+                    linked: false,
+                    error: "the link task panicked".to_string(),
+                }
+            }
+            Err(_) => Ended::Stopped,
+        };
+        *lock(&shared.up) = None;
+        shared.current.store(0, Ordering::Release);
+        let refused = matches!(ended, Ended::Refused(_));
+        match ended {
+            Ended::Stopped => break,
+            Ended::Lost { linked, error } => {
+                refusals = 0;
+                if linked {
+                    attempt = 0;
+                    if let Some(telemetry) = &telemetry {
+                        telemetry.add_counter("moqui.edgelink.reconnects", 1, Default::default());
+                    }
+                    shared.update(|status| status.reconnects += 1);
+                    tracing::warn!("The edge link to {} was lost: {error}", config.url);
+                } else {
+                    tracing::debug!("The edge link to {} did not come up: {error}", config.url);
+                }
+                shared.update(|status| {
+                    status.state = LinkState::Retrying;
+                    status.last_error = error;
+                    status.rtt_ms = None;
+                });
+            }
+            Ended::Refused(error) => {
+                tracing::warn!("The edge node at {} refused the link: {error}", config.url);
+                shared.update(|status| {
+                    status.state = LinkState::Refused;
+                    status.last_error = error;
+                    status.rtt_ms = None;
+                });
+            }
+        }
+        // a refused node waits much longer: dialing again helps only once its operator acts
+        let delay = if refused {
+            refusals = refusals.saturating_add(1);
+            config.refused_backoff.delay(refusals - 1, jitter())
+        } else {
+            attempt = attempt.saturating_add(1);
+            config.backoff.delay(attempt - 1, jitter())
+        };
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            _ = stop.wait_for(|stopped| *stopped) => break,
+            _ = shutdown.wait_for(|stopped| *stopped) => break,
+        }
+    }
+    shared.update(|status| {
+        if status.state == LinkState::Linked || status.state == LinkState::Connecting {
+            status.state = LinkState::Retrying;
+            status.last_error = "stopped".to_string();
+        }
+    });
+}
+
+async fn link_once(
+    config: LocalConfig,
+    prepared: Arc<Prepared>,
+    shared: Arc<Shared>,
+    mut stop: watch::Receiver<bool>,
+    mut shutdown: watch::Receiver<bool>,
+    telemetry: Option<Arc<Telemetry>>,
+) -> Ended {
+    let failed = |error: LinkError| match error {
+        LinkError::Refused(message) => Ended::Refused(message),
+        LinkError::Failed(error) => Ended::Lost { linked: false, error },
+    };
+    // the connect phase gives way to a stop or a shutdown at once (no await in a branch: a watch's borrow is not Send)
+    let connecting = async {
+        let up = connect_up_with(&config, &prepared).await?;
+        shared.current.store(up.generation, Ordering::Release);
+        let down = connect_down(&config, &prepared, up.generation, &shared.current).await?;
+        Ok::<_, LinkError>((up, down))
+    };
+    let connected = tokio::select! {
+        connected = connecting => Some(connected),
+        _ = stop.wait_for(|stopped| *stopped) => None,
+        _ = shutdown.wait_for(|stopped| *stopped) => None,
+    };
+    let (up, down) = match connected {
+        Some(Ok(pair)) => pair,
+        Some(Err(error)) => return failed(error),
+        None => return Ended::Stopped,
+    };
+    *lock(&shared.up) = Some(up.client.clone());
+    let connected = moqui_core::user::now_millis();
+    shared.update(|status| {
+        status.state = LinkState::Linked;
+        status.generation = up.generation;
+        status.last_connect = Some(connected);
+        status.last_error.clear();
+        status.peer = up.edge.clone();
+    });
+    tracing::info!(
+        "The edge link to {} is up (generation {}, edge node {})",
+        config.url,
+        up.generation,
+        up.edge.name
+    );
+    let mut down_ended = down.ended.clone();
+    let mut next_ping = tokio::time::Instant::now();
+    loop {
+        // no await in a branch: a watch's borrow is not Send
+        let event = tokio::select! {
+            () = up.closed() => Event::UpClosed,
+            _ = down_ended.wait_for(|ended| *ended) => Event::DownClosed,
+            () = tokio::time::sleep_until(next_ping) => Event::Ping,
+            _ = stop.wait_for(|stopped| *stopped) => Event::Stop,
+            _ = shutdown.wait_for(|stopped| *stopped) => Event::Stop,
+        };
+        match event {
+            Event::UpClosed => {
+                return Ended::Lost {
+                    linked: true,
+                    error: "the up connection closed".to_string(),
+                }
+            }
+            Event::DownClosed => {
+                return Ended::Lost {
+                    linked: true,
+                    error: "the down connection closed".to_string(),
+                }
+            }
+            Event::Stop => return Ended::Stopped,
+            Event::Ping => {
+                next_ping = tokio::time::Instant::now() + config.ping_every;
+                let rtt = match up.ping().await {
+                    Ok(rtt) => rtt,
+                    Err(error) => return Ended::Lost { linked: true, error },
+                };
+                shared.update(|status| status.rtt_ms = Some(rtt.as_secs_f64() * 1000.0));
+                if let Some(telemetry) = &telemetry {
+                    telemetry.record_duration("moqui.edgelink.rtt", rtt.as_secs_f64(), Default::default());
+                }
+            }
+        }
+    }
+}
+
+enum Event {
+    UpClosed,
+    DownClosed,
+    Ping,
+    Stop,
+}
+
+/// Whether the dialer's link is up, for the `moqui.edgelink.up` gauge.
+pub(crate) fn is_linked(dialer: &Dialer) -> bool {
+    lock(&dialer.shared.status).state == LinkState::Linked
+}

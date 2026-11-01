@@ -19,7 +19,7 @@ dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip", "channels", "xmpp"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip", "channels", "xmpp", "edge"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -77,6 +77,20 @@ xmpp = ["axum", "dep:moqui-xmpp"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
 grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
+# The edge link (plans/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
+# edge node (node_role=edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
+# and Enterprise, whose graph already has all of it (§5.6); not Lite or Dev.
+edge = [
+    "grpc",
+    "dep:tonic-prost",
+    "dep:prost",
+    "dep:webpki-roots",
+    "tonic/codegen",
+    "hyper/http2",
+    "hyper/client",
+    "hyper-util/http2",
+    "hyper-util/service",
+]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
@@ -138,6 +152,10 @@ flate2 = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+# The public key of a presented certificate (src/tls_pin.rs). Already in the graph under rustls.
+webpki = { workspace = true }
 opentelemetry-proto = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
@@ -176,6 +194,10 @@ rsipstack = { workspace = true }
 # against the server, as an independent implementation. default-features off: no DNS or connectors of its own.
 tokio-xmpp = { workspace = true }
 sasl = { workspace = true }
+# The edge link's code generation (src/edge_link/proto/, plans/Edge-Node.md §5.6): a test regenerates the checked-in
+# code with MOQUI_REGENERATE_PROTO=1, and otherwise checks that it matches. No protoc.
+tonic-prost-build = { workspace = true }
+protox = { workspace = true }
 # the dev-aide component's services, for the tests of tests/it/devaide.rs
 dev-aide = { workspace = true }
 indexmap = { workspace = true }

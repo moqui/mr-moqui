@@ -1,7 +1,9 @@
 # Edge Node
 
-Status 2026-11-01: draft. Gap analysis and plan; nothing is built. Every question in [§8](#8-decisions) is
-decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6.
+Status 2026-11-01: E1 built, the link with no comms over it. Every question in [§8](#8-decisions) is decided. E0 done:
+the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1 built, where it differs
+from the design, is in [§5.1](#51-the-edge-link) ("As built"), [§5.6](#56-moquiedgeconfxml-and-packaging) and
+[§5.7](#57-attaching-a-local-node-system-app).
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -265,13 +267,46 @@ access is a service call. It does read audio files itself, through `factory.reso
   cannot.
 - **Liveness.**
   - HTTP/2 PINGs every 15 s keep NAT mappings open.
-  - A dropped connection reconnects with a backoff from 1 s to 60 s.
+  - A dropped connection reconnects with a backoff, doubling from 1 s to 30 s (see "As built").
   - A link generation number fences a stale connection: it cannot acknowledge or answer once a new one is up.
 - **Not on the link.** Call media. Browsers and phones send it to the edge node's media sockets, and the local node is
   not in the media path. One exception: caption audio chunks go to the local node over the link, since the quota and
   `LlmCall` stay there ([§4a](#4a-entity-access-audit)).
 - **QUIC.** Its connection migration would carry a link across an address change. It is a later option; quinn is in
   the tree only under reqwest.
+
+**As built (E1).**
+- **Code.** The link is `crates/moqui-host/src/edge_link/`, the `edge` feature, in Maximal and Enterprise. It is not
+  named `edge` because `src/edge.rs` is the host's async runtime. `moqui-core/src/edge.rs` is the interface the services
+  call. The `.proto` is `crates/moqui-host/proto/edge.proto`.
+- **ALPN per ClientHello.** The HTTPS listener reads each ClientHello first (tokio-rustls `LazyConfigAcceptor`) and
+  picks the TLS settings by its ALPN. Only an edge connection asks for a client certificate, so a browser is never
+  asked for one.
+- **Two ALPNs and a link key.** The edge node has a long-lived link key, `edge_link_key`. It is generated as a secret
+  at the first start and becomes an Ed25519 key.
+  - **Up and down** use ALPN `moqui-edge/1`, with a certificate made from the link key. The local node pins the link
+    key's fingerprint as `edge_node_pin`.
+  - **Checking and pairing** use ALPN `moqui-edge-pair/1`, on the web certificate, which the local node checks by
+    WebPKI. The edge node tells the link key's fingerprint over it.
+  - So a renewed web certificate does not touch the link. Changing `edge_link_key` means every local node must pair
+    again. The local node finds the change: the edge node's key no longer matches its pin. It stops in state Refused,
+    and its Edge Node screen shows the reason, such as "its link key changed, so pair again". A local node the edge
+    node revoked is refused the same way.
+- **Pins are of public keys,** the SHA-256 of each side's public key, not of a certificate. A certificate made again
+  from the same key keeps its pin.
+- **Backoff.** A lost link is dialed again after a delay that doubles from 1 s to 30 s, with jitter. After a refusal
+  the delay starts at 30 s and grows up to 10 minutes.
+- **Limits.** A checking or pairing connection stays open at most 30 s, with at most 4 calls and 2 streams. Pair is
+  limited to 10 tries per IP address per 10 minutes.
+- **Services.** `org.moqui.impl.EdgeServices` (`framework/service/org/moqui/impl/EdgeServices.xml`, bodies in Rust):
+  - on a local node: `get#LinkStatus`, `check#EdgeNode`, `pair#EdgeNode` and `unpair#EdgeNode`;
+  - on an edge node: `create#PairingCode`, `get#EdgeClients`, `revoke#EdgeClient` and `ping#EdgeClient`.
+
+  `check#EdgeNode` (connect and show the edge node before pairing) and `ping#EdgeClient` (a Ping down a local node's
+  down connection) were not in the design. In a binary without the link, each fails with a plain message, and
+  `get#LinkStatus` answers state `notBuilt`.
+- **Entities.** `moqui.edge.EdgeClient` (a paired local node, keyed by its instance id) and `EdgePairingCode` (only the
+  code's hash is kept), in `framework/entity/EdgeEntities.xml`.
 
 ### 5.2 How work crosses the link
 
@@ -485,7 +520,11 @@ release.
 
 ### 5.6 MoquiEdgeConf.xml and packaging
 
-A first draft. The listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP
+Built in E1 as `runtime/conf/MoquiEdgeConf.xml`: `instance_purpose` production, `node_role=edge`, web protection, and
+the entity facade's crypt-pass. The properties of what is not built yet are comments in it, each with its phase:
+`channels_webhooks_enabled` (E6), the rtc and TURN ports (E7), and `pass_backend_url=edge:` (E4; set now, it would send
+mr-pass's REST calls to an address that does not exist). E3's elements have a comment where they go. The draft below is
+the target. The listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP
 domain, LMTP from the gateway.
 
 ```xml
@@ -513,11 +552,13 @@ domain, LMTP from the gateway.
   has no embedded Postgres, and the edge node uses the embedded one.
 - **Components.** A conf adds components and never removes one, so an edge node runtime is a checkout or archive with
   only the base components (framework, tools, webroot, basic-comms) and mr-pass. An `edge` component set in `addons.xml`
-  makes that `./moq component-get edge`. Then `./moq archive --release --no-data --conf conf/MoquiEdgeConf.xml`.
+  makes that `./moq component-get edge`. Then `./moq archive --release --no-data --conf conf/MoquiEdgeConf.xml`. A set
+  names only components from `addons.xml`, so `edge` is mr-pass alone; the base components come with mr-moqui.
 - **`node_role`** is empty on a normal node, or `edge`. A local node needs no role: it links when `edge_node_url` is
   set.
 - **Backups.** The queue is the only data on the edge node that matters, so the conf should run the embedded backup job
-  instead of leaving it paused.
+  instead of leaving it paused. A conf cannot unpause a job, which is seed data, so MoquiEdgeConf.xml says to unpause
+  `backup_EmbeddedDatabase_daily` in System › Service Jobs.
 - **Build cost** (measured in E0, in the dev profile: the Debug package, `cargo build -p moqui`):
   - **Nothing new to compile in Maximal or Enterprise.** Their graph already has all the link needs:
     - tonic 0.14.9 with `channel`, turned on by moqui-core's `grpc` through opentelemetry-proto's `gen-tonic`;
@@ -586,6 +627,33 @@ MailAccounts Add wizard is:
 - the replication cursors, errors, and certificate expiry.
 
 Its actions are pause, resync and unpair.
+
+**As built (E1).** Screens in `runtime/base-component/tools/screen/System/`:
+- **Edge Node** (`EdgeNode.xml`, menu index 17): Status (the state, generation, round trip, last connect, links lost,
+  last error, and the edge node's name, fingerprint, versions and public names; Refresh, and Unpair with a
+  confirmation), and Pair, a two-step wizard:
+  1. **Edge node.** The URL and the pairing code. Next calls `check#EdgeNode`. The code is kept in the session for the
+     next step, as Chat apps keeps a new app password, and never goes in a URL.
+  2. **Connect.** The edge node's name, link key fingerprint, versions and offer, and whether the versions fit. They
+     are step 1's answer, kept in the session, so there is no second round trip. Pair calls `pair#EdgeNode` with that
+     fingerprint as `expectFingerprint`, then shows Status.
+
+  Steps 3 to 5 come with the comms. The status screen has no queues or replication yet, so no pause or resync.
+- **Edge Clients** (`EdgeClients.xml`, menu index 18): the paired local nodes (state, generation, last connect,
+  address, versions, the start of each node's key fingerprint), Ping (shows the round trip) and Revoke (with a
+  confirmation). "Make a pairing code" lets the operator pick the code's lifetime, from 15 minutes to a day, and shows
+  the code once with its expiry. The screen also shows this edge node's link key fingerprint, for the operator to
+  compare with what the local node's Connect step shows. An edge node whose HTTPS listener is off says it takes no
+  links.
+- **Menus.** The System menu cannot leave a screen out by a condition, so both are listed on every node. Edge Node
+  says so on an edge node, and Edge Clients on a node that is not one. In a binary without the link both say this build
+  has no edge link (state `notBuilt`). Where the build has it but no HTTPS listener started it, as under `moqui test`,
+  both say it is not running in this process (`notStarted`). A menu condition is a framework item for later.
+- **Spec.** `tools/test/EdgeScreens.spec.js` renders both screens and the wizard's steps in qvt and tui, one case per
+  `where` row: no link in this process, a local node, an edge node. On an edge node it also makes a pairing code and
+  checks that it shows once. It checks that Connect uses the answer step 1 kept. A case that is not this node's skips.
+  `moqui test` starts no listener, and `--serve` starts it only after the specs, so a run is always the no-link case.
+  The local and edge cases were checked over HTTP on a served Maximal build.
 
 ### 5.8 Security
 

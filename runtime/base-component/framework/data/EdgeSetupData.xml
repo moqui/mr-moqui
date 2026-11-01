@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.impl.EdgeServices, plans/Edge-Node.md): the statuses of a
+    paired local node. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.StatusType statusTypeId="EdgeClient" description="Edge Client"/>
+    <moqui.basic.StatusItem statusId="EdgeClientActive" statusTypeId="EdgeClient" sequenceNum="1" description="Active" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="EdgeClientRevoked" statusTypeId="EdgeClient" sequenceNum="2" description="Revoked" statusColor="negative"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientActive" toStatusId="EdgeClientRevoked" transitionName="Revoke"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientRevoked" toStatusId="EdgeClientActive" transitionName="Pair Again"/>
+</entity-facade-xml>

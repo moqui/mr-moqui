@@ -134,6 +134,139 @@ pub fn clear_dotenv() {
     }
 }
 
+/// The first line of a dotenv file this process writes.
+pub const DOTENV_HEADER: &str = "# This file holds secrets and must be kept with the instance backup.\n";
+
+/// Set or replace each of `set` and remove each of `remove` in the dotenv file at `path` (`runtime/.env`), then in the
+/// loaded dotenv table, so a lookup sees the change without a restart; a process property of the same name still wins.
+///
+/// Other lines, comments and their order are kept. A name already in the file keeps its place; a new one goes at the
+/// end. A new file starts with [`DOTENV_HEADER`]. The file is written whole to a sibling and renamed over the old one,
+/// with mode 0600 on Unix. A name with `=` or a line break, or a value with a line break, is refused before anything is
+/// written, and the error never shows a value.
+pub fn update_dotenv_file(path: &std::path::Path, set: &[(String, String)], remove: &[&str]) -> Result<(), Error> {
+    if set.is_empty() && remove.is_empty() {
+        return Ok(());
+    }
+    // one read-modify-write at a time in this process, so two writers do not lose each other's change
+    static WRITING: Mutex<()> = Mutex::new(());
+    let _writing = lock(&WRITING);
+    // a symlinked .env stays a symlink: the file it points to is the one rewritten
+    let resolved = if path.is_symlink() || path.exists() {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    let path = resolved.as_path();
+    let fail = |what: &str| {
+        Error::new(format!(
+            "could not write runtime environment file {}: {what}",
+            path.display()
+        ))
+    };
+    if path.exists() && !path.is_file() {
+        return Err(fail("path is a directory"));
+    }
+    for (name, value) in set {
+        if name.is_empty() || name.contains(['=', '\n', '\r']) || value.contains(['\n', '\r']) {
+            return Err(fail("invalid name or value"));
+        }
+    }
+    let existing = if path.is_file() {
+        std::fs::read_to_string(path).map_err(|err| {
+            Error::new(format!("could not read runtime environment file {}", path.display())).with_source(err)
+        })?
+    } else {
+        String::new()
+    };
+    let mut written: Vec<&str> = Vec::new();
+    let mut text = String::with_capacity(existing.len() + 128);
+    if existing.is_empty() {
+        text.push_str(DOTENV_HEADER);
+    }
+    for line in existing.lines() {
+        if let Some(key) = dotenv_key(line) {
+            if remove.contains(&key) {
+                continue;
+            }
+            if let Some((name, value)) = set.iter().find(|(name, _)| name == key) {
+                // a name repeated in the file keeps its first place only
+                if !written.contains(&name.as_str()) {
+                    written.push(name);
+                    text.push_str(&format!("{name}={value}\n"));
+                }
+                continue;
+            }
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    for (name, value) in set {
+        if !written.contains(&name.as_str()) {
+            written.push(name);
+            text.push_str(&format!("{name}={value}\n"));
+        }
+    }
+    static PARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let partial = path.with_file_name(format!(
+        ".{}.part-{}-{}",
+        path.file_name().and_then(|name| name.to_str()).unwrap_or("env"),
+        std::process::id(),
+        PARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let write = || -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&partial)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&partial, path)?;
+        // the rename itself survives a crash once the directory is synced (Unix; a directory cannot be opened on Windows)
+        #[cfg(unix)]
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        Ok(())
+    };
+    if let Err(err) = write() {
+        let _ = std::fs::remove_file(&partial);
+        return Err(
+            Error::new(format!("could not write runtime environment file {}", path.display())).with_source(err),
+        );
+    }
+    with_dotenv(|map| {
+        for name in remove {
+            map.remove(*name);
+        }
+        for (name, value) in set {
+            map.insert(name.clone(), value.clone());
+        }
+    });
+    Ok(())
+}
+
+/// The name of a `KEY=value` line as [`parse_dotenv`] reads it, or `None` for a blank line or a comment.
+fn dotenv_key(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let line = line.strip_prefix("export ").unwrap_or(line).trim();
+    let (key, _) = line.split_once('=')?;
+    Some(key.trim()).filter(|key| !key.is_empty())
+}
+
 pub fn load_dotenv_file(path: impl AsRef<std::path::Path>) -> Result<(), Error> {
     let path = path.as_ref();
     let text = std::fs::read_to_string(path)
@@ -229,98 +362,5 @@ fn is_expand_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn property_beats_environment_and_underscore_falls_through_to_dots() {
-        let key = "moqui_lib_env_probe_alpha";
-        let dotted = "moqui.lib.env.probe.beta";
-        clear_property(key);
-        set_property(dotted, "from-dotted");
-        assert_eq!(get_prop_or_env(key), "");
-        assert_eq!(get_prop_or_env("moqui_lib_env_probe_beta"), "from-dotted");
-        set_property(key, "from-prop");
-        assert_eq!(get_prop_or_env(key), "from-prop");
-        set_property(key, "");
-        assert_eq!(get_prop_or_env(key), "");
-        clear_property(key);
-        clear_property(dotted);
-    }
-
-    #[test]
-    fn environment_is_visible_when_no_property_is_set() {
-        let path = get_prop_or_env("PATH");
-        assert!(!path.is_empty());
-    }
-
-    #[test]
-    fn dotenv_strips_one_pair_of_matching_quotes() {
-        let pairs = parse_dotenv("A=\"x y\"\nB='q'\nC=\"\"\nD=\"\nE='mixed\"\nF= plain \nG=\"'in'\"");
-        let pairs: Vec<(&str, &str)> = pairs
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str()))
-            .collect();
-        assert_eq!(
-            pairs,
-            [
-                ("A", "x y"),
-                ("B", "q"),
-                ("C", ""),
-                ("D", "\""),
-                ("E", "'mixed\""),
-                ("F", "plain"),
-                ("G", "'in'")
-            ]
-        );
-    }
-
-    #[test]
-    fn expand_replaces_names_only() {
-        set_property("moqui_version", "3");
-        set_property("nested.name", "inner");
-        assert_eq!(expand("plain").unwrap(), "plain");
-        assert_eq!(expand("v${moqui_version}").unwrap(), "v3");
-        assert_eq!(expand("${missing_name_zz}").unwrap(), "");
-        assert_eq!(expand("${nested.name}").unwrap(), "inner");
-        assert_eq!(expand("${1+2}").unwrap(), "${1+2}");
-        assert_eq!(expand("$${moqui_version}").unwrap(), "$3");
-        assert_eq!(expand("${moqui_version").unwrap(), "${moqui_version");
-        clear_property("moqui_version");
-        clear_property("nested.name");
-    }
-
-    #[test]
-    fn expand_takes_the_first_term_that_is_not_empty() {
-        set_property("moqui_lib_env_port", "5433");
-        set_property("moqui_lib_env_zone", "America/Denver");
-        assert_eq!(expand("${moqui_lib_env_port?:'3306'}").unwrap(), "5433");
-        assert_eq!(expand("${moqui_lib_env_none_zz?:'3306'}").unwrap(), "3306");
-        assert_eq!(
-            expand("${moqui_lib_env_none_zz ?: moqui_lib_env_zone}").unwrap(),
-            "America/Denver"
-        );
-        assert_eq!(
-            expand("${moqui_lib_env_none_zz ?: moqui_lib_env_none_yy ?: \"x\"}").unwrap(),
-            "x"
-        );
-        assert_eq!(expand("${moqui_lib_env_none_zz ?: moqui_lib_env_none_yy}").unwrap(), "");
-        assert_eq!(expand("${a ?: 1+2}").unwrap(), "${a ?: 1+2}");
-        assert_eq!(expand("${a ?: 'x}").unwrap(), "${a ?: 'x}");
-        clear_property("moqui_lib_env_port");
-        clear_property("moqui_lib_env_zone");
-    }
-
-    #[test]
-    fn dotenv_loses_to_a_property_and_to_the_environment() {
-        load_dotenv("MOQUI_LIB_DOTENV_PROBE=from-file\nexport MOQUI_LIB_DOTENV_QUOTED=\"quoted value\"\n# comment\n");
-        assert_eq!(get_prop_or_env("MOQUI_LIB_DOTENV_PROBE"), "from-file");
-        assert_eq!(get_prop_or_env("MOQUI_LIB_DOTENV_QUOTED"), "quoted value");
-        set_property("MOQUI_LIB_DOTENV_PROBE", "from-prop");
-        assert_eq!(get_prop_or_env("MOQUI_LIB_DOTENV_PROBE"), "from-prop");
-        clear_property("MOQUI_LIB_DOTENV_PROBE");
-        let path = std::env::var("PATH").unwrap_or_default();
-        load_dotenv(&format!("PATH={path}-not-this"));
-        assert_eq!(get_prop_or_env("PATH"), path);
-    }
-}
+#[path = "env_tests.rs"]
+mod tests;

@@ -50,6 +50,11 @@ mod devtools_cmd;
 #[doc(hidden)]
 pub mod devtools_remote;
 pub mod edge;
+#[cfg(feature = "edge")]
+pub mod edge_link;
+#[cfg(all(feature = "axum", not(feature = "edge")))]
+#[path = "edge_link_off.rs"]
+mod edge_link;
 #[cfg(feature = "print")]
 pub mod ipp;
 pub mod logging;
@@ -80,12 +85,13 @@ mod tui_cmd;
 pub mod tui_remote;
 pub mod types;
 pub mod usage;
-// The request-worker handoff of the SSH server, the SMTP listener and the XMPP server.
-#[cfg(any(feature = "ssh", feature = "inbound-smtp", feature = "xmpp"))]
+// The request-worker handoff of the SSH server, the SMTP listener, the XMPP server and the edge link.
+#[cfg(any(feature = "ssh", feature = "inbound-smtp", feature = "xmpp", feature = "edge"))]
 mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
+mod tls_pin;
 
 #[cfg(feature = "axum")]
 mod channels;
@@ -1773,6 +1779,7 @@ pub fn build_features() -> Vec<&'static str> {
         ("speech-local", cfg!(feature = "speech-local")),
         ("sip", cfg!(feature = "sip")),
         ("xmpp", cfg!(feature = "xmpp")),
+        ("edge", cfg!(feature = "edge")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))

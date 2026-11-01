@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Node status (plans/Edge-Node.md §5.7): the link's state, generation, round trip, last connect, links lost and last
+    error, and the edge node as its last Hello said (name, the pinned fingerprint of its link key, versions, public names). Unpair
+    (org.moqui.impl.EdgeServices.unpair#EdgeNode) revokes this node's key on the edge node and removes the link's settings
+    from runtime/.env. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Status" default-menu-index="1" default-menu-include="false">
+
+    <transition name="unpair">
+        <service-call name="org.moqui.impl.EdgeServices.unpair#EdgeNode"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Unpaired: the link to the edge node is closed</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const state = link.state || 'unpaired'
+        notBuilt = state === 'notBuilt'
+        notStarted = state === 'notStarted'
+        const running = !notBuilt && !notStarted
+        isEdge = running && link.nodeRole === 'edge'
+        paired = running && !isEdge && state !== 'unpaired'
+        unpaired = running && !isEdge && state === 'unpaired'
+        const states = {connecting: [L('Connecting'), 'info'], linked: [L('Linked'), 'positive'], retrying: [L('Retrying'), 'warning'],
+            refused: [L('Refused'), 'negative']}
+        const [stateLabel, stateColor] = states[state] || [state, 'grey']
+        const list = (items) => Array.from(items || []).join(', ')
+        incompatibleMessage = paired && link.compatible === false ? link.message || '' : ''
+        lastError = link.lastError || ''
+        refusedState = paired && state === 'refused'
+        edge = {edgeName: link.edgeName || link.url || L('Edge node'), stateLabel, stateColor,
+            url: link.url || '',
+            generationText: link.generation ? String(link.generation) : '',
+            rttText: link.rttMs != null ? ec.l10n.format(link.rttMs, '#,##0.0') + ' ms' : '',
+            lastConnectText: link.lastConnectDate ? ec.l10n.format(link.lastConnectDate, '') : L('Not yet'),
+            reconnectsText: String(link.reconnects ?? 0),
+            fingerprint: link.fingerprint || '',
+            versionText: link.binaryVersion ? link.binaryVersion + (link.linkVersion ? ' · ' + L('link') + ' ' + link.linkVersion : '') : '',
+            publicNamesText: list(link.publicNames),
+            featuresText: list(link.features)}
+    ]]></script></actions>
+    <widgets>
+        <section name="NotBuilt" condition="notBuilt"><widgets>
+            <container-box><box-header title="Edge node"/><box-body>
+                <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="NotStarted" condition="notStarted"><widgets>
+            <container-box><box-header title="Edge node"/><box-body>
+                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="IsEdge" condition="isEdge"><widgets>
+            <container-box><box-header title="Edge node"/><box-body>
+                <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients."/>
+                <link url="../../EdgeClients" text="Edge clients" icon="sym_o_lan"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="Unpaired" condition="unpaired"><widgets>
+            <container-box><box-header title="Edge node"/><box-body>
+                <label type="p" text="This node is not paired with an edge node. An edge node is a small server in the cloud that gives this node a public presence. This node dials out to it and keeps one link open, so it needs no open port or fixed address."/>
+                <label type="p" text="Make a pairing code on the edge node, in System, Edge Clients, then pair with it here." style="m-muted"/>
+                <link url="../Pair" text="Pair with an edge node" icon="sym_o_add_link" btn-type="primary"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="Paired" condition="paired"><widgets>
+            <container style="m-record-header">
+                <container style="row items-start q-col-gutter-x-md q-col-gutter-y-sm">
+                    <container style="col-12 col-md m-record-title">
+                        <label type="h5" text="${edge.edgeName}"/>
+                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="m-tonal text-${edge.stateColor}">]]></text><text type="tui" template="false">[]</text></render-mode>
+                        <label type="span" text="${edge.stateLabel}"/>
+                        <render-mode><text type="qvt"><![CDATA[</q-chip>]]></text><text type="tui" template="false">[]</text></render-mode>
+                        <label type="div" text="${edge.url}" style="text-caption m-muted"/>
+                    </container>
+                    <container style="col-12 col-md-auto row items-center q-gutter-y-xs m-record-actions">
+                        <link url="." text="Refresh" icon="sym_o_refresh"/>
+                        <link url="unpair" link-type="hidden-form" text="Unpair" icon="sym_o_link_off" btn-type="danger"
+                                confirmation="Unpair from ${edge.edgeName}? The link closes on both sides, and pairing again needs a new code."/>
+                    </container>
+                </container>
+            </container>
+            <section name="Incompatible" condition="incompatibleMessage"><widgets>
+                <container-box type="warning"><box-body>
+                    <label type="p" text="${incompatibleMessage}" style="q-mb-none"/>
+                </box-body></container-box>
+            </widgets></section>
+            <section name="Refused" condition="refusedState"><widgets>
+                <container-box type="danger"><box-header title="The link is refused"/><box-body>
+                    <label type="p" text="${lastError || 'This node stopped linking to the edge node.'}"/>
+                    <label type="p" text="This node stops when the edge node's link key no longer matches its pin, and the edge node refuses this node when it was revoked there. Unpair, make a new pairing code on the edge node, and pair again." style="m-muted q-mb-none"/>
+                </box-body></container-box>
+            </widgets></section>
+            <section name="LastError" condition="lastError &amp;&amp; !refusedState &amp;&amp; edge.stateColor != 'positive'"><widgets>
+                <container-box type="warning"><box-header title="Last error"/><box-body>
+                    <label type="p" text="${lastError}" style="q-mb-none"/>
+                </box-body></container-box>
+            </widgets></section>
+            <container-box><box-header title="Link"/><box-body>
+                <form-single name="LinkStatus" map="edge">
+                    <field name="rttText"><default-field title="Round trip"><display/></default-field></field>
+                    <field name="lastConnectText"><default-field title="Last connect"><display/></default-field></field>
+                    <field name="generationText"><default-field title="Generation" tooltip="Goes up by one each time the link comes up"><display/></default-field></field>
+                    <field name="reconnectsText"><default-field title="Links lost" tooltip="Since this server started"><display/></default-field></field>
+                    <field name="versionText"><default-field title="Edge node version"><display/></default-field></field>
+                    <field name="fingerprint"><default-field title="Link key fingerprint" tooltip="The SHA-256 of the edge node's link key, pinned at pairing; a renewed web certificate does not change it"><display/></default-field></field>
+                    <field name="publicNamesText"><default-field title="Public names"><display/></default-field></field>
+                    <field name="featuresText"><default-field title="Features"><display/></default-field></field>
+                    <field-layout>
+                        <field-row><field-ref name="rttText"/><field-ref name="lastConnectText"/></field-row>
+                        <field-row><field-ref name="generationText"/><field-ref name="reconnectsText"/></field-row>
+                        <field-row><field-ref name="versionText"/><field-ref name="publicNamesText"/></field-row>
+                        <field-ref name="fingerprint"/>
+                        <field-ref name="featuresText"/>
+                    </field-layout>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

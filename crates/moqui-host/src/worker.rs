@@ -45,8 +45,8 @@ where
 }
 
 /// [`on_pool`] with authorization off for the whole job, for SFTP: its calls run as no user, and the `SSH_SFTP`
-/// permission checked at login is the gate.
-#[cfg(any(feature = "ssh", feature = "inbound-smtp"))]
+/// permission checked at login is the gate; and for the edge link's own bookkeeping.
+#[cfg(any(feature = "ssh", feature = "inbound-smtp", feature = "edge"))]
 pub(crate) async fn on_pool_without_authz<T, F>(factory: &Weak<ExecutionContextFactory>, job: F) -> Result<T, CoreError>
 where
     T: Send + 'static,

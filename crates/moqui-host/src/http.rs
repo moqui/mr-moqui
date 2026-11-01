@@ -195,6 +195,7 @@ pub(crate) async fn listen(
     #[cfg(feature = "grpc")]
     let grpc = crate::monitor::grpc::bind_address(&factory, address)
         .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
+    let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
     let secure = match https {
         Some(https) => {
             let listener = TcpListener::bind(https.bind)
@@ -203,6 +204,7 @@ pub(crate) async fn listen(
             let local = listener
                 .local_addr()
                 .map_err(|err| fail(format!("bound HTTPS listener has no address: {err}")))?;
+            certs = Some(https.certs);
             Some((listener, local, tokio_rustls::TlsAcceptor::from(https.config)))
         }
         None => None,
@@ -234,6 +236,9 @@ pub(crate) async fn listen(
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
     guard.log_start();
+    // the edge link (plans/Edge-Node.md §5.1): on an edge node the HTTPS listener's hand-off, and on a paired local
+    // node its dialer
+    let edge = crate::edge_link::start(&factory, certs, shutdown_rx.clone());
     crate::monitor::register_guard_gauges(&factory, &guard);
     tokio::spawn(sweep(Arc::clone(&guard), shutdown_rx.clone()));
     // Text responses are compressed when the client accepts gzip (`Compressible`).
@@ -330,7 +335,7 @@ pub(crate) async fn listen(
                 plain,
                 serve(
                     listener,
-                    Some(acceptor),
+                    Some(Tls { acceptor, edge }),
                     app,
                     limits,
                     guard,
@@ -365,9 +370,26 @@ async fn sweep(guard: Arc<Guard>, mut stopped: tokio::sync::watch::Receiver<bool
 /// `header_read_timeout` takes effect. With `tls` the handshake runs in the connection's own task, so a slow
 /// client cannot hold up accepting. `guard` admits each connection before its handshake and checks each request
 /// before the router.
+/// The HTTPS listener's handshake: its own settings, or on an edge node the link's for a client that offers
+/// `moqui-edge/1` (`edge_link`).
+#[derive(Clone)]
+struct Tls {
+    acceptor: tokio_rustls::TlsAcceptor,
+    edge: Option<Arc<crate::edge_link::Acceptor>>,
+}
+
+impl Tls {
+    async fn accept(&self, stream: tokio::net::TcpStream) -> std::io::Result<crate::edge_link::Secured> {
+        match &self.edge {
+            Some(edge) => edge.accept(stream, self.acceptor.config()).await,
+            None => self.acceptor.accept(stream).await.map(crate::edge_link::Secured::Http),
+        }
+    }
+}
+
 async fn serve(
     listener: TcpListener,
-    tls: Option<tokio_rustls::TlsAcceptor>,
+    tls: Option<Tls>,
     app: Router,
     limits: ListenLimits,
     guard: Arc<Guard>,
@@ -433,14 +455,21 @@ async fn serve(
             };
             match tls {
                 None => run_connection(stream, false, serving).await,
-                Some(acceptor) => {
-                    let handshake = acceptor.accept(stream);
+                Some(tls) => {
+                    let handshake = tls.accept(stream);
                     let secured = match limits.header {
                         Some(limit) => tokio::time::timeout(limit, handshake).await.ok(),
                         None => Some(handshake.await),
                     };
                     match secured {
-                        Some(Ok(stream)) => {
+                        Some(Ok(crate::edge_link::Secured::Link(stream))) => {
+                            // the link ends with the listeners' stop on its own; it holds no HTTP connection open
+                            drop(serving);
+                            if let Some(edge) = &tls.edge {
+                                edge.serve(stream, remote).await;
+                            }
+                        }
+                        Some(Ok(crate::edge_link::Secured::Http(stream))) => {
                             // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
                             #[cfg(feature = "xmpp")]
                             let serving = Serving {

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair step 1, the edge node (plans/Edge-Node.md §5.7): its address (https://host, or https://host:port) and the one-use
+    pairing code made on it in System, Edge Clients. Next connects to it and checks its certificate
+    (org.moqui.impl.EdgeServices.check#EdgeNode), keeps the code in the session for Connect, and carries the address on.
+    The answer goes in the session too, so Connect shows it without a second round trip. A node already paired, an edge
+    node, a build without the edge link and a process where it is not running see why they cannot pair instead. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edge node" default-menu-index="1" menu-image="sym_o_cloud" menu-image-type="icon">
+
+    <parameter name="url"/>
+
+    <transition name="checkEdgeNode">
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            url = String(url || '').trim()
+            if (url && !/^[a-z]+:\/\//i.test(url)) url = 'https://' + url
+            const pairingCode = String(code || '').trim()
+            if (!url) { ec.message.addError(L('Enter the edge node address')); return }
+            if (!pairingCode) { ec.message.addError(L('Enter the pairing code made on the edge node')); return }
+            const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
+            if (ec.message.hasError()) return
+            ec.web.sessionAttributes.edgePairingCode = pairingCode
+            // for Connect: what the edge node answered, for this address (session attributes are text)
+            ec.web.sessionAttributes.edgeCheck = JSON.stringify({url: url, edgeName: out.edgeName || '', fingerprint: out.fingerprint || '',
+                binaryVersion: out.binaryVersion || '', linkVersion: out.linkVersion ? String(out.linkVersion) : '',
+                publicNames: Array.from(out.publicNames || []).map(String), features: Array.from(out.features || []).map(String),
+                compatible: out.compatible !== false, message: out.message || ''})
+        ]]></script></actions>
+        <default-response url="."><parameter name="url"/></default-response>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        notBuilt = link.state === 'notBuilt'
+        notStarted = link.state === 'notStarted'
+        const running = !notBuilt && !notStarted
+        isEdge = running && link.nodeRole === 'edge'
+        alreadyPaired = running && !isEdge && !!link.state && link.state !== 'unpaired'
+        pairedName = link.edgeName || link.url || ''
+        canPair = running && !isEdge && !alreadyPaired
+        edgeAddress = {url: url || ''}
+    ]]></script></actions>
+    <widgets>
+        <section name="NotBuilt" condition="notBuilt"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotStarted" condition="notStarted"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="IsEdge" condition="isEdge"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="AlreadyPaired" condition="alreadyPaired"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This node is paired with ${pairedName}. Unpair it first to pair with another edge node." style="q-mb-sm"/>
+                <link url="../../Status" text="Edge node" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="EdgeAddress" condition="canPair"><widgets>
+            <container-box><box-header title="The edge node"/><box-body>
+                <label type="p" text="The edge node's address, and a pairing code made on it in System, Edge Clients. A code pairs one node, once, before it expires." style="m-muted"/>
+                <form-single name="EdgeAddress" transition="checkEdgeNode" map="edgeAddress" focus-field="url">
+                    <field name="url"><default-field title="Address" tooltip="Like https://edge.example.com"><text-line size="50"/></default-field></field>
+                    <field name="code"><default-field title="Pairing code"><text-line size="30"/></default-field></field>
+                </form-single>
+                <label type="p" text="Next connects to the edge node and checks its certificate. Nothing is paired yet." style="text-caption m-muted q-mb-none q-mt-sm"/>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

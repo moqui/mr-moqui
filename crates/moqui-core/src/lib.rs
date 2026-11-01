@@ -20,6 +20,7 @@ pub mod cluster;
 pub mod context;
 pub mod devtools;
 pub mod drain;
+pub mod edge;
 pub use moqui_entity::driver;
 pub mod edi;
 pub mod entity;

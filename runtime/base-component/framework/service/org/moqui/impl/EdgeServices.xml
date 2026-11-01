@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The edge link (plans/Edge-Node.md §5.7) for the System app: on a local node its Edge Node screen (check, pair, status,
+    unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired local nodes, revoke). The
+    bodies are Rust (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/,
+    the edge feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into
+    this host", except get#LinkStatus, which answers state notBuilt (or notStarted in a binary with the link but no
+    HTTP listener). All are internal (allow-remote false) and for an
+    administrator: pairing writes keys to runtime/.env. The model is framework/entity/EdgeEntities.xml. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="LinkStatus" type="rust" location="moqui_core::service::edge::get_link_status"
+            allow-remote="false" transaction="ignore">
+        <description>The local node's link: state (unpaired, connecting, linked, retrying, refused; notBuilt in a binary
+            without the edge link, notStarted in one with it where no HTTP listener started it, as under moqui test),
+            the edge node's URL, the link generation, the round trip of the last Ping on the up connection, when the link
+            last came up, the last error, the links lost since start, and the edge node as its last Hello said, with the
+            pinned fingerprint. nodeRole is this node's node_role; on an edge node linkFingerprint is its own link key's
+            fingerprint.</description>
+        <out-parameters>
+            <parameter name="nodeRole"/>
+            <parameter name="state"/>
+            <parameter name="url"/>
+            <parameter name="generation" type="Long"/>
+            <parameter name="rttMs" type="Double"/>
+            <parameter name="lastConnectDate" type="Timestamp"/>
+            <parameter name="lastError"/>
+            <parameter name="reconnects" type="Long"/>
+            <parameter name="linkFingerprint"><description>On an edge node, the fingerprint of its own link key
+                (edge_link_key; SHA-256 of the public key, hex), to compare with what a local node's check#EdgeNode
+                shows; empty on any other node. The key itself is never shown.</description></parameter>
+            <parameter name="edgeName"/>
+            <parameter name="fingerprint"/>
+            <parameter name="binaryVersion"/>
+            <parameter name="linkVersion" type="Long"/>
+            <parameter name="features" type="List"/>
+            <parameter name="capabilities" type="List"/>
+            <parameter name="publicNames" type="List"/>
+            <parameter name="compatible" type="Boolean"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+
+    <service verb="check" noun="EdgeNode" type="rust" location="moqui_core::service::edge::check_edge_node"
+            allow-remote="false" transaction="ignore">
+        <description>Connect to the edge node at url (https://host or https://host:port), check its web certificate by
+            WebPKI, and answer its name, the fingerprint of its link key (edge_link_key), versions and offer, without
+            pairing: for the operator to confirm before pair#EdgeNode. compatible is false, with message, when the link
+            protocol versions are more than one apart.</description>
+        <in-parameters><parameter name="url" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="edgeName"/>
+            <parameter name="fingerprint"/>
+            <parameter name="binaryVersion"/>
+            <parameter name="linkVersion" type="Long"/>
+            <parameter name="features" type="List"/>
+            <parameter name="capabilities" type="List"/>
+            <parameter name="publicNames" type="List"/>
+            <parameter name="compatible" type="Boolean"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+
+    <service verb="pair" noun="EdgeNode" type="rust" location="moqui_core::service::edge::pair_edge_node"
+            allow-remote="false" transaction="ignore">
+        <description>Pair this local node with the edge node at url, using the one-use code its operator made: make this
+            node's key, have the edge node pin it, pin the edge node's link key (refused when expectFingerprint, the
+            fingerprint check#EdgeNode showed, is given and differs), write edge_node_url, edge_node_key and edge_node_pin to
+            runtime/.env, and bring the link up without a restart. keyFingerprint is this node's key as the edge node
+            pinned it.</description>
+        <in-parameters>
+            <parameter name="url" required="true"/>
+            <parameter name="code" required="true"/>
+            <parameter name="expectFingerprint"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="keyFingerprint"/>
+            <parameter name="edgeName"/>
+            <parameter name="fingerprint"/>
+            <parameter name="binaryVersion"/>
+            <parameter name="linkVersion" type="Long"/>
+            <parameter name="features" type="List"/>
+            <parameter name="capabilities" type="List"/>
+            <parameter name="publicNames" type="List"/>
+            <parameter name="compatible" type="Boolean"/>
+            <parameter name="message"/>
+        </out-parameters>
+    </service>
+
+    <service verb="unpair" noun="EdgeNode" type="rust" location="moqui_core::service::edge::unpair_edge_node"
+            allow-remote="false" transaction="ignore">
+        <description>Tell the edge node to revoke this node's key (when the link is up), close the link and remove
+            edge_node_url, edge_node_key and edge_node_pin from runtime/.env.</description>
+    </service>
+
+    <service verb="create" noun="PairingCode" type="rust" location="moqui_core::service::edge::create_pairing_code"
+            allow-remote="false">
+        <description>On an edge node: a one-use pairing code for a local node, good for validMinutes (60 by default, at
+            most 1440). The code is shown once; only its hash is kept (moqui.edge.EdgePairingCode).</description>
+        <in-parameters><parameter name="validMinutes" type="Integer" default-value="60"/></in-parameters>
+        <out-parameters>
+            <parameter name="pairingCodeId"/>
+            <parameter name="code"/>
+            <parameter name="expireDate" type="Timestamp"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeClients" type="rust" location="moqui_core::service::edge::get_edge_clients"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: the paired local nodes (moqui.edge.EdgeClient) with their live links: linked (the up
+            connection is open), down (the down connection too), the generation, the remote address, and the versions of
+            their last Hello.</description>
+        <out-parameters>
+            <parameter name="clientList" type="List"><parameter name="client" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="keyFingerprint"/><parameter name="statusId"/>
+                <parameter name="linked" type="Boolean"/><parameter name="down" type="Boolean"/>
+                <parameter name="generation" type="Long"/><parameter name="lastConnectDate" type="Timestamp"/>
+                <parameter name="remoteAddress"/><parameter name="binaryVersion"/><parameter name="linkVersion" type="Long"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="revoke" noun="EdgeClient" type="rust" location="moqui_core::service::edge::revoke_edge_client"
+            allow-remote="false">
+        <description>On an edge node: revoke a local node's key and close its link; it can link again only by pairing
+            with a new code. revoked is false when no such node is paired.</description>
+        <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
+        <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="ping" noun="EdgeClient" type="rust" location="moqui_core::service::edge::ping_edge_client"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: a Ping down a linked local node's down connection; rttMs is its round
+            trip.</description>
+        <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
+        <out-parameters><parameter name="rttMs" type="Double"/></out-parameters>
+    </service>
+</services>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node. For now
+    it is the edge link only (E1): local nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by
+    ALPN); no web access, comms or PASS go over the link yet.
+    Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
+    Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
+    addresses, ports) go in .env.
+    The HTTPS listener needs a WebPKI certificate, in runtime/cert: local nodes check it when they pair. The links use the edge node's own
+    link key, edge_link_key, generated into .env at the first start. A renewed web certificate does not touch the links;
+    a changed edge_link_key means every local node must pair again. The command is in docs/Run-Deploy.md, Edge node. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <default-property name="node_role" value="edge"/>
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- Not built yet; each is turned on by the phase that uses it:
+        E6, chat bridges and SMS:    <default-property name="channels_webhooks_enabled" value="true"/>
+        E7, calls (rtc_public_address in .env, needed when binding every address):
+                                     <default-property name="rtc_media_port" value="10000"/>
+                                     <default-property name="rtc_media_host" value="0.0.0.0"/>
+                                     <default-property name="turn_port" value="3478"/>
+        E4, mr-pass over the link:   <default-property name="pass_backend_url" value="edge:"/> -->
+
+    <!-- The link's queue is the only data here that matters: unpause the backup_EmbeddedDatabase_daily job (System ›
+        Service Jobs) and set its mirror (docs/Run-Deploy.md, backups). -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- E3: queue retention and size cap, delegated services and replicated sets go here. -->
+</moqui-conf>

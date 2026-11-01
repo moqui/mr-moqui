@@ -69,6 +69,8 @@ const CERT_EXTENSIONS: [&str; 3] = ["crt", "pem", "cer"];
 pub(crate) struct HttpsListen {
     pub bind: SocketAddr,
     pub config: Arc<rustls::ServerConfig>,
+    /// The certificates `config` serves, which an edge node's link settings share (`edge_link`).
+    pub certs: Arc<CertStore>,
 }
 
 /// The HTTPS listener to start on `ip`, or `None` when it is off or, by default, when no certificate exists. A port
@@ -100,9 +102,11 @@ pub(crate) fn plan(runtime_dir: &Path, ip: IpAddr, use_default_port: bool) -> Re
         tracing::warn!("The HTTPS listener is not started: {missing}");
         return Ok(None);
     }
+    let certs = Arc::new(store);
     Ok(Some(HttpsListen {
         bind: SocketAddr::new(ip, port),
-        config: Arc::new(server_config(store)?),
+        config: Arc::new(server_config(Arc::clone(&certs))?),
+        certs,
     }))
 }
 
@@ -133,12 +137,16 @@ fn listen_port(raw: &str, use_default_port: bool) -> Result<Option<u16>, Error> 
     }
 }
 
-pub(crate) fn server_config(store: CertStore) -> Result<rustls::ServerConfig, Error> {
+/// The listener's TLS settings on `store`, which may be shared: an edge node's link (ALPN `moqui-edge/1`) has settings
+/// of its own on the same certificates, chosen by the ClientHello before the handshake (`edge_link`), so this
+/// listener's ALPN stays `http/1.1` alone and a browser is never asked for a client certificate.
+pub(crate) fn server_config(store: impl Into<Arc<CertStore>>) -> Result<rustls::ServerConfig, Error> {
+    let store: Arc<CertStore> = store.into();
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|err| Error::new(format!("could not set up the HTTPS listener: {err}")))?
         .with_no_client_auth()
-        .with_cert_resolver(Arc::new(store));
+        .with_cert_resolver(store);
     // The listener speaks HTTP/1.1 only.
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(config)

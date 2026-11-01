@@ -1,0 +1,119 @@
+// This software is in the public domain under CC0 1.0 Universal plus a
+// Grant of Patent License.
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to the
+// public domain worldwide. This software is distributed without any
+// warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software (see the LICENSE.md file). If not, see
+// <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+// The edge link between a local node and its edge node (plans/Edge-Node.md §5.1).
+//
+// Changes are additive only: a new field or RPC gets a new number or name, and no field or RPC is removed, renamed or
+// renumbered. A change that cannot be made that way is a new link protocol version (LINK_VERSION in
+// crates/moqui-host/src/edge_link/mod.rs), and the two ends refuse a link more than one version apart.
+//
+// The Rust code in crates/moqui-host/src/edge_link/proto/ is generated from this file and checked in:
+//   MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib edge_link::proto
+
+syntax = "proto3";
+
+package moqui.edge.v1;
+
+// What each end says about itself, at pairing and on each new link.
+message Hello {
+  // The moqui binary's version (the workspace version).
+  string binary_version = 1;
+  // The link protocol version.
+  uint32 link_version = 2;
+  // The features compiled in that the other end may use: rtc, sip, xmpp, inbound-smtp, channels.
+  repeated string features = 3;
+  // The edge node's: what it offers (later phases fill this in).
+  repeated string capabilities = 4;
+  // The edge node's: the public host names it answers for.
+  repeated string public_names = 5;
+  // The local node's: its instance id, which the edge node keys its rows by.
+  string instance_id = 6;
+  // A name to show the operator of the other end.
+  string node_name = 7;
+}
+
+message ProbeRequest {}
+
+message ProbeReply {
+  Hello hello = 1;
+  // The fingerprint of the edge node's link key (SHA-256 of its public key, hex), which the up and down connections
+  // present: told over the pairing connection, whose web certificate WebPKI checked, so the local node can pin it.
+  string link_fingerprint = 2;
+}
+
+message PairRequest {
+  // The one-use code the edge node's operator made.
+  string code = 1;
+  Hello hello = 2;
+}
+
+message PairReply {
+  Hello hello = 1;
+  // The fingerprint the edge node pinned for the local node's key (SHA-256 of its public key, hex).
+  string key_fingerprint = 2;
+  // The fingerprint of the edge node's link key, as in ProbeReply.
+  string link_fingerprint = 3;
+}
+
+message HelloRequest {
+  Hello hello = 1;
+}
+
+message HelloReply {
+  Hello hello = 1;
+  // The link generation of this up connection; the down connection names it.
+  uint64 generation = 2;
+}
+
+message PingRequest {
+  // The link generation the sender is on.
+  uint64 generation = 1;
+}
+
+message PingReply {
+  uint64 generation = 1;
+}
+
+message UnpairRequest {}
+
+message UnpairReply {}
+
+// Served by the edge node; the local node calls it on its up connection. Probe is on a check or pairing connection and
+// Pair on a pairing connection (ALPN moqui-edge-pair/1, the web certificate); the others on an up connection (ALPN
+// moqui-edge/1, the link key).
+service Link {
+  // The edge node's Hello, before pairing, so the operator can confirm the edge node's name and fingerprint.
+  rpc Probe(ProbeRequest) returns (ProbeReply);
+  // Pin the key of the connection's client certificate for the local node named in the Hello.
+  rpc Pair(PairRequest) returns (PairReply);
+  // The first call of an up connection.
+  rpc Hello(HelloRequest) returns (HelloReply);
+  rpc Ping(PingRequest) returns (PingReply);
+  // The local node unpairs: the edge node revokes its key and closes the link.
+  rpc Unpair(UnpairRequest) returns (UnpairReply);
+}
+
+message LocalHelloRequest {
+  Hello hello = 1;
+  // The generation of the up connection this down connection belongs to.
+  uint64 generation = 2;
+}
+
+message LocalHelloReply {
+  Hello hello = 1;
+}
+
+// Served by the local node on its down connection; the edge node calls it.
+service LocalLink {
+  rpc Hello(LocalHelloRequest) returns (LocalHelloReply);
+  rpc Ping(PingRequest) returns (PingReply);
+}

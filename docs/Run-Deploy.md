@@ -15,7 +15,7 @@ and the build packages are in [Build-Test](Build-Test.md).
     [HTTPS, ports and proxies](#https-ports-and-proxies);
   - deployments: [One production server](#one-production-server), [Cluster](#cluster),
     [PASS servers with a BOSS server or cluster](#pass-servers-with-a-boss-server-or-cluster),
-    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server);
+    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server), [Edge node](#edge-node) (the link only);
   - reference: [Components](#components), [Moving from Moqui Java](#moving-from-moqui-java),
     [Directory layout](#directory-layout).
 
@@ -212,8 +212,8 @@ stripped, and `$` is not expanded. It is read after the conf merge, so it cannot
 with `--no-data` leaves it out, so it is the place for per-host settings that should survive an upgrade.
 
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
-covers `entity_ds_crypt_pass`, `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert` and
-`cluster_tls_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
+covers `entity_ds_crypt_pass`, `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
+`cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
 
 The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
@@ -266,6 +266,9 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
+| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#edge-node)) |
+| `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
+| `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -623,6 +626,37 @@ visitors out of the shared login ([its README](../runtime/dev-component/demo/REA
 a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
 the Dev AIDE loads there.
 
+## Edge node
+
+An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
+open ([plan](../plans/Edge-Node.md)). For now this is the link only: pairing, the link's state and revoking. No web
+access, mail, chat, calls or PASS go over it yet.
+
+- **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
+  mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
+  have the link:
+
+  ```sh
+  ./moq run-production --release -c conf/MoquiEdgeConf.xml
+  ./moq archive --release --no-data --conf conf/MoquiEdgeConf.xml    # or package it for the host
+  ```
+
+  Local nodes dial its HTTPS listener, which tells their connections from browsers' by ALPN, so it needs a WebPKI
+  certificate ([Certificates](#certificates)) and no port of its own.
+  - **Port.** A local node dials port 443 unless the address has a port, and `webapp_https_listen_port` is 8443 by
+    default. Listen on 443, or give the port in the address.
+  - **No TLS-terminating proxy in front.** The link needs ALPN and client certificates end to end.
+  - **Link key.** Pairing checks the web certificate. The link itself uses the edge node's own link key,
+    `edge_link_key`. It is generated into `runtime/.env` on every node at the first start, but only an edge node uses
+    it. A renewed web certificate does not touch the link, but a changed `edge_link_key` means every local node must
+    pair again.
+  - **Edge Clients.** Its operator makes a pairing code in System › Edge Clients, which also lists the paired nodes,
+    pings them and revokes them. It shows the edge node's link key fingerprint, to compare with the one the local node
+    shows when it pairs.
+- **The local node** needs no role and no open port. In System › Edge Node, enter the edge node's address and the code,
+  check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to
+  `runtime/.env` and brings the link up; unpairing removes them.
+
 ## Cluster
 
 Several members share one database and run behind a load balancer. Members find each other in the
@@ -954,7 +988,7 @@ mr-moqui/
     component/        components from ./moq component-get (not in git)
     dev-component/    components that load only on a dev instance: dev-aide, example, demo (off until a conf names
                       it); template for component-create
-    conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml
+    conf/             MoquiDevConf.xml, MoquiProductionConf.xml, MoquiDemoConf.xml, MoquiEdgeConf.xml
     cert/ db/ log/ .env   per-instance files (not in git)
   podman/             the image, compose stacks and Quadlet units
   systemd/            the unit, sysusers file and drop-ins

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Edge Node (plans/Edge-Node.md §5.7): on a local node, its link to an edge node. Status is the link's state and the
+    edge node it is paired with, with Unpair; Pair is the pairing wizard (the edge node's address and pairing code, then
+    its name and fingerprint to confirm). On an edge node (node_role=edge) and in a build without the edge link, Status
+    says so. The menu cannot leave this screen out by node role, so it is listed on every node. Every call goes through
+    org.moqui.impl.EdgeServices. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edge Node" default-menu-index="17" menu-image="sym_o_cloud_sync" menu-image-type="icon">
+    <subscreens default-item="Status"/>
+    <widgets>
+        <subscreens-active/>
+    </widgets>
+</screen>

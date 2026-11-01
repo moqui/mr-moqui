@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair with an edge node (plans/Edge-Node.md §5.7; style-guide §3.10 Wizard): a subscreens-panel type="wizard" over the
+    steps in Pair/: EdgeUrl (the edge node's address and the pairing code its operator made; Next connects and checks its
+    certificate) and Connect (its name, link key fingerprint and versions to confirm; Pair pairs, pinning that fingerprint, and
+    shows the status). Between the steps the URL carries the address only. The pairing code is a secret: it is kept in
+    the session for Connect, as the Chat apps screen keeps a new app password, and never put in a URL. Discovery, apply
+    and test steps come with the comms over the link (§5.7 steps 3 to 5). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Pair" default-menu-index="2" default-menu-include="false">
+
+    <parameter name="url"/>
+    <subscreens default-item="EdgeUrl"/>
+
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h5" text="Pair with an edge node" style="q-my-none"/>
+            <container style="col"/>
+            <link url="../Status" text="Edge node" icon="sym_o_cloud_sync"/>
+        </container>
+        <subscreens-panel id="PairEdgeNodeWizard" type="wizard" finish-text="Pair"/>
+    </widgets>
+</screen>

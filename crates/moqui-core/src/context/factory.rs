@@ -15,8 +15,6 @@
 //! Execution context factory. One factory is shared. One context is thread-local.
 
 use std::cell::{RefCell, RefMut};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -47,7 +45,6 @@ use super::Error;
 use crate::entity::EntityFacade;
 use crate::user::{AuthInfo, StackAuthz};
 
-const ENV_HEADER: &str = "# This file holds secrets and must be kept with the instance backup.\n";
 /// The `response-header` entries of the shipped `MoquiDefaultConf.xml` webapp, `(type, name, value, add)`, for a conf
 /// whose webapp declares none (a test conf, or one that leaves the defaults out).
 const DEFAULT_RESPONSE_HEADERS: &[(&str, &str, &str, bool)] = &[
@@ -1531,72 +1528,9 @@ fn generate_secret() -> Result<String, Error> {
     Ok(STANDARD.encode(bytes))
 }
 
+/// Write generated secrets to `runtime/.env`: added, or replacing an empty `name=` line (moqui_lib::env).
 fn append_env_secrets(path: &Path, pairs: &[(String, String)]) -> Result<(), Error> {
-    if pairs.is_empty() {
-        return Ok(());
-    }
-    if path.exists() && !path.is_file() {
-        return Err(Error::new(format!(
-            "could not append runtime environment file {}: path is a directory",
-            path.display()
-        )));
-    }
-    for (name, value) in pairs {
-        if name.contains(['=', '\n', '\r']) || value.contains(['\n', '\r']) {
-            return Err(Error::new(format!(
-                "could not append runtime environment file {}: invalid secret name",
-                path.display()
-            )));
-        }
-    }
-    let existing = if path.is_file() {
-        std::fs::read_to_string(path).map_err(|err| {
-            Error::new(format!("could not read runtime environment file {}", path.display())).with_source(err)
-        })?
-    } else {
-        String::new()
-    };
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path).map_err(|err| {
-        Error::new(format!("could not append runtime environment file {}", path.display())).with_source(err)
-    })?;
-    if existing.is_empty() {
-        file.write_all(ENV_HEADER.as_bytes()).map_err(|err| {
-            Error::new(format!("could not append runtime environment file {}", path.display())).with_source(err)
-        })?;
-    }
-    let mut body = String::new();
-    // A file written by hand may end without a newline, and the first secret must not join its last line.
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        body.push('\n');
-    }
-    for (name, value) in pairs {
-        body.push_str(name);
-        body.push('=');
-        body.push_str(value);
-        body.push('\n');
-    }
-    file.write_all(body.as_bytes()).map_err(|err| {
-        Error::new(format!("could not append runtime environment file {}", path.display())).with_source(err)
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|err| {
-            Error::new(format!(
-                "could not set permissions on runtime environment file {}",
-                path.display()
-            ))
-            .with_source(err)
-        })?;
-    }
-    Ok(())
+    Ok(env::update_dotenv_file(path, pairs, &[])?)
 }
 
 #[derive(Default)]

@@ -441,7 +441,10 @@ async fn a_request_over_tls_is_marked_secure() {
         tokio::join!(
             serve(
                 secure_listener,
-                Some(tokio_rustls::TlsAcceptor::from(config)),
+                Some(super::Tls {
+                    acceptor: tokio_rustls::TlsAcceptor::from(config),
+                    edge: None,
+                }),
                 app.clone(),
                 limits,
                 unguarded(),

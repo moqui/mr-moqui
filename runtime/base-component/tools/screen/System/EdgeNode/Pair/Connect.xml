@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair step 2, connect (plans/Edge-Node.md §5.7): the edge node at the address, as it answers now
+    (org.moqui.impl.EdgeServices.check#EdgeNode, as step 1 kept it in the session; asked again for an address step 1 did
+    not check): its name, the fingerprint of its link key (told over the
+    WebPKI-checked web certificate), its versions, public names and
+    features, and whether its link protocol fits this node's. Pair (pair#EdgeNode) pairs with the code from step 1, kept
+    in the session, refusing an edge node whose fingerprint is not the one shown here; it writes the link's settings to
+    runtime/.env, brings the link up and shows the status. When the session lost the code, it is asked for here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Connect" default-menu-index="2" menu-image="sym_o_link" menu-image-type="icon">
+
+    <parameter name="url"/>
+
+    <transition name="pairEdgeNode">
+        <actions><script><![CDATA[
+            const pairingCode = String(code || '').trim() || ec.web.sessionAttributes.edgePairingCode || ''
+            if (!pairingCode) { ec.message.addError(ec.l10n.localize('Enter the pairing code made on the edge node')); return }
+            ec.service.sync().name('org.moqui.impl.EdgeServices.pair#EdgeNode')
+                .parameters({url: url, code: pairingCode, expectFingerprint: expectFingerprint}).call()
+            if (!ec.message.hasError()) { ec.web.sessionAttributes.remove('edgePairingCode'); ec.web.sessionAttributes.remove('edgeCheck') }
+        ]]></script>
+            <if condition="!ec.message.hasError()"><message type="success">Paired with the edge node</message></if>
+        </actions>
+        <default-response url="../../Status"/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        checked = false
+        checkError = ''
+        if (!url) return
+        // step 1's answer for this address, else a probe (Practices-App-Dev §4): a failed check is shown, not raised
+        let kept = null
+        try { kept = JSON.parse(ec.web.sessionAttributes.edgeCheck || 'null') } catch (e) { kept = null }
+        let out = kept && kept.url === url ? kept : null
+        if (!out) {
+            ec.message.pushErrors()
+            try {
+                out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
+                if (ec.message.hasError()) checkError = ec.message.getErrorsString()
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+            if (checkError) return
+        }
+        checked = true
+        compatible = out.compatible !== false
+        compatibleMessage = out.message || ''
+        hasCode = !!ec.web.sessionAttributes.edgePairingCode
+        const list = (items) => Array.from(items || []).join(', ')
+        edge = {edgeName: out.edgeName || '', fingerprint: out.fingerprint || '',
+            versionText: (out.binaryVersion || '') + (out.linkVersion ? ' · ' + L('link') + ' ' + out.linkVersion : ''),
+            publicNamesText: list(out.publicNames), featuresText: list(out.features)}
+        pair = {url: url, expectFingerprint: out.fingerprint || ''}
+    ]]></script></actions>
+    <widgets>
+        <section name="NoAddress" condition="!url"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Enter the edge node's address first." style="q-mb-sm"/>
+                <link url="../EdgeUrl" text="Edge node" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="CheckFailed" condition="url &amp;&amp; !checked"><widgets>
+            <container-box type="warning"><box-header title="The edge node did not answer"/><box-body>
+                <label type="p" text="${checkError}"/>
+                <link url="../EdgeUrl" text="Edge node" icon="sym_o_arrow_back" parameter-map="{url:url}"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="Checked" condition="checked"><widgets>
+            <container-box><box-header title="Is this your edge node?"/><box-body>
+                <!-- the step form, first: the wizard's Pair submits the first form of the step -->
+                <section name="PairForm" condition="compatible"><widgets>
+                    <form-single name="PairEdgeNode" transition="pairEdgeNode" map="pair">
+                        <field name="url"><default-field><hidden/></default-field></field>
+                        <field name="expectFingerprint"><default-field><hidden/></default-field></field>
+                        <field name="code"><conditional-field condition="!hasCode" title="Pairing code"><text-line size="30"/></conditional-field>
+                            <default-field><ignored/></default-field></field>
+                    </form-single>
+                </widgets></section>
+                <form-single name="EdgeReview" map="edge">
+                    <field name="edgeName"><default-field title="Name"><display/></default-field></field>
+                    <field name="versionText"><default-field title="Version"><display/></default-field></field>
+                    <field name="fingerprint"><default-field title="Link key fingerprint" tooltip="The SHA-256 of the edge node's link key, the key its links use"><display/></default-field></field>
+                    <field name="publicNamesText"><default-field title="Public names"><display/></default-field></field>
+                    <field name="featuresText"><default-field title="Features"><display/></default-field></field>
+                    <field-layout>
+                        <field-row><field-ref name="edgeName"/><field-ref name="versionText"/></field-row>
+                        <field-ref name="fingerprint"/>
+                        <field-row><field-ref name="publicNamesText"/><field-ref name="featuresText"/></field-row>
+                    </field-layout>
+                </form-single>
+                <section name="Compatible" condition="compatible"><widgets>
+                    <label type="p" text="The edge node's web certificate checked out, and it told this link key fingerprint over it. Pair pins it: this node then links only to that key, and the edge node only to this node's own new key. A renewed web certificate does not change it." style="m-muted q-mt-md q-mb-none"/>
+                </widgets></section>
+                <section name="Incompatible" condition="!compatible"><widgets>
+                    <label type="p" text="${compatibleMessage || 'The versions are too far apart to link. Upgrade the older of the two.'}" style="text-warning q-mt-md q-mb-none"/>
+                </widgets></section>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

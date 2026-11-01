@@ -28,6 +28,8 @@ channels = ["moqui-host/channels"]
 # XMPP for local users (crates/moqui-xmpp), in Enterprise, Maximal and Debug; for a Default build
 # `./moq build -- --features xmpp`.
 xmpp = ["moqui-host/xmpp"]
+# The edge link (plans/Edge-Node.md), in Enterprise and Maximal; for a Default build `./moq build -- --features edge`.
+edge = ["moqui-host/edge"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the

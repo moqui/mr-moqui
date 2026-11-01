@@ -34,11 +34,10 @@ use base64::Engine;
 use moqui_core::cluster::Sender;
 use moqui_core::context::{ErrorKind, ExecutionContextFactory};
 use moqui_core::notify::TopicMessage;
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
-use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::DigitallySignedStruct;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use sha2::{Digest, Sha256};
+
+use crate::tls_pin::{Pin, PinVerifier};
 
 const DEFAULT_PORT: u16 = 8444;
 const BODY_LIMIT: usize = moqui_core::cluster::MAX_CLUSTER_BODY;
@@ -788,119 +787,8 @@ fn server_config(material: &Material) -> Result<rustls::ServerConfig, HostError>
         .map_err(|err| HostError::new(format!("cluster tls server certificate: {err}")))
 }
 
-fn fingerprint_verifier(material: &Material, provider: &rustls::crypto::CryptoProvider) -> Arc<FingerprintVerifier> {
-    Arc::new(FingerprintVerifier {
-        digest: material.digest,
-        schemes: provider.signature_verification_algorithms,
-        hints: Vec::new(),
-    })
-}
-
-struct FingerprintVerifier {
-    digest: [u8; 32],
-    schemes: rustls::crypto::WebPkiSupportedAlgorithms,
-    hints: Vec<rustls::DistinguishedName>,
-}
-
-impl std::fmt::Debug for FingerprintVerifier {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("FingerprintVerifier").finish_non_exhaustive()
-    }
-}
-
-impl FingerprintVerifier {
-    fn trusted(&self, end_entity: &CertificateDer<'_>) -> Result<(), rustls::Error> {
-        let digest = Sha256::digest(end_entity.as_ref());
-        if digest.as_slice() == self.digest {
-            Ok(())
-        } else {
-            Err(rustls::Error::InvalidCertificate(
-                rustls::CertificateError::UnknownIssuer,
-            ))
-        }
-    }
-}
-
-impl ServerCertVerifier for FingerprintVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        self.trusted(end_entity)?;
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.schemes)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.schemes)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.schemes.supported_schemes()
-    }
-}
-
-impl ClientCertVerifier for FingerprintVerifier {
-    fn offer_client_auth(&self) -> bool {
-        true
-    }
-
-    fn client_auth_mandatory(&self) -> bool {
-        true
-    }
-
-    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
-        &self.hints
-    }
-
-    fn verify_client_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _now: UnixTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
-        self.trusted(end_entity)?;
-        Ok(ClientCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.schemes)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.schemes)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.schemes.supported_schemes()
-    }
+fn fingerprint_verifier(material: &Material, provider: &rustls::crypto::CryptoProvider) -> Arc<PinVerifier> {
+    PinVerifier::new(Pin::Certificate(material.digest), true, provider)
 }
 
 fn join_handle(name: &str, handle: JoinHandle<()>) {
