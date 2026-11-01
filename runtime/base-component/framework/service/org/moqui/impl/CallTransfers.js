@@ -112,6 +112,16 @@ function myCall(callSessionId, revision) {
   return { session, me, myLeg }
 }
 
+/**
+ * An external user (the framework permission EXTERNAL_USER; a failed check counts as external) chooses nobody to ring:
+ * as Calls.js start refuses them a call to people of their choosing, they neither transfer a call nor add to it.
+ */
+function externalRefusal(userId) {
+  const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [userId])
+    .disableAuthz().call()
+  return out?.anyExternal !== false ? refuse('notAllowed', 'You may not transfer this call or add to it') : null
+}
+
 function openTransfer(callSessionId) {
   return Array.from(find(TRANSFER).condition('callSessionId', callSessionId).condition('statusId', 'in', OPEN).forUpdate(true).limit(1).list())[0] || null
 }
@@ -169,7 +179,7 @@ function dialNumber(session, number, me) {
   }
   const node = one('moqui.call.SipNode', { instanceId: session.mediaNodeId })
   if (!node) return { refusal: refuse('voiceUnavailable', 'Phone calls are not available on this call\'s media server') }
-  const added = calls('addPhoneLeg', { callSessionId: session.callSessionId, phoneNumber: number, displayName: number })
+  const added = calls('addPhoneLeg', { callSessionId: session.callSessionId, phoneNumber: number, displayName: number, dialedByUserId: me })
   if (!added.callLegId) return { refusal: refuse(added.reasonCode || 'callEnded', 'The call has ended') }
   const dialed = voice('dialForward', { callSessionId: session.callSessionId, callLegId: added.callLegId, phoneNumber: number,
     userId: me, transfer: true, fromNumber: callerIdFor(session, me) })
@@ -193,6 +203,8 @@ function transfer(p) {
   const mine = myCall(p.callSessionId, p.revision)
   if (mine.refusal) return mine.refusal
   const { session, me, myLeg } = mine
+  const external = externalRefusal(me)
+  if (external) return external
   if (openTransfer(session.callSessionId)) return refuse('transferring', 'This call is being transferred already')
   const far = farLeg(session)
   if (!far) return refuse('noPhone', 'Only a phone call\'s outside party is transferred: add the person to the call instead')
@@ -263,11 +275,22 @@ function resumeHeld(row, session) {
   engine(session, { action: 'resume', callLegId: held.callLegId })
 }
 
+/**
+ * A transfer and its call, locked as every other path locks them, the call first (Calls.js answer, phoneEvent and
+ * declineRing lock the call, then its open transfer), so two of them never wait on each other.
+ */
+function lockTransfer(callTransferId) {
+  const seen = callTransferId ? one(TRANSFER, { callTransferId }) : null
+  if (!seen) return { row: null, session: null }
+  const session = find(SESSION).condition('callSessionId', seen.callSessionId).forUpdate(true).one()
+  const row = find(TRANSFER).condition('callTransferId', callTransferId).forUpdate(true).one()
+  return { row, session }
+}
+
 function myTransfer(callTransferId) {
   const me = ec.user.userId
-  const row = callTransferId ? find(TRANSFER).condition('callTransferId', callTransferId).forUpdate(true).one() : null
+  const { row, session } = me ? lockTransfer(callTransferId) : { row: null, session: null }
   if (!me || !row || row.fromUserId !== me) return { refusal: refuse('notFound', 'Transfer not found') }
-  const session = find(SESSION).condition('callSessionId', row.callSessionId).forUpdate(true).one()
   if (!session || session.statusId === 'CssEnded') return { refusal: refuse('callEnded', 'The call has ended') }
   return { row, session }
 }
@@ -325,9 +348,8 @@ function blindFallback(row) {
  * answers where the far end goes (the target user's voicemail, or the end), or mode done when the transfer is over.
  */
 function expire(p) {
-  const row = p.callTransferId ? find(TRANSFER).condition('callTransferId', p.callTransferId).forUpdate(true).one() : null
+  const { row, session } = lockTransfer(p.callTransferId)
   if (!row || row.statusId !== 'CtsRinging') return { mode: 'done' }
-  const session = find(SESSION).condition('callSessionId', row.callSessionId).forUpdate(true).one()
   if (!session || session.statusId === 'CssEnded') return { mode: 'done' }
   if (row.targetTypeEnumId === 'CtgUser') calls('closeOffers', { callSessionId: row.callSessionId })
   else dropTarget(row)
@@ -408,6 +430,8 @@ function addParticipant(p) {
   const mine = myCall(p.callSessionId, p.revision)
   if (mine.refusal) return mine.refusal
   const { session, me } = mine
+  const external = externalRefusal(me)
+  if (external) return external
   if (!blank(p.userId)) {
     const target = resolveTarget('user', p.userId, me)
     if (target.refusal) return target.refusal

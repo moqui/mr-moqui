@@ -298,7 +298,12 @@ a transfer: a `CallQueueEntry`, waiting.
   logged in), round robin (after the last one offered) or all at once. An offer rings the agents' tabs and phones as
   any call does, with a `CallUserLog` row (`CurQueueAgent`); the first answer wins. An offer that rings `ringSeconds`
   ends (the agents rung missed it) and the next agent is offered; one who missed the call is offered it again only when
-  nobody else is free.
+  nobody else is free. An agent who declines ends their offer at once: the call waits on (it does not go to voicemail)
+  and the next tick offers it to another agent, the one who declined only when nobody else is free.
+- **Locks.** A tick, a call entering and an agent's status change lock the queue's row first, then a call, then its
+  entry, as an answer locks the call, then the entry; so two ticks of one queue never wait on each other. A tick that
+  fails (the services unavailable for a moment) is tried again on the next one, up to three in a row, before the call
+  ends.
 - **After the call** the agent who answered is in wrap-up for `wrapUpSeconds` and skipped.
 - **Limits.** A call that waited `maxWaitSeconds`, one that finds `maxLength` calls waiting, and one outside the queue's
   schedule go to its fallback (a `CallTarget`, as an IVR option's). A caller who hangs up abandons the entry.
@@ -315,7 +320,8 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   outside number or a queue, and the user's leg leaves at once (`CerTransferred`). The far end hears ringback until the
   target answers; a target that does not answer in `call_transfer_ring_seconds` (the engine's timer, then
   `expire#CallTransfer`), or declines, missed it, and the far end goes to the target user's voicemail (a number's: the
-  call ends). A transfer to a queue puts the far end in it at once.
+  call ends). A transfer to a queue puts the far end in it at once. The timer of a transfer that is over (answered, or
+  the call moved on to a queue or another transfer) does nothing.
 - **Attended transfer** (mode `attended`): the far end is put on hold (hold music, not heard by the others), the target
   rings in the same call, the user talks to them, then `complete#CallTransfer` (the target answered: the far end comes
   off hold with them and the user leaves) or `cancel#CallTransfer` (the target leaves, the far end comes back).
@@ -325,10 +331,14 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   canceled, the call ends and the target's answer finds it ended; if the target answers first, the transfer completes
   and the call goes on until either hangs up. Two outside parties left alone by a transfer to a number stay bridged
   until one of them hangs up.
+- **Who.** A user transfers, adds to and merges only calls they are in (an answered leg). An external user (the
+  framework permission `EXTERNAL_USER`) neither transfers nor adds, as they start no call to people of their choosing,
+  and is offered no queues.
 - **Add a participant** (`add#CallParticipant`): a user rings in the call (a direct call becomes a group call first), or
   a number joins it as one more phone leg. An end-to-end encrypted call adds no phone legs.
 - **Numbers** a transfer or an add calls are calls the user places: their outbound permission, the deployment's and
-  their international and premium permissions, emergency numbers refused, and their limits at once and per day; the
+  their international and premium permissions, emergency numbers refused, and their limits at once and per day, which
+  count the numbers they added or transferred to (`CallLeg.dialedByUserId`) with the calls they placed and forwards; the
   number presented is the one the call came in on, else the user's first caller ID. One of our own numbers goes to the
   user or queue it routes to.
 - **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and

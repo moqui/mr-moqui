@@ -243,3 +243,16 @@ fn the_tone_patterns_are_synthetic_and_a_place_is_pips_or_spoken_digits() {
         chime + 2 * (100 + 80 * rate)
     );
 }
+
+#[test]
+fn a_transfer_that_is_over_leaves_the_leg_where_it_is_now() {
+    // done: the target answered, or a later transfer put the leg in a queue, whose ticks a routed done would stop
+    let done = serde_json::json!({"answer": {"mode": "done"}});
+    assert!(expired_route("L1", Ok(done)).is_none());
+    // a failed expiry is logged; the leg is not ended
+    assert!(expired_route("L1", Err("db".to_string())).is_none());
+    // nobody answered: the target's voicemail
+    let voicemail = serde_json::json!({"answer": {"mode": "voicemail", "stepToken": "3"}});
+    let routed = expired_route("L1", Ok(voicemail.clone())).expect("routed");
+    assert_eq!(routed, Ok(voicemail));
+}

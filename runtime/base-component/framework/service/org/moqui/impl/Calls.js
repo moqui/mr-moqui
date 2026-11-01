@@ -692,6 +692,12 @@ function declineRing(session, participant, leg, userId) {
   // V5: a transfer's target declined: the transfer decides (the target's voicemail, or back to the consult)
   if (find(TRANSFER).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count() &&
     v5('CallTransfers', 'declined', { callSessionId: session.callSessionId, userId }).handled) return
+  // V5: a queue agent declined its offer: the call waits on in the queue, offered to another agent on its next tick; it does
+  // not go to voicemail (nor on through a handling plan it had before it was transferred to the queue)
+  if (find(QUEUE_ENTRY).condition('callSessionId', session.callSessionId).condition('statusId', 'CqeWaiting').count()) {
+    v5('CallQueues', 'declined', { callSessionId: session.callSessionId, userId })
+    return
+  }
   // V3: the call's handling plan goes on (a ring group's next member, a forward), or to voicemail
   if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) {
     phoneControl(session, 'voicemail', { reason: 'declined', stepToken: routeStepToken(session.callSessionId) })
@@ -1920,7 +1926,8 @@ function addPhoneLeg(p) {
   if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
   const participant = makePhoneParticipant(session, p.displayName || p.phoneNumber, 'CasInvited')
   const leg = makeLeg(session, participant, 'ClsOffered', 'CltPstn')
-  leg.set('phoneNumber', p.phoneNumber)
+  // the user who added it: their limits at once and per day count it (Voice.js dialForward)
+  leg.setFields({ phoneNumber: p.phoneNumber, dialedByUserId: p.dialedByUserId || null }, true, null, null)
   leg.update()
   bump(session)
   session.update()

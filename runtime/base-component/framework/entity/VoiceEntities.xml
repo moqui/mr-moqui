@@ -715,9 +715,12 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
-    <!-- hold (V5): a leg on hold, its phone hearing hold music and not heard by the others -->
+    <!-- hold (V5): a leg on hold, its phone hearing hold music and not heard by the others; dialedByUserId: the user who
+        added the number or transferred the call to it, whose limits at once and per day count the leg -->
     <extend-entity entity-name="CallLeg" package="moqui.call">
         <field name="heldDate" type="date-time"/>
+        <field name="dialedByUserId" type="id"/>
+        <index name="CALL_LEG_DIALED_BY"><index-field name="dialedByUserId"/><index-field name="offeredDate"/></index>
     </extend-entity>
     <!-- ========== end V5 ========== -->
 </entities>

@@ -130,9 +130,11 @@ function choose(queue, atMs, offered, skip) {
 
 /** Offers one waiting entry to the queue's free agents; false when none is free. */
 function offerEntry(queue, entry, atMs, offered) {
-  // one at a time, an agent who missed this call is offered it again only when nobody else is free
-  const missed = queue.strategyEnumId === 'CqsAllAtOnce' ? null
-    : new Set(rows('moqui.call.CallUserLog', { callSessionId: entry.callSessionId, outcomeEnumId: 'CuoMissed' }).map((l) => l.userId))
+  // one at a time, an agent who missed or declined this call is offered it again only when nobody else is free; all at
+  // once, one who declined it
+  const skipped = queue.strategyEnumId === 'CqsAllAtOnce' ? ['CuoDeclined'] : ['CuoMissed', 'CuoDeclined']
+  const missed = new Set(Array.from(find('moqui.call.CallUserLog').condition('callSessionId', entry.callSessionId)
+    .condition('outcomeEnumId', 'in', skipped).selectField('userId').list()).map((l) => l.userId))
   const userIds = choose(queue, atMs, offered, missed)
   if (!userIds.length) return false
   const session = one(SESSION, { callSessionId: entry.callSessionId })
@@ -151,7 +153,7 @@ function offerEntry(queue, entry, atMs, offered) {
     }
   }
   if (queue.strategyEnumId === 'CqsRoundRobin') {
-    const row = find(QUEUE).condition('callQueueId', queue.callQueueId).forUpdate(true).one()
+    const row = one(QUEUE, { callQueueId: queue.callQueueId })
     row.set('lastAgentUserId', userIds[0])
     row.update()
     queue.lastAgentUserId = userIds[0]
@@ -165,7 +167,15 @@ function waiting(callQueueId) {
     .orderBy('callQueueEntryId').list())
 }
 
-/** Offers the waiting calls that have no offer, oldest first, while agents are free. */
+/**
+ * The queue's row, locked: its offers are made one tick, entry or agent change at a time, the queue before any call
+ * (a tick offers other calls of the queue, locking each; two at once would wait on each other).
+ */
+function lockQueue(callQueueId) {
+  return callQueueId ? find(QUEUE).condition('callQueueId', callQueueId).forUpdate(true).one() : null
+}
+
+/** Offers the waiting calls that have no offer, oldest first, while agents are free (the queue locked: lockQueue). */
 function offerWaiting(queue, atMs) {
   const offered = offeredUsers()
   for (const entry of waiting(queue.callQueueId)) {
@@ -228,7 +238,7 @@ function fallback(queue, entry, ctx, why) {
  */
 function enter(p) {
   const atMs = atOf(p)
-  const queue = p.callQueueId ? one(QUEUE, { callQueueId: p.callQueueId }) : null
+  const queue = lockQueue(p.callQueueId)
   const ctx = { callSessionId: p.callSessionId, callLegId: p.callLegId, fromNumber: p.fromNumber || null,
     displayName: p.displayName || null, atMs, depth: intOr(p.depth, 0) }
   if (!queue) {
@@ -257,9 +267,14 @@ function enter(p) {
  */
 function tick(p) {
   const atMs = atOf(p)
-  const entry = p.callQueueEntryId ? find(ENTRY).condition('callQueueEntryId', p.callQueueEntryId).forUpdate(true).one() : null
+  // the queue, then the call, then its entry: the order of every other path (enter, an agent's status; an answer locks
+  // the call, then the entry)
+  const seen = p.callQueueEntryId ? one(ENTRY, { callQueueEntryId: p.callQueueEntryId }) : null
+  if (!seen || seen.statusId !== 'CqeWaiting') return { mode: 'done' }
+  lockQueue(seen.callQueueId)
+  const session = find(SESSION).condition('callSessionId', seen.callSessionId).forUpdate(true).one()
+  const entry = find(ENTRY).condition('callQueueEntryId', p.callQueueEntryId).forUpdate(true).one()
   if (!entry || entry.statusId !== 'CqeWaiting') return { mode: 'done' }
-  const session = one(SESSION, { callSessionId: entry.callSessionId })
   if (!session || session.statusId === 'CssEnded') {
     entry.setFields({ statusId: 'CqeAbandoned', endedDate: new Date(atMs) }, true, null, null)
     entry.update()
@@ -286,6 +301,22 @@ function answered(p) {
     entry.update()
   }
   return {}
+}
+
+/**
+ * Internal (Calls.js declineRing): an agent declined the offer of a waiting call. With nobody else it rings, the offer is
+ * over and the next tick offers the call to another agent (the one who declined only when nobody else is free).
+ */
+function declined(p) {
+  let handled = false
+  for (const entry of Array.from(find(ENTRY).condition('callSessionId', p.callSessionId).condition('statusId', 'CqeWaiting').forUpdate(true).list())) {
+    handled = true
+    const others = String(entry.offerUserIds || '').split(',').filter((id) => id && id !== p.userId)
+    const ringing = find('moqui.call.CallLeg').condition('callSessionId', p.callSessionId).condition('statusId', 'ClsOffered').count()
+    entry.setFields(ringing && others.length ? { offerUserIds: others.join(',') } : { offeredDate: null, offerUserIds: null }, true, null, null)
+    entry.update()
+  }
+  return { handled }
 }
 
 /** Internal (Calls.js, when an answered leg closes): the agent who answered a queue call goes into wrap-up. */
@@ -350,6 +381,8 @@ function setAgentStatus(p) {
   if (!mine.length) return refuse('notFound', 'You take no calls for that queue')
   const atMs = atOf(p)
   for (const row of mine) {
+    // the queue first, as a tick locks it before the agents it offers to
+    const queue = lockQueue(row.callQueueId)
     const agent = find(AGENT).condition({ callQueueId: row.callQueueId, userId: me }).forUpdate(true).one()
     if (p.status === 'in') agent.setFields({ loggedIn: 'Y', paused: 'N', loggedInDate: agent.loggedIn === 'Y' ? agent.loggedInDate : new Date(atMs) }, true, null, null)
     else if (p.status === 'out') agent.setFields({ loggedIn: 'N', paused: 'N' }, true, null, null)
@@ -357,7 +390,6 @@ function setAgentStatus(p) {
     agent.update()
     // a waiting call rings an agent who just came free
     if (p.status === 'in' || p.status === 'resume') {
-      const queue = one(QUEUE, { callQueueId: row.callQueueId })
       if (queue) offerWaiting(queue, atMs)
     }
   }
@@ -499,6 +531,10 @@ function storeQueueAudio(p) {
 /** The queues a signed-in user may transfer a call to: their names, with how many calls wait and agents are free. */
 function transferQueues(p) {
   if (!ec.user.userId) return refuse('notSignedIn', 'Sign in first')
+  // an external user (EXTERNAL_USER) transfers no call (CallTransfers.js), so sees no queue
+  const outside = ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [ec.user.userId])
+    .disableAuthz().call()
+  if (outside?.anyExternal !== false) return { queueList: [] }
   const atMs = nowMs()
   const term = String(p.term || '').trim().toLowerCase()
   return {
@@ -510,7 +546,7 @@ function transferQueues(p) {
 
 const operations = {
   transferQueues,
-  enter, tick, answered, legClosed, sessionEnded, myQueues, setAgentStatus, findQueues, storeQueue, deleteQueue, storeAgent,
+  enter, tick, answered, declined, legClosed, sessionEnded, myQueues, setAgentStatus, findQueues, storeQueue, deleteQueue, storeAgent,
   deleteAgent, storeQueueAudio,
 }
 

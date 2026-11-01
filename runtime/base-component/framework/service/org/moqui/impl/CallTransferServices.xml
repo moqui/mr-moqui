@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     attended transfer of a phone call's outside party, a person or a number added to a call, two calls merged into a meeting,
     and a call made a meeting. The logic is CallTransfers.js beside this file. Each user service acts on a call the
     signed-in user is in (another's is "not found"), refuses a call that still rings, and takes the call's revision (a
-    stale one is refused); a number is under the fraud policy of a call the user places. refer#Call and expire#CallTransfer
+    stale one is refused); a number is under the fraud policy of a call the user places, and counts toward the user's limits
+    at once and per day (CallLeg dialedByUserId). An external user (EXTERNAL_USER) neither transfers nor adds (notAllowed). refer#Call and expire#CallTransfer
     are internal (the SIP engine). No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 

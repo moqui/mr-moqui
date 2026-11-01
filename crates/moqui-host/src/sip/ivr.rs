@@ -374,16 +374,39 @@ pub(crate) enum LoopKind {
     Music(Option<String>),
 }
 
+/// What a blind transfer's timer does with `expire#CallTransfer`'s answer: where the far end goes now, or nothing. A
+/// transfer that is over (mode `done`: its target answered, the call ended) leaves the leg as it is now, which may be
+/// waiting in a queue or ringing a later transfer's target; a `done` routed would stop that queue's ticks. One that failed
+/// is logged and leaves the leg too, rather than ending a call its target may have answered.
+fn expired_route(leg: &str, result: Result<Json, String>) -> Option<Result<Json, String>> {
+    match result {
+        Ok(out) => {
+            let mode = out.get("answer").map(|a| text(a, "mode")).unwrap_or_default();
+            (mode != "done").then_some(Ok(out))
+        }
+        Err(err) => {
+            tracing::error!("SIP leg {leg}: the transfer's expiry failed: {err}");
+            None
+        }
+    }
+}
+
 /// One call in a menu on the engine.
 pub(super) struct IvrCall {
     machine: Machine,
 }
 
-/// One call waiting in a queue: its entry, and the generation of its next tick (a newer one replaces it).
+/// One call waiting in a queue: its entry, the generation of its next tick (a newer one replaces it), the seconds
+/// between ticks, and the ticks that failed in a row.
 pub(super) struct QueueCall {
     entry: String,
     generation: u64,
+    seconds: u64,
+    failures: u32,
 }
+
+/// The ticks of a queue call that may fail in a row (the services unavailable for a moment) before the call ends.
+const MAX_TICK_FAILURES: u32 = 3;
 
 /// The audio at a location, 48 kHz mono; none when it is not set or does not read (logged).
 fn location_audio(factory: &Arc<moqui_core::context::ExecutionContextFactory>, location: &str) -> Option<Vec<i16>> {
@@ -453,15 +476,8 @@ impl Engine {
                 if super::flag(answer, "announce") {
                     self.announce(leg, answer);
                 }
-                self.next_tick += 1;
-                let generation = self.next_tick;
-                self.queued.insert(leg.to_string(), QueueCall { entry, generation });
                 let seconds = number(answer, "tickSeconds").unwrap_or(5).clamp(1, 30);
-                let (commands, leg) = (self.commands.clone(), leg.to_string());
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(seconds)).await;
-                    let _ = commands.send(Command::QueueTick { leg, generation });
-                });
+                self.arm_tick(leg, entry, seconds, 0);
             }
             "ring" => {
                 self.set_loop(leg, Some(LoopKind::Ringback));
@@ -474,8 +490,13 @@ impl Engine {
                 self.set_loop(leg, None);
                 self.start_voicemail(leg, "busy", step_token(answer));
             }
+            // the call no longer waits (an agent answered, or it ended); a tick answered as the agent answered may have
+            // put the music back, which goes now unless the leg is on hold
             "done" => {
                 self.queued.remove(leg);
+                if self.legs.get(leg).is_some_and(|e| e.answered && !e.held) {
+                    self.set_loop(leg, None);
+                }
             }
             _ => {
                 tracing::info!("SIP leg {leg}: the call ends ({})", text(answer, "reasonCode"));
@@ -549,12 +570,39 @@ impl Engine {
         });
     }
 
-    /// A service's answer of where the call goes; one that failed ends the call.
+    /// The next tick of a call waiting in a queue, replacing any it had.
+    fn arm_tick(&mut self, leg: &str, entry: String, seconds: u64, failures: u32) {
+        self.next_tick += 1;
+        let generation = self.next_tick;
+        self.queued.insert(
+            leg.to_string(),
+            QueueCall {
+                entry,
+                generation,
+                seconds,
+                failures,
+            },
+        );
+        let (commands, leg) = (self.commands.clone(), leg.to_string());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(seconds)).await;
+            let _ = commands.send(Command::QueueTick { leg, generation });
+        });
+    }
+
+    /// A service's answer of where the call goes. One that failed ends the call, but for a call waiting in a queue,
+    /// whose tick is tried again (the caller keeps their place and music) up to [`MAX_TICK_FAILURES`] times in a row.
     pub(super) fn routed(&mut self, leg: &str, result: Result<Json, String>) {
         match result {
             Ok(out) => {
                 let answer = out.get("answer").cloned().unwrap_or(Json::Null);
                 self.route_answer(leg, &answer);
+            }
+            Err(err) if self.queued.get(leg).is_some_and(|q| q.failures + 1 < MAX_TICK_FAILURES) => {
+                let Some(call) = self.queued.get(leg) else { return };
+                let (entry, seconds, failures) = (call.entry.clone(), call.seconds, call.failures + 1);
+                tracing::error!("SIP leg {leg}: its queue tick failed ({failures} in a row), tried again: {err}");
+                self.arm_tick(leg, entry, seconds, failures);
             }
             Err(err) => {
                 tracing::warn!("SIP leg {leg}: not routed, the call ends: {err}");
@@ -684,7 +732,9 @@ impl Engine {
                 serde_json::json!({"callTransferId": transfer}),
             )
             .await;
-            let _ = commands.send(Command::Routed { leg, result });
+            if let Some(result) = expired_route(&leg, result) {
+                let _ = commands.send(Command::Routed { leg, result });
+            }
         });
     }
 

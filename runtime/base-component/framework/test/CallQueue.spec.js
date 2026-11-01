@@ -4,7 +4,8 @@
 // phones with a CallUserLog row; an offer that rings out is missed and the next agent is offered; with all at once the
 // first answer wins and the entry is answered; after a queue call its agent is in wrap-up and skipped; past its wait
 // limit or its length the call goes to the fallback; the stats count the waiting calls, the longest wait and the free
-// agents; a caller who hangs up abandons the entry. Time is simulated (tick#QueueCall and the agents' status at atMs).
+// agents; a caller who hangs up abandons the entry; an agent who declines an offer ends it, the call waits on (not to
+// voicemail) and the next tick offers it to another agent. Time is simulated (tick#QueueCall and the agents' status at atMs).
 // No SIP engine runs here: fake SipNode and CallMediaNode rows stand in for one.
 // Run: ./moq test framework --spec CallQueue
 const ADMIN = "CQ_SPEC_ADMIN"
@@ -306,5 +307,39 @@ feature("past its wait limit a call goes to the fallback; a full queue sends a n
         abandoned.statusId == "CqeAbandoned"
         thirdTick.mode == "done"
         after.waitingCount == 1
+    }
+})
+
+feature("an agent who declines an offer ends it: the call waits on and the next tick offers it to another agent", {
+    when() {
+        endAll()
+        sys(() => ec.entity.find(AGENT).condition("callQueueId", queueId).updateAll({wrapUpUntilDate: null}))
+        as(A1, "set#QueueAgentStatus", {status: "in"})
+        as(A2, "set#QueueAgentStatus", {status: "in"})
+        const now = Date.now()
+        upsert(AGENT, {callQueueId: queueId, userId: A1}, {lastCallEndDate: new Date(now - 60000)})
+        upsert(AGENT, {callQueueId: queueId, userId: A2}, {lastCallEndDate: new Date(now - 600000)})
+        const call = receive()
+        const first = offeredTo(call.callSessionId)
+        const declined = as(A2, "org.moqui.impl.CallServices.decline#Call", {callSessionId: call.callSessionId})
+        const afterDecline = entryOf(call)
+        // 5 s on, well inside ringSeconds: A1 rings, not A2 again
+        const next = tick(call, now + 5000)
+        const second = offeredTo(call.callSessionId)
+        const callAfter = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", call.callSessionId).one())
+        const phoneLeg = sys(() => ec.entity.find(LEG).condition("callLegId", call.callLegId).one())
+        return {call, first, declined, afterDecline, next, second, callAfter, phoneLeg, a2Log: log(call.callSessionId, A2)}
+    },
+    then({call, first, declined, afterDecline, next, second, callAfter, phoneLeg, a2Log}) {
+        call.ivr.mode == "queue"
+        first.join(",") == A2
+        declined.errors == ""
+        afterDecline.statusId == "CqeWaiting"
+        afterDecline.offeredDate == null
+        a2Log.outcomeEnumId == "CuoDeclined"
+        next.mode == "queue"
+        second.join(",") == A1
+        callAfter.statusId != "CssEnded"
+        phoneLeg.statusId == "ClsAnswered"
     }
 })

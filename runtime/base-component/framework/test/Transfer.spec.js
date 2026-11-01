@@ -6,14 +6,17 @@
 // far end goes to the target's voicemail; a transfer to an international number is refused under the fraud policy (the
 // same transfer to a domestic number goes); a number transferred to hears the recording notice and acknowledges it by
 // pressing 1; a person is added, a number is not added to an end-to-end encrypted call; two calls on one media node
-// merge into a meeting, and calls on different nodes are refused. No SIP engine runs here: fake SipNode and CallMediaNode
+// merge into a meeting, and calls on different nodes are refused. The numbers a user adds count toward their limit of calls
+// at once; an external user (EXTERNAL_USER) in a call neither adds to it nor transfers it. No SIP engine runs here: fake SipNode and CallMediaNode
 // rows stand in for one, and the phones' events come through note#PhoneLeg.
 // Run: ./moq test framework --spec Transfer
 const ADMIN = "XFER_SPEC_ADMIN"
 const A = "XFER_SPEC_A"
 const B = "XFER_SPEC_B"
 const C = "XFER_SPEC_C"
-const USERS = [ADMIN, A, B, C]
+const D = "XFER_SPEC_D"
+const EXTERNAL_GROUP = "XFER_SPEC_EXTERNAL"
+const USERS = [ADMIN, A, B, C, D]
 const NODE = "xfer-spec-node"
 const NODE2 = "xfer-spec-node2"
 const TRUNK = "XFER_SPEC_TRUNK"
@@ -127,6 +130,18 @@ spec({
     setupSpec() {
         makeUser(ADMIN, "ADMIN")
         for (const userId of [A, B, C]) makeUser(userId)
+        // D is an external user (a client's contact): the framework permission EXTERNAL_USER through a group
+        sys(() => {
+            if (!ec.entity.find("moqui.security.UserGroup").condition("userGroupId", EXTERNAL_GROUP).one()) {
+                const group = ec.entity.makeValue("moqui.security.UserGroup")
+                group.setFields({userGroupId: EXTERNAL_GROUP, description: "Xfer spec external"}, true, null, null)
+                group.create()
+                const grant = ec.entity.makeValue("moqui.security.UserGroupPermission")
+                grant.setFields({userGroupId: EXTERNAL_GROUP, userPermissionId: "EXTERNAL_USER", fromDate: new Date(Date.now() - 60000)}, true, null, null)
+                grant.create()
+            }
+        })
+        makeUser(D, EXTERNAL_GROUP)
         clean()
         nodesUp()
         const admin = (name, parameters) => as(ADMIN, "org.moqui.impl.VoiceServices." + name, parameters)
@@ -376,5 +391,40 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         aSecond.statusId == "ClsLeft"
         otherNode.reasonCode == "differentNodes"
         meeting.call.kind == "meeting"
+    }
+})
+
+feature("the numbers a user adds count toward their limit of calls at once; an external user neither adds to a call nor transfers it", {
+    when() {
+        endAll()
+        as(ADMIN, "org.moqui.impl.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: 2})
+        // A's call is one, the first number added two (the limit), the second would be three
+        const call = outbound()
+        const first = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, phoneNumber: "+15550199955"})
+        const firstLeg = first.callLegId ? leg(first.callLegId) : null
+        const second = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, phoneNumber: "+15550199944"})
+        as(ADMIN, "org.moqui.impl.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: ""})
+        // D, an external user, is added to an inbound call and answers; then adds C and transfers the caller to C: both refused,
+        // where A, with the very same parameters, adds C
+        endAll()
+        const inCall = inbound()
+        as(A, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: D})
+        const dAnswered = as(D, "org.moqui.impl.CallServices.answer#Call", {callSessionId: inCall.callSessionId})
+        const dAdds = as(D, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: C})
+        const dTransfers = as(D, "transfer#Call", {callSessionId: inCall.callSessionId, targetType: "user", targetId: C, mode: "blind"})
+        const dQueues = as(D, "org.moqui.impl.CallQueueServices.find#TransferQueues", {term: ""})
+        const aAdds = as(A, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: C})
+        return {first, firstLeg, second, dAnswered, dAdds, dTransfers, dQueues, aAdds, cRinging: lastLeg(inCall.callSessionId, C)}
+    },
+    then({first, firstLeg, second, dAnswered, dAdds, dTransfers, dQueues, aAdds, cRinging}) {
+        first.errors == ""
+        firstLeg.dialedByUserId == A
+        second.reasonCode == "tooManyCalls"
+        dAnswered.errors == ""
+        dAdds.reasonCode == "notAllowed"
+        dTransfers.reasonCode == "notAllowed"
+        dQueues.queueList.length == 0
+        aAdds.errors == ""
+        cRinging.statusId == "ClsOffered"
     }
 })

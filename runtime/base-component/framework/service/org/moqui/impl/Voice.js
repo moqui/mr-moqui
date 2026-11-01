@@ -461,6 +461,20 @@ function forwardLegCount(userId, sinceMs) {
 }
 
 /**
+ * V5: the numbers the user added to calls or transferred calls to (CallLeg dialedByUserId), offered since sinceMs, or (with
+ * sinceMs null) still open in a call that has not ended.
+ */
+function dialedLegCount(userId, sinceMs) {
+  const f = find(LEG).condition('dialedByUserId', userId).condition('legTypeEnumId', 'CltPstn')
+  if (sinceMs != null) return f.condition('offeredDate', '>=', new Date(sinceMs)).count()
+  const open = Array.from(f.condition('statusId', 'in', ['ClsOffered', 'ClsAnswered']).selectField('callSessionId').limit(200).list())
+  if (!open.length) return 0
+  const live = new Set(Array.from(find(SESSION).condition('callSessionId', 'in', Array.from(new Set(open.map((l) => l.callSessionId))))
+    .condition('statusId', '!=', 'CssEnded').selectField('callSessionId').list()).map((s) => s.callSessionId))
+  return open.filter((l) => live.has(l.callSessionId)).length
+}
+
+/**
  * Internal (CallHandling.js): dials a forwarded leg (Calls.js made it, offered) through the trunk of the number the call
  * came in on, which is its caller ID, after forwardCheck and the user's limits at once and per day; the engine checks the
  * destination again. One refused is closed as failed here (reasonCode), and the call goes on with its other legs.
@@ -479,9 +493,13 @@ function dialForward(p) {
     const setting = userSetting(p.userId)
     const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
     const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
-    // the user's limits count their forwards with the calls they place; the leg being dialed is open already
-    if (forwardLegCount(p.userId, null) + countPhoneCalls({ startedByUserId: p.userId }) > perUser) return refused('tooManyCalls')
-    if (forwardLegCount(p.userId, dayStart) + countPhoneCalls({ startedByUserId: p.userId, directionEnumId: 'CdrOutbound' }, dayStart) > perDay) {
+    // the user's limits count their forwards and the numbers they added or transferred to (V5) with the calls they place;
+    // the leg being dialed is open already
+    if (forwardLegCount(p.userId, null) + dialedLegCount(p.userId, null) + countPhoneCalls({ startedByUserId: p.userId }) > perUser) {
+      return refused('tooManyCalls')
+    }
+    if (forwardLegCount(p.userId, dayStart) + dialedLegCount(p.userId, dayStart) +
+      countPhoneCalls({ startedByUserId: p.userId, directionEnumId: 'CdrOutbound' }, dayStart) > perDay) {
       return refused('dailyLimit')
     }
   }
