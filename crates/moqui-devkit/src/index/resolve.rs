@@ -107,6 +107,7 @@ impl Resolver {
     }
 
     /// Know an artifact by its id, kind, name and short name alone, as the rows give them.
+    #[cfg(test)]
     pub fn add_parts(&mut self, id: &str, kind: &str, name: &str, short_name: &str) {
         self.add(&ArtifactRow {
             id: id.to_string(),
@@ -471,6 +472,8 @@ impl Resolver {
                 "entity" | "view-entity" => {
                     names.push(artifact.name.clone());
                     names.push(artifact.short_name.clone());
+                    // a call of its entity-auto services, which resolves to the derived service or the entity
+                    names.extend(Self::entity_auto_names(artifact));
                 }
                 "field" => names.push(artifact.short_name.clone()),
                 "parameter" => {
@@ -499,6 +502,23 @@ impl Resolver {
         }
         names.sort();
         names.dedup();
+        names
+    }
+}
+
+impl Resolver {
+    /// The entity-auto service names of the entity `artifact`, by its full and short name (`create#moqui.basic.Enumeration`,
+    /// `create#Enumeration`, and `update`, `store`, `delete`).
+    #[must_use]
+    pub fn entity_auto_names(artifact: &ArtifactRow) -> Vec<String> {
+        let mut names = Vec::new();
+        for verb in ["create", "update", "store", "delete"] {
+            for name in [&artifact.name, &artifact.short_name] {
+                if !name.is_empty() {
+                    names.push(format!("{verb}#{name}"));
+                }
+            }
+        }
         names
     }
 }

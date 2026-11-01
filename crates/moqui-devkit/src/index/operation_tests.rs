@@ -221,7 +221,8 @@ fn the_service_operation_of_a_name() {
         ("update#Example", "update"),
         ("delete#Example", "delete"),
         ("store#Example", "store"),
-        ("createOrUpdate#Example", "store"),
+        // not a verb of the entity-auto runner: a call of a service by that name
+        ("createOrUpdate#Example", "call"),
         ("example.Things.create#Example", "call"),
         ("example.Things.run#Thing", "call"),
     ] {
@@ -494,4 +495,123 @@ fn bindings_resolve_to_derived_parameters_and_are_replaced_per_file() {
             .count(),
         1
     );
+}
+
+/// A statement goes on past an `ec.` in an argument or in another name, and past a call nested in its arguments.
+#[test]
+fn a_statement_goes_on_past_an_ec_in_its_arguments() {
+    let groovy = r#"
+ec.entity.makeValue("moqui.example.Example").set("createdBy", ec.user.userId).create()
+ec.entity.makeValue("moqui.example.ExampleItem").setAll(rec.map).store()
+ec.entity.makeValue("moqui.example.ExampleRate").setAll(ec.entity.find("moqui.example.Example").one()).create()
+"#;
+    let index = read(
+        ArtifactKind::Script,
+        "/c/example/script/Chains.groovy",
+        "component://example/script/Chains.groovy",
+        groovy,
+    );
+    assert_eq!(
+        operations(&index),
+        [
+            ("moqui.example.Example", "script", "create"),
+            ("moqui.example.ExampleItem", "script", "store"),
+            ("moqui.example.ExampleRate", "script", "create"),
+            ("moqui.example.Example", "script", "find"),
+        ]
+    );
+}
+
+/// A value field given another value (an iterate's entry, a set) no longer holds the make-value's entity.
+#[test]
+fn a_value_field_given_another_value_is_not_the_made_one() {
+    let text = r#"<services>
+    <service verb="run" noun="Thing">
+        <actions>
+            <entity-make-value entity-name="moqui.example.Example" value-field="v"/>
+            <entity-create value-field="v"/>
+            <iterate list="items" entry="v"><entity-update value-field="v"/></iterate>
+            <entity-make-value entity-name="moqui.example.ExampleItem" value-field="w"/>
+            <set field="w" from="other"/>
+            <entity-delete value-field="w"/>
+        </actions>
+    </service>
+</services>"#;
+    let index = read(
+        ArtifactKind::Service,
+        "/c/example/service/example/Things.xml",
+        "component://example/service/example/Things.xml",
+        text,
+    );
+    assert_eq!(
+        operations(&index),
+        [
+            ("moqui.example.Example", "entity-make-value", "create"),
+            ("moqui.example.ExampleItem", "entity-make-value", ""),
+        ]
+    );
+}
+
+/// `true`, `false` and `null` from, and a value with no `${` (empty too), are literals.
+#[test]
+fn field_map_keywords_and_plain_values_are_literals() {
+    let text = r#"<services>
+    <service verb="run" noun="Thing">
+        <actions>
+            <service-call name="update#moqui.example.Example">
+                <field-map field-name="a" from="true"/>
+                <field-map field-name="b" from="null"/>
+                <field-map field-name="c" value=""/>
+                <field-map field-name="d" value="$5.00"/>
+                <field-map field-name="e" value="${total}"/>
+            </service-call>
+        </actions>
+    </service>
+</services>"#;
+    let index = read(
+        ArtifactKind::Service,
+        "/c/example/service/example/Things.xml",
+        "component://example/service/example/Things.xml",
+        text,
+    );
+    let kinds: Vec<(&str, &str)> = index
+        .bindings
+        .iter()
+        .map(|binding| (binding.source_text.as_str(), binding.source_kind.as_str()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("true", "literal"),
+            ("null", "literal"),
+            ("", "literal"),
+            ("$5.00", "literal"),
+            ("${total}", "expression"),
+        ]
+    );
+}
+
+/// A derived service whose entity's fields changed is dropped also when its rows come back parameters first, as rows
+/// read from the database may.
+#[test]
+fn a_changed_entity_drops_its_derived_service_whatever_the_row_order() {
+    let mut first = Resolver::default();
+    for artifact in &entities().artifacts {
+        first.add(artifact);
+    }
+    let derived = first.derive(calls().refs.iter());
+    let service = "service:update#moqui.example.Example";
+    assert!(derived.iter().any(|row| row.id == service), "{derived:?}");
+    let mut resolver = Resolver::default();
+    for artifact in &entities().artifacts {
+        resolver.add(artifact);
+    }
+    for row in derived.iter().rev() {
+        resolver.add(row);
+    }
+    assert_ne!(resolver.derived_rows(service)[0].id, service, "parameters first");
+    let changed = HashSet::from(["entity:moqui.example.Example".to_string()]);
+    let mut gone = BTreeSet::new();
+    let result = derive_in(&mut resolver, &[], &[], &changed, &[], &mut gone);
+    assert!(result.dropped.contains(&service.to_string()), "{:?}", result.dropped);
 }

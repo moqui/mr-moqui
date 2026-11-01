@@ -64,7 +64,7 @@ impl Backend {
         match self {
             Self::Local { index, .. } => {
                 let (_, artifact) = index.at(&path.display().to_string(), line, word)?;
-                artifact.map(|artifact| target_of(&artifact))
+                artifact.map(|artifact| target_of(index, &artifact))
             }
             Self::Remote(remote) => remote.at(path, line, word),
         }
@@ -84,7 +84,11 @@ impl Backend {
 
     fn find(&self, text: &str, kinds: &[String], limit: usize) -> Vec<Target> {
         match self {
-            Self::Local { index, .. } => index.find(text, kinds, limit).iter().map(target_of).collect(),
+            Self::Local { index, .. } => index
+                .find(text, kinds, limit)
+                .iter()
+                .map(|artifact| target_of(index, artifact))
+                .collect(),
             Self::Remote(remote) => remote.find(text, kinds, limit),
         }
     }
@@ -101,13 +105,21 @@ impl Backend {
     }
 }
 
-fn target_of(artifact: &index::ArtifactRow) -> Target {
+/// The target of `artifact`; a derived one (an entity-auto service or its parameter, no file's) is at its entity.
+fn target_of(index: &MemoryIndex, artifact: &index::ArtifactRow) -> Target {
+    let mut place = std::borrow::Cow::Borrowed(artifact);
+    while place.origin == index::extract::ORIGIN_DERIVED {
+        match place.parent.as_deref().and_then(|parent| index.describe(parent)) {
+            Some(parent) => place = std::borrow::Cow::Owned(parent),
+            None => break,
+        }
+    }
     Target {
         id: artifact.id.clone(),
         kind: artifact.kind.clone(),
         name: artifact.name.clone(),
-        path: PathBuf::from(&artifact.path),
-        line: artifact.line,
+        path: PathBuf::from(&place.path),
+        line: place.line,
         summary: artifact.summary.clone(),
     }
 }

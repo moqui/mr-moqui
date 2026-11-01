@@ -1261,7 +1261,8 @@ fn apply(
                 }
             }
         }
-        derived = derive_in(&mut resolver, &changes, &changed_entities, &added, &mut gone);
+        let waiting = waiting_refs(facade, &added, &changed_paths);
+        derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
         // an id another file still defines is not gone
         gone.retain(|id| !resolver.has(id));
@@ -1352,12 +1353,56 @@ struct Derived {
     rows: Vec<ArtifactRow>,
 }
 
+/// The unresolved references of files not read now that call an entity-auto service of an entity `added` defines (by
+/// its name, or a parameter by its service): written before the entity was known, they need its derived service. One
+/// that cannot be read is logged and left for the next full build.
+fn waiting_refs(facade: &EntityFacade, added: &[ArtifactRow], changed: &HashSet<String>) -> Vec<RefRow> {
+    let names: HashSet<String> = added
+        .iter()
+        .filter(|artifact| artifact.kind == "entity")
+        .flat_map(Resolver::entity_auto_names)
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let unresolved = || facade.find(REF).map(|find| find.eq("resolved", Value::string("N")));
+    let mut lists = Vec::new();
+    if names.len() > 2000 {
+        // many names (a build): every unresolved reference in one read
+        lists.push(unresolved().and_then(|find| find.list()));
+    } else {
+        let values: Vec<Value> = names.iter().map(|name| Value::string(name.as_str())).collect();
+        for chunk in values.chunks(500) {
+            for field in ["toName", "toScope"] {
+                lists
+                    .push(unresolved().and_then(|find| find.condition(Condition::is_in(field, chunk.to_vec())).list()));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for list in lists {
+        match list {
+            Ok(rows) => {
+                for row in rows.into_values() {
+                    let calls = names.contains(&text(&row, "toName")) || names.contains(&text(&row, "toScope"));
+                    if calls && !changed.contains(&text(&row, "filePath")) {
+                        found.push(ref_of(&row));
+                    }
+                }
+            }
+            Err(err) => tracing::error!("Artifact index: the references waiting for an entity were not read: {err}"),
+        }
+    }
+    found
+}
+
 /// Forget the derived services a file now defines or whose entity's fields changed (`changed_entities`), and derive
-/// what the references read and the dropped services need, with the entity's fields now: the resolver knows them,
-/// and the ids that are no more are `gone`.
+/// what the references read (and those `waiting` in other files) and the dropped services need, with the entity's
+/// fields now: the resolver knows them, and the ids that are no more are `gone`.
 fn derive_in(
     resolver: &mut Resolver,
     changes: &[Change],
+    waiting: &[RefRow],
     changed_entities: &HashSet<String>,
     added: &[ArtifactRow],
     gone: &mut BTreeSet<String>,
@@ -1366,8 +1411,13 @@ fn derive_in(
     let mut dropped = Vec::new();
     for id in resolver.derived_ids() {
         let rows = resolver.derived_rows(&id);
-        let entity = rows.first().and_then(|row| row.parent.as_deref()).unwrap_or_default();
-        if defined.contains(id.as_str()) || changed_entities.contains(entity) {
+        // by the id, not a row's parent: rows read back from the database come in no set order (a parameter's parent is
+        // the service)
+        let entity = id
+            .split_once('#')
+            .map(|(_, entity)| format!("entity:{entity}"))
+            .unwrap_or_default();
+        if defined.contains(id.as_str()) || changed_entities.contains(&entity) {
             for row in &rows {
                 resolver.remove(row);
                 gone.insert(row.id.clone());
@@ -1381,7 +1431,8 @@ fn derive_in(
             Change::Read { index, .. } => Some(index.refs.iter()),
             _ => None,
         })
-        .flatten();
+        .flatten()
+        .chain(waiting);
     let mut rows = resolver.derive(read);
     // a service a file no longer defines, its entity-auto name now derived in its stead
     let undefined: Vec<String> = gone.iter().filter(|id| id.starts_with("service:")).cloned().collect();

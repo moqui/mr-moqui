@@ -435,8 +435,11 @@ fn get_artifact_bindings(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let (from, to) = (text_in(parameters, "fromArtifactId"), text_in(parameters, "toId"));
-    if from.trim().is_empty() && to.trim().is_empty() {
+    let (from, to) = (
+        text_in(parameters, "fromArtifactId").trim().to_string(),
+        text_in(parameters, "toId").trim().to_string(),
+    );
+    if from.is_empty() && to.is_empty() {
         ExecutionContext::with_current(|ec| ec.message().add_error("fromArtifactId or toId is required".to_string()));
         return Ok(BTreeMap::new());
     }

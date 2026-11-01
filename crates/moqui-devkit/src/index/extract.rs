@@ -1193,6 +1193,18 @@ impl Reader<'_> {
         first_ref: usize,
         values: &mut ValueFields,
     ) {
+        // a field given another value (an iterate's entry, a set, a find's list) holds no value of a known entity now
+        let assigned = match element {
+            "iterate" => node.attribute("entry"),
+            "set" => node.attribute("field"),
+            "entity-find" => node.attribute("list"),
+            _ => None,
+        };
+        if let Some(name) = assigned {
+            let (line, column) = actions_block(node);
+            values.remove(&(line, column, name));
+            return;
+        }
         let Some(field) = node.attribute("value-field") else {
             return;
         };
@@ -1238,9 +1250,9 @@ impl Reader<'_> {
     }
 
     /// The binding a `field-map` of a `service-call` makes: what flows into the callee's in-parameter. `value` is a
-    /// literal, or an expression when it has `${`; `from` (or, with neither, the field's own name, which Moqui reads
-    /// from the context) is a parameter of the artifact the call is in when it declares that name, a context value
-    /// when it is a plain name, else an expression.
+    /// literal (empty too), or an expression when it has `${`; `from` (or, with neither, the field's own name, which
+    /// Moqui reads from the context) is a literal when it is `true`, `false` or `null`, a parameter of the artifact the
+    /// call is in when it declares that name, a context value when it is another plain name, else an expression.
     fn field_map_binding(&mut self, node: &MNode, from: &str) {
         let Some(service) = refs::service_of(node).filter(|name| refs::is_literal(name)) else {
             return;
@@ -1249,11 +1261,13 @@ impl Reader<'_> {
             return;
         };
         let (source_kind, source_text, source_id) = match node.attribute("value") {
-            Some(value) if refs::is_literal(&value) => ("literal", value, None),
+            Some(value) if !value.contains("${") => ("literal", value, None),
             Some(value) => ("expression", value, None),
             None => {
                 let text = node.attribute("from").unwrap_or_else(|| name.clone());
-                if is_identifier(&text) {
+                if matches!(text.trim(), "true" | "false" | "null") {
+                    ("literal", text, None)
+                } else if is_identifier(&text) {
                     let own = ["in", "path"]
                         .iter()
                         .map(|direction| parameter_id(from, direction, &text))
@@ -1331,7 +1345,7 @@ fn default_operation(kind: ToKind, ref_type: &str, name: &str) -> &'static str {
 }
 
 /// The operation of a call to the service `name`: an entity-auto name's verb (`create#moqui.example.Example` is
-/// `create`; `store#` and `createOrUpdate#` are `store`), else `call`.
+/// `create`; the runner's verbs are `create`, `update`, `store` and `delete`), else `call`.
 #[must_use]
 pub fn service_operation(name: &str) -> &'static str {
     let Some((verb, noun)) = name.split_once('#') else {
@@ -1343,7 +1357,7 @@ pub fn service_operation(name: &str) -> &'static str {
     match verb {
         "create" => "create",
         "update" => "update",
-        "store" | "createOrUpdate" => "store",
+        "store" => "store",
         "delete" => "delete",
         _ => "call",
     }
@@ -1464,16 +1478,44 @@ pub fn script_names(text: &str) -> Vec<ScriptName> {
     found
 }
 
-/// The rest of a statement from a call on: to its `;`, a blank line, or the next `ec.` call, at most 400 bytes.
+/// The rest of a statement from a call on (`after` starts inside the call's parentheses): to its `;`, a blank line, or
+/// the next `ec.entity` or `ec.service` call outside any parentheses, at most 400 bytes. An `ec.` in an argument
+/// (`set("u", ec.user.userId)`) or in another name (`rec.`, `spec.`) does not end it.
 fn statement_of(after: &str) -> &str {
     let mut end = after.len().min(400);
     while !after.is_char_boundary(end) {
         end -= 1;
     }
     let window = &after[..end];
-    let stops = [window.find(';'), window.find("\n\n"), window.find("ec.")];
-    let end = stops.into_iter().flatten().min().unwrap_or(window.len());
-    &window[..end]
+    let bytes = window.as_bytes();
+    let mut depth = 1i32;
+    for (at, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b';' => return &window[..at],
+            b'\n' if bytes.get(at + 1) == Some(&b'\n') => return &window[..at],
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'e' if depth <= 0 && starts_call(window, at) => return &window[..at],
+            _ => {}
+        }
+    }
+    window
+}
+
+/// Whether an `ec.entity` or `ec.service` call starts at `at` of `text`: `ec` not the end of a longer name.
+fn starts_call(text: &str, at: usize) -> bool {
+    if text[..at]
+        .chars()
+        .next_back()
+        .is_some_and(|before| before.is_ascii_alphanumeric() || before == '_' || before == '.')
+    {
+        return false;
+    }
+    text[at..]
+        .strip_prefix("ec")
+        .and_then(|rest| rest.trim_start().strip_prefix('.'))
+        .map(str::trim_start)
+        .is_some_and(|rest| rest.starts_with("entity") || rest.starts_with("service"))
 }
 
 /// The entity whose fields, relationships and indexes the element at `from` declares: an `entity:` or `view-entity`'s, or

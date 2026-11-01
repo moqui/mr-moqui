@@ -829,7 +829,7 @@ const AUTO_DEFINED: &str = r#"<services>
 
 /// The rows of the derived entity-auto services in the database index: written for a call to an entity-auto name, with
 /// the binding into its parameter; derived again when the entity's fields change; dropped while a file defines the id,
-/// and derived again when that file goes.
+/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes.
 #[test]
 fn the_index_rows_derive_entity_auto_services() {
     if !crate::common::own_process() {
@@ -928,6 +928,41 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         parameters(&factory),
         ["in.color", "in.widgetId", "in.widgetName", "out.widgetId"]
+    );
+
+    // a call (by the short name) indexed before its entity: unresolved, then derived and resolved when the entity comes
+    let gadget_calls = site.join("service/acme/GadgetServices.xml");
+    std::fs::write(
+        &gadget_calls,
+        AUTO_CALLS
+            .replace("Widget", "Gadget")
+            .replace("create#acme.Gadget", "create#Gadget"),
+    )
+    .unwrap();
+    index::update_files(&factory, std::slice::from_ref(&gadget_calls)).unwrap();
+    let gadget_caller = "service:acme.GadgetServices.make#Gadget";
+    let gadget_call = |factory: &Arc<ExecutionContextFactory>| {
+        index::refs(factory, gadget_caller, index::Direction::Out, &[])
+            .unwrap()
+            .into_iter()
+            .find(|r| r.ref_type == "service-call")
+            .expect("the call")
+    };
+    assert_eq!(gadget_call(&factory).to_id, None);
+    let gadget_entities = site.join("entity/GadgetEntities.xml");
+    std::fs::write(
+        &gadget_entities,
+        AUTO_ENTITIES.replace("Widget", "Gadget").replace("widget", "gadget"),
+    )
+    .unwrap();
+    index::update_files(&factory, std::slice::from_ref(&gadget_entities)).unwrap();
+    let gadget = index::describe(&factory, "service:create#acme.Gadget")
+        .unwrap()
+        .expect("derived for the waiting call");
+    assert_eq!(gadget.origin, "derived");
+    assert_eq!(
+        gadget_call(&factory).to_id.as_deref(),
+        Some("service:create#acme.Gadget")
     );
     eprintln!("derived entity-auto rows: {} ms", started.elapsed().as_millis());
 }
