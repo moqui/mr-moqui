@@ -88,6 +88,11 @@ spec({
             for (const entity of ["moqui.chat.ChatToDevice", "moqui.chat.ChatDeviceKey", "moqui.chat.ChatDevice"]) {
                 ec.entity.find(entity).condition("userId", "in", [A, B, C, D]).deleteAll()
             }
+            // C shares no room with anyone at the start, also after an earlier run that stopped half way
+            for (const member of ec.entity.find("moqui.chat.ChatRoomMember").condition("userId", C).condition("leftDate", null).list()) {
+                member.set("leftDate", ec.user.nowTimestamp)
+                member.update()
+            }
         })
         // A and B share a room; C shares nothing with anyone; D is only in a call with A (made in its feature)
         ec.user.internalLoginUser(username(A))
@@ -239,7 +244,8 @@ feature("concurrent claims never hand out the same one-time key; the fallback ke
         oneTime.length == 20
         new Set(oneTime).size == 20
         fallback.length == 12
-        left.device_one_time_keys_count.signed_curve25519 == null
+        // 0, not left out: the OlmMachine uploads more only when the count names the algorithm
+        left.device_one_time_keys_count.signed_curve25519 == 0
         left.device_unused_fallback_key_types.length == 0
     }
 })
@@ -265,15 +271,20 @@ feature("to-device messages queue per device in order, a sync acknowledges up to
             const rowsAfter2 = toDeviceRows(B, dev.B1)
             const page3 = as(B, "sync#ToDevice", {deviceId: dev.B1, since: Number(page2.next_batch)})
             const rowsAfter3 = toDeviceRows(B, dev.B1)
+            // a cursor past the last position queued answers the last one as next_batch, so a message queued later
+            // still arrives on the next sync from it
+            const ahead = as(B, "sync#ToDevice", {deviceId: dev.B1, since: Number(page3.next_batch) + 50})
+            const late = send("t4", "late")
+            const afterAhead = as(B, "sync#ToDevice", {deviceId: dev.B1, since: Number(ahead.next_batch)})
             const woken = waitFor(() => capture.getMessages("chatUser:" + B).length > 0, 5000)
             const pushes = capture.getMessages("chatUser:" + B).map((row) => typeof row.message === "string" ? row.message : JSON.stringify(row.message))
-            return {first, repeat, toC, page1, rowsAfter1, page2, rowsAfter2, page3, rowsAfter3, woken, pushes}
+            return {first, repeat, toC, page1, rowsAfter1, page2, rowsAfter2, page3, rowsAfter3, ahead, late, afterAhead, woken, pushes}
         } finally {
             capture.disable()
             capture.clear()
         }
     },
-    then({first, repeat, toC, page1, rowsAfter1, page2, rowsAfter2, page3, rowsAfter3, woken, pushes}) {
+    then({first, repeat, toC, page1, rowsAfter1, page2, rowsAfter2, page3, rowsAfter3, ahead, late, afterAhead, woken, pushes}) {
         first.queued == 1
         repeat.repeated == true
         toC.queued == 0
@@ -291,6 +302,10 @@ feature("to-device messages queue per device in order, a sync acknowledges up to
         page3.to_device.events.length == 0
         page3.next_batch == page2.next_batch
         rowsAfter3 == 0
+        ahead.next_batch == page3.next_batch
+        late.queued == 1
+        afterAhead.to_device.events.length == 1
+        afterAhead.to_device.events[0].content.ciphertext.x.body == "late"
         woken == true
         pushes.every((text) => text.indexOf("toDevice") >= 0 && text.indexOf("one") < 0 && text.indexOf("ciphertext") < 0)
     }
@@ -345,5 +360,39 @@ feature("a revoked device gets no new keys or messages, drops out of queries, an
         upload.reasonCode == "revoked"
         !list.includes(doomed)
         listAll.includes(doomed)
+    }
+})
+
+feature("a member who left the room, and a forged sender, reach nothing: the sender is always the signed-in user", {
+    when() {
+        // C joins a room with A, so each reaches the other; then C leaves it
+        ec.user.internalLoginUser(username(A))
+        const shared = sys(() => call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Keys spec left", memberUserIdList: [C]})).chatRoomId
+        const aSeesCMember = queried(A, C)
+        const toCMember = as(A, "send#ToDevice", {deviceId: dev.A1, event_type: "m.room.encrypted", txn_id: "t-left1",
+            messages: {[mx(C)]: {[dev.C1]: {ciphertext: "member", sender: mx(B)}}}})
+        const cSync = as(C, "sync#ToDevice", {deviceId: dev.C1, since: 0})
+        sys(() => {
+            const member = ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: shared, userId: C}).one()
+            member.set("leftDate", ec.user.nowTimestamp)
+            member.update()
+        })
+        const aSeesCLeft = queried(A, C)
+        const cSeesALeft = queried(C, A)
+        const toCLeft = as(A, "send#ToDevice", {deviceId: dev.A1, event_type: "m.room.encrypted", txn_id: "t-left2",
+            messages: {[mx(C)]: {[dev.C1]: {ciphertext: "left"}}}})
+        const claimLeft = as(A, "claim#Keys", {one_time_keys: {[mx(C)]: {[dev.C1]: "signed_curve25519"}}})
+        return {aSeesCMember, toCMember, cSync, aSeesCLeft, cSeesALeft, toCLeft, claimLeft}
+    },
+    then({aSeesCMember, toCMember, cSync, aSeesCLeft, cSeesALeft, toCLeft, claimLeft}) {
+        aSeesCMember.join() == dev.C1
+        toCMember.queued == 1
+        cSync.to_device.events.length == 1
+        // the sender is who signed in, whatever the content says
+        cSync.to_device.events[0].sender == mx(A)
+        aSeesCLeft.length == 0
+        cSeesALeft.length == 0
+        toCLeft.queued == 0
+        Object.keys(claimLeft.one_time_keys).length == 0
     }
 })

@@ -14,7 +14,9 @@
  * the store is made for it; its deviceId is remembered in localStorage by userId, so the next page opens the same store.
  * A device the server no longer knows or has revoked (Settings, My devices) is forgotten here: its store is deleted, and
  * the next ensureDevice makes a new one. Logout and leaving the page close the store; a store belongs to one user and
- * device, and a page of another user never opens it.
+ * device, and a page of another user never opens it. One tab at a time opens a store (a Web Lock on it): two OlmMachines
+ * on one store would each keep their own copy of its Olm sessions and spoil them, so another tab of the same browser and
+ * user is refused (reasonCode busy) until the first one closes it.
  *
  * Wake-ups: a to-device message for any of the user's devices pushes {kind: 'toDevice'} on chatUser:<me>; a loaded page
  * syncs then, and when its notification socket comes back. The push carries nothing of the message.
@@ -50,6 +52,8 @@
     let cursor = 0;
     let listCursor = null;
     let unsubscribe = null;
+    let stateOff = null;
+    let releaseLock = null;
     const listeners = new Set();
 
     const currentUser = () => (moqui.webrootVue && moqui.webrootVue.userId) || null;
@@ -199,12 +203,18 @@
         if (machine) await machine.markRequestAsSent(request.id, request.type, JSON.stringify(answer));
     }
 
-    /** The server no longer knows this device (revoked, or another account's session): forget it and its store. */
+    /**
+     * The server refused this device (notFound or revoked): forget it and its store, but only when the session is still
+     * this user's. A session that is now another user's, or none (signed out or in again in another tab), only closes the
+     * store: it stays for this user's next page.
+     */
     async function gone() {
         const user = me;
         const deviceId = state.deviceId;
+        const matrixUserId = state.matrixUserId;
+        const sameUser = await call("whoami", null, "GET").then((who) => who.user_id === matrixUserId, () => false);
         await closeNow();
-        if (user && deviceId) {
+        if (sameUser && user && deviceId) {
             writePointer(user, null);
             await deleteStore(storePrefix(user, deviceId));
         }
@@ -269,7 +279,25 @@
         if (!client || unsubscribe) return;
         const off = client.registerListener("chatUser:" + user, onPush);
         unsubscribe = typeof off === "function" ? off : () => null;
-        if (client.onState) client.onState((open) => { if (open && machine) sync().catch(() => null); });
+        // onState calls with "open" or "closed": a sync when the socket is back, for what it missed
+        const offState = client.onState ? client.onState((socketState) => { if (socketState === "open" && machine) sync().catch(() => null); }) : null;
+        stateOff = typeof offState === "function" ? offState : null;
+    }
+
+    /** Takes the store's Web Lock when no other tab holds it: the function that releases it, or null (another tab has it). */
+    function lockStore(prefix) {
+        const locks = root.navigator && root.navigator.locks;
+        if (!locks || !locks.request) return Promise.resolve(() => null);
+        return new Promise((resolve, reject) => {
+            locks.request("moqui-crypto-store:" + prefix, { ifAvailable: true }, (lock) => {
+                if (!lock) {
+                    resolve(null);
+                    return null;
+                }
+                // held until released (closeNow) or the page goes away
+                return new Promise((release) => resolve(release));
+            }).catch(reject);
+        });
     }
 
     async function open(user, retry) {
@@ -279,11 +307,15 @@
             pointer = { deviceId: made.deviceId, user_id: made.user_id };
             writePointer(user, pointer);
         }
+        const release = await lockStore(storePrefix(user, pointer.deviceId));
+        if (!release) throw { reasonCode: "busy", errors: "Encryption is open in another tab of this browser; close it there to use it here" };
+        releaseLock = release;
         try {
             machine = await sdk.OlmMachine.initialize(new sdk.UserId(pointer.user_id), new sdk.DeviceId(pointer.deviceId),
                 storePrefix(user, pointer.deviceId));
         } catch (err) {
             // a store that is not this device's (another server name, a broken store): start over once with a new device
+            unlock();
             writePointer(user, null);
             await deleteStore(storePrefix(user, pointer.deviceId));
             if (retry) throw err;
@@ -406,9 +438,16 @@
         return () => listeners.delete(fn);
     }
 
+    function unlock() {
+        const release = releaseLock;
+        releaseLock = null;
+        if (release) release();
+    }
     async function closeNow() {
         if (unsubscribe) { try { unsubscribe(); } catch (err) { /* the socket is gone */ } }
         unsubscribe = null;
+        if (stateOff) { try { stateOff(); } catch (err) { /* the socket is gone */ } }
+        stateOff = null;
         const m = machine;
         machine = null;
         me = null;
@@ -416,6 +455,7 @@
         listCursor = null;
         Object.assign(state, { status: "idle", deviceId: null, matrixUserId: null, error: null });
         if (m) { try { m.close(); } catch (err) { /* already closed */ } }
+        unlock();
     }
     function close() {
         return serial(() => closeNow());

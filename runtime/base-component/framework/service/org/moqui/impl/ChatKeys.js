@@ -284,8 +284,13 @@ function revokeDevice(p) {
 
 // ---- keys/upload, keys/query, keys/claim ----
 
+/**
+ * The device's unclaimed one-time keys by algorithm, signed_curve25519 always there (0 when none is left): the OlmMachine
+ * updates its count only from an algorithm the answer names, so without it a device whose keys were all claimed would never
+ * upload more (Synapse answers it the same way).
+ */
 function unclaimedCounts(me, deviceId) {
-  const counts = {}
+  const counts = { signed_curve25519: 0 }
   for (const row of find(KEY).condition({ userId: me, deviceId, isFallback: 'N', claimedDate: null }).selectField('algorithm').list()) {
     counts[row.algorithm] = (counts[row.algorithm] || 0) + 1
   }
@@ -536,11 +541,12 @@ function syncToDevice(p) {
   if (found.refusal) return found.refusal
   const { me, device } = found
   const deviceId = device.deviceId
-  const since = Math.max(0, Math.floor(Number(p.since) || 0))
+  // never past the last position queued: a cursor ahead of it would acknowledge messages queued after this sync, unread
+  const since = Math.min(Math.max(0, Math.floor(Number(p.since) || 0)), Number(device.lastToDevicePos || 0))
   const limit = Math.min(MAX_SYNC, Math.max(1, Math.floor(Number(p.limit) || 100)))
   if (since > 0) {
     find(TO_DEVICE).condition({ userId: me, deviceId }).condition('streamPos', '<=', since).deleteAll()
-    if (since > Number(device.ackedToDevicePos || 0)) device.set('ackedToDevicePos', Math.min(since, Number(device.lastToDevicePos || 0)))
+    if (since > Number(device.ackedToDevicePos || 0)) device.set('ackedToDevicePos', since)
   }
   device.set('lastSeenDate', ec.user.nowTimestamp)
   device.update()

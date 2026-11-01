@@ -115,7 +115,8 @@ along with this software (see the LICENSE.md file). If not, see
             device_id must be this device's; its identity keys cannot change once set: keysChanged), one_time_keys (key ID
             to signed key; at most 200 at once and 500 unclaimed: tooManyKeys; an ID uploaded before with another value:
             keyExists) and fallback_keys (each replaces the device's fallback key of its algorithm). Answers
-            one_time_key_counts, the device's unclaimed one-time keys by algorithm.</description>
+            one_time_key_counts, the device's unclaimed one-time keys by algorithm (signed_curve25519 always, 0 when none
+            is left, as the OlmMachine needs it to upload more).</description>
         <in-parameters>
             <parameter name="deviceId" required="true"/>
             <parameter name="device_keys" type="Map"/>
@@ -191,7 +192,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="sync" noun="ToDevice">
         <description>The to-device part of a Matrix sync for the current user's device deviceId. since is the stream
-            position the device has handled: everything at or before it is acknowledged and deleted. Answers to_device.events
+            position the device has handled: everything at or before it is acknowledged and deleted (a position past the last
+            one queued counts as the last, so a message queued later is never acknowledged unread). Answers to_device.events
             after it ({type, sender, content}, oldest first, at most limit, default 100, up to 500; has_more when more wait)
             and next_batch, the position to pass next time; device_lists.changed, the Matrix user IDs (in reach) whose devices
             changed since deviceListSince (millis; the value of device_lists_next of the last sync), and

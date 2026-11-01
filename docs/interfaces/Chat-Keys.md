@@ -32,7 +32,12 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   not sign the browser out.
 - **Logout and account switch.** Logout and leaving the page close the store. A store belongs to one user and device,
   and a page of another user never opens it. The server refuses a device that is not the session user's ("not found"),
-  so a tab left open across an account switch gets nothing.
+  so a tab left open across an account switch gets nothing; that tab only closes the store (it deletes it only when the
+  session is still the store's user).
+- **One tab at a time.** A tab holds a Web Lock on the store while it is open: two `OlmMachine`s on one store would spoil
+  its Olm sessions. Another tab of the same browser and user is refused (`busy`) until the first closes it.
+- **At rest.** The store is not encrypted with a passphrase: whoever can read this browser profile's IndexedDB can read
+  its private keys (a later C7 pass, with key backup).
 
 ## Who reaches whom
 
@@ -66,10 +71,14 @@ The services take and answer Matrix's payloads, so the Matrix client API (C6a) c
 | `send` | `send#ToDevice` | `sendToDevice/{eventType}/{txnId}` |
 | `sync` | `sync#ToDevice` | `/sync`: `to_device`, `device_lists`, `device_one_time_keys_count`, `device_unused_fallback_key_types` |
 
+The key counts (`one_time_key_counts`, `device_one_time_keys_count`) always hold `signed_curve25519`, 0 when none is
+left: the machine updates its count only from an algorithm the answer names, so a device whose keys were all claimed
+would otherwise never upload more. A sync's `since` past the last position queued counts as that position.
+
 - **Request shape.** Each is a POST with a JSON body (`devices` and `whoami` are GETs) and the session's CSRF token.
 - **Device.** The device is named by `deviceId` in the body, where Matrix takes it from the access token.
 - **Errors.** A refusal answers `{errors, reasonCode}`: `notFound`, `revoked`, `keysChanged`, `keyExists`, `badKeys`,
-  `tooManyKeys`, `tooManyDevices`, `tooLarge`, `tooMany`.
+  `tooManyKeys`, `tooManyDevices`, `tooLarge`, `tooMany`; in the browser also `busy` (another tab has the store).
 
 **User IDs.** A Matrix user ID is `@<localpart>:<chat_server_name>`.
 - The localpart is the userId with Matrix's mapping of other character sets: an upper-case letter is `_` and the letter,
@@ -109,7 +118,7 @@ policy sets none.
   - reach by room and by live call;
   - concurrent claims (8 threads, 32 claims of 20 keys);
   - the queue's cursor, acknowledgement and repeated transactions, and a wake push with no content;
-  - device-list changes, and a revoked device.
+  - device-list changes, a revoked device, a member who left the room, and a sender the server sets.
 - **Browser:** `./moq test-client basic-comms --serve --spec CryptoFlow`. Two Chromium pages of two users who share a
   room:
   - each makes a device;

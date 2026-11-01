@@ -29,6 +29,9 @@ feature("two browsers exchange an Olm-encrypted to-device message; the server se
             window.moqui.crypto.onToDevice((event) => window.__received.push(event))
             return window.moqui.crypto.ensureDevice()
         })
+        // the open store holds its Web Lock, so another tab of this browser and user cannot open it at the same time
+        const lockHeld = receiver.evaluate((d) => navigator.locks.request("moqui-crypto-store:moqui-crypto-" + d.userId + "-" + d.deviceId,
+            {ifAvailable: true}, (lock) => !lock), receiverDevice)
         // the sender records every body its page posts to /ChatKeys, to look for the plaintext in them
         const sent = sender.evaluate(([userId, secret]) => {
             window.__posted = []
@@ -49,9 +52,10 @@ feature("two browsers exchange an Olm-encrypted to-device message; the server se
             {method: "POST", params: {deviceId}}).then((result) => result.json || {}), receiverDevice.deviceId)
         const after = sender.evaluate((userId) => window.moqui.crypto.sendToDevices([userId], "io.moqui.test.key", {key: "later"}),
             receiverDevice.userId)
-        return {receiverDevice, sent, woke, received, posted, revoked, after}
+        return {receiverDevice, lockHeld, sent, woke, received, posted, revoked, after}
     },
-    then({receiverDevice, sent, woke, received, posted, revoked, after}) {
+    then({receiverDevice, lockHeld, sent, woke, received, posted, revoked, after}) {
+        lockHeld == true
         receiverDevice.deviceId.length == 10
         sent.me.deviceId.length == 10
         sent.out.sent == 1
