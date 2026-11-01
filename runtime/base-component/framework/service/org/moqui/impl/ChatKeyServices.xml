@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat devices, keys and to-device messages (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the
+    endpoints the browser's OlmMachine (matrix-sdk-crypto, js/WebrootCrypto.js) calls, with Matrix's payloads and names
+    (device_keys, one_time_keys, one_time_key_counts, ...), so the Matrix client API (C6a) can serve the same services at
+    /_matrix/client/v3/keys/upload, keys/query, keys/claim, sendToDevice/{eventType}/{txnId} and the to-device part of
+    /sync. The browser reaches them through the /ChatKeys transitions (webroot ChatKeys.xml). The model is
+    framework/entity/ChatKeyEntities.xml; the logic is ChatKeys.js beside this file. No Java counterpart.
+
+    Access. Each service acts as the signed-in user: the deviceId a request names must be theirs and not revoked
+    (reasonCode notFound for another's, with the same parameters, and revoked). query#Keys, claim#Keys and send#ToDevice
+    reach only the devices of users who share a room or a live call with the caller, and the caller's own; the others are
+    left out as if they had no devices. The server keeps public keys, ciphertext and routing only. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== The user's devices ========== -->
+
+    <service verb="create" noun="ChatDevice">
+        <description>A new crypto device for the current user (one browser's store): a deviceId (10 letters) and the
+            Matrix user ID (user_id) the store is made for. Up to 50 devices that are not revoked; then tooManyDevices.</description>
+        <in-parameters>
+            <parameter name="displayName"/>
+            <parameter name="userAgent"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deviceId"/>
+            <parameter name="user_id"/>
+            <parameter name="serverName"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('createDevice', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="ChatDevices">
+        <description>The current user's devices, newest seen first, without the revoked ones unless includeRevoked: each
+            deviceId, displayName, ed25519Key (to compare with the device itself), hasKeys, userAgent, createdDate,
+            lastSeenDate, verifiedDate, revokedDate and revoked. user_id is the user's Matrix user ID.</description>
+        <in-parameters><parameter name="includeRevoked" type="Boolean"/></in-parameters>
+        <out-parameters>
+            <parameter name="deviceList" type="List"/>
+            <parameter name="user_id"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('findDevices', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="ChatDevice">
+        <description>Rename one of the current user's devices (others see the name in their key queries). reasonCode
+            notFound, revoked, nameRequired.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="displayName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="device" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('renameDevice', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="ChatDevice">
+        <description>Remove one of the current user's devices: it gets no new keys or messages, its keys and the messages
+            waiting for it are deleted, it drops out of key queries, and it cannot be used again (the browser makes a new
+            device the next time it needs one). It does not sign that browser out. Again for a revoked one: repeated.
+            reasonCode notFound.</description>
+        <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="deviceId"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('revokeDevice', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ChatKeyIdentity">
+        <description>The current user's Matrix user ID (user_id) and the server name in it (chat_server_name).</description>
+        <out-parameters>
+            <parameter name="user_id"/>
+            <parameter name="serverName"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('whoami', context))</script></actions>
+    </service>
+
+    <service verb="map" noun="ChatKeyUserIds" allow-remote="false">
+        <description>Internal: the Matrix user IDs of userIdList (matrixIds, by userId) and the userIds of matrixIdList
+            (userIds, by Matrix user ID; null for another server's or one that is not a user ID).</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List"/>
+            <parameter name="matrixIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matrixIds" type="Map"/>
+            <parameter name="userIds" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('mapIds', context))</script></actions>
+    </service>
+
+    <!-- ========== keys/upload, keys/query, keys/claim ========== -->
+
+    <service verb="upload" noun="Keys">
+        <description>Matrix keys/upload for the current user's device deviceId: its signed device_keys (user_id and
+            device_id must be this device's; its identity keys cannot change once set: keysChanged), one_time_keys (key ID
+            to signed key; at most 200 at once and 500 unclaimed: tooManyKeys; an ID uploaded before with another value:
+            keyExists) and fallback_keys (each replaces the device's fallback key of its algorithm). Answers
+            one_time_key_counts, the device's unclaimed one-time keys by algorithm (signed_curve25519 always, 0 when none
+            is left, as the OlmMachine needs it to upload more).</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="device_keys" type="Map"/>
+            <parameter name="one_time_keys" type="Map"/>
+            <parameter name="fallback_keys" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="one_time_key_counts" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('uploadKeys', context))</script></actions>
+    </service>
+
+    <service verb="query" noun="Keys">
+        <description>Matrix keys/query: device_keys is Matrix user ID to a list of device IDs (empty for all). Answers
+            device_keys, user to device to the signed keys as uploaded with unsigned.device_display_name, for the users who
+            share a room or a live call with the current user, and the user's own; no revoked device and none without keys.
+            failures, master_keys, self_signing_keys and user_signing_keys are empty (no cross-signing yet).</description>
+        <in-parameters>
+            <parameter name="device_keys" type="Map"/>
+            <parameter name="timeout" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="device_keys" type="Map"/>
+            <parameter name="failures" type="Map"/>
+            <parameter name="master_keys" type="Map"/>
+            <parameter name="self_signing_keys" type="Map"/>
+            <parameter name="user_signing_keys" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('queryKeys', context))</script></actions>
+    </service>
+
+    <service verb="claim" noun="Keys">
+        <description>Matrix keys/claim: one_time_keys is Matrix user ID to device ID to algorithm. For each device of a
+            user who shares a room or a live call with the current user (or is the user), one key: its oldest unclaimed
+            one-time key, which no other claim gets, else its fallback key. Answers one_time_keys, user to device to
+            {keyId: key}; a device with no key, revoked or out of reach is left out.</description>
+        <in-parameters>
+            <parameter name="one_time_keys" type="Map"/>
+            <parameter name="timeout" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="one_time_keys" type="Map"/>
+            <parameter name="failures" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('claimKeys', context))</script></actions>
+    </service>
+
+    <!-- ========== To-device ========== -->
+
+    <service verb="send" noun="ToDevice">
+        <description>Matrix sendToDevice from the current user's device deviceId: event_type, txn_id and messages, Matrix
+            user ID to device ID (or * for all their devices) to the event content (Olm ciphertext for an encrypted event;
+            64 KB at most). Each is queued to its device at the device's next stream position and the recipient's tabs are
+            woken on chatUser:userId ({kind: toDevice}, nothing of the message). Only to users who share a room or a live
+            call with the sender, or the sender's other devices; never to a revoked device. A txn_id still queued is not
+            queued again (repeated). queued is how many were.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="event_type" required="true"/>
+            <parameter name="txn_id" required="true"/>
+            <parameter name="messages" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queued" type="Integer"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('sendToDevice', context))</script></actions>
+    </service>
+
+    <service verb="sync" noun="ToDevice">
+        <description>The to-device part of a Matrix sync for the current user's device deviceId. since is the stream
+            position the device has handled: everything at or before it is acknowledged and deleted (a position past the last
+            one queued counts as the last, so a message queued later is never acknowledged unread). Answers to_device.events
+            after it ({type, sender, content}, oldest first, at most limit, default 100, up to 500; has_more when more wait)
+            and next_batch, the position to pass next time; device_lists.changed, the Matrix user IDs (in reach) whose devices
+            changed since deviceListSince (millis; the value of device_lists_next of the last sync), and
+            device_lists_next; device_one_time_keys_count and device_unused_fallback_key_types of the device. A revoked
+            device is refused (revoked), so its browser drops its store.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="since" type="Long"/>
+            <parameter name="limit" type="Integer"/>
+            <parameter name="deviceListSince" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="next_batch"/>
+            <parameter name="has_more" type="Boolean"/>
+            <parameter name="to_device" type="Map"/>
+            <parameter name="device_lists" type="Map"/>
+            <parameter name="device_lists_next" type="Long"/>
+            <parameter name="device_one_time_keys_count" type="Map"/>
+            <parameter name="device_unused_fallback_key_types" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('syncToDevice', context))</script></actions>
+    </service>
+
+    <service verb="clean" noun="ChatToDevice" authenticate="anonymous-all">
+        <description>The job clean_ChatToDevice_daily: deletes to-device messages waiting longer than
+            chat_to_device_retention_days (default 30) and one-time keys claimed over a day ago. Each part that fails is
+            logged and the other still runs.</description>
+        <out-parameters>
+            <parameter name="messagesDeleted" type="Integer"/>
+            <parameter name="keysDeleted" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('clean', context))</script></actions>
+    </service>
+</services>

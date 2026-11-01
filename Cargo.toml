@@ -322,6 +322,10 @@ str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"]
 # host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
 turn-server-proto = { version = "0.7.3", default-features = false, features = ["std"] }
 turn-client-proto = { version = "0.7.3", default-features = false, features = ["std"] }
+# SFrame (RFC 9605) for the tests of encrypted calls only (W8): moqui-rtc's tests check the RFC's vectors, which the browser's
+# own SFrame (webroot js/WebrootSFrame.js) runs too, against this independent implementation. rust-crypto: the CTR suites
+# as well, on the aes-gcm, hkdf, sha2, ctr and cipher already in the graph; not ring.
+sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto"] }
 # Opus for the call audio core (moqui-rtc audio/, plans/Comms-Framework.md §6.2 "The M0 gate"): a pure-Rust port of
 # libopus 1.6 with no dependencies, chosen over rusty-opus and opus-pure, and over libopus through `opus` and cmake.
 opus-rs = "0.1.40"

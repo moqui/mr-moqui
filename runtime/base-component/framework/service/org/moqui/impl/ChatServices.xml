@@ -114,7 +114,24 @@ along with this software (see the LICENSE.md file). If not, see
     asynchronously with the message in its parameters. The agent answers by calling send#Message with senderUserId (as
     internal work). The framework's agents (org.moqui.agent.AgentServices.handle#ChatMessage, crates/moqui-core/src/llm/chat.rs)
     post their approvals, questions and replies as cards (send#AssistCard, content.assist, changed in place with
-    update#AssistCard) and type with a status text (signal#Typing statusText). -->
+    update#AssistCard) and type with a status text (signal#Typing statusText).
+
+    Actors and bridges (plans/Comms-Framework.md §4.1, §4.4; C1). A member, sender, mention and vote is a ChatActor: a local
+    user (get#LocalActors makes one on first use) or an external actor of a bridge (no userId, no login). These services take
+    and answer userIds for local users as before; an external member is in memberList with chatActorId, external true, its
+    name and its network, and an external sender's events have senderActorId, senderName and senderExternal {network,
+    networkName}. Pushes go to local users only. send#Message, edit#Message, react#Message and redact#Message take
+    senderActorId (authorization disabled only): org.moqui.impl.ChatBridgeServices.ingest#Event posts as an external actor
+    through them, so unread counts, threads and agent dispatch work as for a local message; an external actor posts only as
+    a current member of a room that is not archived, and edits and deletes only its own messages. Its messages reach the
+    room's agents only when the room's agentsReadExternal is Y, and get no link previews.
+
+    A room mapped to a connector (ChatRoomBridge) is bridged: append#Event writes a ChatBridgeDelivery for each mapping a
+    message, edit, reaction or delete goes to (in or both, not the bridge it came from), in the event's transaction, and
+    wakes the delivery worker after the commit (crates/moqui-core/src/service/chat_bridge.rs). An edit, delete or reaction of
+    a message that went to a bridge whose adapter does not carry it is refused before the change (reasonCode
+    bridgeUnsupported). get#Room and find#Rooms say whether a room is bridged and whether a bridge is not connected;
+    get#Timeline gives each message's delivery state (ChatBridgeServices.get#EventDeliveries). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Access ========== -->
@@ -200,8 +217,10 @@ along with this software (see the LICENSE.md file). If not, see
                 createdByUserId: row.createdByUserId ?? null, createdDate: toMillis(row.createdDate), archivedDate: toMillis(row.archivedDate),
                 lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate),
                 lastMessageSeq: row.lastMessageSeq != null ? Number(row.lastMessageSeq) : null, lastMessageUserId: row.lastMessageUserId ?? null,
-                lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null}
-            if (memberRow) member = {chatRoomId: memberRow.chatRoomId, userId: memberRow.userId, roleEnumId: memberRow.roleEnumId ?? null,
+                lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null,
+                callE2eeRequired: row.callE2eeRequired === 'Y'}
+            if (memberRow) member = {chatRoomId: memberRow.chatRoomId, userId: memberRow.userId, chatActorId: memberRow.chatActorId ?? null,
+                roleEnumId: memberRow.roleEnumId ?? null,
                 agentRef: memberRow.agentRef ?? null, joinedDate: toMillis(memberRow.joinedDate), leftDate: toMillis(memberRow.leftDate),
                 lastReadEventSeq: Number(memberRow.lastReadEventSeq || 0), notificationLevelEnumId: memberRow.notificationLevelEnumId ?? null,
                 isPinned: memberRow.isPinned === 'Y', isMuted: memberRow.isMuted === 'Y'}
@@ -262,11 +281,15 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: add an event to a room's timeline with the room's next eventSeq, and push it to the room's
             members on chatRoom:id (unless noPush). The caller has checked access. A message of the main timeline (no
             threadRootEventSeq) becomes the room's last message. event is the event as pushed: get#Timeline's shape
-            without the aggregates. memberUserIdList are the users it was pushed to.</description>
+            without the aggregates. memberUserIdList are the users it was pushed to. In a bridged room a message, edit,
+            reaction or delete gets a ChatBridgeDelivery for each mapping it goes out on (direction both or out, not
+            sourceChatBridgeId's; an edit, reaction or delete only where what it is about reached that network), and the
+            delivery worker is woken after the commit.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventTypeEnumId" required="true"/>
             <parameter name="senderUserId"/>
+            <parameter name="senderActorId"><description>The sender's actor: a local sender's when empty</description></parameter>
             <parameter name="content" type="Map"/>
             <parameter name="bodyText" allow-html="any"/>
             <parameter name="replyToEventSeq" type="Integer"/>
@@ -275,6 +298,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="relatesToEventSeq" type="Integer"/>
             <parameter name="clientRef"/>
             <parameter name="noPush" type="Boolean" default="false"/>
+            <parameter name="sourceChatBridgeId"><description>The bridge the event came from: nothing goes back to it</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -290,12 +314,15 @@ along with this software (see the LICENSE.md file). If not, see
                 const files = (attachments || []).map((file) => file.fileName).filter((name) => name)
                 return files.length ? '📎 ' + files.join(', ') : ''
             }
+            if (!senderActorId && senderUserId) senderActorId = (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors')
+                    .parameter('userIdList', [senderUserId]).disableAuthz().call()?.actorMap || {})[senderUserId] || null
             const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).one()
             if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const now = ec.user.nowTimestamp
             eventSeq = Number(room.lastEventSeq || 0) + 1
             const row = ec.entity.makeValue('moqui.chat.ChatEvent')
             row.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, senderUserId: senderUserId || null,
+                senderActorId: senderActorId || null,
                 contentJson: content ? JSON.stringify(content) : null, bodyText: bodyText || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null, sentDate: now},
@@ -306,20 +333,26 @@ along with this software (see the LICENSE.md file). If not, see
             if (eventTypeEnumId === 'CetMessage' && threadRootEventSeq == null) {
                 room.set('lastMessageSeq', eventSeq)
                 room.set('lastMessageUserId', senderUserId || null)
+                room.set('lastMessageActorId', senderActorId || null)
                 room.set('lastMessageDate', now)
                 room.set('lastMessageSnippet', snippetOf(bodyText, content ? content.attachments : null) || null)
             }
             room.update()
 
-            let senderName = null
+            let senderName = null, senderExternal = null
             if (senderUserId) {
                 const account = ec.entity.find('moqui.security.UserAccount').condition('userId', senderUserId)
                         .selectField('userFullName').selectField('username').disableAuthz().one()
                 if (account) senderName = account.userFullName || account.username || senderUserId
+            } else if (senderActorId) {
+                const actor = (ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames').parameter('chatActorIdList', [senderActorId])
+                        .call()?.actorMap || {})[senderActorId]
+                if (actor) { senderName = actor.name; senderExternal = actor.external ? {network: actor.network, networkName: actor.networkName} : null }
             }
             const body = content && content.body != null ? content.body : null
             event = {chatRoomId: chatRoomId, eventSeq: eventSeq, eventTypeEnumId: eventTypeEnumId, type: CODES[eventTypeEnumId] || null,
-                senderUserId: senderUserId || null, senderName: senderName, sentDate: Number(now), content: content || {},
+                senderUserId: senderUserId || null, senderActorId: senderActorId || null, senderName: senderName, senderExternal: senderExternal,
+                sentDate: Number(now), content: content || {},
                 body: body, bodyText: bodyText || null, mentions: (content && content.mentions) || [],
                 attachments: (content && content.attachments) || [], records: (content && content.records) || [],
                 forwardOf: (content && content.forwardOf) || null, poll: null, assist: (content && content.assist) || null, linkPreviews: [],
@@ -328,10 +361,40 @@ along with this software (see the LICENSE.md file). If not, see
 
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             memberUserIdList = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
+                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+                    .map((member) => member.userId)
             if (!noPush && memberUserIdList.length) {
                 ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                     userIdList: memberUserIdList, message: {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}}).call()
+            }
+
+            // the bridges it goes out to: a delivery row per mapping, in this transaction (C1)
+            const BRIDGED = ['CetMessage', 'CetEdit', 'CetReaction', 'CetRedaction']
+            if (BRIDGED.includes(eventTypeEnumId)) {
+                const mappings = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
+                        .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).disableAuthz().list())
+                        .filter((mapping) => !sourceChatBridgeId || mapping.chatBridgeId !== sourceChatBridgeId)
+                const target = eventTypeEnumId === 'CetEdit' ? editsEventSeq : eventTypeEnumId === 'CetMessage' ? null : relatesToEventSeq
+                let queued = 0
+                for (const mapping of mappings) {
+                    let dependsOn = null
+                    if (target != null) {
+                        // an edit, reaction or delete goes where what it is about went, or came from
+                        const prior = ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatRoomId', chatRoomId).condition('eventSeq', target)
+                                .condition('chatRoomBridgeId', mapping.chatRoomBridgeId).disableAuthz().one()
+                        if (prior) dependsOn = prior.chatBridgeDeliveryId
+                        else if (!ec.entity.find('moqui.chat.ChatEventExternal').condition('chatRoomId', chatRoomId).condition('eventSeq', target)
+                                .condition('chatBridgeId', mapping.chatBridgeId).disableAuthz().count()) continue
+                    }
+                    const delivery = ec.entity.makeValue('moqui.chat.ChatBridgeDelivery')
+                    delivery.setSequencedIdPrimary()
+                    delivery.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, chatRoomBridgeId: mapping.chatRoomBridgeId,
+                        chatBridgeId: mapping.chatBridgeId, idempotencyKey: `moqui-chat:${chatRoomId}:${eventSeq}:${mapping.chatRoomBridgeId}`,
+                        dependsOnDeliveryId: dependsOn, statusEnumId: 'CdsPending', attemptCount: 0, createdDate: now}, true, null, null)
+                    delivery.create()
+                    queued++
+                }
+                if (queued) ec.service.sync().name('org.moqui.impl.ChatServices.wake#BridgeDelivery').disableAuthz().call()
             }
         ]]></script></actions>
     </service>
@@ -352,11 +415,179 @@ along with this software (see the LICENSE.md file). If not, see
             if (!room || !row) return
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             const users = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
+                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+                    .map((member) => member.userId)
             if (users.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: users, message: {kind: 'update', chatRoomId: chatRoomId, eventSeq: eventSeq,
                 threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null, fields: fields}}).call()
         ]]></script></actions>
+    </service>
+
+    <!-- ========== Actors (C1) ========== -->
+
+    <service verb="get" noun="LocalActors" type="rust" location="moqui_core::service::chat_bridge::get_local_actors"
+            allow-remote="false">
+        <description>Internal: the ChatActor of each local user of userIdList, made on first use: a local actor's id is its
+            userId, written with one create-or-update, so two callers making one user's actor at once both succeed.</description>
+        <in-parameters><parameter name="userIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="actorMap" type="Map"><description>userId to chatActorId</description></parameter></out-parameters>
+    </service>
+
+    <service verb="get" noun="ActorNames" allow-remote="false">
+        <description>Internal: the actors of chatActorIdList as the screens show them: actorMap chatActorId to {chatActorId,
+            userId, name, external, network (the bridge type's code), networkName, chatBridgeId}. A local actor's name is its
+            user's; an external actor's its display name, else its id on the network. The caller has checked access.</description>
+        <in-parameters><parameter name="chatActorIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="actorMap" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            actorMap = {}
+            const ids = Array.from(new Set(Array.from(chatActorIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            if (!ids.length) return
+            const actors = Array.from(ec.entity.find('moqui.chat.ChatActor').condition('chatActorId', 'in', ids).disableAuthz().list())
+            const userIds = actors.map((row) => row.userId).filter((id) => id)
+            const externalIds = actors.map((row) => row.chatExternalUserId).filter((id) => id)
+            const names = {}
+            if (userIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds)
+                    .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
+                names[account.userId] = account.userFullName || account.username || account.userId
+            const externals = {}, bridgeIds = new Set()
+            if (externalIds.length) for (const row of ec.entity.find('moqui.chat.ChatExternalUser').condition('chatExternalUserId', 'in', externalIds)
+                    .disableAuthz().list()) { externals[row.chatExternalUserId] = row; if (row.chatBridgeId) bridgeIds.add(row.chatBridgeId) }
+            const networks = {}
+            if (bridgeIds.size) {
+                const bridges = Array.from(ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', 'in', Array.from(bridgeIds))
+                        .selectField('chatBridgeId').selectField('typeEnumId').disableAuthz().list())
+                const types = {}
+                const typeIds = Array.from(new Set(bridges.map((row) => row.typeEnumId).filter((id) => id)))
+                if (typeIds.length) for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'in', typeIds).disableAuthz().list())
+                    types[row.enumId] = row
+                for (const row of bridges) networks[row.chatBridgeId] = {network: types[row.typeEnumId]?.enumCode || null,
+                    networkName: types[row.typeEnumId]?.description || null}
+            }
+            for (const row of actors) {
+                if (row.userId) {
+                    actorMap[row.chatActorId] = {chatActorId: row.chatActorId, userId: row.userId, name: names[row.userId] || row.userId,
+                        external: false, network: null, networkName: null, chatBridgeId: null}
+                } else {
+                    const external = externals[row.chatExternalUserId] || {}
+                    const network = networks[external.chatBridgeId] || {}
+                    actorMap[row.chatActorId] = {chatActorId: row.chatActorId, userId: null,
+                        name: external.displayName || external.externalUserId || row.chatActorId, external: true,
+                        network: network.network || null, networkName: network.networkName || null, chatBridgeId: external.chatBridgeId || null}
+                }
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="RoomBridges" allow-remote="false">
+        <description>Internal: the connectors of rooms (chatRoomIdList): bridgeMap chatRoomId to [{chatRoomBridgeId,
+            chatBridgeId, name, network, networkName, statusId, connected, externalRoomName, externalRoomUrl, directionEnumId,
+            outbound}], the active mappings; and capabilityMap chatRoomId to {edit, delete, reaction}: what every outbound
+            bridge of the room carries (all true for a room with none). The caller has checked access.</description>
+        <in-parameters><parameter name="chatRoomIdList" type="List" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="bridgeMap" type="Map"/>
+            <parameter name="capabilityMap" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            bridgeMap = {}; capabilityMap = {}
+            const ids = Array.from(new Set(Array.from(chatRoomIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+            if (!ids.length) return
+            const mappings = Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', 'in', ids).condition('thruDate', null)
+                    .disableAuthz().list())
+            if (!mappings.length) return
+            const bridgeIds = Array.from(new Set(mappings.map((row) => row.chatBridgeId)))
+            const bridges = {}
+            for (const row of ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', 'in', bridgeIds).disableAuthz().list()) bridges[row.chatBridgeId] = row
+            const types = {}
+            const typeIds = Array.from(new Set(Object.values(bridges).map((row) => row.typeEnumId).filter((id) => id)))
+            if (typeIds.length) for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'in', typeIds).disableAuthz().list()) types[row.enumId] = row
+            const caps = ec.service.sync().name('org.moqui.impl.ChatServices.get#BridgeCapabilities').parameter('chatBridgeIdList', bridgeIds)
+                    .disableAuthz().call()?.capabilityMap || {}
+            for (const row of mappings) {
+                const bridge = bridges[row.chatBridgeId] || {}
+                const outbound = row.directionEnumId !== 'CrbIn'
+                ;(bridgeMap[row.chatRoomId] = bridgeMap[row.chatRoomId] || []).push({chatRoomBridgeId: row.chatRoomBridgeId,
+                    chatBridgeId: row.chatBridgeId, name: bridge.name ?? null, network: types[bridge.typeEnumId]?.enumCode || null,
+                    networkName: types[bridge.typeEnumId]?.description || null, statusId: bridge.statusId ?? null,
+                    connected: bridge.statusId === 'CbsConnected', externalRoomName: row.externalRoomName ?? null,
+                    externalRoomUrl: row.externalRoomUrl ?? null, directionEnumId: row.directionEnumId ?? null, outbound: outbound})
+                const cap = caps[row.chatBridgeId] || {}
+                const room = capabilityMap[row.chatRoomId] = capabilityMap[row.chatRoomId] || {edit: true, delete: true, reaction: true}
+                if (outbound) { room.edit = room.edit && cap.edit === true; room.delete = room.delete && cap.delete === true
+                    room.reaction = room.reaction && cap.reaction === true }
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="check" noun="BridgeSupport" allow-remote="false">
+        <description>Internal: whether a change (operation edit, delete or reaction) of a message may be made: refused
+            (supported false, reasonCode bridgeUnsupported, bridgeName) when the message went to, or came from, a bridge
+            whose adapter does not carry it, so it is never shown as synchronized. Adds no error.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Integer" required="true"/>
+            <parameter name="operation" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="supported" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="bridgeName"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            supported = true; reasonCode = null; bridgeName = null
+            const bridgeIds = new Set()
+            for (const row of ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                    .selectField('chatBridgeId').disableAuthz().list()) bridgeIds.add(row.chatBridgeId)
+            for (const row of ec.entity.find('moqui.chat.ChatEventExternal').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
+                    .selectField('chatBridgeId').disableAuthz().list()) bridgeIds.add(row.chatBridgeId)
+            if (!bridgeIds.size) return
+            // only the bridges the room still sends to
+            const live = new Set(Array.from(ec.entity.find('moqui.chat.ChatRoomBridge').condition('chatRoomId', chatRoomId).condition('thruDate', null)
+                    .condition('directionEnumId', 'in', ['CrbBoth', 'CrbOut']).selectField('chatBridgeId').disableAuthz().list()).map((row) => row.chatBridgeId))
+            const ids = Array.from(bridgeIds).filter((id) => live.has(id))
+            if (!ids.length) return
+            const caps = ec.service.sync().name('org.moqui.impl.ChatServices.get#BridgeCapabilities').parameter('chatBridgeIdList', ids)
+                    .disableAuthz().call()?.capabilityMap || {}
+            for (const id of ids) {
+                if ((caps[id] || {})[operation] === true) continue
+                supported = false
+                reasonCode = 'bridgeUnsupported'
+                bridgeName = ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', id).disableAuthz().one()?.name || id
+                return
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="BridgeCapabilities" type="rust" location="moqui_core::service::chat_bridge::get_bridge_capabilities"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: what the adapter of each bridge of chatBridgeIdList carries: capabilityMap chatBridgeId to {edit,
+            delete, reaction, idempotent, adapter} (adapter false: this build has no adapter for it, and it carries nothing).</description>
+        <in-parameters><parameter name="chatBridgeIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="capabilityMap" type="Map"/></out-parameters>
+    </service>
+
+    <service verb="wake" noun="BridgeDelivery" type="rust" location="moqui_core::service::chat_bridge::wake_bridge_delivery"
+            allow-remote="false" transaction="ignore">
+        <description>Internal: wake this node's chat bridge delivery worker once the caller's transaction commits.</description>
+    </service>
+
+    <service verb="migrate" noun="ChatActors" type="rust" location="moqui_core::service::chat_migrate::migrate_chat_actors"
+            allow-remote="false" transaction="ignore">
+        <description>Move a database from before chat actors (C1) to them; run once, in a maintenance window, with no server
+            on the old code (docs/Run-Deploy.md "Chat actors"). A local actor for each user the chat rows name (a deleted
+            account's history too), each row given its actor (table by table: one that fails is logged and the rest go on),
+            ChatRoomMember, ChatEventMention and ChatPollVote rebuilt on their new keys with their rows (the old rows kept in
+            CHAT_ROOM_MEMBER_PRE_C1, CHAT_EVENT_MENTION_PRE_C1 and CHAT_POLL_VOTE_PRE_C1; a table with a row lacking an
+            actor is not rebuilt), then the references checked. Running it again changes nothing. ChatBridgeSetupData.xml
+            calls it on a load.</description>
+        <out-parameters>
+            <parameter name="actorCount" type="Long"/>
+            <parameter name="filledCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+            <parameter name="rebuiltList" type="List"/>
+            <parameter name="problemList" type="List"/>
+        </out-parameters>
     </service>
 
     <service verb="publish" noun="ChatCounts">
@@ -399,7 +630,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The current user's rooms (another user's only with authorization disabled), pinned first, then by the
             last event. Each: the room's fields, displayName (a direct room's: the other members' names), isMember, my
             roleEnumId, notificationLevelEnumId, isPinned, isMuted, lastReadEventSeq, unreadCount (messages from others after
-            my read marker), mentionCount, lastMessage {eventSeq, senderUserId, senderName, sentDate, snippet}, and for a
+            my read marker), mentionCount, lastMessage {eventSeq, senderUserId, senderName, sentDate, snippet}, bridged (a
+            connector is mapped to it), notConnected (one of them is not connected) and bridgeNetworkNames, and for a
             direct room otherUserIdList and, with one other member, otherUserId and presence (as get#UserStatuses gives it).
             filter: unread (unread messages or mentions), mentions, direct, rooms (private and public), records; searchText
             matches the name and topic. includeJoinable adds the public rooms the user has not joined (isMember false).
@@ -462,7 +694,7 @@ along with this software (see the LICENSE.md file). If not, see
             const directMembers = {}
             if (directIds.length) {
                 for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', directIds).selectField('chatRoomId')
-                        .selectField('userId').orderBy('joinedDate').list()) (directMembers[row.chatRoomId] = directMembers[row.chatRoomId] || []).push(row.userId)
+                        .selectField('userId').orderBy('joinedDate').list()) if (row.userId) (directMembers[row.chatRoomId] = directMembers[row.chatRoomId] || []).push(row.userId)
             }
             const userIds = new Set([userId])
             for (const ids of Object.values(directMembers)) ids.forEach((id) => userIds.add(id))
@@ -471,6 +703,12 @@ along with this software (see the LICENSE.md file). If not, see
             for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', Array.from(userIds))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // an external actor's last message: its name; the connectors of the rooms (C1)
+            const externalLast = rooms.filter((row) => !row.lastMessageUserId && row.lastMessageActorId).map((row) => row.lastMessageActorId)
+            const actorNames = externalLast.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', externalLast).call()?.actorMap || {} : {}
+            const bridgeMap = rooms.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomBridges')
+                    .parameter('chatRoomIdList', rooms.map((row) => row.chatRoomId)).call()?.bridgeMap || {} : {}
             // the unread messages and the mentions of every room the user is in, in one query each
             const unreadOf = {}, mentionsOf = {}
             if (roomIds.length) {
@@ -501,9 +739,12 @@ along with this software (see the LICENSE.md file). If not, see
                     isPinned: !!member && member.isPinned === 'Y', isMuted: !!member && member.isMuted === 'Y',
                     lastReadEventSeq: lastRead, unreadCount: unreadCount, mentionCount: mentionCount,
                     lastMessage: row.lastMessageSeq != null ? {eventSeq: Number(row.lastMessageSeq), senderUserId: row.lastMessageUserId ?? null,
-                        senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId : null,
+                        senderName: row.lastMessageUserId ? names[row.lastMessageUserId] || row.lastMessageUserId
+                            : (actorNames[row.lastMessageActorId]?.name ?? null),
                         sentDate: toMillis(row.lastMessageDate), snippet: row.lastMessageSnippet ?? null, redacted: row.lastMessageSnippet == null} : null,
-                    otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null}
+                    otherUserIdList: others, otherUserId: others.length === 1 ? others[0] : null, presence: null,
+                    bridged: !!bridgeMap[row.chatRoomId], notConnected: (bridgeMap[row.chatRoomId] || []).some((bridge) => !bridge.connected),
+                    bridgeNetworkNames: Array.from(new Set((bridgeMap[row.chatRoomId] || []).map((bridge) => bridge.networkName).filter((name) => name)))}
                 if (text && !(`${displayName} ${row.topic || ''}`.toLowerCase().includes(text))) continue
                 if (filter === 'unread' && !(unreadCount > 0 || mentionCount > 0)) continue
                 if (filter === 'mentions' && !(mentionCount > 0)) continue
@@ -531,8 +772,11 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="Room">
-        <description>A room the user may read, with its members (current ones; memberList each {userId, name, roleEnumId,
-            joinedDate, lastReadEventSeq}), the user's member row and what the user may do (as get#RoomAccess). By
+        <description>A room the user may read, with its members (current ones; memberList each {userId, chatActorId, name,
+            roleEnumId, joinedDate, lastReadEventSeq, isAgent, external, network, networkName}: an external actor has no
+            userId), the user's member row and what the user may do (as get#RoomAccess). The room has bridges (its connectors,
+            as get#RoomBridges gives them), bridged, notConnected and bridgeCapabilities {edit, delete, reaction}, what every
+            bridge it sends to carries. By
             chatRoomId, or by recordEntityName and recordId for the room bound to that record (room null, and no error,
             when there is none or the user may not read it: a record's Chatter asks so). A member whose preference
             CHAT_READ_RECEIPTS is N has no lastReadEventSeq (null) for others.</description>
@@ -573,17 +817,33 @@ along with this software (see the LICENSE.md file). If not, see
             const rows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).orderBy('joinedDate').list())
                     .filter((row) => isDirect || !row.leftDate)
             const names = {}
-            if (rows.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', rows.map((row) => row.userId))
+            const localIds = rows.map((row) => row.userId).filter((id) => id)
+            if (localIds.length) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', localIds)
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // an external actor of a bridge: its name and network (C1)
+            const externalIds = rows.filter((row) => !row.userId).map((row) => row.chatActorId)
+            const actors = externalIds.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', externalIds).call()?.actorMap || {} : {}
             // the read marker of a member who turned read receipts off is not shown to others
             const me = ec.user.userId
-            const others = rows.map((row) => row.userId).filter((id) => id !== me)
+            const others = localIds.filter((id) => id !== me)
             const receiptsOff = new Set(others.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#ReceiptsOffUsers')
                     .parameter('userIdList', others).call().offUserIdList || [] : [])
-            memberList = rows.map((row) => ({userId: row.userId, name: names[row.userId] || row.userId, roleEnumId: row.roleEnumId ?? null,
-                joinedDate: toMillis(row.joinedDate), lastReadEventSeq: receiptsOff.has(row.userId) ? null : Number(row.lastReadEventSeq || 0),
-                isAgent: row.roleEnumId === 'CmrAgent'}))
+            memberList = rows.map((row) => {
+                const actor = row.userId ? null : actors[row.chatActorId] || {}
+                return {userId: row.userId ?? null, chatActorId: row.chatActorId ?? null,
+                    name: row.userId ? names[row.userId] || row.userId : actor.name || row.chatActorId, roleEnumId: row.roleEnumId ?? null,
+                    joinedDate: toMillis(row.joinedDate), lastReadEventSeq: !row.userId || receiptsOff.has(row.userId) ? null : Number(row.lastReadEventSeq || 0),
+                    isAgent: row.roleEnumId === 'CmrAgent', external: !row.userId, network: actor ? actor.network ?? null : null,
+                    networkName: actor ? actor.networkName ?? null : null}
+            })
+            // its connectors
+            const bridgesOut = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomBridges').parameter('chatRoomIdList', [chatRoomId]).call()
+            room.bridges = (bridgesOut?.bridgeMap || {})[chatRoomId] || []
+            room.bridged = room.bridges.length > 0
+            room.notConnected = room.bridges.some((bridge) => !bridge.connected)
+            room.bridgeCapabilities = (bridgesOut?.capabilityMap || {})[chatRoomId] || {edit: true, delete: true, reaction: true}
         ]]></script></actions>
     </service>
 
@@ -692,9 +952,11 @@ along with this software (see the LICENSE.md file). If not, see
             chatRoomId = room.chatRoomId
             created = true
             const members = [userId].concat(others)
+            const actorOf = ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', members)
+                    .disableAuthz().call()?.actorMap || {}
             for (const memberId of members) {
                 const member = ec.entity.makeValue('moqui.chat.ChatRoomMember')
-                member.setFields({chatRoomId: chatRoomId, userId: memberId,
+                member.setFields({chatRoomId: chatRoomId, chatActorId: actorOf[memberId], userId: memberId,
                     roleEnumId: type === 'CrtDirect' || memberId !== userId ? 'CmrMember' : 'CmrOwner', joinedDate: now, lastReadEventSeq: 0,
                     notificationLevelEnumId: levelFor(memberId), isPinned: 'N', isMuted: 'N', addedByUserId: userId}, true, null, null)
                 member.create()
@@ -856,7 +1118,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.message.hasError()) return
             }
             for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null).selectField('userId').list())
-                ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + row.userId,
+                if (row.userId) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + row.userId,
                     userIdList: [row.userId], message: {kind: 'room', action: 'changed', chatRoomId: chatRoomId}}).call()
         ]]></script></actions>
     </service>
@@ -929,6 +1191,8 @@ along with this software (see the LICENSE.md file). If not, see
             const ownLevels = room.roomTypeEnumId === 'CrtDirect' ? {} : ec.service.sync().name('org.moqui.impl.ChatServices.get#DefaultNotifyLevels')
                     .parameter('userIdList', targets).call().levelMap || {}
             let roomLocked = false
+            const actorOf = ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', targets)
+                    .disableAuthz().call()?.actorMap || {}
             for (const target of targets) {
                 const level = ownLevels[target] || roomLevel
                 let row = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', target).one()
@@ -949,7 +1213,7 @@ along with this software (see the LICENSE.md file). If not, see
                     row.update()
                 } else {
                     row = ec.entity.makeValue('moqui.chat.ChatRoomMember')
-                    row.setFields({chatRoomId: chatRoomId, userId: target, roleEnumId: role, agentRef: agentRef || null, joinedDate: now,
+                    row.setFields({chatRoomId: chatRoomId, chatActorId: actorOf[target], userId: target, roleEnumId: role, agentRef: agentRef || null, joinedDate: now,
                         lastReadEventSeq: lastSeq, notificationLevelEnumId: level, isPinned: 'N', isMuted: 'N', addedByUserId: me}, true, null, null)
                     row.create()
                 }
@@ -971,24 +1235,29 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="remove" noun="Member">
         <description>Leave a room (userId empty or the current user), or take another member out (a moderator or owner;
-            an owner only by an owner). Leaving a direct room hides it until its next message, with no event. When the last
+            an owner only by an owner; an external actor of a bridge by its chatActorId). Leaving a direct room hides it until
+            its next message, with no event. When the last
             owner leaves a room that still has members, the longest-standing moderator, else member, becomes its owner. A
             membership event; the user's room list hears of it on chatUser:userId.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="userId"/>
+            <parameter name="chatActorId"/>
         </in-parameters>
         <actions><script><![CDATA[
             const me = ec.user.userId
-            if (!userId) userId = me
+            if (!userId && !chatActorId) userId = me
             const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.isMember) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const room = access.room
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const self = userId === me
-            const row = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', userId).one()
-            if (!row || row.leftDate) { if (!self) ec.message.addError(`User ${userId} is not in the room`); return }
+            const row = userId ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', userId).one()
+                    : ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('chatActorId', chatActorId).one()
+            // a local user's actor named by chatActorId is that user: the same checks, and the user hears of it
+            if (row && !userId && row.userId) userId = row.userId
+            const self = !!userId && userId === me
+            if (!row || row.leftDate) { if (!self) ec.message.addError(`User ${userId || chatActorId} is not in the room`); return }
             if (!self) {
                 if (isDirect) { ec.message.addError(ec.l10n.localize('A direct room has fixed members')); return }
                 if (!access.canModerate) { ec.message.addError(ec.l10n.localize('Only a moderator or owner may take a member out')); return }
@@ -999,11 +1268,12 @@ along with this software (see the LICENSE.md file). If not, see
             row.update()
             if (!isDirect) {
                 ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                    eventTypeEnumId: 'CetMembership', senderUserId: me, content: {action: self ? 'leave' : 'remove', userId: userId, byUserId: me}}).call()
+                    eventTypeEnumId: 'CetMembership', senderUserId: me, content: {action: self ? 'leave' : 'remove', userId: userId || null,
+                    chatActorId: row.chatActorId ?? null, byUserId: me}}).call()
                 if (ec.message.hasError()) return
                 if (row.roleEnumId === 'CmrOwner') {
                     const remaining = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
-                            .condition('roleEnumId', 'not-equals', 'CmrAgent').orderBy('joinedDate').list())
+                            .condition('roleEnumId', 'not-equals', 'CmrAgent').orderBy('joinedDate').list()).filter((member) => member.userId)
                     if (remaining.length && !remaining.some((member) => member.roleEnumId === 'CmrOwner')) {
                         const heir = remaining.find((member) => member.roleEnumId === 'CmrModerator') || remaining[0]
                         heir.set('roleEnumId', 'CmrOwner')
@@ -1013,6 +1283,7 @@ along with this software (see the LICENSE.md file). If not, see
                     }
                 }
             }
+            if (!userId) return
             ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + userId,
                 userIdList: [userId], message: {kind: 'room', action: 'left', chatRoomId: chatRoomId}}).call()
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', [userId]).call()
@@ -1113,8 +1384,10 @@ along with this software (see the LICENSE.md file). If not, see
             redacted true with no body, bodyText or attachments and removedLabel "Message removed", and a reply has replyTo
             {eventSeq, senderUserId, senderName, snippet, redacted}. A message has forwardOf (a forwarded message, see
             send#Message), poll (get#PollStates, with the user's own votes), linkPreviews [{url, title, description,
-            siteName}] and, for the user's own message, clientRef. Also the room, the user's access and lastReadEventSeq,
-            and memberList (as get#Room: each member's lastReadEventSeq gives the read markers).</description>
+            siteName}] and, for the user's own message, clientRef. An external actor's event has senderActorId, senderName
+            and senderExternal {network, networkName}. In a bridged room a message has delivery (ChatBridgeServices
+            get#EventDeliveries: its state and each destination's, with canRetry). Also the room, the user's access and
+            lastReadEventSeq, and memberList (as get#Room: each member's lastReadEventSeq gives the read markers).</description>
         <in-parameters>
             <parameter name="chatRoomId"/>
             <parameter name="recordEntityName"/>
@@ -1207,8 +1480,9 @@ along with this software (see the LICENSE.md file). If not, see
                 const target = Number(reaction.relatesToEventSeq)
                 const byKey = reactions[target] = reactions[target] || {}
                 const entry = byKey[key] = byKey[key] || {key: key, count: 0, userIds: [], mine: false}
-                if (entry.userIds.includes(reaction.senderUserId)) continue
-                entry.userIds.push(reaction.senderUserId)
+                const who = reaction.senderUserId || reaction.senderActorId
+                if (entry.userIds.includes(who)) continue
+                entry.userIds.push(who)
                 entry.count++
                 if (reaction.senderUserId === me) entry.mine = true
             }
@@ -1235,6 +1509,18 @@ along with this software (see the LICENSE.md file). If not, see
             if (userIds.size) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', Array.from(userIds))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 names[account.userId] = account.userFullName || account.username || account.userId
+            // the external actors' names and networks (C1)
+            const externalActorIds = Array.from(new Set(Object.values(replied).concat(rows).filter((row) => !row.senderUserId && row.senderActorId)
+                    .map((row) => row.senderActorId)))
+            const actors = externalActorIds.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames')
+                    .parameter('chatActorIdList', externalActorIds).call()?.actorMap || {} : {}
+            const nameOf = (row) => row.senderUserId ? names[row.senderUserId] || row.senderUserId : (actors[row.senderActorId]?.name ?? null)
+            const externalOf = (row) => !row.senderUserId && actors[row.senderActorId]
+                    ? {network: actors[row.senderActorId].network, networkName: actors[row.senderActorId].networkName} : null
+            // the delivery state of a bridged room's messages
+            const deliveries = room.bridged ? (ec.service.sync().name('org.moqui.impl.ChatBridgeServices.get#EventDeliveries').parameters({
+                chatRoomId: chatRoomId, eventSeqList: rows.filter((row) => row.eventTypeEnumId === 'CetMessage').map((row) => Number(row.eventSeq))})
+                .call()?.deliveryMap || {}) : {}
             const removedLabel = ec.l10n.localize('Message removed')
             const snippet = (row) => {
                 if (!row || row.redactedDate) return null
@@ -1248,7 +1534,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const edit = edits[seq]
                 const isMessage = row.eventTypeEnumId === 'CetMessage'
                 const item = {chatRoomId: chatRoomId, eventSeq: seq, eventTypeEnumId: row.eventTypeEnumId, type: CODES[row.eventTypeEnumId] || null,
-                    senderUserId: row.senderUserId ?? null, senderName: row.senderUserId ? names[row.senderUserId] || row.senderUserId : null,
+                    senderUserId: row.senderUserId ?? null, senderActorId: row.senderActorId ?? null, senderName: nameOf(row),
+                    senderExternal: externalOf(row), delivery: deliveries[seq] || null,
                     sentDate: toMillis(row.sentDate), content: isMessage ? {} : content,
                     body: redacted || !isMessage ? null : (edit && edit.body != null ? edit.body : content.body ?? null),
                     bodyText: redacted ? null : row.bodyText ?? null,
@@ -1272,7 +1559,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (item.replyToEventSeq != null) {
                     const target = replied[item.replyToEventSeq]
                     item.replyTo = target ? {eventSeq: item.replyToEventSeq, senderUserId: target.senderUserId ?? null,
-                        senderName: target.senderUserId ? names[target.senderUserId] || target.senderUserId : null, snippet: snippet(target),
+                        senderName: nameOf(target), snippet: snippet(target),
                         redacted: !!target.redactedDate} : {eventSeq: item.replyToEventSeq, senderUserId: null, senderName: null, snippet: null, redacted: true}
                 }
                 eventList.push(item)
@@ -1373,7 +1660,12 @@ along with this software (see the LICENSE.md file). If not, see
 
             Once it commits, the previews of its links are fetched (fetch#LinkPreviews, pushed as an update), unless the
             property chat_link_previews is false or the sender's preference CHAT_LINK_PREVIEWS is N. Out: eventSeq and event
-            (as pushed).</description>
+            (as pushed).
+
+            senderActorId (authorization disabled only) sends as an actor: an external actor of a bridge
+            (ChatBridgeServices.ingest#Event) posts as a current member of a room that is not archived, with no files,
+            forward, clientRef or mentions, and no link previews; its message reaches the room's agents only when the room's
+            agentsReadExternal is Y. sourceChatBridgeId is the bridge it came from, which it does not go back to.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="body" allow-html="safe"/>
@@ -1386,6 +1678,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="clientRef"/>
             <parameter name="forwardOfChatRoomId"/>
             <parameter name="forwardOfEventSeq" type="Integer"/>
+            <parameter name="senderActorId"/>
+            <parameter name="sourceChatBridgeId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -1409,12 +1703,42 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('A message is sent as yourself')); return }
                 sender = senderUserId
             }
-            if (!sender) { ec.message.addError(ec.l10n.localize('No user to send the message')); return }
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameters({chatRoomId: chatRoomId, userId: sender}).call()
-            if (ec.message.hasError()) return
-            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
-            if (!access.isMember) { ec.message.addError(ec.l10n.localize('Join the room to post in it')); return }
-            if (access.isArchived) { ec.message.addError(ec.l10n.localize('The room is archived')); return }
+            // an actor (C1): an external actor of a bridge, or a local user's actor
+            let externalActor = null
+            if (senderActorId) {
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('A message is sent as yourself')); return }
+                const actorRow = ec.entity.find('moqui.chat.ChatActor').condition('chatActorId', senderActorId).disableAuthz().one()
+                if (!actorRow) { ec.message.addError(`Chat actor ${senderActorId} not found`); return }
+                if (actorRow.userId) sender = actorRow.userId
+                else externalActor = actorRow
+            }
+            if (!sender && !externalActor) { ec.message.addError(ec.l10n.localize('No user to send the message')); return }
+            // the bridge a message came from is an external actor's only: a local user's message goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
+            let access
+            if (externalActor) {
+                sender = null
+                if (clientRef || forwardOfChatRoomId || forwardOfEventSeq != null || (chatAttachmentIdList && chatAttachmentIdList.length)) {
+                    ec.message.addError(ec.l10n.localize('An external message carries text only')); return }
+                const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
+                const actorMember = roomRow ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                        .condition('chatActorId', externalActor.chatActorId).one() : null
+                if (!roomRow) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                if (!actorMember || actorMember.leftDate) { ec.message.addError(ec.l10n.localize('Join the room to post in it')); return }
+                if (roomRow.archivedDate) { ec.message.addError(ec.l10n.localize('The room is archived')); return }
+                access = {canRead: true, isMember: true, isArchived: false, canModerate: false, isOwner: false,
+                    room: {chatRoomId: roomRow.chatRoomId, roomTypeEnumId: roomRow.roomTypeEnumId, roomName: roomRow.roomName ?? null,
+                        visibilityEnumId: roomRow.visibilityEnumId, recordEntityName: roomRow.recordEntityName ?? null, recordId: roomRow.recordId ?? null,
+                        agentsReadExternal: roomRow.agentsReadExternal ?? null}}
+            } else {
+                access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameters({chatRoomId: chatRoomId, userId: sender}).call()
+                if (ec.message.hasError()) return
+                if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                if (!access.isMember) { ec.message.addError(ec.l10n.localize('Join the room to post in it')); return }
+                if (access.isArchived) { ec.message.addError(ec.l10n.localize('The room is archived')); return }
+            }
+            const senderActor = externalActor ? externalActor.chatActorId : (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors')
+                    .parameter('userIdList', [sender]).disableAuthz().call()?.actorMap || {})[sender]
             const room = access.room
             // a send tried again: the room is locked so two tries do not both pass, and the first one's message answers
             if (clientRef != null && clientRef !== '') {
@@ -1519,12 +1843,12 @@ along with this software (see the LICENSE.md file). If not, see
                     .map((record) => ({entity: String(record.entity), id: String(record.id)}))
 
             // the mentions: users, who may read the room
-            const mentionedAll = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
-                    .filter((id) => id && id !== sender)))
+            const mentionedAll = externalActor ? [] : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
+                    .map((match) => decode(match[1]).trim()).filter((id) => id && id !== sender)))
             const mentioned = mentionedAll.filter((id) => id !== ROOM_MENTION)
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
             const memberOf = {}
-            memberRows.forEach((row) => { memberOf[row.userId] = row })
+            memberRows.forEach((row) => { if (row.userId) memberOf[row.userId] = row })
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             const current = (row) => row && (!row.leftDate || isDirect)
             // a user who is not a member of a record room counts when they may see the record (asked as that user)
@@ -1539,7 +1863,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // @room: every current member, from a moderator or owner, or from anyone in a room of 20 members or fewer
             if (mentionedAll.includes(ROOM_MENTION)) {
-                const everyone = memberRows.filter((row) => current(row) && row.roleEnumId !== 'CmrAgent')
+                const everyone = memberRows.filter((row) => row.userId && current(row) && row.roleEnumId !== 'CmrAgent')
                 if (access.canModerate || access.isOwner || everyone.length <= 20)
                     for (const row of everyone) if (row.userId !== sender && !mentionIds.includes(row.userId)) mentionIds.push(row.userId)
             }
@@ -1560,8 +1884,8 @@ along with this software (see the LICENSE.md file). If not, see
             // a forward is found and shown by its text too
             const storedText = [bodyText, forwardOf ? forwardOf.bodyText : null].filter((part) => part).join('\n') || bodyText
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetMessage', senderUserId: sender, content: content, bodyText: storedText,
-                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef}).call()
+                eventTypeEnumId: 'CetMessage', senderUserId: sender, senderActorId: senderActor, content: content, bodyText: storedText,
+                replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef, sourceChatBridgeId: sourceChatBridgeId || null}).call()
             if (ec.message.hasError()) return
             eventSeq = appended.eventSeq
             event = appended.event
@@ -1575,20 +1899,22 @@ along with this software (see the LICENSE.md file). If not, see
                 rootRow.update()
             }
             // the sender has read it; in a direct room the members who left are back
-            const senderRow = memberOf[sender]
+            const senderRow = memberRows.find((row) => row.chatActorId === senderActor)
             if (senderRow) { senderRow.set('lastReadEventSeq', eventSeq); senderRow.set('lastReadDate', now); senderRow.update() }
             if (isDirect) for (const row of memberRows) {
                 if (!row.leftDate) continue
                 row.set('leftDate', null)
                 row.update()
-                ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + row.userId,
+                if (row.userId) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + row.userId,
                     userIdList: [row.userId], message: {kind: 'room', action: 'joined', chatRoomId: chatRoomId}}).call()
             }
             // mentions: counted, and notified unless the member's level is none
             if (mentionIds.length) {
+                const mentionActors = ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', mentionIds)
+                        .disableAuthz().call()?.actorMap || {}
                 for (const id of mentionIds) {
                     const mention = ec.entity.makeValue('moqui.chat.ChatEventMention')
-                    mention.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, userId: id}, true, null, null)
+                    mention.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, chatActorId: mentionActors[id], userId: id}, true, null, null)
                     mention.create()
                 }
                 const notify = mentionIds.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
@@ -1597,20 +1923,22 @@ along with this software (see the LICENSE.md file). If not, see
                     authorName: event.senderName || sender, bodyText: bodyText, roomUrl: roomUrl || null}).call()
             }
             ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
-            if (html) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
-                senderUserId: sender, body: html}).call()
+            if (html && !externalActor) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
+                eventSeq: eventSeq, senderUserId: sender, body: html}).call()
             // the counts of the members whose count it changes
-            const counted = new Set([sender].concat(mentionIds))
-            for (const row of memberRows) if (current(row) && row.userId !== sender && LEVEL_ALL(row)) counted.add(row.userId)
+            const counted = new Set([sender].concat(mentionIds).filter((id) => id))
+            for (const row of memberRows) if (row.userId && current(row) && row.userId !== sender && LEVEL_ALL(row)) counted.add(row.userId)
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
-            // the agent members: each gets the message to answer (the Assist port's entry point)
+            // the agent members: each gets the message to answer (the Assist port's entry point); an external actor's only
+            // under the room's policy (agentsReadExternal)
             for (const row of memberRows) {
-                if (row.roleEnumId !== 'CmrAgent' || !row.agentRef || row.leftDate || row.userId === sender) continue
+                if (row.roleEnumId !== 'CmrAgent' || !row.agentRef || row.leftDate || !row.userId || row.userId === sender) continue
+                if (externalActor && room.agentsReadExternal !== 'Y') continue
                 try {
                     ec.message.pushErrors()
                     ec.service.async().name('org.moqui.impl.ChatServices.deliver#AgentMessage').parameters({chatRoomId: chatRoomId,
-                        eventSeq: eventSeq, agentUserId: row.userId, agentRef: row.agentRef, senderUserId: sender, body: html,
-                        bodyText: bodyText, threadRootEventSeq: threadRoot}).call()
+                        eventSeq: eventSeq, agentUserId: row.userId, agentRef: row.agentRef, senderUserId: sender, senderActorId: senderActor,
+                        senderName: event.senderName || null, body: html, bodyText: bodyText, threadRootEventSeq: threadRoot}).call()
                     if (ec.message.hasError()) ec.logger.warn(`Could not hand chat message ${chatRoomId}::${eventSeq} to agent ${row.userId}: ${ec.message.errorsString}`)
                 } catch (err) {
                     ec.logger.warn(`Could not hand chat message ${chatRoomId}::${eventSeq} to agent ${row.userId}: ${err && err.message ? err.message : err}`)
@@ -1627,16 +1955,22 @@ along with this software (see the LICENSE.md file). If not, see
             chat_edit_window_minutes, 1440 by default, 0 for no limit. An edit event with the new body and mentions; the
             message keeps its place, shows the new text and is edited. New mentions are counted and notified, dropped ones
             no longer count (@room as send#Message has it). The search index has the new text, and its link previews are
-            fetched again unless the sender removed them. A poll is not edited.</description>
+            fetched again unless the sender removed them. A poll is not edited. A message that went to a bridge whose adapter
+            cannot carry edits is not edited (reasonCode bridgeUnsupported). senderActorId (authorization disabled only) is an
+            external actor editing its own message from its network (no edit window, no mentions), sourceChatBridgeId the
+            bridge it came from.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
             <parameter name="body" allow-html="safe"/>
             <parameter name="roomUrl"/>
+            <parameter name="senderActorId"/>
+            <parameter name="sourceChatBridgeId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="editEventSeq" type="Integer"/>
             <parameter name="event" type="Map"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const decode = (text) => String(text || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
@@ -1645,19 +1979,50 @@ along with this software (see the LICENSE.md file). If not, see
             const toText = (html) => decode(String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h[1-6]|blockquote|pre|div)>/gi, '\n')
                     .replace(/<[^>]*>/g, '')).replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            editEventSeq = null; event = null
-            const me = ec.user.userId
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
-            if (ec.message.hasError()) return
+            editEventSeq = null; event = null; reasonCode = null
+            // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
+            let externalActor = null
+            if (senderActorId) {
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('Only you change your messages')); return }
+                externalActor = ec.entity.find('moqui.chat.ChatActor').condition('chatActorId', senderActorId).disableAuthz().one()
+                if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
+            }
+            const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
+            let access
+            if (externalActor) {
+                const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
+                const actorMember = roomRow ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                        .condition('chatActorId', externalActor.chatActorId).one() : null
+                if (!roomRow) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                const current = !!actorMember && !actorMember.leftDate
+                access = {canRead: true, isMember: current, canPost: current && !roomRow.archivedDate, isArchived: !!roomRow.archivedDate,
+                    canModerate: false, isOwner: false, room: {chatRoomId: roomRow.chatRoomId, roomTypeEnumId: roomRow.roomTypeEnumId,
+                    roomName: roomRow.roomName ?? null, visibilityEnumId: roomRow.visibilityEnumId, recordEntityName: roomRow.recordEntityName ?? null,
+                    recordId: roomRow.recordId ?? null}}
+            } else {
+                access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+                if (ec.message.hasError()) return
+            }
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to post in it'); return }
             const original = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
             if (!original || original.eventTypeEnumId !== 'CetMessage' || original.redactedDate) { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
-            if (original.senderUserId !== me) { ec.message.addError(ec.l10n.localize('You may edit only your own messages')); return }
+            if (externalActor ? original.senderActorId !== externalActor.chatActorId : original.senderUserId !== me) {
+                ec.message.addError(ec.l10n.localize('You may edit only your own messages')); return }
             if (parse(original.contentJson).poll) { ec.message.addError(ec.l10n.localize('A poll is not edited: close it, or delete it and make another')); return }
             const windowMinutes = Number(System.getProperty('chat_edit_window_minutes') || 1440)
-            if (windowMinutes > 0 && Number(ec.user.nowTimestamp) - Number(original.sentDate) > windowMinutes * 60000) {
+            if (!externalActor && windowMinutes > 0 && Number(ec.user.nowTimestamp) - Number(original.sentDate) > windowMinutes * 60000) {
                 ec.message.addError(ec.l10n.localize('This message is too old to edit')); return }
+            // a bridge that cannot carry the change refuses it before it is made
+            if (!externalActor) {
+                const support = ec.service.sync().name('org.moqui.impl.ChatServices.check#BridgeSupport').parameters({chatRoomId: chatRoomId,
+                    eventSeq: eventSeq, operation: 'edit'}).call()
+                if (support && support.supported === false) { reasonCode = support.reasonCode
+                    ec.message.addError(ec.resource.expand('Edits do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
+            }
+
             const html = body ? String(body).trim() : ''
             const bodyText = toText(html)
             if (!bodyText && !/<img\b/i.test(html)) { ec.message.addError(ec.l10n.localize('Delete the message to remove its text')); return }
@@ -1665,10 +2030,10 @@ along with this software (see the LICENSE.md file). If not, see
             const room = access.room
             const memberRows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).list())
             const memberOf = {}
-            memberRows.forEach((row) => { memberOf[row.userId] = row })
+            memberRows.forEach((row) => { if (row.userId) memberOf[row.userId] = row })
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const mentionedAll = Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g)).map((match) => decode(match[1]).trim())
-                    .filter((id) => id && id !== me)))
+            const mentionedAll = externalActor ? [] : Array.from(new Set(Array.from(html.matchAll(/data-mention-id="([^"]*)"/g))
+                    .map((match) => decode(match[1]).trim()).filter((id) => id && id !== me)))
             const mentioned = mentionedAll.filter((id) => id !== '@room')
             let mentionIds = []
             if (mentioned.length) {
@@ -1682,7 +2047,7 @@ along with this software (see the LICENSE.md file). If not, see
                         || room.visibilityEnumId === 'CrvUsers' || recordReader(id)))
             }
             if (mentionedAll.includes('@room')) {
-                const everyone = memberRows.filter((row) => (!row.leftDate || isDirect) && row.roleEnumId !== 'CmrAgent')
+                const everyone = memberRows.filter((row) => row.userId && (!row.leftDate || isDirect) && row.roleEnumId !== 'CmrAgent')
                 if (access.canModerate || access.isOwner || everyone.length <= 20)
                     for (const row of everyone) if (row.userId !== me && !mentionIds.includes(row.userId)) mentionIds.push(row.userId)
             }
@@ -1698,8 +2063,9 @@ along with this software (see the LICENSE.md file). If not, see
             const before = new Set(Array.from(ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
                     .condition('eventSeq', eventSeq).selectField('userId').list()).map((row) => row.userId))
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetEdit', senderUserId: me, content: {body: html, mentions: mentionIds}, bodyText: bodyText,
-                editsEventSeq: eventSeq, threadRootEventSeq: original.threadRootEventSeq ?? null}).call()
+                eventTypeEnumId: 'CetEdit', senderUserId: me, senderActorId: externalActor ? externalActor.chatActorId : null,
+                content: {body: html, mentions: mentionIds}, bodyText: bodyText, editsEventSeq: eventSeq,
+                threadRootEventSeq: original.threadRootEventSeq ?? null, sourceChatBridgeId: sourceChatBridgeId || null}).call()
             if (ec.message.hasError()) return
             editEventSeq = appended.eventSeq
             event = appended.event
@@ -1715,9 +2081,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const added = mentionIds.filter((id) => !before.has(id))
             const dropped = Array.from(before).filter((id) => !mentionIds.includes(id))
+            const addedActors = added.length ? ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', added)
+                    .disableAuthz().call()?.actorMap || {} : {}
             for (const id of added) {
                 const mention = ec.entity.makeValue('moqui.chat.ChatEventMention')
-                mention.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, userId: id}, true, null, null)
+                mention.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, chatActorId: addedActors[id], userId: id}, true, null, null)
                 mention.create()
             }
             for (const id of dropped) ec.entity.find('moqui.chat.ChatEventMention').condition('chatRoomId', chatRoomId)
@@ -1727,7 +2095,7 @@ along with this software (see the LICENSE.md file). If not, see
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
                 authorName: event.senderName || me, bodyText: bodyText, roomUrl: roomUrl || null}).call()
             ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
-            if (!parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
+            if (!externalActor && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
                 chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()
             if (added.length || dropped.length) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts')
                     .parameter('userIdList', added.concat(dropped)).call()
@@ -1738,13 +2106,21 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Delete a message: one's own, or any (not in a direct room) as a moderator or owner. Its content, its
             edits' content, its files, its link previews and its poll go, its mentions no longer count, it leaves the search
             index, and the timeline shows "message removed" in its place (a redaction event, content {target: 'message',
-            reason}). A thread reply leaves its thread's count, and its thread's last reply is the last one that stands.</description>
+            reason}). A thread reply leaves its thread's count, and its thread's last reply is the last one that stands. A
+            message that went to a bridge whose adapter cannot carry deletes is not deleted (reasonCode bridgeUnsupported).
+            senderActorId (authorization disabled only) is an external actor deleting its own message from its network,
+            sourceChatBridgeId the bridge it came from.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
             <parameter name="reason"/>
+            <parameter name="senderActorId"/>
+            <parameter name="sourceChatBridgeId"/>
         </in-parameters>
-        <out-parameters><parameter name="redactionEventSeq" type="Integer"/></out-parameters>
+        <out-parameters>
+            <parameter name="redactionEventSeq" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
         <actions><script><![CDATA[
             const snippetOf = (text, attachments) => {
                 const shown = String(text || '').replace(/\s+/g, ' ').trim()
@@ -1753,17 +2129,47 @@ along with this software (see the LICENSE.md file). If not, see
                 return files.length ? '📎 ' + files.join(', ') : ''
             }
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            redactionEventSeq = null
-            const me = ec.user.userId
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
-            if (ec.message.hasError()) return
+            redactionEventSeq = null; reasonCode = null
+            // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
+            let externalActor = null
+            if (senderActorId) {
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('Only you change your messages')); return }
+                externalActor = ec.entity.find('moqui.chat.ChatActor').condition('chatActorId', senderActorId).disableAuthz().one()
+                if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
+            }
+            const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
+            let access
+            if (externalActor) {
+                const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
+                const actorMember = roomRow ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                        .condition('chatActorId', externalActor.chatActorId).one() : null
+                if (!roomRow) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                const current = !!actorMember && !actorMember.leftDate
+                access = {canRead: true, isMember: current, canPost: current && !roomRow.archivedDate, isArchived: !!roomRow.archivedDate,
+                    canModerate: false, isOwner: false, room: {chatRoomId: roomRow.chatRoomId, roomTypeEnumId: roomRow.roomTypeEnumId,
+                    roomName: roomRow.roomName ?? null, visibilityEnumId: roomRow.visibilityEnumId, recordEntityName: roomRow.recordEntityName ?? null,
+                    recordId: roomRow.recordId ?? null}}
+            } else {
+                access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+                if (ec.message.hasError()) return
+            }
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (!access.isMember) { ec.message.addError(ec.l10n.localize('Join the room to change it')); return }
             const original = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
             if (!original || original.eventTypeEnumId !== 'CetMessage') { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
             if (original.redactedDate) return
-            const own = original.senderUserId === me
+            const own = externalActor ? original.senderActorId === externalActor.chatActorId : original.senderUserId === me
             if (!own && !access.canModerate) { ec.message.addError(ec.l10n.localize('You may delete only your own messages')); return }
+            // a bridge that cannot carry the change refuses it before it is made
+            if (!externalActor) {
+                const support = ec.service.sync().name('org.moqui.impl.ChatServices.check#BridgeSupport').parameters({chatRoomId: chatRoomId,
+                    eventSeq: eventSeq, operation: 'delete'}).call()
+                if (support && support.supported === false) { reasonCode = support.reasonCode
+                    ec.message.addError(ec.resource.expand('Deletes do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
+            }
+
             const now = ec.user.nowTimestamp
             original.setFields({redactedDate: now, redactedByUserId: me, contentJson: '{"redacted":true}', bodyText: null, pinnedDate: null,
                 pinnedByUserId: null}, true, null, null)
@@ -1782,14 +2188,15 @@ along with this software (see the LICENSE.md file). If not, see
                     const last = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('threadRootEventSeq', original.threadRootEventSeq)
                             .condition('eventTypeEnumId', 'CetMessage').condition('redactedDate', null).orderBy('-eventSeq').limit(1).list()
                     const reply = last.length ? last[0] : null
-                    root.setFields({threadLastEventSeq: reply ? reply.eventSeq : null, threadLastUserId: reply ? reply.senderUserId : null,
+                    root.setFields({threadLastEventSeq: reply ? reply.eventSeq : null, threadLastUserId: reply ? reply.senderUserId ?? null : null,
                         threadLastDate: reply ? reply.sentDate : null}, true, null, null)
                     root.update()
                 }
             }
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetRedaction', senderUserId: me, relatesToEventSeq: eventSeq,
-                threadRootEventSeq: original.threadRootEventSeq ?? null, content: {target: 'message', reason: reason || null, byModerator: !own}}).call()
+                eventTypeEnumId: 'CetRedaction', senderUserId: me, senderActorId: externalActor ? externalActor.chatActorId : null,
+                relatesToEventSeq: eventSeq, threadRootEventSeq: original.threadRootEventSeq ?? null,
+                content: {target: 'message', reason: reason || null, byModerator: !own}, sourceChatBridgeId: sourceChatBridgeId || null}).call()
             if (ec.message.hasError()) return
             redactionEventSeq = appended.eventSeq
             // the room's last message is the last one that stands
@@ -1799,12 +2206,13 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('threadRootEventSeq', null).condition('redactedDate', null).orderBy('-eventSeq').limit(1).list()
                 const row = last.length ? last[0] : null
                 roomRow.setFields({lastMessageSeq: row ? row.eventSeq : null, lastMessageUserId: row ? row.senderUserId : null,
+                    lastMessageActorId: row ? row.senderActorId ?? null : null,
                     lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
                 roomRow.update()
             }
             const counted = new Set(mentioned)
             for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
-                    .condition('lastReadEventSeq', 'less', eventSeq).selectField('userId').list()) counted.add(row.userId)
+                    .condition('lastReadEventSeq', 'less', eventSeq).selectField('userId').list()) if (row.userId) counted.add(row.userId)
             ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
         ]]></script></actions>
     </service>
@@ -1842,42 +2250,82 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="react" noun="Message">
         <description>Toggle the current user's reaction key (an emoji, up to 32 characters) on a message: a reaction event
             when the user had none with that key, else that reaction is taken back (a redaction event, content {target:
-            'reaction', messageSeq, key}). A member of a room that is not archived.</description>
+            'reaction', messageSeq, key}). A member of a room that is not archived. A message that went to a bridge whose
+            adapter cannot carry reactions takes none (reasonCode bridgeUnsupported). senderActorId (authorization disabled
+            only) is an external actor reacting from its network, with mode add or remove (not toggle), sourceChatBridgeId the
+            bridge it came from.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventSeq" type="Integer" required="true"/>
             <parameter name="key" required="true"/>
+            <parameter name="mode" default-value="toggle"><description>toggle, add or remove</description></parameter>
+            <parameter name="senderActorId"/>
+            <parameter name="sourceChatBridgeId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="added" type="Boolean"/>
             <parameter name="reactionEventSeq" type="Integer"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script><![CDATA[
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            added = false; reactionEventSeq = null
-            const me = ec.user.userId
+            added = false; reactionEventSeq = null; reasonCode = null
             const reactionKey = String(key || '').trim()
             if (!reactionKey || Array.from(reactionKey).length > 32 || /[<>]/.test(reactionKey)) { ec.message.addError(ec.l10n.localize('A reaction is an emoji or a short word')); return }
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
-            if (ec.message.hasError()) return
+            // an external actor of a bridge (C1, ChatBridgeServices.ingest#Event): a current member, its own messages only
+            let externalActor = null
+            if (senderActorId) {
+                if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('Only you change your messages')); return }
+                externalActor = ec.entity.find('moqui.chat.ChatActor').condition('chatActorId', senderActorId).disableAuthz().one()
+                if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
+            }
+            const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
+            let access
+            if (externalActor) {
+                const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
+                const actorMember = roomRow ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
+                        .condition('chatActorId', externalActor.chatActorId).one() : null
+                if (!roomRow) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+                const current = !!actorMember && !actorMember.leftDate
+                access = {canRead: true, isMember: current, canPost: current && !roomRow.archivedDate, isArchived: !!roomRow.archivedDate,
+                    canModerate: false, isOwner: false, room: {chatRoomId: roomRow.chatRoomId, roomTypeEnumId: roomRow.roomTypeEnumId,
+                    roomName: roomRow.roomName ?? null, visibilityEnumId: roomRow.visibilityEnumId, recordEntityName: roomRow.recordEntityName ?? null,
+                    recordId: roomRow.recordId ?? null}}
+            } else {
+                access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+                if (ec.message.hasError()) return
+            }
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to post in it'); return }
             const target = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
             if (!target || target.eventTypeEnumId !== 'CetMessage' || target.redactedDate) { ec.message.addError(`Message ${eventSeq} not found in the room`); return }
+            // a bridge that cannot carry the change refuses it before it is made
+            if (!externalActor) {
+                const support = ec.service.sync().name('org.moqui.impl.ChatServices.check#BridgeSupport').parameters({chatRoomId: chatRoomId,
+                    eventSeq: eventSeq, operation: 'reaction'}).call()
+                if (support && support.supported === false) { reasonCode = support.reasonCode
+                    ec.message.addError(ec.resource.expand('Reactions do not reach ${bridgeName}, where this message went', '', {bridgeName: support.bridgeName})); return }
+            }
+            const actorId = externalActor ? externalActor.chatActorId : null
             const mine = Array.from(ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventTypeEnumId', 'CetReaction')
-                    .condition('relatesToEventSeq', eventSeq).condition('senderUserId', me).condition('redactedDate', null).list())
-                    .filter((row) => parse(row.contentJson).key === reactionKey)
+                    .condition('relatesToEventSeq', eventSeq).condition(externalActor ? 'senderActorId' : 'senderUserId', externalActor ? actorId : me)
+                    .condition('redactedDate', null).list()).filter((row) => parse(row.contentJson).key === reactionKey)
             if (mine.length) {
+                if (mode === 'add') return
                 for (const row of mine) { row.set('redactedDate', ec.user.nowTimestamp); row.set('redactedByUserId', me); row.update() }
                 const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                    eventTypeEnumId: 'CetRedaction', senderUserId: me, relatesToEventSeq: Number(mine[0].eventSeq),
-                    content: {target: 'reaction', messageSeq: eventSeq, key: reactionKey}}).call()
+                    eventTypeEnumId: 'CetRedaction', senderUserId: me, senderActorId: actorId, relatesToEventSeq: Number(mine[0].eventSeq),
+                    content: {target: 'reaction', messageSeq: eventSeq, key: reactionKey}, sourceChatBridgeId: sourceChatBridgeId || null}).call()
                 if (ec.message.hasError()) return
                 reactionEventSeq = appended.eventSeq
                 return
             }
+            if (mode === 'remove') return
             const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
-                eventTypeEnumId: 'CetReaction', senderUserId: me, relatesToEventSeq: eventSeq, content: {key: reactionKey}}).call()
+                eventTypeEnumId: 'CetReaction', senderUserId: me, senderActorId: actorId, relatesToEventSeq: eventSeq, content: {key: reactionKey},
+                sourceChatBridgeId: sourceChatBridgeId || null}).call()
             if (ec.message.hasError()) return
             added = true
             reactionEventSeq = appended.eventSeq
@@ -1945,7 +2393,8 @@ along with this software (see the LICENSE.md file). If not, see
                 message: {kind: 'read', chatRoomId: chatRoomId, lastReadEventSeq: next}}).call()
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
+                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+                    .map((member) => member.userId)
             // no read receipt from a user who turned them off
             const receiptsOff = ec.service.sync().name('org.moqui.impl.ChatServices.get#ReceiptsOffUsers').parameter('userIdList', [me]).call().offUserIdList || []
             if (others.length && !receiptsOff.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
@@ -2067,7 +2516,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (!access.canPost) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const isDirect = access.room.roomTypeEnumId === 'CrtDirect'
             const others = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', 'not-equals', me)
-                    .selectField('userId').selectField('leftDate').list()).filter((member) => isDirect || !member.leftDate).map((member) => member.userId)
+                    .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
+                    .map((member) => member.userId)
             if (others.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
                 userIdList: others, message: {kind: 'typing', chatRoomId: chatRoomId, userId: me, typing: !!typing,
                     statusText: typing && statusText ? String(statusText).replace(/\s+/g, ' ').trim().slice(0, 80) : null}}).call()
@@ -2260,11 +2710,12 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('threadRootEventSeq', null).condition('redactedDate', null).orderBy('-eventSeq').limit(1).list()
                 const row = last.length ? last[0] : null
                 room.setFields({lastMessageSeq: row ? row.eventSeq : null, lastMessageUserId: row ? row.senderUserId : null,
+                    lastMessageActorId: row ? row.senderActorId ?? null : null,
                     lastMessageDate: row ? row.sentDate : null, lastMessageSnippet: row ? (snippetOf(row.bodyText, parse(row.contentJson).attachments) || null) : null}, true, null, null)
                 room.update()
             }
             for (const row of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
-                    .condition('lastReadEventSeq', 'less', all[all.length - 1]).selectField('userId').list()) counted.add(row.userId)
+                    .condition('lastReadEventSeq', 'less', all[all.length - 1]).selectField('userId').list()) if (row.userId) counted.add(row.userId)
             if (counted.size) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
         ]]></script></actions>
     </service>
@@ -2489,15 +2940,18 @@ along with this software (see the LICENSE.md file). If not, see
             if (!same) {
                 ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).condition('userId', me).deleteAll()
                 for (const id of before) if (byId[id]) byId[id].set('voteCount', Math.max(0, Number(byId[id].voteCount || 0) - 1))
+                const myActor = chosen.length ? (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', [me])
+                        .disableAuthz().call()?.actorMap || {})[me] : null
                 for (const id of chosen) {
                     const vote = ec.entity.makeValue('moqui.chat.ChatPollVote')
-                    vote.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, userId: me, optionSeq: id, votedDate: ec.user.nowTimestamp}, true, null, null)
+                    vote.setFields({chatRoomId: chatRoomId, eventSeq: eventSeq, chatActorId: myActor, userId: me, optionSeq: id,
+                        votedDate: ec.user.nowTimestamp}, true, null, null)
                     vote.create()
                     byId[id].set('voteCount', Number(byId[id].voteCount || 0) + 1)
                 }
                 for (const option of options) if (before.includes(Number(option.optionSeq)) || chosen.includes(Number(option.optionSeq))) option.update()
                 const voters = new Set(Array.from(ec.entity.find('moqui.chat.ChatPollVote').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
-                        .selectField('userId').list()).map((vote) => vote.userId))
+                        .selectField('chatActorId').list()).map((vote) => vote.chatActorId))
                 row.set('voterCount', voters.size)
                 row.update()
             }
@@ -2885,8 +3339,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="deliver" noun="AgentMessage">
         <description>The agent entry point (for the Assist port, mr-moqui Phase 13): hand a room message to an agent member,
-            calling the service its agentRef names with chatRoomId, eventSeq, agentUserId, senderUserId, body, bodyText and
-            threadRootEventSeq (the message is in the parameters, so the agent need not read it). send#Message runs it
+            calling the service its agentRef names with chatRoomId, eventSeq, agentUserId, senderUserId, senderActorId,
+            senderName, body, bodyText and threadRootEventSeq (the message is in the parameters, so the agent need not read
+            it; an external actor's message, which only a room whose agentsReadExternal is Y hands on, has no senderUserId). send#Message runs it
             asynchronously for each agent member of the room but the sender. Without an agentRef nothing is done (logged).
             The agent replies with send#Message and senderUserId (authorization disabled). Failure tolerant: an error is
             logged.</description>
@@ -2896,6 +3351,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="agentUserId" required="true"/>
             <parameter name="agentRef"/>
             <parameter name="senderUserId"/>
+            <parameter name="senderActorId"/>
+            <parameter name="senderName" allow-html="any"/>
             <parameter name="body" allow-html="any"/>
             <parameter name="bodyText" allow-html="any"/>
             <parameter name="threadRootEventSeq" type="Integer"/>
@@ -2908,8 +3365,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (!agentRef) { ec.logger.info(`Chat agent ${agentUserId} of room ${chatRoomId} has no agentRef; no agent runs in the framework`); return }
             ec.message.pushErrors()
             try {
-                ec.service.sync().name(agentRef).parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, agentUserId: agentUserId,
-                    senderUserId: senderUserId, body: body, bodyText: bodyText, threadRootEventSeq: threadRootEventSeq}).call()
+                const parameters = {chatRoomId: chatRoomId, eventSeq: eventSeq, agentUserId: agentUserId,
+                    senderUserId: senderUserId, body: body, bodyText: bodyText, threadRootEventSeq: threadRootEventSeq}
+                if (!senderUserId) Object.assign(parameters, {senderActorId: senderActorId, senderName: senderName})
+                ec.service.sync().name(agentRef).parameters(parameters).call()
                 if (ec.message.hasError()) ec.logger.error(`Chat agent service ${agentRef} failed for ${chatRoomId}::${eventSeq}: ${ec.message.errorsString}`)
             } catch (err) {
                 ec.logger.error(`Chat agent service ${agentRef} failed for ${chatRoomId}::${eventSeq}: ${err && err.message ? err.message : err}`)
@@ -3006,7 +3465,7 @@ along with this software (see the LICENSE.md file). If not, see
                     .selectField('chatRoomId').disableAuthz().list()).map((member) => member.chatRoomId)
             const others = new Set()
             if (roomIds.length) for (const member of ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', 'in', roomIds)
-                    .condition('leftDate', null).selectField('userId').disableAuthz().list()) if (member.userId !== userId) others.add(member.userId)
+                    .condition('leftDate', null).selectField('userId').disableAuthz().list()) if (member.userId && member.userId !== userId) others.add(member.userId)
             const recipients = Array.from(others).slice(0, 2000)
             if (recipients.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'userStatus',
                 userIdList: recipients, message: message}).call()

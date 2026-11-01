@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat actors and bridges (plans/Comms-Framework.md §4.3, §4.4; C1; org.moqui.impl.ChatBridgeServices): the permission to
+    administer the bridges, and the move of a database from before chat actors (ChatServices.migrate#ChatActors: nothing to do
+    once done, or on a new database). On an existing database load this file with the server stopped, as docs/Run-Deploy.md
+    "Chat actors" says. -->
+<entity-facade-xml type="seed">
+    <moqui.security.UserPermission userPermissionId="ChatBridgeAdmin" description="Set up chat bridges, map rooms to them and send failed deliveries again"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ChatBridgeAdmin" fromDate="0"/>
+    <org.moqui.impl.ChatServices.migrate-ChatActors/>
+</entity-facade-xml>

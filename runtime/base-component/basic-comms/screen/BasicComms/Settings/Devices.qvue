@@ -1,0 +1,92 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- My devices (plans/Comms-Framework.md §4.5, C7 core), the component Devices.xml serves in the qvue render mode: the
+    browsers that hold the user's encryption keys, this browser marked (moqui.crypto.thisDeviceId, which loads nothing),
+    each with when it was added and last seen, its browser and its key's fingerprint; Rename and Remove. Removing this
+    browser's own device also deletes its local store (moqui.crypto.forget); it gets a new device the next time it needs one. -->
+<template><div class="m-chat-devices q-pa-sm column q-gutter-md" style="max-width:900px">
+    <div class="row items-center">
+        <div class="text-h6">{{t('My devices')}}</div><q-space></q-space>
+        <q-btn flat dense no-caps icon="sym_o_refresh" :label="t('Refresh')" @click="load"></q-btn>
+    </div>
+    <div class="m-muted">{{t('The browsers that hold your encryption keys, for encrypted calls. A browser gets one the first time it needs it.')}}
+        {{t('Remove one you no longer use: it gets no new keys, and others stop encrypting to it.')}}</div>
+    <div v-if="loaded && !devices.length" class="m-muted">{{t('No devices yet.')}}</div>
+    <q-list bordered separator class="rounded-borders" v-if="devices.length">
+        <q-item v-for="d in devices" :key="d.deviceId">
+            <q-item-section avatar><q-icon name="sym_o_devices" :color="d.deviceId === thisId ? 'primary' : 'grey'"></q-icon></q-item-section>
+            <q-item-section>
+                <q-item-label>{{d.displayName || d.deviceId}}
+                    <q-badge v-if="d.deviceId === thisId" color="primary" class="q-ml-xs">{{t('This browser')}}</q-badge></q-item-label>
+                <q-item-label caption>{{d.deviceId}} · {{t('added')}} {{whenText(d.createdDate)}}<span v-if="d.lastSeenDate"> · {{t('last seen')}} {{whenText(d.lastSeenDate)}}</span></q-item-label>
+                <q-item-label caption v-if="d.ed25519Key" class="text-mono">{{t('Key')}} {{fingerprint(d.ed25519Key)}}</q-item-label>
+                <q-item-label caption v-if="d.userAgent" class="ellipsis">{{d.userAgent}}</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+                <div class="row q-gutter-xs">
+                    <q-btn flat dense no-caps icon="sym_o_edit" :label="t('Rename')" @click="rename(d)"></q-btn>
+                    <q-btn flat dense no-caps icon="sym_o_delete" color="negative" :label="t('Remove')" @click="remove(d)"></q-btn>
+                </div>
+            </q-item-section>
+        </q-item>
+    </q-list>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'ChatDevices',
+    data() {
+        return { devices: [], loaded: false, thisId: null };
+    },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Devices']).join('/') + '/' + name; },
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        load() {
+            this.thisId = moqui.crypto ? moqui.crypto.thisDeviceId() : null;
+            return this.request('devices').then((json) => {
+                this.devices = json.deviceList || [];
+                this.loaded = true;
+            }, () => { this.loaded = true; });
+        },
+        rename(d) {
+            this.$q.dialog({ title: t('Rename the device'), prompt: { model: d.displayName || '', type: 'text', maxlength: 100 },
+                ok: { label: t('Rename'), color: 'primary', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk((name) => this.request('rename', { deviceId: d.deviceId, displayName: name }, 'POST').then(() => this.load(), () => null));
+        },
+        remove(d) {
+            const mine = d.deviceId === this.thisId;
+            this.$q.dialog({ title: t('Remove the device?'),
+                message: mine ? t('This browser deletes its keys; it gets a new device the next time it needs one.') : t('It gets no new keys, and others stop encrypting to it.'),
+                ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => {
+                    const done = mine && moqui.crypto ? moqui.crypto.forget() : this.request('revoke', { deviceId: d.deviceId }, 'POST');
+                    Promise.resolve(done).then(() => this.load(), () => this.load());
+                });
+        },
+        fingerprint(key) { return String(key || '').replace(/(.{4})/g, '$1 ').trim(); },
+        whenText(millis) {
+            return millis ? new Date(Number(millis)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        }
+    }
+};
+</script>

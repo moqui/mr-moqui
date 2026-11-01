@@ -964,8 +964,10 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
             <moqui.security.UserPreference userId="EX_JOHN_DOE" preferenceKey="CHAT_STATUS_PRESETS"
                 preferenceValue="[{&quot;emoji&quot;:&quot;🚀&quot;,&quot;text&quot;:&quot;Shipping&quot;,&quot;clearAfter&quot;:&quot;60&quot;},{&quot;emoji&quot;:&quot;📅&quot;,&quot;text&quot;:&quot;In a meeting&quot;,&quot;clearAfter&quot;:&quot;0&quot;}]"/>
             <moqui.chat.ChatRoom chatRoomId="GATE_DM" roomTypeEnumId="CrtDirect" visibilityEnumId="CrvMembers" directKey="EX_JOHN_DOE,GATE_ADA" lastEventSeq="0"/>
-            <moqui.chat.ChatRoomMember chatRoomId="GATE_DM" userId="EX_JOHN_DOE" roleEnumId="CmrMember" lastReadEventSeq="0" notificationLevelEnumId="CnlAll"/>
-            <moqui.chat.ChatRoomMember chatRoomId="GATE_DM" userId="GATE_ADA" roleEnumId="CmrMember" lastReadEventSeq="0" notificationLevelEnumId="CnlAll"/>
+            <moqui.chat.ChatActor chatActorId="EX_JOHN_DOE" kindEnumId="CakLocal" userId="EX_JOHN_DOE"/>
+            <moqui.chat.ChatActor chatActorId="GATE_ADA" kindEnumId="CakLocal" userId="GATE_ADA"/>
+            <moqui.chat.ChatRoomMember chatRoomId="GATE_DM" chatActorId="EX_JOHN_DOE" userId="EX_JOHN_DOE" roleEnumId="CmrMember" lastReadEventSeq="0" notificationLevelEnumId="CnlAll"/>
+            <moqui.chat.ChatRoomMember chatRoomId="GATE_DM" chatActorId="GATE_ADA" userId="GATE_ADA" roleEnumId="CmrMember" lastReadEventSeq="0" notificationLevelEnumId="CnlAll"/>
         </entity-facade-xml>"#,
     );
     let base = format!("http://{}", gate.server.address());

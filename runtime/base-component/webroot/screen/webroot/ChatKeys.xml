@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Chat devices and keys for the signed-in browser (C7 core; js/WebrootCrypto.js, docs/interfaces/Chat-Keys.md): the
+    endpoints the browser's OlmMachine calls, each a transition over org.moqui.impl.ChatKeyServices with Matrix's
+    payloads (a JSON body; the answer is the service's out-parameters as JSON, or {errors, reasonCode}):
+    /ChatKeys/device (create#ChatDevice), /ChatKeys/devices, /ChatKeys/rename, /ChatKeys/revoke, /ChatKeys/whoami,
+    /ChatKeys/upload (keys/upload), /ChatKeys/query (keys/query), /ChatKeys/claim (keys/claim), /ChatKeys/send
+    (sendToDevice) and /ChatKeys/sync (the to-device part of /sync). Each works as the session's user only, which the
+    services check (a device of another user is "not found"), so authorization is not asked; without a user it is 401.
+    Posts need the session's CSRF token. Each runs its service in its own transaction, so a refusal answers as JSON
+    (ChatKeys.js web). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
+    <transition name="device" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'create#ChatDevice', names: ['displayName']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="devices" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'find#ChatDevices', names: ['includeRevoked']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="rename" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'update#ChatDevice', names: ['deviceId', 'displayName']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revoke" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'revoke#ChatDevice', names: ['deviceId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="whoami" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'get#ChatKeyIdentity', names: []})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="upload" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'upload#Keys', names: ['deviceId', 'device_keys', 'one_time_keys', 'fallback_keys']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="query" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'query#Keys', names: ['device_keys', 'timeout']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="claim" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'claim#Keys', names: ['one_time_keys', 'timeout']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="send" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'send#ToDevice', names: ['deviceId', 'event_type', 'txn_id', 'messages']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sync" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'sync#ToDevice', names: ['deviceId', 'since', 'limit', 'deviceListSince']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets/>
+</screen>

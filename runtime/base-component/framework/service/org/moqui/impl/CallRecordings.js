@@ -52,6 +52,11 @@ function refuse(reasonCode, text) {
 }
 
 /** The deployment's policy: the default-properties in MoquiDefaultConf.xml. */
+/** An end-to-end encrypted call (W8): any media encryption but dtls-srtp, which the server cannot hear. */
+function encrypted(session) {
+  return !!session.encryptionMode && session.encryptionMode !== 'dtls-srtp'
+}
+
 function policy() {
   const flag = (name) => String(System.getProperty(name) || '').trim().toLowerCase() === 'true'
   const days = Number(System.getProperty('call_recording_retention_days') || 0)
@@ -245,7 +250,8 @@ function state(p) {
   const consent = recording && who.leg ? one(CONSENT, { callRecordingId: recording.callRecordingId, callLegId: who.leg.callLegId }) : null
   return {
     enabled: pol.enabled, ackRequired: pol.ackRequired,
-    canRecord: pol.enabled && !!who.userId && who.session.statusId === 'CssActive' && isHost(who.session, who.userId),
+    canRecord: pol.enabled && !!who.userId && who.session.statusId === 'CssActive' && isHost(who.session, who.userId) && !encrypted(who.session),
+    encrypted: encrypted(who.session),
     recording: recordingView(recording),
     myConsent: consent ? { noticed: true, ackRequired: consent.ackRequired === 'Y', acknowledged: !!consent.ackDate,
       withdrawn: !!consent.withdrawnDate } : null,
@@ -253,19 +259,19 @@ function state(p) {
 }
 
 function start(p) {
-  const pol = policy()
-  if (!pol.enabled) return refuse('recordingOff', 'Recording calls is off on this server')
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in to use calls')
   const session = lockSession(p.callSessionId)
   if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  // an end-to-end encrypted call (W8): the server cannot hear it, and recording never lowers its encryption; said first,
+  // whatever the policy, so its people know why
+  if (encrypted(session)) return refuse('encrypted', 'An end-to-end encrypted call cannot be recorded')
+  const pol = policy()
+  if (!pol.enabled) return refuse('recordingOff', 'Recording calls is off on this server')
   if (!isHost(session, me)) return refuse('notAllowed', 'Only the host records the call')
   if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
   if (session.statusId !== 'CssActive') return refuse('notInCall', 'The call has not started')
   if (!session.mediaNodeId) return refuse('mediaUnavailable', 'The call has no media server')
-  if (session.encryptionMode && session.encryptionMode !== 'dtls-srtp') {
-    return refuse('encrypted', 'An end-to-end encrypted call cannot be recorded')
-  }
   const existing = activeRecording(session.callSessionId)
   if (existing) return { callRecordingId: existing.callRecordingId, recording: recordingView(existing), repeated: true }
 

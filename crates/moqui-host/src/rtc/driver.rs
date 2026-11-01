@@ -17,6 +17,13 @@
 //! the socket until the SFU's next timeout or the next injected frame (at most [`MAX_WAIT`], so a command never waits
 //! long). A frame's reply, and the SFU's offers and events for a leg, go to the socket that leg's
 //! last frame came from ([`Route`]): on this node straight to the socket, on another by `rtc-signal`.
+//!
+//! Cascading (W7): a leg that joins here for a call whose media node is another (this node is an edge) links the room to
+//! that node (the origin); the SFUs' relay messages go between the two by `rtc-signal` (kind `relay`). What this node
+//! tells a room's legs of the room itself (a `participant`, a relayed `mute`, a notice, a caption) goes to the room's
+//! other nodes too (kind `roomFrame`), and the origin passes an edge's on to the other edges. A link that is lost puts
+//! the edge's legs on the reconnect path (`mediaLost`); one the origin refused sends them back to the call's node
+//! (`note#MediaEvent` `relayRefused`) the same way; one the origin closed (the call ended) ends them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
@@ -29,7 +36,7 @@ use std::time::{Duration, Instant};
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::notify::{TopicMessage, RTC_SIGNAL};
 use moqui_lib::object::Value;
-use moqui_rtc::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
+use moqui_rtc::{Layer, LegKey, Proto, RelayMessage, RelayRole, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
 use serde_json::{json, Value as Json};
 
 use super::media::Media;
@@ -70,6 +77,8 @@ struct Driver<'a> {
     media: Media,
     /// The frames each leg gets when it joins: the rooms' recording and captions notices.
     notices: RoomNotices,
+    /// The call's media node of each room this node is an edge of (W7).
+    origins: HashMap<String, String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -97,6 +106,7 @@ pub(super) fn run(
         revoke,
         media: Media::default(),
         notices: RoomNotices::default(),
+        origins: HashMap::new(),
     };
     let mut buf = vec![0u8; DATAGRAM];
     loop {
@@ -171,8 +181,36 @@ impl Driver<'_> {
                 room,
                 leg,
                 generation,
+                origin,
                 frame,
-            } => self.frame(route, &room, &leg, generation, &frame),
+            } => self.frame(route, &room, &leg, generation, &origin, &frame),
+            Command::Relay { room, from, message } => {
+                if let Err(e) = self.sfu.handle_relay(Instant::now(), &room, &from, *message) {
+                    tracing::debug!("call {room}: relay message from {from} not taken: {e}");
+                }
+            }
+            Command::Link { room, origin } => {
+                if !origin.is_empty() && origin != self.own {
+                    match self.sfu.link(Instant::now(), &room, &origin) {
+                        Ok(()) => {
+                            self.origins.insert(room.clone(), origin.clone());
+                        }
+                        Err(e) => tracing::warn!("call {room}: not linked to its media node {origin}: {e}"),
+                    }
+                }
+            }
+            Command::RoomFrame {
+                room,
+                from,
+                except,
+                frame,
+                notice,
+            } => {
+                if let Some((kind, keep)) = notice {
+                    self.notices.set(&room, kind, keep.then(|| frame.clone()));
+                }
+                self.spread(&room, except.as_deref(), frame, notice, Some(&from));
+            }
             Command::TcpIn { from, data } => {
                 if let Some((addr, _)) = &self.tcp {
                     let addr = *addr;
@@ -195,10 +233,12 @@ impl Driver<'_> {
                         json!({"rtc": "ended", "callLegId": leg, "reason": "left"}),
                     );
                 }
-                self.to_room(
+                self.spread(
                     &room,
                     None,
                     json!({"rtc": "participant", "callLegId": leg, "connected": false}),
+                    None,
+                    None,
                 );
             }
             Command::Keyframes { room } => self.sfu.request_keyframes(Instant::now(), &room),
@@ -206,6 +246,7 @@ impl Driver<'_> {
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
                 self.notices.room_closed(&room);
+                self.origins.remove(&room);
                 let legs: Vec<LegKey> = self
                     .routes
                     .keys()
@@ -226,7 +267,7 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
-            Command::ToRoom { room, frame } => self.to_room(&room, None, frame),
+            Command::ToRoom { room, frame } => self.spread(&room, None, frame, None, None),
             Command::RoomNotice {
                 room,
                 kind,
@@ -235,13 +276,14 @@ impl Driver<'_> {
             } => {
                 // every leg now; kept, each leg that joins later too (a notice not kept takes its kind's down)
                 self.notices.set(&room, kind, keep.then(|| frame.clone()));
-                self.to_room(&room, None, frame);
+                self.spread(&room, None, frame, Some((kind, keep)), None);
             }
             Command::Stop => {}
         }
     }
 
-    fn frame(&mut self, route: Route, room: &str, leg: &str, generation: u64, frame: &Json) {
+    #[allow(clippy::too_many_arguments)]
+    fn frame(&mut self, route: Route, room: &str, leg: &str, generation: u64, origin: &str, frame: &Json) {
         let key = LegKey::new(room, leg);
         let op = frame.get("rtc").and_then(Json::as_str).unwrap_or_default();
         let id = frame.get("id").cloned().unwrap_or(Json::Null);
@@ -254,16 +296,30 @@ impl Driver<'_> {
                 .unwrap_or_default()
         };
         let result: Result<Option<Json>, SfuError> = match op {
-            "join" => self.sfu.join(now, &key, generation, sdp()).map(|answer| {
-                self.routes.insert(
-                    key.clone(),
-                    LegRoute {
-                        generation,
-                        route: route.clone(),
-                    },
-                );
-                Some(json!({"rtc": "joined", "callLegId": leg, "generation": generation, "sdp": answer}))
-            }),
+            "join" => self
+                .sfu
+                .join(now, &key, generation, sdp())
+                .and_then(|answer| {
+                    // a leg here of a call whose media is on another node: this node is an edge, linked to that one
+                    if !origin.is_empty() && origin != self.own {
+                        if let Err(e) = self.sfu.link(now, room, origin) {
+                            let _ = self.sfu.leave(now, &key, generation);
+                            return Err(e);
+                        }
+                        self.origins.insert(room.to_string(), origin.to_string());
+                    }
+                    Ok(answer)
+                })
+                .map(|answer| {
+                    self.routes.insert(
+                        key.clone(),
+                        LegRoute {
+                            generation,
+                            route: route.clone(),
+                        },
+                    );
+                    Some(json!({"rtc": "joined", "callLegId": leg, "generation": generation, "sdp": answer}))
+                }),
             "offer" => self
                 .sfu
                 .handle_offer(now, &key, generation, sdp())
@@ -310,7 +366,7 @@ impl Driver<'_> {
                         o.remove("id");
                         o.insert("from".to_string(), Json::String(leg.to_string()));
                     }
-                    self.to_room(room, Some(leg), relay);
+                    self.spread(room, Some(leg), relay, None, None);
                     Ok(None)
                 }
                 Some(_) => Err(SfuError::StaleGeneration),
@@ -359,10 +415,12 @@ impl Driver<'_> {
             }
             SfuEvent::Connected { key, generation } => {
                 self.to_leg(&key, generation, json!({"rtc": "connected"}));
-                self.to_room(
+                self.spread(
                     &key.room,
                     Some(&key.leg),
                     json!({"rtc": "participant", "callLegId": &*key.leg, "connected": true}),
+                    None,
+                    None,
                 );
                 super::note(
                     self.factory,
@@ -378,10 +436,12 @@ impl Driver<'_> {
                 let current = self.routes.get(&key).is_some_and(|r| r.generation == generation);
                 if current {
                     self.to_leg(&key, generation, json!({"rtc": "mediaLost"}));
-                    self.to_room(
+                    self.spread(
                         &key.room,
                         Some(&key.leg),
                         json!({"rtc": "participant", "callLegId": &*key.leg, "connected": false}),
+                        None,
+                        None,
                     );
                 }
             }
@@ -413,11 +473,103 @@ impl Driver<'_> {
             SfuEvent::ActiveSpeaker { room, leg } => {
                 self.to_room(&room, None, json!({"rtc": "activeSpeaker", "speaker": &*leg}));
             }
+            SfuEvent::Relay { room, node, message } => self.send_relay(&room, &node, &message),
+            SfuEvent::RelayUp { room, node } => tracing::debug!("call {room}: relay link to {node} connected"),
+            SfuEvent::RelayDown { room, node, reason } => self.relay_down(&room, &node, &reason),
             SfuEvent::Estimate { key, kbps } => {
                 let generation = self.routes.get(&key).map_or(0, |r| r.generation);
                 self.to_leg(&key, generation, json!({"rtc": "quality", "kbps": kbps}));
             }
         }
+    }
+
+    /// A message of the SFU for the node at the other end of a room's relay link.
+    fn send_relay(&self, room: &str, node: &str, message: &RelayMessage) {
+        let message = match serde_json::to_value(message) {
+            Ok(message) => message,
+            Err(e) => return tracing::warn!("call {room}: relay message not written: {e}"),
+        };
+        self.send_node(
+            node,
+            json!({"target": node, "kind": "relay", "from": self.own, "callSessionId": room, "message": message}),
+        );
+    }
+
+    /// A room's link ended. For an edge: lost, its legs reconnect (and link again), and a room with phone legs here links
+    /// again at once; refused or unreachable (it never connected), they go back to the call's node as they reconnect;
+    /// closed by the origin (the call ended), they end. Nothing else is done for the others.
+    fn relay_down(&mut self, room: &str, node: &str, reason: &str) {
+        let edge = self.origins.get(room).is_some_and(|origin| origin == node);
+        tracing::info!("call {room}: relay link to {node} ended: {reason}");
+        if !edge {
+            return;
+        }
+        if reason == "ended" {
+            return self.command(Command::CloseRoom { room: room.to_string() });
+        }
+        let pinned = reason.starts_with("refused") || reason == "unreachable";
+        if reason != "lost" && !pinned {
+            return;
+        }
+        let legs: Vec<(LegKey, u64)> = self
+            .routes
+            .iter()
+            .filter(|(k, _)| &*k.room == room)
+            .map(|(k, r)| (k.clone(), r.generation))
+            .collect();
+        for (key, generation) in legs {
+            if pinned {
+                super::note(
+                    self.factory,
+                    "org.moqui.impl.CallServices.note#MediaEvent",
+                    vec![
+                        ("callLegId", Value::string(&*key.leg)),
+                        ("generation", Value::I64(i64::try_from(generation).unwrap_or(0))),
+                        ("event", Value::string("relayRefused")),
+                    ],
+                );
+            }
+            // the leg's peer goes: its socket hears mediaLost and joins again, with a new generation
+            if self.sfu.generation(&key) == Some(generation) {
+                let _ = self.sfu.leave(Instant::now(), &key, generation);
+            }
+        }
+        // what is left here has no socket to reconnect: a phone's (SIP) leg, whose media stays on this node
+        if self.sfu.legs(room).is_empty() {
+            return;
+        }
+        if pinned {
+            tracing::error!(
+                "call {room}: the phone legs here are cut off from the call's media node {node} (link {reason})"
+            );
+        } else if let Err(e) = self.sfu.link(Instant::now(), room, node) {
+            tracing::error!("call {room}: the phone legs here are not linked again to {node}: {e}");
+        }
+    }
+
+    /// To every leg of the room, here and on the room's other nodes (W7), but `except`; not back to `from`. A notice goes
+    /// with its kind, so the other nodes keep it for their legs that join later.
+    fn spread(
+        &self,
+        room: &str,
+        except: Option<&str>,
+        frame: Json,
+        notice: Option<(super::NoticeKind, bool)>,
+        from: Option<&str>,
+    ) {
+        for (node, role, _) in self.sfu.relays(room) {
+            // an edge's frame goes on from the origin to the other edges; an edge sends only to its origin
+            if from == Some(&*node) || (from.is_some() && role != RelayRole::Origin) {
+                continue;
+            }
+            self.send_node(
+                &node,
+                json!({"target": &*node, "kind": "roomFrame", "from": self.own, "callSessionId": room,
+                    "except": except, "frame": frame, "notice": notice.map(|(k, _)| k.as_str()),
+                    "keep": notice.is_some_and(|(_, keep)| keep)}),
+            );
+        }
+        self.to_room(room, except, frame);
     }
 
     fn to_leg(&self, key: &LegKey, generation: u64, frame: Json) {
@@ -456,14 +608,22 @@ impl Driver<'_> {
             crate::notws::push_to_socket(route.socket_id, frame.to_string());
             return;
         }
+        self.send_node(
+            &route.node,
+            json!({"target": route.node, "kind": "reply", "socketId": route.socket_id, "frame": frame}),
+        );
+    }
+
+    /// A message to another node on `rtc-signal`, to that node only.
+    fn send_node(&self, node: &str, body: Json) {
         let Some(facade) = self.factory.entity() else { return };
         let message = TopicMessage {
             origin_id: moqui_core::notify::origin_id().to_string(),
             message_id: moqui_core::entity::uuid_v4().unwrap_or_default(),
-            body: json!({"target": route.node, "kind": "reply", "socketId": route.socket_id, "frame": frame}),
+            body,
         };
-        if let Err(err) = moqui_core::cluster::send_to(&facade, &route.node, RTC_SIGNAL, &message) {
-            tracing::debug!("call signaling reply to {} not sent: {}", route.node, err.message());
+        if let Err(err) = moqui_core::cluster::send_to(&facade, node, RTC_SIGNAL, &message) {
+            tracing::debug!("call signaling to {node} not sent: {}", err.message());
         }
     }
 }

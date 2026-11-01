@@ -135,7 +135,7 @@ feature("an end-to-end encrypted call refuses captions", {
     when() {
         sys(() => {
             const row = ec.entity.find(SESSION).condition("callSessionId", theCall.callSessionId).one()
-            row.set("encryptionMode", "sframe")
+            row.set("encryptionMode", "e2ee-sframe")
             row.update()
         })
         const out = on(() => ({started: captions(A, "start#Captions", theCall), state: captions(A, "get#CaptionState", theCall)}))

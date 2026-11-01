@@ -17,6 +17,10 @@
 //! over the notification socket and exchanges audio through the server's SFU, renegotiating as the other's tracks
 //! arrive. Then a second socket of the same leg takes the next generation and the first socket's frames are refused,
 //! the other user cannot join a leg that is not theirs, and leaving ends the call for both.
+//!
+//! [`cascade`] runs a call on two servers of one cluster, each with its media port (W7).
+
+mod cascade;
 
 use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
@@ -25,7 +29,7 @@ use moqui_lib::object::{to_plain_string, Value};
 use serde_json::{json, Value as Json};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::format::Codec;
-use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid};
+use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Simulcast, SimulcastLayer};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 use tungstenite::stream::MaybeTlsStream;
@@ -82,7 +86,19 @@ pub(crate) struct Peer {
     pub(crate) received: usize,
     pub(crate) frames: Vec<Json>,
     start: Instant,
+    /// A camera track, sent in three simulcast layers of [`VIDEO_LAYER_BYTES`] when set.
+    video: Option<Mid>,
+    video_sent: Instant,
+    video_frame: u64,
+    keyframe_asked: bool,
+    /// Video frames received, and the size of the last (which tells the layer).
+    pub(crate) video_received: usize,
+    pub(crate) last_video_len: Option<usize>,
 }
+
+/// The bytes of each simulcast layer's frame a peer with video sends, low to high: a frame's size tells its layer.
+pub(crate) const VIDEO_LAYER_BYTES: [usize; 3] = [300, 900, 2_400];
+const RIDS: [&str; 3] = ["l", "m", "h"];
 
 impl Peer {
     pub(crate) fn new(ws: Ws, call: &str, leg: &str) -> Self {
@@ -106,6 +122,54 @@ impl Peer {
             received: 0,
             frames: Vec::new(),
             start: Instant::now(),
+            video: None,
+            video_sent: Instant::now(),
+            video_frame: 0,
+            keyframe_asked: true,
+            video_received: 0,
+            last_video_len: None,
+        }
+    }
+
+    /// Joins with its microphone and a camera in three simulcast layers.
+    pub(crate) fn join_with_video(&mut self) {
+        let mut change = self.rtc.sdp_api();
+        self.audio = Some(change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None));
+        let mut layers = Simulcast::new();
+        for rid in RIDS {
+            layers.add_send_layer(SimulcastLayer::new(rid));
+        }
+        self.video = Some(change.add_media(MediaKind::Video, Direction::SendOnly, None, None, Some(layers)));
+        let (offer, pending) = change.apply().unwrap();
+        self.pending = Some(pending);
+        self.send(json!({"rtc": "join", "id": 1, "sdp": offer.to_sdp_string()}));
+    }
+
+    /// A video frame in each layer, every 33 ms: a keyframe when one was asked for, and every 30th.
+    fn send_video(&mut self) {
+        let Some(mid) = self.video else { return };
+        if self.video_sent.elapsed() < Duration::from_millis(33) {
+            return;
+        }
+        self.video_sent = Instant::now();
+        self.video_frame += 1;
+        let key = self.keyframe_asked || self.video_frame.is_multiple_of(30);
+        self.keyframe_asked = false;
+        let t = self.start.elapsed().as_millis() as u64 * 90;
+        for (rid, size) in RIDS.iter().zip(VIDEO_LAYER_BYTES) {
+            let Some(writer) = self.rtc.writer(mid) else { return };
+            let Some(pt) = writer
+                .payload_params()
+                .find(|p| p.spec().codec == Codec::Vp8)
+                .map(|p| p.pt())
+            else {
+                return;
+            };
+            let mut frame = vec![0u8; size];
+            frame[0] = if key { 0x00 } else { 0x01 };
+            let _ = writer
+                .rid((*rid).into())
+                .write(pt, Instant::now(), MediaTime::new(t, Frequency::NINETY_KHZ), frame);
         }
     }
 
@@ -174,6 +238,7 @@ impl Peer {
                 }
             }
         }
+        self.send_video();
         loop {
             match self.rtc.poll_output() {
                 Ok(Output::Timeout(_)) | Err(_) => break,
@@ -183,6 +248,11 @@ impl Peer {
                 {
                     self.received += 1
                 }
+                Ok(Output::Event(Event::MediaData(d))) => {
+                    self.video_received += 1;
+                    self.last_video_len = Some(d.data.len());
+                }
+                Ok(Output::Event(Event::KeyframeRequest(_))) => self.keyframe_asked = true,
                 Ok(Output::Event(_)) => {}
             }
         }

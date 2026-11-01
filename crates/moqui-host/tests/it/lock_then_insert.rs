@@ -15,7 +15,7 @@
 //! Services that read a row, find none and create it, called at once on embedded Postgres: a lock on a missing row
 //! locks nothing there, and a failed insert aborts the whole transaction, so each locks a row that is always there
 //! before it looks again. Several joins of a room by one user at once (`ChatServices.add#Member`, which locks the
-//! `ChatRoom`) all succeed with one member row and one membership event; several first saves of one wiki page
+//! `ChatRoom`) all succeed with one member row, one membership event and one chat actor (made with one create-or-update); several first saves of one wiki page
 //! (`WikiServices.update#WikiPage`, which locks the `WikiSpace`) all succeed with one `WikiPage` row.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
@@ -88,6 +88,13 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
             &[("chatRoomId", &room_id), ("userId", &user_id)],
         );
         assert_eq!(members, 1, "round {round}: one member row");
+        // each join makes the user's chat actor (its id is the userId), once
+        let actors = count(
+            &factory,
+            "moqui.chat.ChatActor",
+            &[("chatActorId", &user_id), ("userId", &user_id)],
+        );
+        assert_eq!(actors, 1, "round {round}: one chat actor");
         let joins = count(
             &factory,
             "moqui.chat.ChatEvent",

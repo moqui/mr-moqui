@@ -93,6 +93,8 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::sip_credential::register(&mut map),
         super::speech::register(&mut map),
         super::chat_link::register(&mut map),
+        super::chat_bridge::register(&mut map),
+        super::chat_migrate::register(&mut map),
         super::web_push::register(&mut map),
         crate::llm_hooks::get().map_or(Ok(()), |hooks| (hooks.register_services)(&mut map)),
     ] {

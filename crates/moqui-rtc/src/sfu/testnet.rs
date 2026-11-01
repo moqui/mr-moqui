@@ -15,6 +15,10 @@
 //! An in-memory network for the SFU tests: str0m client peers (standing in for browsers) and the [`Sfu`] exchange
 //! datagrams through queues on a simulated clock, with a latency and, per client, a downlink capacity that queues and
 //! then drops what exceeds it (so TWCC sees congestion). No sockets, no threads, no wall-clock waits.
+//!
+//! With [`Net::with_edge`] a second node's [`Sfu`] (the edge, W7) is on the network too: a client may join there, and the
+//! two SFUs' relay messages go between them with the same latency, as the host's cluster send to one node carries them.
+//! [`Net::link_up`] false cuts the edge off from the origin, datagrams and messages both.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -26,11 +30,14 @@ use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Simulcast, S
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
-use super::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuEvent, SfuOutput};
+use super::{Layer, LegKey, Proto, RelayMessage, Sfu, SfuConfig, SfuEvent, SfuOutput};
 use crate::audio::opus::OpusEncoder;
 use crate::audio::FRAME;
 
 pub const ROOM: &str = "CS1";
+/// The call's media node, and the second node of [`Net::with_edge`].
+pub const ORIGIN: &str = "nodeA";
+pub const EDGE: &str = "nodeB";
 /// The simulated step.
 const STEP: Duration = Duration::from_millis(2);
 /// A downlink queue longer than this drops.
@@ -47,6 +54,8 @@ struct Packet {
 /// A browser stand-in.
 pub struct Client {
     pub key: LegKey,
+    /// The node its media is on: 0 the origin, 1 the edge.
+    pub node: usize,
     pub generation: u64,
     pub addr: SocketAddr,
     pub rtc: Rtc,
@@ -82,12 +91,35 @@ pub struct Client {
     pub audio_frames: HashMap<String, Vec<(u64, Vec<u8>)>>,
 }
 
+/// The second media node of [`Net::with_edge`].
+pub struct Edge {
+    pub sfu: Sfu,
+    pub addr: SocketAddr,
+    to_sfu: VecDeque<Packet>,
+    pub events: Vec<SfuEvent>,
+}
+
+/// A relay message on its way to a node.
+struct Message {
+    at: Instant,
+    to: usize,
+    from: &'static str,
+    room: String,
+    message: RelayMessage,
+}
+
 pub struct Net {
     pub now: Instant,
     pub sfu: Sfu,
     pub sfu_addr: SocketAddr,
     pub clients: Vec<Client>,
     to_sfu: VecDeque<Packet>,
+    pub edge: Option<Edge>,
+    messages: VecDeque<Message>,
+    /// The relay messages sent, each node's: (from, the message).
+    pub relayed: Vec<(&'static str, RelayMessage)>,
+    /// False cuts the edge off from the origin: their datagrams and messages are dropped.
+    pub link_up: bool,
     pub latency: Duration,
     pub events: Vec<SfuEvent>,
     /// The leg whose offers from the SFU the test holds back.
@@ -117,6 +149,10 @@ impl Net {
             sfu_addr,
             clients: Vec::new(),
             to_sfu: VecDeque::new(),
+            edge: None,
+            messages: VecDeque::new(),
+            relayed: Vec::new(),
+            link_up: true,
             latency: Duration::from_millis(10),
             events: Vec::new(),
             hold_offers: None,
@@ -125,14 +161,61 @@ impl Net {
         }
     }
 
+    /// A network of two media nodes, each with `config`: the origin ([`Net::sfu`]) and an edge.
+    pub fn with_edge(config: SfuConfig) -> Self {
+        let mut net = Net::new();
+        net.sfu = Sfu::new(SfuConfig {
+            udp_candidates: vec![net.sfu_addr],
+            tcp_candidates: Vec::new(),
+            ..config.clone()
+        });
+        let addr: SocketAddr = (Ipv4Addr::new(10, 0, 0, 2), 10_000).into();
+        net.edge = Some(Edge {
+            sfu: Sfu::new(SfuConfig {
+                udp_candidates: vec![addr],
+                tcp_candidates: Vec::new(),
+                ..config
+            }),
+            addr,
+            to_sfu: VecDeque::new(),
+            events: Vec::new(),
+        });
+        net
+    }
+
+    pub fn edge(&self) -> &Edge {
+        self.edge.as_ref().expect("a network with an edge")
+    }
+
+    pub fn edge_sfu(&mut self) -> &mut Sfu {
+        &mut self.edge.as_mut().expect("a network with an edge").sfu
+    }
+
+    fn node_sfu(&mut self, node: usize) -> &mut Sfu {
+        if node == 0 {
+            &mut self.sfu
+        } else {
+            self.edge_sfu()
+        }
+    }
+
     /// Adds a client that publishes audio and video (in three layers when `simulcast`) and joins.
     pub fn join(&mut self, leg: &str, simulcast: bool) -> usize {
         self.join_with(leg, simulcast, Protocol::Udp)
     }
 
+    /// A client that joins at the edge, whose SFU links the room to the origin as the host does for a leg there.
+    pub fn join_edge(&mut self, leg: &str, simulcast: bool) -> usize {
+        self.join_at(leg, simulcast, Protocol::Udp, 1)
+    }
+
     pub fn join_with(&mut self, leg: &str, simulcast: bool, proto: Protocol) -> usize {
+        self.join_at(leg, simulcast, proto, 0)
+    }
+
+    fn join_at(&mut self, leg: &str, simulcast: bool, proto: Protocol, node: usize) -> usize {
         let n = self.clients.len() as u8 + 2;
-        let addr: SocketAddr = (Ipv4Addr::new(10, 0, 1, n), 5_000).into();
+        let addr: SocketAddr = (Ipv4Addr::new(10, 0, 1 + node as u8, n), 5_000).into();
         let mut rtc = Rtc::builder()
             .clear_codecs()
             .enable_opus(true, false)
@@ -160,12 +243,20 @@ impl Net {
         let video_mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, sim);
         let (offer, pending) = change.apply().expect("an offer");
         let key = LegKey::new(ROOM, leg);
-        let answer = self.sfu.join(self.now, &key, 1, &offer.to_sdp_string()).expect("join");
+        let now = self.now;
+        let answer = self
+            .node_sfu(node)
+            .join(now, &key, 1, &offer.to_sdp_string())
+            .expect("join");
+        if node == 1 {
+            self.edge_sfu().link(now, ROOM, ORIGIN).expect("linked");
+        }
         rtc.sdp_api()
             .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
             .expect("accepted");
         self.clients.push(Client {
             key,
+            node,
             generation: 1,
             addr,
             rtc,
@@ -310,19 +401,80 @@ impl Net {
     /// Moves everything that is due and polls every endpoint until it has nothing more now.
     pub fn pump(&mut self) {
         for _ in 0..50 {
-            let mut moved = false;
-            while self.to_sfu.front().is_some_and(|p| p.at <= self.now) {
-                let p = self.to_sfu.pop_front().expect("a packet");
-                let proto = Proto::from_protocol(p.proto);
-                self.sfu
-                    .handle_receive(self.now, proto, p.source, p.destination, &p.contents);
-                moved = true;
+            let mut moved = self.pump_node(0);
+            if self.edge.is_some() {
+                moved |= self.pump_node(1);
+                moved |= self.deliver_messages();
             }
-            self.sfu.handle_timeout(self.now);
-            loop {
-                match self.sfu.poll_output() {
-                    SfuOutput::Transmit(t) => {
-                        moved = true;
+            for i in 0..self.clients.len() {
+                moved |= self.poll_client(i);
+            }
+            if !moved {
+                break;
+            }
+        }
+    }
+
+    /// The relay messages that are due go to their node's SFU.
+    fn deliver_messages(&mut self) -> bool {
+        let mut moved = false;
+        while self.messages.front().is_some_and(|m| m.at <= self.now) {
+            let m = self.messages.pop_front().expect("a message");
+            moved = true;
+            if !self.link_up {
+                continue;
+            }
+            let now = self.now;
+            let _ = self.node_sfu(m.to).handle_relay(now, &m.room, m.from, m.message);
+        }
+        moved
+    }
+
+    /// One node: its due datagrams in, its timeouts, and what it sends out.
+    fn pump_node(&mut self, node: usize) -> bool {
+        let mut moved = false;
+        let now = self.now;
+        loop {
+            let queue = if node == 0 {
+                &mut self.to_sfu
+            } else {
+                &mut self.edge.as_mut().expect("an edge").to_sfu
+            };
+            if !queue.front().is_some_and(|p| p.at <= now) {
+                break;
+            }
+            let p = queue.pop_front().expect("a packet");
+            let proto = Proto::from_protocol(p.proto);
+            self.node_sfu(node)
+                .handle_receive(now, proto, p.source, p.destination, &p.contents);
+            moved = true;
+        }
+        self.node_sfu(node).handle_timeout(now);
+        loop {
+            match self.node_sfu(node).poll_output() {
+                SfuOutput::Transmit(t) => {
+                    moved = true;
+                    // to the other node: the link between the two
+                    if let Some(edge) = self.edge.as_mut() {
+                        let to = match node {
+                            0 if t.destination == edge.addr => Some(&mut edge.to_sfu),
+                            1 if t.destination == self.sfu_addr => Some(&mut self.to_sfu),
+                            _ => None,
+                        };
+                        if let Some(queue) = to {
+                            if self.link_up {
+                                queue.push_back(Packet {
+                                    at: now + self.latency,
+                                    proto: Protocol::Udp,
+                                    source: t.source,
+                                    destination: t.destination,
+                                    contents: t.contents,
+                                });
+                            }
+                            continue;
+                        }
+                    }
+                    {
                         let Some(c) = self.clients.iter_mut().find(|c| c.addr == t.destination) else {
                             continue;
                         };
@@ -349,23 +501,18 @@ impl Net {
                             contents: t.contents,
                         });
                     }
-                    SfuOutput::Event(e) => {
-                        moved = true;
-                        self.sfu_event(e);
-                    }
-                    SfuOutput::Timeout(_) => break,
                 }
-            }
-            for i in 0..self.clients.len() {
-                moved |= self.poll_client(i);
-            }
-            if !moved {
-                break;
+                SfuOutput::Event(e) => {
+                    moved = true;
+                    self.sfu_event(node, e);
+                }
+                SfuOutput::Timeout(_) => break,
             }
         }
+        moved
     }
 
-    fn sfu_event(&mut self, e: SfuEvent) {
+    fn sfu_event(&mut self, node: usize, e: SfuEvent) {
         match &e {
             SfuEvent::Offer {
                 key,
@@ -376,7 +523,7 @@ impl Net {
                 let Some(c) = self
                     .clients
                     .iter_mut()
-                    .find(|c| c.key == *key && c.generation == *generation)
+                    .find(|c| c.key == *key && c.generation == *generation && c.node == node)
                 else {
                     return;
                 };
@@ -385,14 +532,30 @@ impl Net {
                 let answer = c.rtc.sdp_api().accept_offer(offer).expect("the client answers");
                 let key = key.clone();
                 let generation = *generation;
-                self.sfu
-                    .handle_answer(self.now, &key, generation, *offer_id, &answer.to_sdp_string())
+                let now = self.now;
+                self.node_sfu(node)
+                    .handle_answer(now, &key, generation, *offer_id, &answer.to_sdp_string())
                     .expect("the answer is taken");
             }
             SfuEvent::Offer { .. } => self.held.push(e.clone()),
+            SfuEvent::Relay { room, message, .. } => {
+                let from = if node == 0 { ORIGIN } else { EDGE };
+                self.relayed.push((from, message.clone()));
+                self.messages.push_back(Message {
+                    at: self.now + self.latency,
+                    to: 1 - node,
+                    from,
+                    room: room.to_string(),
+                    message: message.clone(),
+                });
+            }
             _ => {}
         }
-        self.events.push(e);
+        if node == 0 {
+            self.events.push(e);
+        } else if let Some(edge) = self.edge.as_mut() {
+            edge.events.push(e);
+        }
     }
 
     fn poll_client(&mut self, i: usize) -> bool {
@@ -421,10 +584,19 @@ impl Net {
                 Ok(Output::Transmit(t)) => {
                     moved = true;
                     // A client on TCP only reaches the SFU's TCP candidate, as when UDP is blocked.
-                    if c.proto == Protocol::Udp && t.destination != self.sfu_addr {
+                    let node_addr = if c.node == 0 {
+                        self.sfu_addr
+                    } else {
+                        self.edge.as_ref().map_or(self.sfu_addr, |e| e.addr)
+                    };
+                    if c.proto == Protocol::Udp && t.destination != node_addr {
                         continue;
                     }
-                    self.to_sfu.push_back(Packet {
+                    let queue = match (c.node, self.edge.as_mut()) {
+                        (1, Some(edge)) => &mut edge.to_sfu,
+                        _ => &mut self.to_sfu,
+                    };
+                    queue.push_back(Packet {
                         at: now + self.latency,
                         proto: t.proto,
                         source: t.source,
@@ -483,9 +655,9 @@ impl Net {
         let mut change = c.rtc.sdp_api();
         let mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, None);
         let (offer, pending) = change.apply().expect("an offer");
-        let key = c.key.clone();
+        let (key, node) = (c.key.clone(), c.node);
         let answer = self
-            .sfu
+            .node_sfu(node)
             .handle_offer(now, &key, 1, &offer.to_sdp_string())
             .expect("the share is answered");
         let c = self.client_mut(leg);
@@ -494,7 +666,7 @@ impl Net {
             .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
             .expect("accepted");
         c.screen_mid = Some(mid);
-        self.sfu
+        self.node_sfu(node)
             .set_source(&key, 1, &mid.to_string(), super::Source::Screen)
             .expect("declared");
         self.pump();
@@ -509,9 +681,9 @@ impl Net {
         let mut change = c.rtc.sdp_api();
         change.set_direction(mid, Direction::Inactive);
         let (offer, pending) = change.apply().expect("an offer");
-        let key = c.key.clone();
+        let (key, node) = (c.key.clone(), c.node);
         let answer = self
-            .sfu
+            .node_sfu(node)
             .handle_offer(now, &key, 1, &offer.to_sdp_string())
             .expect("the stop is answered");
         let c = self.client_mut(leg);

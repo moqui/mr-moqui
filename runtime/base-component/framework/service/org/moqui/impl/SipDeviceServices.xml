@@ -185,7 +185,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="ring" noun="SipDevices" authenticate="false" allow-remote="false">
         <description>Internal (Calls.js, when a call rings users): rings the users' phones registered with the call's node,
             a CltSipDevice leg offered for each, which that node's SIP engine forks to the phone's live bindings. From
-            fromUserId's username, else the call's phone number. Nothing while the registrar is off.</description>
+            fromUserId's username, else the call's phone number. Nothing while the registrar is off, and nothing for an
+            end-to-end encrypted call (W8, reasonCode encrypted): a phone cannot decrypt it.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="userIdList" type="List" required="true"/>
@@ -194,6 +195,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="ringCount" type="Integer"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/SipDevices.js').execute('ringDevices', context))</script></actions>
     </service>

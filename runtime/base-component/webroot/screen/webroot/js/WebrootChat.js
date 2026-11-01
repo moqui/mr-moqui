@@ -127,8 +127,10 @@
                 target.reactions = target.reactions || [];
                 let entry = target.reactions.find((reaction) => reaction.key === key);
                 if (!entry) { entry = { key, count: 0, userIds: [], mine: false }; target.reactions.push(entry); }
-                if (entry.userIds.indexOf(event.senderUserId) < 0) {
-                    entry.userIds.push(event.senderUserId);
+                // a reactor is a local user, or an external actor of a bridged room (no userId)
+                const who = event.senderUserId || event.senderActorId;
+                if (entry.userIds.indexOf(who) < 0) {
+                    entry.userIds.push(who);
                     entry.count++;
                     if (event.senderUserId === me) entry.mine = true;
                 }
@@ -140,7 +142,7 @@
                     const target = find(content.messageSeq);
                     const entry = target && (target.reactions || []).find((reaction) => reaction.key === content.key);
                     if (entry) {
-                        const index = entry.userIds.indexOf(event.senderUserId);
+                        const index = entry.userIds.indexOf(event.senderUserId || event.senderActorId);
                         if (index >= 0) { entry.userIds.splice(index, 1); entry.count--; }
                         if (event.senderUserId === me) entry.mine = false;
                         if (entry.count <= 0) target.reactions.splice(target.reactions.indexOf(entry), 1);

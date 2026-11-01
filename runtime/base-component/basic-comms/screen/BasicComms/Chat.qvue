@@ -112,6 +112,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label class="row no-wrap items-center">
                                 <span class="ellipsis" :class="countsOf(room).unread || countsOf(room).mentions ? 'text-weight-bold' : ''">{{room.displayName}}</span>
                                 <q-icon v-if="room.isPinned" name="sym_o_keep" size="12px" class="m-muted q-ml-xs"></q-icon>
+                                <q-icon v-if="room.bridged" :name="room.notConnected ? 'sym_o_link_off' : 'sym_o_hub'" size="12px" class="q-ml-xs"
+                                        :class="room.notConnected ? 'text-warning' : 'm-muted'" :data-bridged="room.chatRoomId"><q-tooltip>{{bridgeText(room)}}</q-tooltip></q-icon>
                                 <q-space></q-space>
                                 <span class="text-caption m-muted text-no-wrap q-ml-xs">{{shortWhen(room.lastMessage ? room.lastMessage.sentDate : room.lastEventDate)}}</span>
                             </q-item-label>
@@ -265,7 +267,7 @@ const isEmptyHtml = (html) => (moqui.richText && moqui.richText.isEmpty ? moqui.
 const systemText = (event, nameOf) => {
     const content = event.content || {};
     const by = nameOf(content.byUserId || event.senderUserId);
-    const who = nameOf(content.userId);
+    const who = nameOf(content.userId || content.chatActorId);
     const roles = { CmrOwner: t('an owner'), CmrModerator: t('a moderator'), CmrMember: t('a member'), CmrAgent: t('an agent') };
     if (event.type === 'membership') {
         if (content.action === 'join') return [fill(t('{user} joined'), { user: who }), 'sym_o_login'];
@@ -330,6 +332,8 @@ const messageTemplate = `
     <div class="col" style="min-width:0">
         <div v-if="!item.grouped" class="row items-baseline no-wrap">
             <span class="text-weight-medium ellipsis">{{item.senderName}}</span>
+            <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
+                {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
             <q-icon v-if="item.pinned" name="sym_o_keep" size="14px" color="primary" class="q-ml-xs"><q-tooltip>{{room.t('Pinned')}}</q-tooltip></q-icon>
         </div>
@@ -397,12 +401,20 @@ const messageTemplate = `
             </div>
             <div v-if="item.reactions.length" class="row items-center q-mt-xs">
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
-                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs" :disable="!room.canPost" @click.stop="room.react(item, reaction.key)">
+                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs" :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.react(item, reaction.key)">
                     {{reaction.key}} {{reaction.count}}<q-tooltip>{{room.reactorsText(reaction)}}</q-tooltip></q-chip>
             </div>
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
                 <a href="#" class="text-primary text-caption text-weight-medium" @click.prevent.stop="room.openThread(item.eventSeq)">{{room.repliesText(item.threadReplyCount)}}</a>
                 <span class="text-caption m-muted"> · {{room.t('last reply')}} {{room.shortWhen(item.threadLastDate)}}</span>
+            </div>
+            <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
+            <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
+                    :data-delivery="item.event.delivery.state">
+                <q-icon :name="room.deliveryIcon(item)" size="14px" class="q-mr-xs"></q-icon>
+                <span class="ellipsis">{{room.deliveryText(item)}}</span>
+                <q-btn v-if="room.canRetry(item)" flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Send again')"
+                        @click.stop="room.retryDelivery(item)"></q-btn>
             </div>
         </template>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
@@ -413,13 +425,15 @@ const messageTemplate = `
     <div v-if="room.showActions(item, inThread)" class="absolute-top-right q-mr-sm" style="top:-14px;z-index:2" @click.stop>
         <q-card flat bordered class="row no-wrap items-center shadow-2">
             <template v-if="room.canPost">
-                <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
-                        :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
-                <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
-                    <q-menu anchor="bottom right" self="top right"><div class="q-pa-xs row" style="width:236px">
-                        <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
-                    </div></q-menu>
-                </q-btn>
+                <template v-if="room.bridgeCaps.reaction">
+                    <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
+                            :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
+                    <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
+                        <q-menu anchor="bottom right" self="top right"><div class="q-pa-xs row" style="width:236px">
+                            <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
+                        </div></q-menu>
+                    </q-btn>
+                </template>
                 <q-btn v-if="!inThread" flat round dense size="sm" icon="sym_o_reply" :aria-label="room.t('Reply')" @click="room.startReply(item)"><q-tooltip>{{room.t('Reply')}}</q-tooltip></q-btn>
                 <q-btn v-if="!inThread" flat round dense size="sm" icon="sym_o_forum" :aria-label="room.t('Reply in thread')" @click="room.openThread(item.eventSeq)">
                     <q-tooltip>{{room.t('Reply in thread')}}</q-tooltip></q-btn>
@@ -699,6 +713,10 @@ const roomTemplate = `
                     <q-icon v-if="member && (member.isMuted || member.notificationLevelEnumId === 'CnlNone')" name="sym_o_notifications_off" size="14px" class="q-ml-xs m-muted">
                         <q-tooltip>{{t('Muted')}}</q-tooltip></q-icon>
                     <q-chip v-if="room.archivedDate" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip>
+                    <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
+                        <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
+                    <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
+                        <q-tooltip>{{t('Messages stay here and go out once it is back')}}</q-tooltip></q-chip>
                 </div>
                 <div class="text-caption m-muted ellipsis">
                     <template v-if="isDirect && room.otherUserId"><span class="m-status-dot q-mr-xs" style="width:8px;height:8px" :class="'m-presence-' + (presenceOf(room.otherUserId) || 'offline')"></span>{{presenceText(room.otherUserId)}}</template>
@@ -707,7 +725,7 @@ const roomTemplate = `
                 </div>
             </div>
             <div v-if="!isDirect && !narrow" class="row no-wrap items-center cursor-pointer q-mx-xs" @click="openSide('members')">
-                <m-avatar v-for="person in members.slice(0, 4)" :key="person.userId" :name="person.name" :user-id="person.userId" size="24px" class="q-ml-xs"></m-avatar>
+                <m-avatar v-for="person in members.slice(0, 4)" :key="person.userId || person.chatActorId" :name="person.name" :user-id="person.userId || undefined" size="24px" class="q-ml-xs"></m-avatar>
                 <span class="text-caption m-muted q-ml-xs">{{members.length}}</span><q-tooltip>{{t('Members')}}</q-tooltip>
             </div>
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
@@ -908,19 +926,22 @@ const roomTemplate = `
                     <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!addPeople.userIds.length" @click="addMembers"></q-btn>
                 </div>
                 <q-list dense>
-                    <q-item v-for="person in members" :key="person.userId">
-                        <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId" size="32px"></m-avatar></q-item-section>
-                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
-                            <q-item-label caption>{{presenceText(person.userId)}}</q-item-label></q-item-section>
+                    <q-item v-for="person in members" :key="person.userId || person.chatActorId">
+                        <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId || undefined" size="32px"></m-avatar></q-item-section>
+                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
+                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}</q-item-label></q-item-section>
                         <q-item-section side class="row no-wrap items-center">
+                            <q-chip v-if="person.external" dense square icon="sym_o_hub" class="m-tonal text-info m-chat-external">{{person.networkName || t('Outside')}}</q-chip>
                             <q-chip v-if="person.roleEnumId === 'CmrOwner' && !isDirect" dense square class="m-tonal">{{t('Owner')}}</q-chip>
                             <q-chip v-else-if="person.roleEnumId === 'CmrModerator'" dense square class="m-tonal text-info">{{t('Moderator')}}</q-chip>
                             <q-btn v-if="canModerate && person.userId !== me.userId && (isOwner || person.roleEnumId !== 'CmrOwner')" flat round dense size="sm" icon="sym_o_more_vert" :aria-label="t('Member')">
                                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:200px">
-                                    <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
-                                    <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
-                                    <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
-                                    <q-separator></q-separator>
+                                    <template v-if="!person.external">
+                                        <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
+                                        <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
+                                        <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
+                                        <q-separator></q-separator>
+                                    </template>
                                     <q-item clickable v-close-popup @click="removeMember(person)"><q-item-section class="text-negative">{{t('Take out of the room')}}</q-item-section></q-item>
                                 </q-list></q-menu>
                             </q-btn>
@@ -976,6 +997,8 @@ const roomTemplate = `
         <template v-if="isOwner">
             <m-drop-down v-model="settings.visibility" :name="'settingsVisibility' + uid" :options="visibilityOptions" :label="t('Who may join')" class="q-mt-xs"></m-drop-down>
         </template>
+        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
+        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
@@ -1073,6 +1096,13 @@ const chatRoom = {
         canPost() { return !!this.access.canPost; },
         canModerate() { return !!this.access.canModerate; },
         isOwner() { return !!this.access.isOwner; },
+        // a bridged room (C1): what its bridges carry (an edit, a delete or a reaction one of them cannot carry is not offered)
+        bridgeCaps() { return (this.room && this.room.bridgeCapabilities) || { edit: true, delete: true, reaction: true }; },
+        bridgeNames() {
+            const names = ((this.room && this.room.bridges) || []).map((bridge) => bridge.networkName || bridge.name).filter((name) => name);
+            return Array.from(new Set(names)).join(', ');
+        },
+        bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
         roomIcon() { return this.room ? ((this.room.record && this.room.record.icon) || ROOM_ICONS[this.room.roomTypeEnumId] || 'sym_o_chat') : 'sym_o_chat'; },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
@@ -1123,7 +1153,7 @@ const chatRoom = {
             const me = this.me.userId;
             const seqs = this.events.filter((event) => event.type === 'message').map((event) => Number(event.eventSeq));
             for (const person of this.members) {
-                if (person.userId === me || person.isAgent) continue;
+                if (!person.userId || person.userId === me || person.isAgent) continue;
                 const read = Number(person.lastReadEventSeq || 0);
                 if (!read) continue;
                 let at = null;
@@ -1217,7 +1247,8 @@ const chatRoom = {
                     prev = null;
                     continue;
                 }
-                const grouped = !!prev && prev.senderUserId === event.senderUserId && sent - prev.sentDate < GROUP_MILLIS && event.replyToEventSeq == null;
+                const grouped = !!prev && (prev.event.senderActorId || prev.senderUserId) === (event.senderActorId || event.senderUserId)
+                    && sent - prev.sentDate < GROUP_MILLIS && event.replyToEventSeq == null;
                 const item = { kind: 'message', key: 'e' + event.eventSeq, eventSeq: Number(event.eventSeq), event, senderUserId: event.senderUserId,
                     senderName: this.nameOf(event.senderUserId, event.senderName), sentDate: sent, timeText: timeText(sent), timeShort: timeText(sent), fullTime: fullTime(sent),
                     bodyHtml: event.redacted ? null : (event.body ? decorateBody(event.body, me) : null), redacted: !!event.redacted, removedLabel: event.removedLabel,
@@ -1611,8 +1642,43 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW; },
-        canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)); },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
+        externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
+        // ---- a message's delivery to the room's bridges ----
+        deliveryNames(item, state) {
+            const list = ((item.event.delivery && item.event.delivery.destinations) || []).filter((destination) => !state || destination.state === state);
+            return Array.from(new Set(list.map((destination) => destination.networkName || destination.bridgeName).filter((name) => name))).join(', ');
+        },
+        deliveryText(item) {
+            const delivery = item.event.delivery;
+            if (!delivery) return '';
+            if (delivery.state === 'failed') {
+                const failed = delivery.destinations.find((destination) => destination.state === 'failed') || {};
+                return fill(t('Not delivered to {names}'), { names: this.deliveryNames(item, 'failed') }) + (failed.error ? ': ' + failed.error : '');
+            }
+            if (delivery.state === 'uncertain') return fill(t('May not have reached {names}'), { names: this.deliveryNames(item, 'uncertain') });
+            if (delivery.state === 'pending') return fill(t('Sending to {names}'), { names: this.deliveryNames(item, 'pending') });
+            return fill(t('Delivered to {names}'), { names: this.deliveryNames(item) });
+        },
+        deliveryIcon(item) {
+            const state = item.event.delivery && item.event.delivery.state;
+            return { failed: 'sym_o_error', uncertain: 'sym_o_help', pending: 'sym_o_schedule' }[state] || 'sym_o_done_all';
+        },
+        deliveryClass(item) {
+            const state = item.event.delivery && item.event.delivery.state;
+            return state === 'failed' ? 'text-negative' : state === 'uncertain' ? 'text-warning' : 'm-muted';
+        },
+        canRetry(item) { return !!(item.event.delivery && item.event.delivery.retryable) && (item.mine || this.canModerate); },
+        retryDelivery(item) {
+            const destinations = (item.event.delivery.destinations || []).filter((destination) => destination.retryable);
+            Promise.all(destinations.map((destination) => this.post('retryDelivery', { chatBridgeDeliveryId: destination.chatBridgeDeliveryId }))).then((answers) => {
+                const refused = answers.find((json) => json && json.error);
+                if (refused) { moqui.notifyMessages(null, [refused.error]); return; }
+                destinations.forEach((destination) => { destination.state = 'pending'; destination.retryable = false; });
+                Object.assign(item.event.delivery, { state: 'pending', retryable: false });
+            }, () => {});
+        },
         isEditing(item) { return !!this.editing && this.editing.seq === item.eventSeq; },
         startEdit(item) { this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
         cancelEdit() { this.editing = null; this.$nextTick(() => this.focusComposer()); },
@@ -1898,7 +1964,8 @@ const chatRoom = {
         setRole(person, roleEnumId) { this.post('setRole', { chatRoomId: this.roomId, userId: person.userId, roleEnumId }).then(() => this.reloadMeta(), () => {}); },
         removeMember(person) {
             this.confirm(t('Take out of the room?'), fill(t('{name} no longer sees the room or hears of it.'), { name: person.name }), t('Take out'), true).then(() => {
-                this.post('removeMember', { chatRoomId: this.roomId, userId: person.userId }).then(() => this.reloadMeta(), () => {});
+                const who = person.userId ? { userId: person.userId } : { chatActorId: person.chatActorId };
+                this.post('removeMember', Object.assign({ chatRoomId: this.roomId }, who)).then(() => this.reloadMeta(), () => {});
             });
         },
 
@@ -1933,13 +2000,19 @@ const chatRoom = {
             });
         },
         openSettings() {
-            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '', busy: false };
+            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
+                callE2ee: !!this.room.callE2eeRequired, busy: false };
         },
         saveSettings() {
             const params = { chatRoomId: this.roomId, roomName: this.settings.roomName, topic: this.settings.topic || '' };
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
-            this.post('updateRoom', params).then(() => {
+            // the calls' encryption (W8) is its own setting, saved first
+            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+                ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
+                }) : Promise.resolve();
+            e2ee.then(() => this.post('updateRoom', params)).then(() => {
                 this.settings = Object.assign({}, this.settings, { open: false, busy: false });
                 this.reloadMeta();
                 this.$emit('changed');
@@ -2094,6 +2167,10 @@ module.exports = {
             }, (err) => { moqui.handleAjaxError(err); throw err; });
         },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
+        bridgeText(room) {
+            const names = (room.bridgeNetworkNames || []).join(', ');
+            return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
+        },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
             if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);

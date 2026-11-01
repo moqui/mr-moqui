@@ -100,6 +100,19 @@ test("a pushed event merged into a timeline: messages in order, edits, reactions
     assert.equal(chat.applyEvent(null, event({ eventSeq: 1 })), null);
 });
 
+test("an external actor of a bridged room reacts and takes it back; a delivery update keeps the message's own fields", () => {
+    const list = [event({ eventSeq: 2, bodyText: "one", reactions: [] })];
+    chat.applyEvent(list, event({ eventSeq: 3, type: "reaction", relatesToEventSeq: 2, senderUserId: null, senderActorId: "XA100000", content: { key: "👍" } }), "ann");
+    chat.applyEvent(list, event({ eventSeq: 4, type: "reaction", relatesToEventSeq: 2, senderUserId: null, senderActorId: "XA100001", content: { key: "👍" } }), "ann");
+    assert.deepEqual(list[0].reactions, [{ key: "👍", count: 2, userIds: ["XA100000", "XA100001"], mine: false }]);
+    chat.applyEvent(list, event({ eventSeq: 5, type: "redaction", relatesToEventSeq: 3, senderUserId: null, senderActorId: "XA100000",
+        content: { target: "reaction", messageSeq: 2, key: "👍" } }), "ann");
+    assert.deepEqual(list[0].reactions, [{ key: "👍", count: 1, userIds: ["XA100001"], mine: false }]);
+    chat.applyUpdate(list, { eventSeq: 2, fields: { delivery: { state: "failed", retryable: true, destinations: [{ state: "failed", networkName: "SMS" }] } } }, "ann");
+    assert.equal(list[0].delivery.state, "failed");
+    assert.equal(list[0].bodyText, "one");
+});
+
 test("the user's own dot and do not disturb: no toasts, the notifications still come", () => {
     const saved = { state: chat.state, vm: chat.vm, me: chat.me };
     chat.state = freshState();

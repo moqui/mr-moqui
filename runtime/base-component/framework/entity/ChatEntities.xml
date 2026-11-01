@@ -18,7 +18,15 @@ along with this software (see the LICENSE.md file). If not, see
     task, request or event.
 
     These are moqui.* entities, which entity filters never apply to (R21): screens read them only through
-    org.moqui.impl.ChatServices, which checks each room. -->
+    org.moqui.impl.ChatServices, which checks each room.
+
+    Actors (plans/Comms-Framework.md §4.4, C1): a member, a sender, a mention and a vote are a ChatActor, a local user or an
+    external actor of a bridge. The rows of a local actor keep its userId beside the actor (ChatRoomMember.userId,
+    ChatEvent.senderUserId, ChatEventMention.userId, ChatPollVote.userId), so the services take and answer userIds for local
+    users and the reads by user stay one find; an external actor's rows have no userId, and no key holds a userId.
+    org.moqui.impl.ChatServices.migrate#ChatActors moves a database from before (docs/Run-Deploy.md "Chat actors"). The
+    bridge layer's entities are at the end: ChatBridge, ChatRoomBridge, ChatExternalUser, ChatEventExternal,
+    ChatBridgeInbound and ChatBridgeDelivery (org.moqui.impl.ChatBridgeServices, crates/moqui-core/src/service/chat_bridge.rs). -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="ChatRoom" package="moqui.chat" use="transactional" cache="never">
@@ -49,6 +57,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastMessageUserId" type="id"/>
         <field name="lastMessageDate" type="date-time"/>
         <field name="lastMessageSnippet" type="text-medium"/>
+        <field name="lastMessageActorId" type="id"><description>The actor of the last message (an external actor has no
+            lastMessageUserId)</description></field>
+        <field name="federationEnabled" type="text-indicator"><description>Y: remote users of a native endpoint (XMPP, Matrix)
+            may join the room; empty or N: only local users and the connectors mapped to it (ChatRoomBridge). Local users reach
+            any room they belong to with an XMPP or Matrix client either way.</description></field>
+        <field name="agentsReadExternal" type="text-indicator"><description>Y: the room's agent members get the messages of
+            external actors too (the room's explicit policy; an encrypted room never). Empty or N: agents get only local
+            users' messages.</description></field>
         <relationship type="one" title="ChatRoomType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="roomTypeEnumId"/></relationship>
         <relationship type="one" title="ChatRoomVisibility" related="moqui.basic.Enumeration" short-alias="visibility">
@@ -80,13 +96,15 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="ChatRoomMember" package="moqui.chat" use="transactional" cache="never">
-        <description>A user in a room, now (leftDate empty) or before. A member reads up to lastReadEventSeq; the events
+        <description>An actor in a room, now (leftDate empty) or before: a local user (userId, the actor's own, kept here for
+            the reads by user) or an external actor of a bridge (userId empty; C1). A member reads up to lastReadEventSeq; the events
             after it are unread. notificationLevelEnumId says what counts and notifies: every message (CnlAll), mentions
             only (CnlMentions) or nothing (CnlNone). A muted room (isMuted) counts and notifies as CnlMentions and the
             client plays no sound for it. An agent member (CmrAgent) is a service user whose agentRef names the service
             the room's messages are handed to (the Assist port's entry point; no model runs in the framework).</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
-        <field name="userId" type="id" is-pk="true"/>
+        <field name="chatActorId" type="id" is-pk="true"/>
+        <field name="userId" type="id"><description>The local user of a local actor; empty for an external actor</description></field>
         <field name="roleEnumId" type="id"/>
         <field name="agentRef" type="text-medium"><description>For an agent member, the service that receives the room's
             messages (deliver#AgentMessage calls it)</description></field>
@@ -100,12 +118,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="isMuted" type="text-indicator"/>
         <field name="addedByUserId" type="id"/>
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="one" title="ChatMemberRole" related="moqui.basic.Enumeration" short-alias="role">
             <key-map field-name="roleEnumId"/></relationship>
         <relationship type="one" title="ChatNotificationLevel" related="moqui.basic.Enumeration" short-alias="notificationLevel">
             <key-map field-name="notificationLevelEnumId"/></relationship>
         <index name="CHAT_MEMBER_USER"><index-field name="userId"/><index-field name="leftDate"/></index>
+        <index name="CHAT_MEMBER_ROOM_USER" unique="true"><index-field name="chatRoomId"/><index-field name="userId"/></index>
         <seed-data>
             <moqui.basic.EnumerationType description="Chat Member Role" enumTypeId="ChatMemberRole"/>
             <moqui.basic.Enumeration description="Owner" enumId="CmrOwner" enumCode="owner" enumTypeId="ChatMemberRole" sequenceNum="1"/>
@@ -138,7 +158,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
         <field name="eventTypeEnumId" type="id"/>
-        <field name="senderUserId" type="id"/>
+        <field name="senderUserId" type="id"><description>The local user who sent it; empty for an external actor's event</description></field>
+        <field name="senderActorId" type="id"><description>The actor who sent it (C1): a local user's actor, or an external
+            actor of a bridge</description></field>
         <field name="contentJson" type="text-very-long"/>
         <field name="replyToEventSeq" type="number-integer"/>
         <field name="threadRootEventSeq" type="number-integer"/>
@@ -162,6 +184,8 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one-nofk" title="Sender" related="moqui.security.UserAccount" short-alias="sender">
             <key-map field-name="senderUserId" related="userId"/></relationship>
+        <relationship type="one-nofk" title="Sender" related="moqui.chat.ChatActor" short-alias="senderActor">
+            <key-map field-name="senderActorId" related="chatActorId"/></relationship>
         <relationship type="one" title="ChatEventType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="eventTypeEnumId"/></relationship>
         <index name="CHAT_EVENT_THREAD"><index-field name="chatRoomId"/><index-field name="threadRootEventSeq"/></index>
@@ -185,12 +209,14 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="ChatEventMention" package="moqui.chat" use="transactional" cache="never">
-        <description>A user mentioned in a message (or in its edit), so the mention counts and the Mentions filter are one
-            find. A redaction removes its rows.</description>
+        <description>An actor mentioned in a message (or in its edit), so the mention counts and the Mentions filter are one
+            find. A redaction removes its rows. userId is the local user of a local actor.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
-        <field name="userId" type="id" is-pk="true"/>
+        <field name="chatActorId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
         <relationship type="one" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <index name="CHAT_MENTION_USER"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
     </entity>
@@ -210,7 +236,7 @@ along with this software (see the LICENSE.md file). If not, see
         <entity-condition>
             <econdition entity-alias="CE" field-name="eventTypeEnumId" value="CetMessage"/>
             <econdition entity-alias="CE" field-name="eventSeq" operator="greater" to-entity-alias="CRM" to-field-name="lastReadEventSeq"/>
-            <econdition entity-alias="CE" field-name="senderUserId" operator="not-equals" to-entity-alias="CRM" to-field-name="userId"/>
+            <econdition entity-alias="CE" field-name="senderActorId" operator="not-equals" to-entity-alias="CRM" to-field-name="chatActorId"/>
         </entity-condition>
     </view-entity>
     <view-entity entity-name="ChatMemberMentions" package="moqui.chat">
@@ -218,7 +244,7 @@ along with this software (see the LICENSE.md file). If not, see
             leftDate empty, select chatRoomId and mentionCount (grouped by room).</description>
         <member-entity entity-alias="CRM" entity-name="moqui.chat.ChatRoomMember"/>
         <member-entity entity-alias="CEM" entity-name="moqui.chat.ChatEventMention" join-from-alias="CRM">
-            <key-map field-name="chatRoomId"/><key-map field-name="userId"/></member-entity>
+            <key-map field-name="chatRoomId"/><key-map field-name="chatActorId"/></member-entity>
         <alias entity-alias="CRM" name="chatRoomId"/>
         <alias entity-alias="CRM" name="userId"/>
         <alias entity-alias="CRM" name="leftDate"/><!-- filter only -->
@@ -271,13 +297,16 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.chat.ChatPoll" short-alias="poll"/>
     </entity>
     <entity entity-name="ChatPollVote" package="moqui.chat" use="transactional" cache="never">
-        <description>A user's vote for an option of a poll; vote#Poll replaces a user's votes.</description>
+        <description>An actor's vote for an option of a poll; vote#Poll replaces a user's votes. userId is the local user of a
+            local actor.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
         <field name="eventSeq" type="number-integer" is-pk="true"/>
-        <field name="userId" type="id" is-pk="true"/>
+        <field name="chatActorId" type="id" is-pk="true"/>
         <field name="optionSeq" type="number-integer" is-pk="true"/>
+        <field name="userId" type="id"/>
         <field name="votedDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatPoll" short-alias="poll"/>
+        <relationship type="one" related="moqui.chat.ChatActor" short-alias="actor"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
 
@@ -320,6 +349,223 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Away" enumId="UpsAway" enumCode="away" enumTypeId="UserPresenceStatus" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Do not disturb" enumId="UpsDnd" enumCode="dnd" enumTypeId="UserPresenceStatus" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Invisible" enumId="UpsInvisible" enumCode="invisible" enumTypeId="UserPresenceStatus" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+
+    <!-- ========== Actors and bridges (plans/Comms-Framework.md §4.1, §4.3, §4.4; C1) ========== -->
+
+    <entity entity-name="ChatActor" package="moqui.chat" use="transactional" cache="never" sequence-primary-prefix="XA">
+        <description>Who acts in chat: a local user (CakLocal, userId; agents are local service users) or an external actor
+            of a bridge (CakExternal, chatExternalUserId), never both, each unique within its kind. An external actor has no
+            login and no UserAccount. A local actor's chatActorId is its userId, made on first use (get#LocalActors); an
+            external actor's is sequenced with the prefix XA.</description>
+        <field name="chatActorId" type="id" is-pk="true"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="chatExternalUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="ChatActorKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" related="moqui.chat.ChatExternalUser" short-alias="externalUser"/>
+        <!-- not unique: a local actor's id is its userId, which keeps it unique, and the create-or-update that makes it on
+            first use arbitrates on the key alone -->
+        <index name="CHAT_ACTOR_USER"><index-field name="userId"/></index>
+        <index name="CHAT_ACTOR_EXTERNAL" unique="true"><index-field name="chatExternalUserId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Actor Kind" enumTypeId="ChatActorKind"/>
+            <moqui.basic.Enumeration description="Local user" enumId="CakLocal" enumCode="local" enumTypeId="ChatActorKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="External" enumId="CakExternal" enumCode="external" enumTypeId="ChatActorKind" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatBridge" package="moqui.chat" use="transactional" cache="never">
+        <description>A connector account or federated network: one row each. typeEnumId is the network; adapterName picks the
+            ChatBridgeAdapter registered through moqui_core::extension that serves it (empty: the network's code). configJson
+            holds the provider account's settings and secrets, encrypted; inboundTokenHash is the SHA-256 (hex) of the token
+            an adapter gives ingest#Event. statusId: CbsConnected, CbsNotConnected (its rooms show "not connected" and keep
+            their local timeline), CbsDisabled (no deliveries, no input). sendsPerMinute caps the deliveries a node sends to
+            it (empty: the adapter's limit).</description>
+        <field name="chatBridgeId" type="id" is-pk="true"/>
+        <field name="typeEnumId" type="id"/>
+        <field name="adapterName" type="text-short"/>
+        <field name="name" type="text-medium"/>
+        <field name="configJson" type="text-very-long" encrypt="true"/>
+        <field name="inboundTokenHash" type="text-medium"/>
+        <field name="statusId" type="id"/>
+        <field name="lastStatusDate" type="date-time"/>
+        <field name="lastErrorText" type="text-long"/>
+        <field name="lastErrorDate" type="date-time"/>
+        <field name="sendsPerMinute" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="ChatBridgeType" related="moqui.basic.Enumeration" short-alias="type">
+            <key-map field-name="typeEnumId"/></relationship>
+        <relationship type="one" title="ChatBridge" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Bridge Type" enumTypeId="ChatBridgeType"/>
+            <moqui.basic.Enumeration description="XMPP" enumId="CbtXmpp" enumCode="xmpp" enumTypeId="ChatBridgeType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Matrix" enumId="CbtMatrix" enumCode="matrix" enumTypeId="ChatBridgeType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Matrix appservice" enumId="CbtMatrixAppservice" enumCode="matrix-appservice" enumTypeId="ChatBridgeType" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="SMS" enumId="CbtSms" enumCode="sms" enumTypeId="ChatBridgeType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="WhatsApp" enumId="CbtWhatsApp" enumCode="whatsapp" enumTypeId="ChatBridgeType" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Messenger" enumId="CbtMessenger" enumCode="messenger" enumTypeId="ChatBridgeType" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Instagram" enumId="CbtInstagram" enumCode="instagram" enumTypeId="ChatBridgeType" sequenceNum="7"/>
+            <moqui.basic.Enumeration description="Telegram" enumId="CbtTelegram" enumCode="telegram" enumTypeId="ChatBridgeType" sequenceNum="8"/>
+            <moqui.basic.Enumeration description="Slack" enumId="CbtSlack" enumCode="slack" enumTypeId="ChatBridgeType" sequenceNum="9"/>
+            <moqui.basic.Enumeration description="Microsoft Teams" enumId="CbtTeams" enumCode="teams" enumTypeId="ChatBridgeType" sequenceNum="10"/>
+            <moqui.basic.Enumeration description="Discord" enumId="CbtDiscord" enumCode="discord" enumTypeId="ChatBridgeType" sequenceNum="11"/>
+
+            <moqui.basic.StatusType description="Chat Bridge" statusTypeId="ChatBridge"/>
+            <moqui.basic.StatusItem statusId="CbsConnected" statusTypeId="ChatBridge" sequenceNum="1" description="Connected"/>
+            <moqui.basic.StatusItem statusId="CbsNotConnected" statusTypeId="ChatBridge" sequenceNum="2" description="Not connected"/>
+            <moqui.basic.StatusItem statusId="CbsDisabled" statusTypeId="ChatBridge" sequenceNum="3" description="Disabled"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatRoomBridge" package="moqui.chat" use="transactional" cache="never">
+        <description>A connector's mapping of a Moqui room to a room or conversation elsewhere (externalRoomId), in from it,
+            out to it or both (directionEnumId). An external room has one active mapping (thruDate empty) per bridge; delivery
+            rows keep this mapping's id. A native endpoint addresses the Moqui room itself and has none. A link to an external
+            room grants no rights.</description>
+        <field name="chatRoomBridgeId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="chatBridgeId" type="id"/>
+        <field name="externalRoomId" type="text-medium"/>
+        <field name="externalRoomName" type="text-medium"/>
+        <field name="externalRoomUrl" type="text-medium"/>
+        <field name="directionEnumId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
+        <relationship type="one" title="ChatBridgeDirection" related="moqui.basic.Enumeration" short-alias="direction">
+            <key-map field-name="directionEnumId"/></relationship>
+        <index name="CHAT_ROOM_BRIDGE_ROOM"><index-field name="chatRoomId"/><index-field name="thruDate"/></index>
+        <index name="CHAT_ROOM_BRIDGE_EXT"><index-field name="chatBridgeId"/><index-field name="externalRoomId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Bridge Direction" enumTypeId="ChatBridgeDirection"/>
+            <moqui.basic.Enumeration description="Both ways" enumId="CrbBoth" enumCode="both" enumTypeId="ChatBridgeDirection" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="In only" enumId="CrbIn" enumCode="in" enumTypeId="ChatBridgeDirection" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Out only" enumId="CrbOut" enumCode="out" enumTypeId="ChatBridgeDirection" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatExternalUser" package="moqui.chat" use="transactional" cache="never">
+        <description>A person on a bridge's network, unique on the bridge and their id there (externalUserId: for a native
+            endpoint the JID or Matrix ID). linkedUserId is a verified puppet link to a local user: provenance, never
+            permission to act as that user.</description>
+        <field name="chatExternalUserId" type="id" is-pk="true"/>
+        <field name="chatBridgeId" type="id"/>
+        <field name="externalUserId" type="text-medium"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="avatarUrl" type="text-medium"/>
+        <field name="linkedUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
+        <relationship type="one-nofk" title="Linked" related="moqui.security.UserAccount" short-alias="linkedUser">
+            <key-map field-name="linkedUserId" related="userId"/></relationship>
+        <index name="CHAT_EXT_USER_BRIDGE" unique="true"><index-field name="chatBridgeId"/><index-field name="externalUserId"/></index>
+    </entity>
+
+    <entity entity-name="ChatEventExternal" package="moqui.chat" use="transactional" cache="never">
+        <description>A local event and its external counterpart: the bridge (a connector's mapping, chatRoomBridgeId, or a
+            native endpoint), the external room and event id, unique together even across mapping changes, with where it
+            began (originEnumId: CeoInbound came from the network, CeoOutbound was sent there), its original time and protocol
+            metadata. It dedupes input, suppresses echoes and maps edits, reactions and deletes to their target.
+            lastEditOriginDate is the original time of the last edit applied, so an older edit that arrives late changes
+            nothing.</description>
+        <field name="chatEventExternalId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="chatBridgeId" type="id"/>
+        <field name="chatRoomBridgeId" type="id"/>
+        <field name="externalRoomId" type="text-medium"/>
+        <field name="externalEventId" type="text-medium"/>
+        <field name="originEnumId" type="id"/>
+        <field name="originDate" type="date-time"/>
+        <field name="lastEditOriginDate" type="date-time"/>
+        <field name="metadataJson" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatEvent" short-alias="event"/>
+        <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
+        <relationship type="one" title="ChatEventOrigin" related="moqui.basic.Enumeration" short-alias="origin">
+            <key-map field-name="originEnumId"/></relationship>
+        <index name="CHAT_EVENT_EXT_ID" unique="true"><index-field name="chatBridgeId"/><index-field name="externalRoomId"/><index-field name="externalEventId"/></index>
+        <index name="CHAT_EVENT_EXT_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Event Origin" enumTypeId="ChatEventOrigin"/>
+            <moqui.basic.Enumeration description="From the network" enumId="CeoInbound" enumCode="inbound" enumTypeId="ChatEventOrigin" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Sent to the network" enumId="CeoOutbound" enumCode="outbound" enumTypeId="ChatEventOrigin" sequenceNum="2"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatBridgeInbound" package="moqui.chat" use="transactional" cache="never">
+        <description>An authenticated batch from a bridge (the Matrix application service transaction contract), stored
+            before it is acknowledged: the bridge and its transaction id are unique together, so a batch sent again does
+            nothing. batchJson is the bounded batch, outcomesJson each item's outcome by its itemId (accepted, duplicate,
+            echo, waiting, stale, rejected with a reason code). statusEnumId: CbiReceived (stored, not yet worked),
+            CbiWaiting (items wait for their target's mapping), CbiDone. Kept 30 days, longer than a provider retries.</description>
+        <field name="chatBridgeId" type="id" is-pk="true"/>
+        <field name="transactionId" type="text-medium" is-pk="true"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="itemCount" type="number-integer"/>
+        <field name="waitingCount" type="number-integer"/>
+        <field name="batchJson" type="text-very-long"/>
+        <field name="outcomesJson" type="text-very-long"/>
+        <field name="processedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
+        <relationship type="one" title="ChatInboundStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_INBOUND_STATUS"><index-field name="statusEnumId"/><index-field name="receivedDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Inbound Status" enumTypeId="ChatInboundStatus"/>
+            <moqui.basic.Enumeration description="Received" enumId="CbiReceived" enumCode="received" enumTypeId="ChatInboundStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Waiting for targets" enumId="CbiWaiting" enumCode="waiting" enumTypeId="ChatInboundStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Done" enumId="CbiDone" enumCode="done" enumTypeId="ChatInboundStatus" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="ChatBridgeDelivery" package="moqui.chat" use="transactional" cache="never">
+        <description>One local event to one destination (a connector's mapping), written in the event's transaction and
+            unique on the event and mapping. idempotencyKey goes with every attempt; dependsOnDeliveryId is the delivery of
+            the message an edit, reaction or delete needs first. statusEnumId: CdsPending, CdsAccepted (remoteEventId is the
+            network's id), CdsFailed (permanent, or out of attempts: visible, with an authorized retry), CdsUncertain (an
+            attempt whose result was lost to a destination that cannot dedupe: it may or may not have arrived). A worker
+            holds a row while it sends (leaseOwner until leaseExpiresDate). The row stays after the event's content is
+            purged, as a dedupe tombstone, and keeps no message text.</description>
+        <field name="chatBridgeDeliveryId" type="id" is-pk="true"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="chatRoomBridgeId" type="id"/>
+        <field name="chatBridgeId" type="id"/>
+        <field name="idempotencyKey" type="text-medium"/>
+        <field name="dependsOnDeliveryId" type="id"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpiresDate" type="date-time"/>
+        <field name="remoteEventId" type="text-medium"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="lastErrorText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="acceptedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatRoomBridge" short-alias="mapping"/>
+        <relationship type="one" related="moqui.chat.ChatBridge" short-alias="bridge"/>
+        <relationship type="one" title="ChatDeliveryStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="CHAT_DELIVERY_EVENT" unique="true"><index-field name="chatRoomId"/><index-field name="eventSeq"/><index-field name="chatRoomBridgeId"/></index>
+        <index name="CHAT_DELIVERY_DUE"><index-field name="statusEnumId"/><index-field name="nextAttemptDate"/></index>
+        <index name="CHAT_DELIVERY_MAPPING"><index-field name="chatRoomBridgeId"/><index-field name="statusEnumId"/><index-field name="eventSeq"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat Delivery Status" enumTypeId="ChatDeliveryStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="CdsPending" enumCode="pending" enumTypeId="ChatDeliveryStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Accepted" enumId="CdsAccepted" enumCode="accepted" enumTypeId="ChatDeliveryStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Failed" enumId="CdsFailed" enumCode="failed" enumTypeId="ChatDeliveryStatus" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Uncertain" enumId="CdsUncertain" enumCode="uncertain" enumTypeId="ChatDeliveryStatus" sequenceNum="4"/>
         </seed-data>
     </entity>
 </entities>

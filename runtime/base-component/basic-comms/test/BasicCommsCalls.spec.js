@@ -3,6 +3,8 @@
 // and both see the call in History; a user who is not in the call is refused the same post that works for john.doe, through
 // either mount (IronStone's /qapps/Comms when it is installed); the terminal twin shows the call and leaves it; a stored
 // recording (W5) plays for the one who recorded it and is nothing for anyone else; so does a voicemail (V2), for its owner.
+// An end-to-end encrypted call (W8) is answered only with the browser's device, refuses recording, and the terminal twin
+// shows its encryption without Answer.
 // Run: ./moq test basic-comms --spec BasicCommsCalls
 const root = "component://basic-comms/screen/BasicComms.xml"
 const bossRoot = "component://mr-boss/screen/Comms.xml"
@@ -115,6 +117,43 @@ feature("the terminal twin shows the call and leaves it", {
         text.includes("not live in the terminal")
         text.includes("Calls basic.comms.caller")
         after.call.status == "ended"
+    }
+})
+
+feature("an end-to-end encrypted call through the transitions: a browser without its device does not answer; the terminal twin shows the encryption and no Answer", {
+    when() {
+        // a device of john.doe's with its keys uploaded (opaque here); the browser names it with RTCRtpScriptTransform
+        const johnId = john()
+        sys(() => {
+            if (ec.entity.find("moqui.chat.ChatDevice").condition({userId: johnId, deviceId: "BCCSPECDEV"}).count() === 0) {
+                const device = ec.entity.makeValue("moqui.chat.ChatDevice")
+                device.setFields({userId: johnId, deviceId: "BCCSPECDEV", ed25519Key: "ed-spec", curve25519Key: "curve-spec", listRevision: 1,
+                    lastToDevicePos: 0, ackedToDevicePos: 0, createdDate: ec.user.nowTimestamp}, true, null, null)
+                device.create()
+            }
+        })
+        ec.user.internalLoginUser("basic.comms.caller")
+        const started = post(root, "startCall", {calleeUserIdList: johnId, video: "true", requireE2ee: "true"})
+        const encryptedId = started.json.callSessionId
+        login("john.doe")
+        const shown = sys(() => ec.screen.makeTest().rootScreen(root).renderMode("tui").render("Calls/CallTui", {callSessionId: encryptedId}, null))
+        const text = String(shown.output || "")
+        ec.message.clearErrors()
+        const plainly = post(root, "answerCall", {callSessionId: encryptedId})
+        const answered = post(root, "answerCall", {callSessionId: encryptedId, cryptoDeviceId: "BCCSPECDEV", scriptTransform: "true"})
+        const recording = post(root, "startRecording", {callSessionId: encryptedId})
+        post(root, "leaveCall", {callSessionId: encryptedId})
+        return {started, text, plainly, answered, recording}
+    },
+    then({started, text, plainly, answered, recording}) {
+        started.json.call.e2ee == true
+        started.json.call.encryptionMode == "e2ee-sframe"
+        text.includes("End-to-end encrypted")
+        text.includes("answer it in a browser")
+        plainly.json.reasonCode == "unsupportedClient"
+        answered.json.errors == null
+        answered.json.call.e2ee == true
+        recording.json.reasonCode == "encrypted"
     }
 })
 

@@ -375,7 +375,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const others = Array.from(memberList || []).filter((item) => item.userId !== me).map((item) => item.name)
                 source.displayName = others.length ? others.join(', ') : (Array.from(memberList || []).find((item) => item.userId === me) || {}).name || chatRoomId
             } else source.displayName = source.roomName
-            const otherIds = Array.from(memberList || []).filter((item) => item.userId !== me).map((item) => item.userId)
+            const otherIds = Array.from(memberList || []).filter((item) => item.userId && item.userId !== me).map((item) => item.userId)
             source.otherUserIdList = source.roomTypeEnumId === 'CrtDirect' ? otherIds : []
             source.otherUserId = source.roomTypeEnumId === 'CrtDirect' && otherIds.length === 1 ? otherIds[0] : null
             room = ec.service.sync().name('org.moqui.comms.ChatScreenServices.decorate#Rooms').parameter('roomList', [source]).call().roomList[0]
@@ -422,6 +422,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (ids.size) for (const account of ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', Array.from(ids))
                     .selectField('userId').selectField('userFullName').selectField('username').disableAuthz().list())
                 userNames[account.userId] = account.userFullName || account.username || account.userId
+            // the external actors of a bridged room (a reaction's, a membership's): their names on their networks
+            const actorIds = Array.from(ids).filter((id) => !userNames[id])
+            for (const event of events) if (event.content && event.content.chatActorId) actorIds.push(String(event.content.chatActorId))
+            if (actorIds.length) {
+                const actors = ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames').parameter('chatActorIdList', actorIds).call()?.actorMap || {}
+                for (const [id, actor] of Object.entries(actors)) userNames[id] = actor.name
+            }
             page = {room: out.room, access: out.access, eventList: events, hasMoreBefore: !!out.hasMoreBefore, hasMoreAfter: !!out.hasMoreAfter,
                 lastReadEventSeq: out.lastReadEventSeq, memberList: out.memberList, userNames: userNames}
         ]]></script></actions>
@@ -452,7 +459,7 @@ along with this software (see the LICENSE.md file). If not, see
             if ((access.canModerate || access.isOwner || everyone.length <= 20) && (!text || 'room'.startsWith(text) || 'everyone'.startsWith(text)))
                 userList.push({id: '@room', label: 'room'})
             for (const member of Array.from(out.memberList || [])) {
-                if (member.userId === me || member.isAgent) continue
+                if (!member.userId || member.userId === me || member.isAgent) continue
                 if (text && !String(member.name || '').toLowerCase().includes(text)) continue
                 userList.push({id: member.userId, label: member.name})
             }
