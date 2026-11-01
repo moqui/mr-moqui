@@ -409,10 +409,23 @@ feature(
                 auth_data: {public_key: "pk2"}
             })
             const afterUpdate = as(A, "get#KeyBackupVersion", {})
-            const deletedOne = as(A, "delete#BackupKeys", {version: v2.version, roomId: "!r1:localhost", sessionId: "s2"})
+            // another public key sends the backup to another key, as a new version does: it needs a recent sign-in (A's
+            // went with the account switch to B above); new signatures do not
+            const newKey = {version: v2.version, algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data: {public_key: "pk2b"}}
+            const keyChangeRefused = as(A, "update#KeyBackupVersion", newKey)
+            const keyChanged = asFresh(A, "update#KeyBackupVersion", newKey)
+            const keyBack = as(A, "update#KeyBackupVersion", {
+                version: v2.version,
+                algorithm: "m.megolm_backup.v1.curve25519-aes-sha2",
+                auth_data: {public_key: "pk2", signatures: {x: {}}}
+            })
+            // deleting backed-up keys needs a recent sign-in too, refused with the same parameters after a switch
+            as(B, "get#KeyBackupVersion", {})
+            const deleteKeysRefused = as(A, "delete#BackupKeys", {version: v2.version, roomId: "!r1:localhost", sessionId: "s2"})
+            const deletedOne = asFresh(A, "delete#BackupKeys", {version: v2.version, roomId: "!r1:localhost", sessionId: "s2"})
             const deletedNone = as(A, "delete#BackupKeys", {version: v2.version, roomId: "!r1:localhost", sessionId: "s2"})
             const otherDelete = as(B, "delete#KeyBackupVersion", {version: v2.version})
-            const deletedVersion = as(A, "delete#KeyBackupVersion", {version: v2.version})
+            const deletedVersion = asFresh(A, "delete#KeyBackupVersion", {version: v2.version})
             const afterDelete = as(A, "get#KeyBackupVersion", {})
             const gone = as(A, "get#KeyBackupVersion", {version: v2.version})
             const goneSessions = sys(() =>
@@ -447,6 +460,10 @@ feature(
                 otherUpdate,
                 algorithm,
                 afterUpdate,
+                keyChangeRefused,
+                keyChanged,
+                keyBack,
+                deleteKeysRefused,
                 deletedOne,
                 deletedNone,
                 otherDelete,
@@ -482,6 +499,10 @@ feature(
             otherUpdate,
             algorithm,
             afterUpdate,
+            keyChangeRefused,
+            keyChanged,
+            keyBack,
+            deleteKeysRefused,
             deletedOne,
             deletedNone,
             otherDelete,
@@ -533,6 +554,10 @@ feature(
             algorithm.reasonCode == "algorithmChanged"
             afterUpdate.auth_data.signatures.x != null
             afterUpdate.etag == "4"
+            keyChangeRefused.reasonCode == "reauthRequired"
+            keyChanged.errors == ""
+            keyBack.errors == ""
+            deleteKeysRefused.reasonCode == "reauthRequired"
             deletedOne.count == 2
             deletedOne.etag == "5"
             deletedNone.etag == "5"

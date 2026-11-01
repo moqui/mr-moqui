@@ -222,6 +222,9 @@ mod tests {
 pub(crate) const FACTOR_INFO: &str = "org.moqui.impl.UserServices.get#ExternalUserAuthcFactorInfo";
 pub(crate) const VALIDATE_CODE: &str = "org.moqui.impl.UserServices.validate#ExternalUserAuthcCode";
 pub(crate) const SEND_CODE: &str = "org.moqui.impl.UserServices.send#ExternalAuthcCode";
+/// The session attribute of the last code sent for a re-authentication (epoch millis), and the gap before another.
+const REAUTH_CODE_SENT: &str = "moquiReauthCodeSent";
+const REAUTH_CODE_GAP_MILLIS: i64 = 30_000;
 /// A code of a named user, counted as a login when wrong (a re-authentication's second factor).
 const VALIDATE_USER_CODE: &str = "org.moqui.impl.UserServices.validate#UserAuthcFactorCode";
 pub(crate) const CODE_NOT_VALID: &str = "Authentication code is not valid";
@@ -340,7 +343,9 @@ pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
             &[("userId", &user_id), ("code", code), ("countFailure", "true")],
         )?;
         if !validated.get("verified").is_some_and(truthy) {
-            // a refused code leaves the password checked, so the user may try another code
+            // a refused code leaves the password checked, so the user may try another code; it counted as a failed
+            // login (validate#UserAuthcFactorCode) and is noted for the web protection as a wrong password is
+            crate::web::note_auth_failure();
             return code_needed(true);
         }
     }
@@ -358,6 +363,15 @@ pub fn send_reauth_code(factor_id: &str) -> Result<(), Error> {
     if !super::login::reauth_password_checked(&user_id) {
         return Err(Error::new("Enter your password first"));
     }
+    // An email or SMS costs: one send per REAUTH_CODE_GAP_MILLIS in a session.
+    let now = super::login::now_millis();
+    let last = super::session::session_attribute(REAUTH_CODE_SENT).and_then(|text| text.parse::<i64>().ok());
+    if last.is_some_and(|at| (0..REAUTH_CODE_GAP_MILLIS).contains(&(now - at))) {
+        return Err(Error::new(
+            "A code was sent a moment ago: wait half a minute before asking for another",
+        ));
+    }
+    super::session::set_session_attribute(REAUTH_CODE_SENT, Some(&now.to_string()));
     let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
     factor_service(SEND_CODE, &[("factorId", factor_id)]).map(|_| ())
 }

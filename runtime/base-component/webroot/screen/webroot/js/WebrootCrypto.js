@@ -481,10 +481,21 @@
         }
         const made = await call("device", { displayName: deviceName() });
         const next = { deviceId: made.deviceId, user_id: made.user_id };
-        const nextKeys = await storeKeysOf(next);
-        const release = await lockStore(storePrefix(user, next.deviceId));
-        releaseLock = release || (() => null);
-        machine = await initializeStore(user, next, nextKeys.storeKey);
+        let nextKeys;
+        try {
+            nextKeys = await storeKeysOf(next);
+            const release = await lockStore(storePrefix(user, next.deviceId));
+            releaseLock = release || (() => null);
+            machine = await initializeStore(user, next, nextKeys.storeKey);
+        } catch (err) {
+            // the new device has no keys yet: it goes (no sign-in asked for one without keys), and the old store and its
+            // key stay for the next page to try again
+            console.error("This browser's encryption keys were not moved to a new device", err);
+            unlock();
+            await call("revoke", { deviceId: next.deviceId }).catch(() => null);
+            await deleteStore(storePrefix(user, next.deviceId)).catch(() => null);
+            throw err;
+        }
         wire();
         Object.assign(state, { deviceId: next.deviceId, matrixUserId: next.user_id });
         try {

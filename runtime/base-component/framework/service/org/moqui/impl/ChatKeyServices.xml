@@ -350,7 +350,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="update" noun="KeyBackupVersion">
         <description>Matrix PUT room_keys/version/{version}: replaces the auth_data of the current user's backup version.
-            reasonCode notFound, algorithmChanged (algorithm must be the version's), badRequest, tooLarge.</description>
+            A new public_key (the backup's keys then go to another key, as with a new version) needs a sign-in in the last
+            five minutes (check#RecentAuth); new signatures do not. reasonCode notFound, algorithmChanged (algorithm must be
+            the version's), badRequest, tooLarge, reauthRequired.</description>
         <in-parameters>
             <parameter name="version"/>
             <parameter name="algorithm"/>
@@ -418,8 +420,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="delete" noun="BackupKeys">
         <description>Matrix DELETE room_keys/keys[/{roomId}[/{sessionId}]] of the current user's backup version: all its
-            sessions, a room's or one. Answers count (left in the version) and etag (goes up when any was deleted).
-            reasonCode notFound, badRequest (sessionId without roomId).</description>
+            sessions, a room's or one. Answers count (left in the version) and etag (goes up when any was deleted). It needs a
+            sign-in in the last five minutes (check#RecentAuth), as deleting the version does. reasonCode notFound,
+            badRequest (sessionId without roomId), reauthRequired.</description>
         <in-parameters>
             <parameter name="version"/>
             <parameter name="roomId"/>

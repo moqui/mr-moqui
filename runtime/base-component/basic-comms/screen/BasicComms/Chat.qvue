@@ -1879,7 +1879,7 @@ const chatRoom = {
         sealedUrl(file) { return this.url('attachment') + '?chatAttachmentId=' + encodeURIComponent(file.chatAttachmentId); },
         download(file) {
             if (file && file.sealed) {
-                moqui.chat.openFile(this.sealedUrl(file), file).then((url) => this.downloadUrl(url, file.fileName || t('file')),
+                moqui.chat.openFile(this.sealedUrl(file), file, this.roomId).then((url) => this.downloadUrl(url, file.fileName || t('file')),
                     () => moqui.notifyMessages([{ type: 'warning', message: t('This file could not be decrypted') }]));
                 return;
             }
@@ -1895,7 +1895,7 @@ const chatRoom = {
         },
         preview(file) {
             if (file && file.sealed) {
-                moqui.chat.openFile(this.sealedUrl(file), file).then((url) => { this.previewBox = { open: true, src: url, name: file.fileName, download: url, file }; }, () => {});
+                moqui.chat.openFile(this.sealedUrl(file), file, this.roomId).then((url) => { this.previewBox = { open: true, src: url, name: file.fileName, download: url, file }; }, () => {});
                 return;
             }
             this.previewBox = { open: true, src: this.fileUrl(file, true), name: file.fileName, download: this.fileUrl(file, false), file };

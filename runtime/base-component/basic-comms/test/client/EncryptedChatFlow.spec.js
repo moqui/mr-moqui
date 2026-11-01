@@ -8,7 +8,8 @@
 // when that one closes it. A new device of john.doe (a page of its own, so a new store) reads nothing older until it
 // restores the key backup with the recovery key, and after "New recovery key" the old key still restores its older version.
 // With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message. A
-// store re-made under another key is reported and kept, never deleted unasked, until "Start over".
+// store re-made under another key is reported and kept, never deleted unasked, until "Start over". A store from before the
+// derived store key (its random key stored, set here through Tools) moves to a new device with its room keys.
 // Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
 const PASSWORD = "CallsClient1!!"
 const SECRET = "Encrypted lunch plans 7f3a"
@@ -310,5 +311,52 @@ feature("a new device of the same user reads older messages only after restoring
         wrong == "wrongRecoveryKey" || wrong == "badRecoveryKey"
         restored.imported > 0
         after.content.body == expected
+    }
+})
+
+feature("a store from before the derived store key moves once to a new device: its room keys come along, then the old device is revoked and its store deleted", {
+    when() {
+        const page = browser.newPage({user: "john.doe", timeout: 30})
+        page.allowProblems(/userPhoto\?userId=/)
+        page.goto("/qapps/BasicComms/Home")
+        page.evaluate(HELPERS)
+        const result = page.evaluate(async ([roomId, members]) => {
+            const crypto = window.moqui.crypto
+            const keys = (body) => fetch("/ChatKeys/storeKey", { method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json", Accept: "application/json", "X-CSRF-Token": window.moqui.sessionToken },
+                body: JSON.stringify(body) }).then((r) => r.json())
+            const first = await crypto.ensureDevice()
+            // a message this device sends: its own room key is in its store only
+            await window.__e2ee.send(roomId, members, "<p>Moved with the keys 5c1d</p>")
+            const page = await window.__e2ee.get("timeline", { chatRoomId: roomId, limit: 50 })
+            const item = page.eventList.filter((e) => e.encrypted).pop()
+            const derived = (await keys({ deviceId: first.deviceId })).storeKey
+            await crypto.close()
+            // the device as it was before the derived key: its random key stored (the one its store opens with) and the
+            // revision it derives from moved on (Tools, as an administrator)
+            await window.moqui.request("/apps/tools/Entity/DataEdit/EntityDataEdit/update", { method: "POST", params: {
+                selectedEntity: "moqui.chat.ChatDevice", userId: first.userId, deviceId: first.deviceId, storeKey: derived, storeRevision: 7 } })
+            const legacy = (await keys({ deviceId: first.deviceId })).legacyStoreKey
+            const next = await crypto.ensureDevice()
+            const read = await crypto.decryptRoom(roomId, item).catch((err) => ({ error: String((err && (err.errors || err.message)) || err) }))
+            const prefix = "moqui-crypto-" + first.userId + "-" + first.deviceId
+            const oldStores = (await indexedDB.databases()).map((d) => d.name).filter((name) => name && name.indexOf(prefix) === 0).length
+            const oldKey = await keys({ deviceId: first.deviceId })
+            return { first: first.deviceId, legacyGiven: legacy === derived, next: next.deviceId, body: read.content ? read.content.body : read.error,
+                oldStores, oldKey: oldKey.reasonCode || null, nextLegacy: (await keys({ deviceId: next.deviceId })).legacyStoreKey || null }
+        }, [room.id, [room.a, room.b, room.c]])
+        const listed = page.evaluate(() => window.moqui.request("/apps/BasicComms/Settings/Devices/devices").then((r) => (r.json.deviceList || []).map((d) => d.deviceId)))
+        page.close()
+        return {result, listed}
+    },
+    then({result, listed}) {
+        result.legacyGiven == true
+        result.next != result.first
+        String(result.body).includes("Moved with the keys 5c1d")
+        result.oldStores == 0
+        result.oldKey == "revoked"
+        result.nextLegacy == null
+        listed.indexOf(result.first) < 0
+        listed.indexOf(result.next) >= 0
     }
 })

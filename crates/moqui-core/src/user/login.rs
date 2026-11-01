@@ -452,10 +452,12 @@ fn recorded_login(username: &str) -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or not allowed from this address.
-pub fn login_external_user(username: &str) -> Result<(), Error> {
+pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Result<(), Error> {
     recorded_login(username)?;
-    if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
-        note_recent_auth(&user_id);
+    if let Some(at) = authenticated_at {
+        if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
+            note_recent_auth_at(&user_id, at);
+        }
     }
     session::rotate_on_password_login()
 }
@@ -762,19 +764,49 @@ pub fn logout() -> Result<(), Error> {
 /// login (the form, an SSH or terminal password, Basic credentials), the code that finishes a second factor, an SSO
 /// login and a re-authentication ([`super::reauthenticate`]) set it. A login key, an API key, an app password and an
 /// internal login (jobs, `internalLoginUser`) do not: they are not a person signing in.
-const LAST_AUTH: &str = "moquiLastAuth";
+pub(crate) const LAST_AUTH: &str = "moquiLastAuth";
 /// The password a re-authentication checked while it waits for the code: `<millis> <userId>`.
-const REAUTH_PASSWORD: &str = "moquiReauthPassword";
+pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
 /// How long a re-authentication's checked password waits for its code.
 const REAUTH_PASSWORD_MILLIS: i64 = 5 * 60 * 1000;
 
 /// The session's user signed in (or confirmed who they are) now.
 pub(super) fn note_recent_auth(user_id: &str) {
+    note_recent_auth_at(user_id, now_millis());
+}
+
+/// The session's user signed in at `at` (epoch millis; an identity provider's `auth_time`), never later than now.
+fn note_recent_auth_at(user_id: &str, at: i64) {
     if user_id.is_empty() {
         return;
     }
-    session::set_session_attribute(LAST_AUTH, Some(&format!("{} {user_id}", now_millis())));
+    let at = at.min(now_millis());
+    // a later sign-in of this user already noted stays (an SSO login answered from an older provider session after a
+    // password login)
+    let noted = session::session_attribute(LAST_AUTH).and_then(|text| {
+        text.split_once(' ')
+            .map(|(millis, owner)| (millis.parse::<i64>().ok(), owner == user_id))
+    });
+    if let Some((Some(noted), true)) = noted {
+        if noted > at {
+            session::set_session_attribute(REAUTH_PASSWORD, None);
+            return;
+        }
+    }
+    session::set_session_attribute(LAST_AUTH, Some(&format!("{at} {user_id}")));
     session::set_session_attribute(REAUTH_PASSWORD, None);
+}
+
+/// A login of `user_id` drops the sign-in stamps of another user, so an account switch in one session (a key, an
+/// internal login, "login as") never finds an earlier user's sign-in when that user comes back without signing in.
+fn drop_stamps_of_others(user_id: &str) {
+    for name in [LAST_AUTH, REAUTH_PASSWORD] {
+        let owner =
+            session::session_attribute(name).and_then(|text| text.split_once(' ').map(|(_, owner)| owner.to_string()));
+        if owner.is_some_and(|owner| owner != user_id) {
+            session::set_session_attribute(name, None);
+        }
+    }
 }
 
 /// The time in the stamp attribute `name` when it is the current user's.
@@ -1039,6 +1071,7 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
     if !fields.is_empty() {
         update_user(facade, &user_id, &fields)?;
     }
+    drop_stamps_of_others(&user_id);
     session::set_user(&user_id, &username);
     forget_shell_providers();
     let locale = nonempty(text_field(account, "locale"));

@@ -435,7 +435,7 @@ fn key_app_password_and_external_logins_leave_history_rows() {
 
     // an identity provider login
     create_user(&facade, "sso", "Secret1!", |_| {});
-    login_external_user("sso").unwrap();
+    login_external_user("sso", None).unwrap();
     logout().unwrap();
     assert_eq!(history(&user_id("sso")), ["Y"]);
 
@@ -499,12 +499,16 @@ fn a_password_login_and_a_finished_second_factor_are_recent_sign_ins_an_internal
     assert!(recent_auth(300_000));
     let at = last_auth_millis().unwrap();
     assert!((now_millis() - at).abs() < 5_000);
-    // another user's internal login in the same session does not take ada's sign-in
+    assert!(!recent_auth(-1));
+    // a local login (a service run with credentials) leaves the session user's sign-in as it was
+    drop(login_user_local("bob", "Secret1!").unwrap());
+    assert!(recent_auth(300_000));
+    // another user's internal login in the same session does not take ada's sign-in, and drops it: ada coming back
+    // without signing in has none
     internal_login_user("bob").unwrap();
     assert!(!recent_auth(300_000));
     internal_login_user("ada").unwrap();
-    assert!(recent_auth(300_000));
-    assert!(!recent_auth(-1));
+    assert!(!recent_auth(300_000));
     logout().unwrap();
     internal_login_user("ada").unwrap();
     assert!(!recent_auth(300_000));
@@ -525,7 +529,10 @@ fn a_reauthentication_checks_the_password_and_counts_a_wrong_one() {
     let _guard = ctx.enter();
     create_user(&facade, "ada", "Secret1!", |_| {});
     internal_login_user("ada").unwrap();
-    assert_eq!(check_reauth_password("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    assert_eq!(
+        check_reauth_password("ada", "wrong").unwrap_err().to_string(),
+        INVALID_LOGIN
+    );
     assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 1);
     assert!(!reauth_password_checked("ada"));
     check_reauth_password("ada", "Secret1!").unwrap();

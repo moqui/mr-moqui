@@ -1037,6 +1037,11 @@ function updateBackupVersion(p) {
   if (String(p.algorithm || '').trim() !== row.algorithm) return refuse('algorithmChanged', 'A key backup\'s algorithm cannot change')
   const auth = authData(p)
   if (auth.refusal) return auth.refusal
+  // new signatures need nothing more; a new public key sends the backup's keys from now on to another key, as a new
+  // version does: it needs a recent sign-in
+  const before = parseJson(row.authDataJson, `Key backup ${row.version} auth_data of ${me}`)
+  const keyOf = (data) => (isObject(data) && data.public_key != null ? String(data.public_key) : '')
+  if (keyOf(before) !== keyOf(p.auth_data) && !recentAuth()) return refuseReauth()
   row.set('authDataJson', auth.json)
   row.update()
   return { version: row.version }
@@ -1149,6 +1154,8 @@ function deleteBackupKeys(p) {
   let query = find(BACKUP_SESSION).condition({ userId: me, version: row.version })
   if (!blank(p.roomId)) query = query.condition('roomId', String(p.roomId))
   if (!blank(p.sessionId)) query = query.condition('sessionId', String(p.sessionId))
+  // deleting backed-up keys loses them as deleting the backup does: it needs a recent sign-in
+  if (!recentAuth()) return refuseReauth()
   if (query.deleteAll() > 0) {
     row.set('etag', Number(row.etag || 0) + 1)
     row.update()

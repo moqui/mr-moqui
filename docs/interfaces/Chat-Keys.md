@@ -145,7 +145,8 @@ device from before (null for others), for its one re-key. Neither is logged or i
 
 **Recent sign-in.** These need a sign-in in the last five minutes, else `reauthRequired` ([Recent
 sign-in](../security/Recent-Auth.md)): a cross-signing `reset` that replaces the master key, `backupVersionCreate` (a new
-backup, also the first, and "New recovery key"), `backupVersionDelete`, and `revoke` of a device with keys (see Devices).
+backup, also the first, and "New recovery key"), `backupVersionDelete`, `backupKeysDelete`, a `backupVersionUpdate` that
+changes the backup's `public_key` (new signatures alone need none), and `revoke` of a device with keys (see Devices).
 The page asks the user for the password and second factor, or a fresh SSO sign-in, and tries again (`moqui.reauth`).
 
 **Cross-signing.**
@@ -330,8 +331,8 @@ policy sets none.
   - a store key answered only to its own user, the same at each ask, absent from the device list and its row, another
     after a revoke; a device from before answered its `legacyStoreKey`, revoked without a recent sign-in only to its
     replacement;
-  - a reset and a new backup refused without a recent sign-in, with the same parameters; the versions listed with their
-    public keys;
+  - a reset, a new backup, a new backup public key and deleting backed-up keys refused without a recent sign-in (also
+    after another user's login in the session), with the same parameters; the versions listed with their public keys;
   - cross-signing keys uploaded once, the same again a no-op, a different master key refused unless reset;
   - signatures stored only by keys that may sign, refused out of reach and by another signer, and merged into key
     queries; a reset deleting every signature by or over the old keys;
@@ -342,7 +343,7 @@ policy sets none.
   the parameters that pass in a plain room; no plaintext in `bodyText`, the snippet, search, the ChatMention notification
   or the stored content; the timeline's ciphertext of an edit and its reactions; the terminal.
 - **Browser, encrypted rooms:** `./moq test-client basic-comms --serve --spec EncryptedChatFlow` (three users, three
-  pages; about 11 seconds with the server):
+  pages; about 19 seconds with the server):
   - an encrypted message and an encrypted image both ways, the image shown from a decrypted blob; nothing posted, and
     nothing in localStorage, holds the plaintext;
   - a member who leaves cannot decrypt the next message, which is in a new session;
@@ -352,7 +353,9 @@ policy sets none.
   - only verified devices: with the sender's setting, or the room's (set by its owner, refused to a non-member), an
     unverified device cannot read the next message;
   - a store re-made under another key is refused `storeUnreadable` and kept, again on the next try; "Start over" makes
-    a new device and drops the old one.
+    a new device and drops the old one;
+  - a store from before the derived store key (its random key put back through Tools) moves to a new device: the room
+    key of a message it sent comes along, the old device is revoked (its key gone) and its store deleted.
 - **Browser, the chat store:** `./moq test-client webroot --offline --spec WebrootChat`: a closed room's decrypted files
   revoked, another room's kept, and a file decrypted again when opened again.
 - **Browser, encrypted calls:** `EncryptedCallFlow` also checks the warning of unverified devices on the roster.

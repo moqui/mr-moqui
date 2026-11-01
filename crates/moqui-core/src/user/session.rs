@@ -1157,6 +1157,9 @@ pub struct Identity {
     authz: AuthzCache,
     pre_authc: Option<Json>,
     factor_required: Option<Json>,
+    /// The recent sign-in stamps (`login.rs`), so a local login does not take or drop the session user's.
+    last_auth: Option<Json>,
+    reauth_password: Option<Json>,
 }
 
 pub fn identity() -> Identity {
@@ -1170,6 +1173,8 @@ pub fn identity() -> Identity {
         authz: session.authz.clone(),
         pre_authc: session.attributes.get(super::login::PRE_AUTHC_USERNAME).cloned(),
         factor_required: session.attributes.get(super::login::AUTHC_FACTOR_REQUIRED).cloned(),
+        last_auth: session.attributes.get(super::login::LAST_AUTH).cloned(),
+        reauth_password: session.attributes.get(super::login::REAUTH_PASSWORD).cloned(),
     })
 }
 
@@ -1189,6 +1194,8 @@ pub fn restore_identity(identity: &Identity) {
         for (key, value) in [
             (super::login::PRE_AUTHC_USERNAME, &identity.pre_authc),
             (super::login::AUTHC_FACTOR_REQUIRED, &identity.factor_required),
+            (super::login::LAST_AUTH, &identity.last_auth),
+            (super::login::REAUTH_PASSWORD, &identity.reauth_password),
         ] {
             match value {
                 Some(value) => put_json(session, key, value.clone()),
