@@ -293,6 +293,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <resource name="refs">
                     <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactRefs"/></method>
                 </resource>
+                <resource name="bindings">
+                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactBindings"/></method>
+                </resource>
                 <resource name="at">
                     <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactAt"/></method>
                 </resource>

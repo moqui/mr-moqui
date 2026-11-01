@@ -127,6 +127,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
                 file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
     </service>
+    <service verb="get" noun="ArtifactBindings" type="rust" location="moqui_devkit::service::get_artifact_bindings"
+            allow-remote="false" read-only="true">
+        <description>The values flowing into calls' parameters (a service-call's field-map): by the artifact making the
+            call, by the parameter (parameter:service:name@in.field) or both. Each binding has its direction, the kind of
+            source (literal, parameter, context, expression, unknown), its text, the caller's parameter it comes from
+            when known, origin, originHash, filePath and line.</description>
+        <in-parameters>
+            <parameter name="fromArtifactId"/>
+            <parameter name="toId"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
+            <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
+                Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
+            <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
+                sources; left out, its layout is found from its marker paths.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="bindings" type="List"/>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
+    </service>
     <service verb="get" noun="ArtifactAt" type="rust" location="moqui_devkit::service::get_artifact_at"
             allow-remote="false" read-only="true">
         <description>The reference at a line of a file (the one naming word when given) and the artifact it resolves

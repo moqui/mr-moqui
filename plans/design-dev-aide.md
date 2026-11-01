@@ -810,11 +810,12 @@ reads do: rebuilding the index and every tool that writes or runs code stay on d
   name a `projectId`. Both `projectId` and `project` at once is an error.
 - **No fallback.** A read that names a project answers only from that project's own index, also when its directory
   is the server's own runtime: a miss is a miss.
-- **REST.** `/rest/s1/moqui/aide/projects/{projectId}/` `artifacts` (find), `artifact` (`artifactId`), `refs`, `at`
-  and `extensions`, GET with the services' parameters, for an API key or any login.
+- **REST.** `/rest/s1/moqui/aide/projects/{projectId}/` `artifacts` (find), `artifact` (`artifactId`), `refs`, `at`,
+  `extensions` and `bindings`, GET with the services' parameters, for an API key or any login.
 - **Stamp.** Every read answers `indexStamp`: `hash` (of each file's location and content hash, sorted, so the same
-  files give the same hash on any server), `builtAt` (when the index last changed, epoch ms) and `files`, so a caller
-  can say what it read against.
+  files give the same hash on any server; a file that does not parse counts too), `builtAt` (when a file was last read
+  into the index, epoch ms; a removal does not move it) and `files`, so a caller can say what it read against. It is
+  taken before the read, so a change during the read leaves it older than the answer.
 
 ---
 

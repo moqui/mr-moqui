@@ -295,6 +295,9 @@ fn transition_extension_anchor_still_resolves_with_method_ids() {
         column: 1,
         to_id: None,
         resolved: false,
+        operation: String::new(),
+        origin: String::new(),
+        origin_hash: String::new(),
     };
     resolver.resolve(&mut reference, &|_| false);
     assert_eq!(
@@ -328,6 +331,9 @@ fn a_screen_extend_transition_replaces_or_adds_one() {
             column: 1,
             to_id: None,
             resolved: false,
+            operation: String::new(),
+            origin: String::new(),
+            origin_hash: String::new(),
         };
         resolver.resolve(&mut reference, &|_| false);
         (reference.resolved, reference.to_id)
@@ -404,6 +410,7 @@ fn an_id_defined_twice_describes_as_its_first_row() {
         column: 1,
         summary: String::new(),
         parent: None,
+        origin: String::new(),
     };
     let mut index = MemoryIndex {
         artifacts: vec![row("/first.xml"), row("/second.xml")],

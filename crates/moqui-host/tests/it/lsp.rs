@@ -69,7 +69,7 @@ fn the_language_server_answers_on_the_example_component() {
     ];
     let gate = start_with_files("lsp", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
-    let index = MemoryIndex::build(&factory);
+    let index = Box::new(MemoryIndex::build(&factory));
     let mut server = Server::new(Backend::Local { factory, index });
     let site = std::fs::canonicalize(gate.runtime.join("component/my-site")).unwrap();
     let services = site.join("service/mysite/Widgets.xml");

@@ -31,7 +31,7 @@ pub mod rows;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
@@ -40,7 +40,7 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use serde::Serialize;
 
-pub use self::extract::{ArtifactRow, FileIndex, FileInfo, RefRow, ToKind};
+pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, ToKind};
 use self::resolve::Resolver;
 use super::ArtifactKind;
 use moqui_core::context::ExecutionContextFactory;
@@ -51,6 +51,7 @@ const FILE: &str = "moqui.devtools.DevArtifactFile";
 const ARTIFACT: &str = "moqui.devtools.DevArtifact";
 const REF: &str = "moqui.devtools.DevArtifactRef";
 const CALL: &str = "moqui.devtools.DevArtifactCall";
+const BINDING: &str = "moqui.devtools.DevArtifactBinding";
 
 /// The directories of a component the index does not walk.
 const SKIPPED_DIRS: &[&str] = &[".git", "target", "node_modules", "libs", "build", "tmp"];
@@ -117,7 +118,8 @@ impl extract::RecordModel for FactoryModel<'_> {
     fn related(&self, entity: &str, name: &str) -> Option<(String, Vec<(String, String)>)> {
         self.0.entity()?.with_model(|model| {
             let relationship = model.entity(entity).ok()?.relationship(name)?;
-            Some((relationship.related_entity_name.clone(), relationship.key_pairs.clone()))
+            // the full name: `related_entity_name` is the short one, which two packages may share
+            Some((relationship.related.clone(), relationship.key_pairs.clone()))
         })
     }
 }
@@ -208,8 +210,9 @@ pub fn hash_of(text: &str) -> String {
     // Version the extraction rules so persisted files are read again when they change: 2 added parameter artifacts,
     // 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form fields, subscreens items,
     // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
-    // keys by rule name or target.
-    let digest = Sha256::digest(format!("4\n{text}").as_bytes());
+    // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
+    // field.
+    let digest = Sha256::digest(format!("5\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -219,7 +222,7 @@ pub fn hash_of(text: &str) -> String {
 pub struct IndexStamp {
     /// A hash of each file's location and content hash: the same files give the same hash, on any server.
     pub hash: String,
-    /// When the index last changed, in epoch milliseconds.
+    /// When a file was last read into the index, in epoch milliseconds (a removal does not move it).
     pub built_at: i64,
     pub files: usize,
 }
@@ -323,6 +326,20 @@ pub struct RefEntry {
     pub calls: i64,
     /// Observed only: no file names it.
     pub observed_only: bool,
+    /// What it does to its target ([`RefRow::operation`]).
+    pub operation: String,
+    /// Where it was read from ([`RefRow::origin`]).
+    pub origin: String,
+    pub origin_hash: String,
+}
+
+/// One binding ([`BindingRow`]) with the file it is in.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BindingEntry {
+    pub path: String,
+    #[serde(flatten)]
+    pub binding: BindingRow,
 }
 
 /// An extension of a site component (an `extend-entity`, a `screen-extend` and its anchors, an ECA rule on an
@@ -374,6 +391,8 @@ pub struct MemoryIndex {
     pub artifacts: Vec<ArtifactRow>,
     /// Each reference with the file it is in.
     pub refs: Vec<(String, RefRow)>,
+    /// Each binding with the file it is in.
+    pub bindings: Vec<(String, BindingRow)>,
     pub resolver: Resolver,
     /// Files that did not read or parse, with why.
     pub problems: Vec<(String, String)>,
@@ -398,27 +417,11 @@ impl MemoryIndex {
         let mut index = Self::default();
         for file in files {
             match file.extract(factory) {
-                Ok((hash, read)) => {
-                    let path = file.path.display().to_string();
-                    index.hashes.insert(path.clone(), (file.location.clone(), hash));
-                    for artifact in &read.artifacts {
-                        index.resolver.add(artifact);
-                    }
-                    index.artifacts.extend(read.artifacts);
-                    index.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
-                }
-                Err(problem) => {
-                    tracing::error!("Artifact index: {} not read: {problem}", file.path.display());
-                    index.problems.push((file.path.display().to_string(), problem));
-                }
+                Ok((hash, read)) => index.take(file.path.display().to_string(), file.location.clone(), hash, read),
+                Err(problem) => index.problem(file, problem),
             }
         }
-        let exists = |location: &str| location_exists(factory, location);
-        for (_, row) in &mut index.refs {
-            index.resolver.resolve(row, &exists);
-        }
-        index.position();
-        index.changed_millis = now_millis();
+        index.resolve_all(&|location: &str| location_exists(factory, location));
         index
     }
 
@@ -426,6 +429,70 @@ impl MemoryIndex {
     #[must_use]
     pub fn stamp(&self) -> IndexStamp {
         IndexStamp::of(self.hashes.values().cloned().collect(), self.changed_millis)
+    }
+
+    /// Keep that `file` did not read or parse, and its hash when its text reads: the stamp counts the file, as the
+    /// rows of a server's index keep it (stale).
+    fn problem(&mut self, file: &Located, problem: String) {
+        let path = file.path.display().to_string();
+        tracing::error!("Artifact index: {path} not read: {problem}");
+        if let Ok(text) = std::fs::read_to_string(&file.path) {
+            self.hashes
+                .insert(path.clone(), (file.location.clone(), hash_of(&text)));
+        }
+        self.problems.push((path, problem));
+    }
+
+    /// Keep what the file `path` (at `location`, with `hash`) defines and refers to.
+    fn take(&mut self, path: String, location: String, hash: String, read: FileIndex) {
+        self.hashes.insert(path.clone(), (location, hash));
+        self.take_rows(path, read);
+    }
+
+    /// Keep the rows of the file `path`, its hash left as it was (text not yet saved).
+    fn take_rows(&mut self, path: String, read: FileIndex) {
+        self.artifacts.extend(read.artifacts);
+        self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
+        self.bindings
+            .extend(read.bindings.into_iter().map(|row| (path.clone(), row)));
+    }
+
+    /// Know every artifact again, derive the entity-auto services the references need ([`Resolver::derive`], in place
+    /// of the ones derived before), and resolve every reference and binding; the files are changed now.
+    pub fn resolve_all(&mut self, exists: &dyn Fn(&str) -> bool) {
+        self.artifacts
+            .retain(|artifact| artifact.origin != extract::ORIGIN_DERIVED);
+        let mut resolver = Resolver::default();
+        for artifact in &self.artifacts {
+            resolver.add(artifact);
+        }
+        let derived = resolver.derive(self.refs.iter().map(|(_, row)| row));
+        for artifact in &derived {
+            resolver.add(artifact);
+        }
+        self.artifacts.extend(derived);
+        for (_, row) in &mut self.refs {
+            resolver.resolve(row, exists);
+        }
+        for (_, binding) in &mut self.bindings {
+            resolver.resolve_binding(binding);
+        }
+        self.resolver = resolver;
+        self.position();
+        self.changed_millis = now_millis();
+    }
+
+    /// The bindings made at `from` and to `to` (either left empty matches any), in file order.
+    #[must_use]
+    pub fn bindings_of(&self, from: &str, to: &str) -> Vec<BindingEntry> {
+        self.bindings
+            .iter()
+            .filter(|(_, row)| (from.is_empty() || row.from == from) && (to.is_empty() || row.to_id == to))
+            .map(|(path, row)| BindingEntry {
+                path: path.clone(),
+                binding: row.clone(),
+            })
+            .collect()
     }
 
     /// Each id's first row, as a find of the rows in order answers (an id defined in two components is the first's).
@@ -444,33 +511,17 @@ impl MemoryIndex {
         let gone: HashSet<&str> = paths.iter().map(String::as_str).collect();
         self.artifacts.retain(|artifact| !gone.contains(artifact.path.as_str()));
         self.refs.retain(|(file, _)| !gone.contains(file.as_str()));
+        self.bindings.retain(|(file, _)| !gone.contains(file.as_str()));
         self.problems.retain(|(file, _)| !gone.contains(file.as_str()));
         self.hashes.retain(|file, _| !gone.contains(file.as_str()));
         for file in files {
             let path = file.path.display().to_string();
             match file.extract(factory) {
-                Ok((hash, read)) => {
-                    self.hashes.insert(path.clone(), (file.location.clone(), hash));
-                    self.artifacts.extend(read.artifacts);
-                    self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
-                }
-                Err(problem) => {
-                    tracing::error!("Artifact index: {path} not read: {problem}");
-                    self.problems.push((path, problem));
-                }
+                Ok((hash, read)) => self.take(path, file.location.clone(), hash, read),
+                Err(problem) => self.problem(file, problem),
             }
         }
-        let mut resolver = Resolver::default();
-        for artifact in &self.artifacts {
-            resolver.add(artifact);
-        }
-        let exists = |location: &str| location_exists(factory, location);
-        for (_, row) in &mut self.refs {
-            resolver.resolve(row, &exists);
-        }
-        self.resolver = resolver;
-        self.position();
-        self.changed_millis = now_millis();
+        self.resolve_all(&|location: &str| location_exists(factory, location));
         files.len()
     }
 
@@ -563,7 +614,7 @@ impl MemoryIndex {
             self.artifacts
                 .iter()
                 .filter(|artifact| artifact.parent.as_deref() == Some(id))
-                .filter(|artifact| parameters || artifact.kind != "parameter")
+                .filter(|artifact| artifact.kind != "record" && (parameters || artifact.kind != "parameter"))
                 .map(|artifact| artifact.id.as_str()),
         );
         self.refs
@@ -619,18 +670,9 @@ impl MemoryIndex {
         let path = located.path.display().to_string();
         self.artifacts.retain(|artifact| artifact.path != path);
         self.refs.retain(|(file, _)| *file != path);
-        self.artifacts.extend(read.artifacts);
-        self.refs.extend(read.refs.into_iter().map(|row| (path.clone(), row)));
-        let mut resolver = Resolver::default();
-        for artifact in &self.artifacts {
-            resolver.add(artifact);
-        }
-        let exists = |location: &str| location_exists(factory, location);
-        for (_, row) in &mut self.refs {
-            resolver.resolve(row, &exists);
-        }
-        self.resolver = resolver;
-        self.position();
+        self.bindings.retain(|(file, _)| *file != path);
+        self.take_rows(path, read);
+        self.resolve_all(&|location: &str| location_exists(factory, location));
         true
     }
 
@@ -674,6 +716,9 @@ fn entry(path: &str, row: &RefRow, other: Option<ArtifactRow>) -> RefEntry {
         other,
         calls: 0,
         observed_only: false,
+        operation: row.operation.clone(),
+        origin: row.origin.clone(),
+        origin_hash: row.origin_hash.clone(),
     }
 }
 
@@ -754,6 +799,25 @@ struct IndexState {
     listening: AtomicBool,
     /// The stamp of the rows, made at the first read after they changed.
     stamp: Mutex<Option<IndexStamp>>,
+    /// Moved on each time the rows change, so a stamp made of rows read before a change is not kept.
+    generation: AtomicU64,
+}
+
+impl IndexState {
+    /// The rows changed (or are changing): the stamp is made again at the next read.
+    fn rows_changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *lock(&self.stamp) = None;
+    }
+}
+
+/// [`IndexState::rows_changed`] when dropped, so a write's end marks the change also when it returns early.
+struct RowsChanged<'a>(&'a IndexState);
+
+impl Drop for RowsChanged<'_> {
+    fn drop(&mut self) {
+        self.0.rows_changed();
+    }
 }
 
 fn state(factory: &ExecutionContextFactory) -> Arc<IndexState> {
@@ -844,13 +908,13 @@ pub fn clear(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     facade
         .transactions_for(ARTIFACT)?
         .run(TransactionAttribute::ForceNew, None, || {
-            for entity in [REF, ARTIFACT, FILE] {
+            for entity in [REF, BINDING, ARTIFACT, FILE] {
                 facade.find(entity)?.disable_authz().delete_all()?;
             }
             Ok(())
         })?;
     *lock(&state.resolver) = Resolver::default();
-    *lock(&state.stamp) = None;
+    state.rows_changed();
     Ok(())
 }
 
@@ -931,20 +995,20 @@ pub fn build_files(
     }
     {
         let mut resolver = Resolver::default();
+        // a field's summary marks its primary key, and the derived artifacts are known by their origin and parent
         let list = facade
             .find(ARTIFACT)?
             .select_field("artifactId")
             .select_field("artifactKind")
             .select_field("artifactName")
             .select_field("shortName")
+            .select_field("summary")
+            .select_field("parentArtifactId")
+            .select_field("origin")
+            .select_field("filePath")
             .list()?;
         for row in list.into_values() {
-            resolver.add_parts(
-                &text(&row, "artifactId"),
-                &text(&row, "artifactKind"),
-                &text(&row, "artifactName"),
-                &text(&row, "shortName"),
-            );
+            resolver.add(&artifact_of(&row));
         }
         *lock(&state.resolver) = resolver;
     }
@@ -1125,10 +1189,15 @@ fn apply(
     if changes.is_empty() {
         return Ok(());
     }
-    *lock(&state.stamp) = None;
+    state.rows_changed();
+    // again at the end, however it ends: a read while the rows were written may have made it of the old ones
+    let _changed = RowsChanged(state);
     let mut gone: BTreeSet<String> = BTreeSet::new();
     let mut added: Vec<ArtifactRow> = Vec::new();
     let mut changed_paths: HashSet<String> = HashSet::new();
+    // the entities whose fields changed, by id: their derived entity-auto services are derived again
+    let mut changed_entities: HashSet<String> = HashSet::new();
+    let derived: Derived;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1172,6 +1241,9 @@ fn apply(
                 Ok(old_rows) => {
                     for old in old_rows {
                         resolver.remove(&old);
+                        if old.kind == "field" {
+                            changed_entities.extend(old.parent.clone());
+                        }
                         gone.insert(old.id);
                     }
                 }
@@ -1182,11 +1254,17 @@ fn apply(
             if let Change::Read { index, .. } = change {
                 for artifact in &index.artifacts {
                     resolver.add(artifact);
+                    if artifact.kind == "field" {
+                        changed_entities.extend(artifact.parent.clone());
+                    }
                     gone.remove(&artifact.id);
                     added.push(artifact.clone());
                 }
             }
         }
+        let waiting = waiting_refs(facade, &added, &changed_paths);
+        derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
+        added.extend(derived.rows.iter().cloned());
         // an id another file still defines is not gone
         gone.retain(|id| !resolver.has(id));
         shared = added
@@ -1200,11 +1278,18 @@ fn apply(
                 for row in &mut index.refs {
                     resolver.resolve(row, &exists);
                 }
+                for binding in &mut index.bindings {
+                    resolver.resolve_binding(binding);
+                }
             }
         }
     }
     let tx = facade.transactions_for(ARTIFACT)?;
     let writing = std::time::Instant::now();
+    // before the files' rows: a file that now defines a derived service's id takes its row
+    if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || write_derived(facade, &derived)) {
+        tracing::error!("Artifact index: the derived entity-auto services were not written: {err}");
+    }
     // files a hundred to a transaction; a batch that fails is written again file by file, so one file's failure is
     // that file's alone
     let write = |change: &Change| -> Result<(), Error> {
@@ -1258,9 +1343,138 @@ fn apply(
     unresolve(facade, &tx, &gone, &changed_paths)?;
     resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
     report.write_millis = writing.elapsed().as_millis();
-    // again: a read while the rows were written may have made it of the old ones
-    *lock(&state.stamp) = None;
     Ok(())
+}
+
+/// The derived entity-auto services an update changes ([`Resolver::derive`]).
+struct Derived {
+    /// The services whose rows go: each one a file now defines, or whose entity's fields changed.
+    dropped: Vec<String>,
+    /// The rows derived again or anew.
+    rows: Vec<ArtifactRow>,
+}
+
+/// The unresolved references of files not read now that call an entity-auto service of an entity `added` defines (by
+/// its name, or a parameter by its service): written before the entity was known, they need its derived service. One
+/// that cannot be read is logged and left for the next full build.
+fn waiting_refs(facade: &EntityFacade, added: &[ArtifactRow], changed: &HashSet<String>) -> Vec<RefRow> {
+    let names: HashSet<String> = added
+        .iter()
+        .filter(|artifact| artifact.kind == "entity")
+        .flat_map(Resolver::entity_auto_names)
+        .collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let unresolved = || facade.find(REF).map(|find| find.eq("resolved", Value::string("N")));
+    let mut lists = Vec::new();
+    if names.len() > 2000 {
+        // many names (a build): every unresolved reference in one read
+        lists.push(unresolved().and_then(|find| find.list()));
+    } else {
+        let values: Vec<Value> = names.iter().map(|name| Value::string(name.as_str())).collect();
+        for chunk in values.chunks(500) {
+            for field in ["toName", "toScope"] {
+                lists
+                    .push(unresolved().and_then(|find| find.condition(Condition::is_in(field, chunk.to_vec())).list()));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for list in lists {
+        match list {
+            Ok(rows) => {
+                for row in rows.into_values() {
+                    let calls = names.contains(&text(&row, "toName")) || names.contains(&text(&row, "toScope"));
+                    if calls && !changed.contains(&text(&row, "filePath")) {
+                        found.push(ref_of(&row));
+                    }
+                }
+            }
+            Err(err) => tracing::error!("Artifact index: the references waiting for an entity were not read: {err}"),
+        }
+    }
+    found
+}
+
+/// Forget the derived services a file now defines or whose entity's fields changed (`changed_entities`), and derive
+/// what the references read (and those `waiting` in other files) and the dropped services need, with the entity's
+/// fields now: the resolver knows them, and the ids that are no more are `gone`.
+fn derive_in(
+    resolver: &mut Resolver,
+    changes: &[Change],
+    waiting: &[RefRow],
+    changed_entities: &HashSet<String>,
+    added: &[ArtifactRow],
+    gone: &mut BTreeSet<String>,
+) -> Derived {
+    let defined: HashSet<&str> = added.iter().map(|artifact| artifact.id.as_str()).collect();
+    let mut dropped = Vec::new();
+    for id in resolver.derived_ids() {
+        let rows = resolver.derived_rows(&id);
+        // by the id, not a row's parent: rows read back from the database come in no set order (a parameter's parent is
+        // the service)
+        let entity = id
+            .split_once('#')
+            .map(|(_, entity)| format!("entity:{entity}"))
+            .unwrap_or_default();
+        if defined.contains(id.as_str()) || changed_entities.contains(&entity) {
+            for row in &rows {
+                resolver.remove(row);
+                gone.insert(row.id.clone());
+            }
+            dropped.push(id);
+        }
+    }
+    let read = changes
+        .iter()
+        .filter_map(|change| match change {
+            Change::Read { index, .. } => Some(index.refs.iter()),
+            _ => None,
+        })
+        .flatten()
+        .chain(waiting);
+    let mut rows = resolver.derive(read);
+    // a service a file no longer defines, its entity-auto name now derived in its stead
+    let undefined: Vec<String> = gone.iter().filter(|id| id.starts_with("service:")).cloned().collect();
+    for id in dropped.iter().chain(&undefined) {
+        let again = resolver.derived_service(id);
+        let entity_known = again
+            .first()
+            .and_then(|row| row.parent.as_deref())
+            .is_some_and(|entity| resolver.has(entity));
+        if entity_known && !resolver.has(id) && !rows.iter().any(|row| row.id == *id) {
+            rows.extend(again);
+        }
+    }
+    for row in &rows {
+        resolver.add(row);
+        gone.remove(&row.id);
+    }
+    Derived { dropped, rows }
+}
+
+/// Replace the rows of the dropped and derived services in [`extract::DERIVED_PATH`].
+fn write_derived(facade: &EntityFacade, derived: &Derived) -> Result<(), Error> {
+    let services = derived.dropped.iter().cloned().chain(
+        derived
+            .rows
+            .iter()
+            .filter(|row| row.kind == "service")
+            .map(|row| row.id.clone()),
+    );
+    for id in services {
+        for field in ["artifactId", "parentArtifactId"] {
+            facade
+                .find(ARTIFACT)?
+                .eq("filePath", Value::string(extract::DERIVED_PATH))
+                .eq(field, Value::string(&id))
+                .delete_all()?;
+        }
+    }
+    // no file defines a derived id now: a row of one left by a file not yet written again (a file removed) goes first
+    let ids: HashSet<String> = derived.rows.iter().map(|row| row.id.clone()).collect();
+    write_artifacts(facade, extract::DERIVED_PATH, &derived.rows, &ids)
 }
 
 fn old_artifacts(facade: &EntityFacade, path: &str) -> Result<Vec<ArtifactRow>, Error> {
@@ -1289,9 +1503,38 @@ fn write_file(
             .eq("filePath", Value::string(&path))
             .delete_all()?;
         facade.find(REF)?.eq("filePath", Value::string(&path)).delete_all()?;
+        facade
+            .find(BINDING)?
+            .eq("filePath", Value::string(&path))
+            .delete_all()?;
     }
+    write_artifacts(facade, &path, &index.artifacts, shared)?;
+    for (sequence, reference) in index.refs.iter().enumerate() {
+        let mut row = facade.make_value(REF)?;
+        row.set("filePath", Value::string(&path));
+        row.set("refSeqId", Value::string(format!("{sequence:05}")));
+        fill_ref(&mut row, reference);
+        row.create(facade)?;
+    }
+    for (sequence, binding) in index.bindings.iter().enumerate() {
+        let mut row = facade.make_value(BINDING)?;
+        row.set("filePath", Value::string(&path));
+        row.set("bindingSeqId", Value::string(format!("{sequence:05}")));
+        fill_binding(&mut row, binding);
+        row.create(facade)?;
+    }
+    store_file(facade, file, hash, false, "", known)
+}
+
+/// Write the artifact rows of `path` (a file's, or the derived ones of [`extract::DERIVED_PATH`]).
+fn write_artifacts(
+    facade: &EntityFacade,
+    path: &str,
+    artifacts: &[ArtifactRow],
+    shared: &HashSet<String>,
+) -> Result<(), Error> {
     let mut seen = HashSet::new();
-    for (sequence, artifact) in index.artifacts.iter().enumerate() {
+    for (sequence, artifact) in artifacts.iter().enumerate() {
         // a file naming one id twice (a field repeated) keeps the first
         if !seen.insert(artifact.id.as_str()) {
             continue;
@@ -1303,7 +1546,7 @@ fn write_file(
         row.set("shortName", Value::string(&artifact.short_name));
         row.set("searchKey", Value::string(extract::search_key(&artifact.short_name)));
         row.set("component", Value::string(&artifact.component));
-        row.set("filePath", Value::string(&path));
+        row.set("filePath", Value::string(path));
         row.set("lineNumber", Value::I64(i64::from(artifact.line)));
         row.set("columnNumber", Value::I64(i64::from(artifact.column)));
         row.set("summary", Value::string(&artifact.summary));
@@ -1311,6 +1554,9 @@ fn write_file(
             row.set("parentArtifactId", Value::string(parent));
         }
         row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
+        if !artifact.origin.is_empty() {
+            row.set("origin", Value::string(&artifact.origin));
+        }
         if shared.contains(&artifact.id) {
             facade
                 .find(ARTIFACT)?
@@ -1319,14 +1565,7 @@ fn write_file(
         }
         row.create(facade)?;
     }
-    for (sequence, reference) in index.refs.iter().enumerate() {
-        let mut row = facade.make_value(REF)?;
-        row.set("filePath", Value::string(&path));
-        row.set("refSeqId", Value::string(format!("{sequence:05}")));
-        fill_ref(&mut row, reference);
-        row.create(facade)?;
-    }
-    store_file(facade, file, hash, false, "", known)
+    Ok(())
 }
 
 fn fill_ref(row: &mut EntityValue, reference: &RefRow) {
@@ -1342,6 +1581,24 @@ fn fill_ref(row: &mut EntityValue, reference: &RefRow) {
     row.set("lineNumber", Value::I64(i64::from(reference.line)));
     row.set("columnNumber", Value::I64(i64::from(reference.column)));
     row.set("resolved", Value::string(if reference.resolved { "Y" } else { "N" }));
+    row.set("operation", Value::string(&reference.operation));
+    row.set("origin", Value::string(&reference.origin));
+    row.set("originHash", Value::string(&reference.origin_hash));
+}
+
+fn fill_binding(row: &mut EntityValue, binding: &BindingRow) {
+    row.set("fromArtifactId", Value::string(&binding.from));
+    row.set("toId", Value::string(&binding.to_id));
+    row.set("direction", Value::string(&binding.direction));
+    row.set("sourceKind", Value::string(&binding.source_kind));
+    row.set("sourceText", Value::string(&binding.source_text));
+    row.set(
+        "sourceId",
+        binding.source_id.as_deref().map_or(Value::Null, Value::string),
+    );
+    row.set("origin", Value::string(&binding.origin));
+    row.set("originHash", Value::string(&binding.origin_hash));
+    row.set("lineNumber", Value::I64(i64::from(binding.line)));
 }
 
 fn store_file(
@@ -1380,6 +1637,7 @@ fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
         .eq("filePath", Value::string(path))
         .delete_all()?;
     facade.find(REF)?.eq("filePath", Value::string(path)).delete_all()?;
+    facade.find(BINDING)?.eq("filePath", Value::string(path)).delete_all()?;
     facade.find(FILE)?.eq("filePath", Value::string(path)).delete_all()?;
     Ok(())
 }
@@ -1505,6 +1763,7 @@ fn artifact_of(row: &EntityValue) -> ArtifactRow {
         column: u32::try_from(number(row, "columnNumber")).unwrap_or(0),
         summary: text(row, "summary"),
         parent: (!parent.is_empty()).then_some(parent),
+        origin: text(row, "origin"),
     }
 }
 
@@ -1520,6 +1779,27 @@ fn ref_of(row: &EntityValue) -> RefRow {
         column: u32::try_from(number(row, "columnNumber")).unwrap_or(0),
         to_id: (!to_id.is_empty()).then_some(to_id),
         resolved: text(row, "resolved") == "Y",
+        operation: text(row, "operation"),
+        origin: text(row, "origin"),
+        origin_hash: text(row, "originHash"),
+    }
+}
+
+fn binding_of(row: &EntityValue) -> BindingEntry {
+    let source_id = text(row, "sourceId");
+    BindingEntry {
+        path: text(row, "filePath"),
+        binding: BindingRow {
+            from: text(row, "fromArtifactId"),
+            to_id: text(row, "toId"),
+            direction: text(row, "direction"),
+            source_kind: text(row, "sourceKind"),
+            source_text: text(row, "sourceText"),
+            source_id: (!source_id.is_empty()).then_some(source_id),
+            origin: text(row, "origin"),
+            origin_hash: text(row, "originHash"),
+            line: u32::try_from(number(row, "lineNumber")).unwrap_or(0),
+        },
     }
 }
 
@@ -1771,7 +2051,9 @@ pub fn refs(
         .list()?
         .values()
     {
-        if parameters || text(child, "artifactKind") != "parameter" {
+        // a data file's records refer to nothing and nothing refers to them: not asked for, one id each
+        let kind = text(child, "artifactKind");
+        if kind != "record" && (parameters || kind != "parameter") {
             ids.push(Value::string(text(child, "artifactId")));
         }
     }
@@ -1863,12 +2145,43 @@ pub fn refs(
             other,
             calls: count,
             observed_only: true,
+            operation: "call".into(),
+            origin: "observed".into(),
+            origin_hash: String::new(),
         });
     }
     if !kinds.is_empty() {
         entries.retain(|item| item.other.as_ref().is_some_and(|other| kinds.contains(&other.kind)));
     }
     Ok(entries)
+}
+
+/// The value bindings into a call's parameters: those `from` makes (a service or screen's call), those into `to` (a
+/// parameter id, `parameter:service:<name>@in.<field>`), or both. Nothing when neither is given.
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn bindings(
+    factory: &Arc<ExecutionContextFactory>,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<BindingEntry>, Error> {
+    if from.is_none() && to.is_none() {
+        return Ok(Vec::new());
+    }
+    ensure(factory)?;
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _lifted = fence::lift();
+    let mut find = facade.find(BINDING)?.disable_authz();
+    if let Some(from) = from {
+        find = find.eq("fromArtifactId", Value::string(from));
+    }
+    if let Some(to) = to {
+        find = find.eq("toId", Value::string(to));
+    }
+    let rows = find.order_by("filePath", false).order_by("lineNumber", false).list()?;
+    Ok(rows.values().iter().map(binding_of).collect())
 }
 
 /// Whether refs of `id` take in its parameters' (the field-maps of each call): for a parameter, or when `kinds` asks
@@ -2028,7 +2341,8 @@ pub fn extensions(factory: &Arc<ExecutionContextFactory>, components: &[String])
     Ok(found)
 }
 
-/// The stamp of the rows: each file's location and hash, and the last time a file's rows were written.
+/// The stamp of the rows: each file's location and hash, and the last time a file's rows were written. A stamp made
+/// while the rows changed is answered but not kept.
 ///
 /// # Errors
 ///
@@ -2036,6 +2350,7 @@ pub fn extensions(factory: &Arc<ExecutionContextFactory>, components: &[String])
 pub fn stamp(factory: &Arc<ExecutionContextFactory>) -> Result<IndexStamp, Error> {
     ensure(factory)?;
     let state = state(factory);
+    let generation = state.generation.load(Ordering::SeqCst);
     if let Some(stamp) = lock(&state.stamp).clone() {
         return Ok(stamp);
     }
@@ -2065,7 +2380,11 @@ pub fn stamp(factory: &Arc<ExecutionContextFactory>) -> Result<IndexStamp, Error
         }
     }
     let stamp = IndexStamp::of(files, built_at);
-    *lock(&state.stamp) = Some(stamp.clone());
+    let mut kept = lock(&state.stamp);
+    // not kept when the rows changed while they were read
+    if state.generation.load(Ordering::SeqCst) == generation {
+        *kept = Some(stamp.clone());
+    }
     Ok(stamp)
 }
 
@@ -2100,3 +2419,6 @@ mod parameter_tests;
 
 #[cfg(test)]
 mod kinds_tests;
+
+#[cfg(test)]
+mod operation_tests;
