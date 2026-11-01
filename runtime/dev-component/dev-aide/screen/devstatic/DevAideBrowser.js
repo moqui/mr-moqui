@@ -77,7 +77,9 @@
 
     const kindIcon = { entity: "sym_o_table", "view-entity": "sym_o_view_column", service: "sym_o_settings", screen: "sym_o_web",
         transition: "sym_o_arrow_forward", form: "sym_o_list_alt", seca: "sym_o_bolt", eeca: "sym_o_bolt", rest: "sym_o_api",
-        job: "sym_o_schedule", document: "sym_o_description", script: "sym_o_code", field: "sym_o_label" };
+        job: "sym_o_schedule", document: "sym_o_description", script: "sym_o_code", field: "sym_o_label",
+        relationship: "sym_o_link", index: "sym_o_format_list_numbered", "view-member": "sym_o_join_inner", "form-field": "sym_o_input",
+        subscreen: "sym_o_tab", ext: "sym_o_extension", "widget-template": "sym_o_widgets", record: "sym_o_data_object" };
 
     const browser = {
         name: "mDevArtifactBrowser",

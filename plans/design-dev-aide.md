@@ -705,8 +705,12 @@ the command until then.
 - **Ids**: `entity:mantle.order.OrderHeader`, `field:mantle.order.OrderHeader.statusId`,
   `service:mantle.order.OrderServices.place#Order`,
   `screen:component://mr-marble/screen/SimpleScreens/Order/OrderDetail.xml`, `transition:<screen>#<name>:<method>`,
-  `form:<screen>#<name>`, `seca:<file>#<id or position>` (and `eeca`, `emeca`, `giteca`), `rest:/mantle/orders`,
-  `job:<jobName>`, `document:<dataDocumentId>`, `file:<root>/<path>`.
+  `form:<screen>#<name>`, `form-field:<screen>#<form>@<field>`, `subscreen:<screen>#<item>`,
+  `ext:<screen>#<ext-action|ext-panel>:<name>`, `relationship:<entity>@<[title#]related entity>`,
+  `index:<entity>@<name>`, `view-member:<view entity>@<entity alias>`, `record:<entity>:<pk values>`,
+  `widget-template:<file>#<name>`, `seca:<file>#<key>` (and `eeca`, `emeca`, `giteca`; the key is the rule's `id`,
+  else its `rule-name`, else its target and event), `rest:/mantle/orders`, `job:<jobName>`,
+  `document:<dataDocumentId>`, `file:<root>/<path>`.
 - **References**, each with its source position and how it refers (`entity-find`, `entity-auto create`, `service-call`,
   transition service, SECA `post-service`, `subscreens-item`, `link`, `member-entity`, relationship, script string,
   and the **extension anchors**: a `screen-extend`'s named form, container, section or transition, an
@@ -1420,7 +1424,21 @@ are independent of P4 and may run beside it.
   key is the short name's segments; a qualified name also matches the full name.
 - **What is read.** Every component's entity, service, ECA, REST, screen, `screen-extend`, data (XML), script and skill
   files, and as rows service jobs, data documents, email templates and DbForm forms. A script's names come from the
-  string literals of its service and entity calls by pattern, not by oxc. A `link` or response URL is a reference when it
+  string literals of its service and entity calls by pattern, not by oxc. Below the file artifacts: an entity's
+  relationships (`relationship:<entity>@<[title#]related>`, Moqui's relationship name, the related entity by its full
+  name when the model knows it), indexes (`index:<entity>@<name>`, each `index-field` a field reference) and a view
+  entity's members (`view-member:<view>@<alias>`, for `member-entity` and `member-relationship`); a form's fields
+  (`form-field:<screen>#<form>@<field>`, whose references stay the form's), a screen's subscreens items
+  (`subscreen:<screen>#<item>`) and `ext-action`s and `ext-panel`s (`ext:<screen>#<element>:<name>`); a
+  `screen-extend`'s own transitions, forms, fields, items and parameters by its location, under it; a template
+  directory's `widget-templates` files (`widget-template:<file>#<name>`, which `widget-template-include` resolves to);
+  and the records of data files and of an entity's `seed-data` (`record:<entity>:<pk values>`, the values in primary
+  key order, comma separated with `%` and `,` escaped, under the data file or entity), which needs the entity model, so
+  the server's and a project's index read them and a model-less read does not; a record whose primary key is left to
+  the loader or whose id is longer than 255 characters is not indexed. An ECA rule's key is its `id`, else its
+  `rule-name`, else its target and event (`seca:<file>#<service>:<when>`, `eeca:<file>#<entity>:create+update`), with
+  `:2`, `:3` from the second rule on the same one. A `service-include` is a `service:` artifact by the including file's
+  name, summary `includes <service>`, with a `service-include` reference to the included service. A `link` or response URL is a reference when it
   is a transition of the same screen. Parameters have IDs `parameter:<owner>@<in|out|path>.<dotted-name>`;
   their parent is the owner or enclosing parameter, and their summary records type and requiredness. Service in/out,
   screen and transition inputs, and REST path parameters are indexed. REST methods are `rest:<path>:<method>` under

@@ -77,7 +77,9 @@ fn entities_fields_and_extensions() {
             "entity:moqui.example.Example",
             "field:moqui.example.Example.exampleId",
             "field:moqui.example.Example.statusId",
+            "relationship:moqui.example.Example@moqui.basic.StatusItem",
             "entity:moqui.example.ExampleAndStatus",
+            "view-member:moqui.example.ExampleAndStatus@EX",
             "field:moqui.example.ExampleAndStatus.exampleId",
             "extend-entity:component://example/entity/ExampleEntities.xml#moqui.basic.StatusItem",
             "field:moqui.basic.StatusItem.extra",
@@ -89,13 +91,13 @@ fn entities_fields_and_extensions() {
         refs_of(&index),
         [
             (
-                "entity:moqui.example.Example".to_string(),
+                "relationship:moqui.example.Example@moqui.basic.StatusItem".to_string(),
                 "entity",
                 "moqui.basic.StatusItem",
                 "relationship"
             ),
             (
-                "entity:moqui.example.ExampleAndStatus".to_string(),
+                "view-member:moqui.example.ExampleAndStatus@EX".to_string(),
                 "entity",
                 "moqui.example.Example",
                 "member-entity"
@@ -168,6 +170,7 @@ fn screens_transitions_forms_anchors_and_links() {
         ids(&index),
         [
             "screen:component://example/screen/Detail.xml",
+            "subscreen:component://example/screen/Detail.xml#Sub",
             "transition:component://example/screen/Detail.xml#updateExample:any",
             "anchor:component://example/screen/Detail.xml#ExampleBox",
             "form:component://example/screen/Detail.xml#ExampleFacts",
@@ -224,7 +227,7 @@ fn screen_extend_names_its_base_and_anchors() {
 }
 
 #[test]
-fn eca_rules_by_id_or_position() {
+fn eca_rules_by_id_or_target() {
     let text = r#"<secas>
     <seca service="update#moqui.example.Example" when="post-service"><actions/></seca>
     <seca id="Named" service="example.Things.run#Thing" when="tx-commit"><actions/></seca>
@@ -233,7 +236,10 @@ fn eca_rules_by_id_or_position() {
     let index = read(ArtifactKind::Seca, location, text);
     assert_eq!(
         ids(&index),
-        [format!("seca:{location}#1"), format!("seca:{location}#Named")]
+        [
+            format!("seca:{location}#update#moqui.example.Example:post-service"),
+            format!("seca:{location}#Named")
+        ]
     );
     assert!(index
         .refs
