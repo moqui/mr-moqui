@@ -2525,15 +2525,22 @@ fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
     .all(|row| row["component"] != "example"));
 
     // refused: a project not allowed or not there alike, a directory, the server's own index, no permission
-    for id in ["PROJ_SHUT", "NOPE"] {
-        let err = read(
-            "aide.reader",
-            "find#Artifacts",
-            &[("projectId", id), ("text", "ProjThing")],
-        )
-        .unwrap_err();
-        assert!(err.contains("not an allowed project"), "{id}: {err}");
-    }
+    let refused: Vec<String> = ["PROJ_SHUT", "NOPE"]
+        .into_iter()
+        .map(|id| {
+            read(
+                "aide.reader",
+                "find#Artifacts",
+                &[("projectId", id), ("text", "ProjThing")],
+            )
+            .unwrap_err()
+        })
+        .collect();
+    assert!(refused[0].contains("not an allowed project"), "{refused:?}");
+    assert_eq!(
+        refused[0], refused[1],
+        "a row not allowed and no row give the same error"
+    );
     let dir = project.display().to_string();
     for parameters in [vec![("project", dir.as_str())], vec![]] {
         let err = read("aide.reader", "find#Artifacts", &parameters).unwrap_err();
@@ -2582,5 +2589,29 @@ fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
     assert!(body.contains("not an allowed project"), "{body}");
     let (status, _, body) = get("/rest/s1/moqui/aide/projects/PROJ_A/artifacts?text=ProjThing", &nobody);
     assert!(status == 401 || status == 403, "{status} {body}");
+
+    // the row is read on each call: an admin's allowed=N holds from the next read on
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade
+            .find("moqui.devtools.DevArtifactProject")
+            .unwrap()
+            .eq("projectId", Value::string("PROJ_A"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("allowed", Value::string("N"));
+        row.update(&facade).unwrap();
+    }
+    let err = read(
+        "aide.reader",
+        "find#Artifacts",
+        &[("projectId", "PROJ_A"), ("text", "ProjThing")],
+    )
+    .unwrap_err();
+    assert_eq!(err, refused[0]);
     let _ = std::fs::remove_dir_all(&project);
 }

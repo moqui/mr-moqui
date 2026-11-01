@@ -31,7 +31,7 @@ pub mod rows;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
@@ -221,7 +221,7 @@ pub fn hash_of(text: &str) -> String {
 pub struct IndexStamp {
     /// A hash of each file's location and content hash: the same files give the same hash, on any server.
     pub hash: String,
-    /// When the index last changed, in epoch milliseconds.
+    /// When a file was last read into the index, in epoch milliseconds (a removal does not move it).
     pub built_at: i64,
     pub files: usize,
 }
@@ -417,10 +417,7 @@ impl MemoryIndex {
         for file in files {
             match file.extract(factory) {
                 Ok((hash, read)) => index.take(file.path.display().to_string(), file.location.clone(), hash, read),
-                Err(problem) => {
-                    tracing::error!("Artifact index: {} not read: {problem}", file.path.display());
-                    index.problems.push((file.path.display().to_string(), problem));
-                }
+                Err(problem) => index.problem(file, problem),
             }
         }
         index.resolve_all(&|location: &str| location_exists(factory, location));
@@ -431,6 +428,18 @@ impl MemoryIndex {
     #[must_use]
     pub fn stamp(&self) -> IndexStamp {
         IndexStamp::of(self.hashes.values().cloned().collect(), self.changed_millis)
+    }
+
+    /// Keep that `file` did not read or parse, and its hash when its text reads: the stamp counts the file, as the
+    /// rows of a server's index keep it (stale).
+    fn problem(&mut self, file: &Located, problem: String) {
+        let path = file.path.display().to_string();
+        tracing::error!("Artifact index: {path} not read: {problem}");
+        if let Ok(text) = std::fs::read_to_string(&file.path) {
+            self.hashes
+                .insert(path.clone(), (file.location.clone(), hash_of(&text)));
+        }
+        self.problems.push((path, problem));
     }
 
     /// Keep what the file `path` (at `location`, with `hash`) defines and refers to.
@@ -508,10 +517,7 @@ impl MemoryIndex {
             let path = file.path.display().to_string();
             match file.extract(factory) {
                 Ok((hash, read)) => self.take(path, file.location.clone(), hash, read),
-                Err(problem) => {
-                    tracing::error!("Artifact index: {path} not read: {problem}");
-                    self.problems.push((path, problem));
-                }
+                Err(problem) => self.problem(file, problem),
             }
         }
         self.resolve_all(&|location: &str| location_exists(factory, location));
@@ -792,6 +798,25 @@ struct IndexState {
     listening: AtomicBool,
     /// The stamp of the rows, made at the first read after they changed.
     stamp: Mutex<Option<IndexStamp>>,
+    /// Moved on each time the rows change, so a stamp made of rows read before a change is not kept.
+    generation: AtomicU64,
+}
+
+impl IndexState {
+    /// The rows changed (or are changing): the stamp is made again at the next read.
+    fn rows_changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *lock(&self.stamp) = None;
+    }
+}
+
+/// [`IndexState::rows_changed`] when dropped, so a write's end marks the change also when it returns early.
+struct RowsChanged<'a>(&'a IndexState);
+
+impl Drop for RowsChanged<'_> {
+    fn drop(&mut self) {
+        self.0.rows_changed();
+    }
 }
 
 fn state(factory: &ExecutionContextFactory) -> Arc<IndexState> {
@@ -888,7 +913,7 @@ pub fn clear(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
             Ok(())
         })?;
     *lock(&state.resolver) = Resolver::default();
-    *lock(&state.stamp) = None;
+    state.rows_changed();
     Ok(())
 }
 
@@ -1163,7 +1188,9 @@ fn apply(
     if changes.is_empty() {
         return Ok(());
     }
-    *lock(&state.stamp) = None;
+    state.rows_changed();
+    // again at the end, however it ends: a read while the rows were written may have made it of the old ones
+    let _changed = RowsChanged(state);
     let mut gone: BTreeSet<String> = BTreeSet::new();
     let mut added: Vec<ArtifactRow> = Vec::new();
     let mut changed_paths: HashSet<String> = HashSet::new();
@@ -1314,8 +1341,6 @@ fn apply(
     unresolve(facade, &tx, &gone, &changed_paths)?;
     resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
     report.write_millis = writing.elapsed().as_millis();
-    // again: a read while the rows were written may have made it of the old ones
-    *lock(&state.stamp) = None;
     Ok(())
 }
 
@@ -2262,7 +2287,8 @@ pub fn extensions(factory: &Arc<ExecutionContextFactory>, components: &[String])
     Ok(found)
 }
 
-/// The stamp of the rows: each file's location and hash, and the last time a file's rows were written.
+/// The stamp of the rows: each file's location and hash, and the last time a file's rows were written. A stamp made
+/// while the rows changed is answered but not kept.
 ///
 /// # Errors
 ///
@@ -2270,6 +2296,7 @@ pub fn extensions(factory: &Arc<ExecutionContextFactory>, components: &[String])
 pub fn stamp(factory: &Arc<ExecutionContextFactory>) -> Result<IndexStamp, Error> {
     ensure(factory)?;
     let state = state(factory);
+    let generation = state.generation.load(Ordering::SeqCst);
     if let Some(stamp) = lock(&state.stamp).clone() {
         return Ok(stamp);
     }
@@ -2299,7 +2326,11 @@ pub fn stamp(factory: &Arc<ExecutionContextFactory>) -> Result<IndexStamp, Error
         }
     }
     let stamp = IndexStamp::of(files, built_at);
-    *lock(&state.stamp) = Some(stamp.clone());
+    let mut kept = lock(&state.stamp);
+    // not kept when the rows changed while they were read
+    if state.generation.load(Ordering::SeqCst) == generation {
+        *kept = Some(stamp.clone());
+    }
     Ok(stamp)
 }
 

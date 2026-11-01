@@ -85,3 +85,48 @@ fn the_stamp_is_the_files_and_their_hashes_in_any_order() {
     assert_ne!(one.hash, fewer.hash);
     assert_ne!(IndexStamp::of(Vec::new(), 0).hash, one.hash);
 }
+
+/// A file that does not parse is in a memory index's stamp, as a server's rows keep it (stale): the same files give the
+/// same stamp on both, and fixing the file changes it.
+#[test]
+fn a_file_that_does_not_parse_is_in_the_stamp() {
+    let dir = std::env::temp_dir().join(format!("moqui-stamp-problem-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let located = |name: &str, text: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        Located {
+            path,
+            component: "c".to_string(),
+            location: format!("component://c/entity/{name}"),
+            kind: ArtifactKind::Entity,
+        }
+    };
+    let good = located(
+        "Good.xml",
+        r#"<entities><entity entity-name="Good" package="p"><field name="goodId" type="id" is-pk="true"/></entity></entities>"#,
+    );
+    let broken = located("Broken.xml", "<entities><entity");
+    let ctx = moqui_core::context::ExecutionContextFactory::test_context();
+    let mut index = MemoryIndex::of_files(ctx.factory(), &[good.clone(), broken.clone()]);
+    assert_eq!(index.problems.len(), 1, "{:?}", index.problems);
+    let stamp = index.stamp();
+    let expected = IndexStamp::of(
+        vec![
+            (
+                good.location.clone(),
+                hash_of(&std::fs::read_to_string(&good.path).unwrap()),
+            ),
+            (broken.location.clone(), hash_of("<entities><entity")),
+        ],
+        stamp.built_at,
+    );
+    assert_eq!(stamp, expected);
+
+    let fixed = located("Broken.xml", "<entities/>");
+    index.replace_files(ctx.factory(), &[fixed.path.display().to_string()], &[fixed]);
+    assert!(index.problems.is_empty(), "{:?}", index.problems);
+    assert_eq!(index.stamp().files, 2);
+    assert_ne!(index.stamp().hash, stamp.hash);
+    let _ = std::fs::remove_dir_all(&dir);
+}

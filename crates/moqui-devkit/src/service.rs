@@ -13,7 +13,8 @@
  */
 
 //! `org.moqui.impl.DevToolsServices`: the framework's development tools (this crate) as services, on dev
-//! instances only (plans/design-dev-aide.md 17).
+//! instances only (plans/design-dev-aide.md 17), but for the index reads of an allowed project, which answer on any
+//! instance for `AIDE_READ` (7.4).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -295,15 +296,21 @@ fn source_in(
         Source::Directory => project_in(parameters, model),
         Source::Allowed { directory, java } => {
             let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())).ok_or(())?;
+            let id = text_in(parameters, "projectId");
             crate::project::cache::allowed(&directory, java, &factory, model)
                 .map(Some)
-                .map_err(|err| add_error(format!("projectId {}: {err}", text_in(parameters, "projectId").trim())))
+                .map_err(|err| {
+                    // the directory and why stay in the log: a reader is not told the server's paths
+                    tracing::error!("Dev AIDE: allowed project {} ({directory}) not read: {err}", id.trim());
+                    add_error(format!("projectId {}: not readable", id.trim()));
+                })
         }
     }
 }
 
-/// A read of the index: `body` answers from the index [`source_in`] chose, then the stamp of that index is added as
-/// `indexStamp` (`hash`, `builtAt`, `files`), so a caller can say what it read against.
+/// A read of the index: `body` answers from the index [`source_in`] chose, with the stamp of that index as `indexStamp`
+/// (`hash`, `builtAt`, `files`), so a caller can say what it read against. The stamp is taken first, so a change while
+/// `body` reads leaves it older than the answer, never newer; a stamp that cannot be made is logged and left out.
 fn read_index(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -314,11 +321,15 @@ fn read_index(
     let Ok(project) = source_in(parameters, facade, "The artifact index", model) else {
         return out;
     };
-    body(project.as_deref(), &mut out);
     let stamp = match project.as_deref() {
         Some(project) => Some(project.stamp()),
-        None => with_index(crate::index::stamp),
+        None => ExecutionContext::with_current(|ec| Arc::clone(ec.factory())).and_then(|factory| {
+            crate::index::stamp(&factory)
+                .map_err(|err| tracing::error!("Dev AIDE: the index stamp was not made: {err}"))
+                .ok()
+        }),
     };
+    body(project.as_deref(), &mut out);
     if let Some(stamp) = stamp {
         out.insert("indexStamp".to_string(), json_value(&stamp));
     }
