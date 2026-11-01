@@ -54,6 +54,13 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 | Pull | Scrape targets have no relabeling, extra labels, basic auth or service discovery, and OpenMetrics exemplars are ignored; checks are single HTTP requests (no TCP, DNS, certificate expiry or multi-step flows) from this server only; a check that calls an unsampled page of this same server loses its CLIENT child (the page's SERVER span decides the trace first) | `telemetry/scrape.rs`, `telemetry/mod.rs` |
 | Patterns, AI | Log patterns group the newest 1,000 matching lines (the documents page cap), and a pattern narrows the search by its constant words as phrases, which can match a little more than the pattern; Monitor › AI groups the newest 1,000 LLM calls, and spans carry no cost (System › LLM › Usage has it) | `report/patterns.rs`, `Monitor/AgentTraces.xml` |
 
+## Maps
+
+Initial design, not built: [Maps](Maps.md) owns the OpenLayers Tools app, shared full-screen and local-map interface,
+global/personal configuration, OpenFreeMap and ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance)
+include local postal-code coordinates using basic Geo data, Mantle record adapters and BOSS/HOME integration.
+Resource streaming is shared with Media; the LFS placement item below remains a dependency for filesystem git/LFS.
+
 ## Chat and presence
 
 Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies

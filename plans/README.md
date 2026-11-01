@@ -25,6 +25,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md).
 
+**Maps**
+- [Maps.md](Maps.md): shared OpenLayers Maps app and address dialogs in Tools, OpenFreeMap, ResourceFacade-backed PMTiles, global/personal configuration, postal-code coordinate lookup and Rust server work for BOSS, HOME and other consumers.
+
 **Databases**
 - [MySQL-Issues.md](MySQL-Issues.md): what loading every data type into MySQL 8.4 found (two tables over MySQL's row and
   key limits, 3-byte `utf8`, `text-medium` at 255 characters, lock wait timeouts, and three issues found on the way that
