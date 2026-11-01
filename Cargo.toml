@@ -20,6 +20,7 @@ members = [
     "crates/moqui-collab",
     "crates/moqui-rtc",
     "crates/moqui-sip",
+    "crates/moqui-channels",
     "crates/moqui-dav",
     "crates/moqui-devkit",
     "crates/moqui-drivers",
@@ -78,6 +79,9 @@ moqui-collab = { path = "crates/moqui-collab" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
 # links it under its rtc feature and owns the sockets.
 moqui-rtc = { path = "crates/moqui-rtc" }
+# Business messaging channels: the SMS adapter on Telnyx (plans/Comms-Framework.md §4.3, §5.6, C4-SMS); the host links it
+# under its channels feature.
+moqui-channels = { path = "crates/moqui-channels" }
 # Phone calls: the SIP user agent and B2BUA over moqui-rtc's audio core (plans/Comms-Framework.md §5.2, D-V1); the host
 # links it under its sip feature and owns the RTP sockets.
 moqui-sip = { path = "crates/moqui-sip" }
@@ -114,6 +118,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.
 hmac = "0.13"
+# Ed25519 webhook signatures (moqui-channels): the aws-lc-rs that rustls, rcgen and str0m already link, with the default
+# features they turn on.
+aws-lc-rs = "1.19"
 sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"

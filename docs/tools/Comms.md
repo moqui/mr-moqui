@@ -48,6 +48,11 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   why) or may not have arrived; the sender or a moderator can Send again. When the bridge is not connected the room says
   so and keeps its messages, which go out once it is back. An edit, a delete or a reaction the network cannot carry is
   not offered. The terminal shows the same, with Send again. See [Chat bridges](../interfaces/Chat-Bridges.md).
+- <a id="texts"></a>**Texts** (C4-SMS). A number of ours with messaging has one room for each outside number it texts
+  with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
+  reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
+  who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
+  administrator allows them. See [SMS](../interfaces/SMS.md).
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
   members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
   audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
@@ -211,6 +216,7 @@ records drive's folders by their records.
 
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
+| `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out); Mantle answers from its consent records) |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 
 The other hooks (`invitation`, `contact-card`, `home-source`,
@@ -231,7 +237,8 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 `./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
 Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
-provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
+provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
+texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
 and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and

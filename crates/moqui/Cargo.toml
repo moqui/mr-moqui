@@ -22,6 +22,9 @@ rtc = ["moqui-host/rtc"]
 speech-local = ["moqui-host/speech-local"]
 # Phone calls (crates/moqui-sip), in Enterprise, Maximal and Debug; for a Default build `./moq build -- --features sip`.
 sip = ["moqui-host/sip"]
+# Business messaging channels (crates/moqui-channels: SMS on Telnyx), in Enterprise and Maximal; for a Default build
+# `./moq build -- --features channels`.
+channels = ["moqui-host/channels"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
 # The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the

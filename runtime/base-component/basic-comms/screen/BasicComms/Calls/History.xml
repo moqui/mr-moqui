@@ -20,7 +20,9 @@ along with this software (see the LICENSE.md file). If not, see
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
     org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
-    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; New call and a call link
+    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; Text a number (C4-SMS): a
+    number from one of the user's numbers with messaging (org.moqui.impl.SmsServices open#PairRoom), opening the pair's room in
+    Chat; New call and a call link
     may be end-to-end encrypted (W8); the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
     item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
     find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
@@ -88,6 +90,18 @@ along with this software (see the LICENSE.md file). If not, see
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- C4-SMS: the room of the pair (one of my numbers, theirs), with its texts and calls -->
+    <transition name="textNumber">
+        <actions><script><![CDATA[
+            // the form's fields are textTo and textFrom: toNumber is a name the script runtime has already
+            const out = ec.service.sync().name('org.moqui.impl.SmsServices.open#PairRoom').parameters({toNumber: textTo || '',
+                fromNumber: textFrom || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            textRoomId = out.chatRoomId || null
+        ]]></script></actions>
+        <conditional-response url="../../Chat" condition="textRoomId"><parameter name="chatRoomId" from="textRoomId"/></conditional-response>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
@@ -182,6 +196,11 @@ along with this software (see the LICENSE.md file). If not, see
         phoneActive = !!voice.active
         phoneReason = !voice.active ? L('Phone calls are not available here.') : !callerIdOptions.length ? L('You have no number to call from; an administrator can give you one.') : ''
         newPhoneCall = {phoneNumber: '', fromNumber: callerIdOptions.length ? callerIdOptions[0].key : ''}
+        // Text a number (C4-SMS): the user's numbers with messaging
+        const texting = ec.service.sync().name('org.moqui.impl.SmsServices.find#MyTextNumbers').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        textNumberOptions = Array.from(texting.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        newText = {textTo: '', textFrom: textNumberOptions.length ? textNumberOptions[0].key : ''}
 
         // the history, by outcome; the Missed tab marks them seen
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
@@ -274,6 +293,17 @@ along with this software (see the LICENSE.md file). If not, see
                         <field-layout><field-row-big><field-ref name="phoneNumber"/><field-ref name="fromNumber"/><field-ref name="submitButton"/></field-row-big></field-layout>
                     </form-single>
                 </box-body></container-box>
+                <section name="TextNumber" condition="textNumberOptions.length"><widgets>
+                    <container-box><box-header title="Text a number"/><box-body>
+                        <form-single name="TextNumber" transition="textNumber" map="newText">
+                            <field name="textTo"><default-field title="Number"><text-line size="20"/></default-field></field>
+                            <field name="textFrom"><default-field title="From">
+                                <drop-down><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Text"><submit icon="sym_o_sms"/></default-field></field>
+                            <field-layout><field-row-big><field-ref name="textTo"/><field-ref name="textFrom"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                        </form-single>
+                    </box-body></container-box>
+                </widgets></section>
                 <container-box><box-header title="Now"/><box-body>
                     <section name="NoCalls" condition="!callList.length"><widgets><label type="p" text="No call is ringing for you, and you are in no call." style="m-muted"/></widgets></section>
                     <form-list name="ActiveCalls" list="callList" skip-form="true">

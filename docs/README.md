@@ -52,6 +52,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Chat-Keys.md](interfaces/Chat-Keys.md) | Browsers' crypto devices for end-to-end encryption: devices, keys and Olm to-device messages with Matrix's payloads, who reaches whom, revocation, the browser API |
 | [Voicemail.md](interfaces/Voicemail.md) | Voicemail on the SIP engine: when a call goes there, the greeting and recording, phone access with a PIN and its limits, notices, transcription, the prompts an admin supplies |
 | [Chat-Bridges.md](interfaces/Chat-Bridges.md) | Chat actors and the bridge layer: the adapter contract, input stored before it is acknowledged, durable delivery with leases and idempotency keys, the C1 migration |
+| [SMS.md](interfaces/SMS.md) | SMS and MMS on Telnyx: setup and 10DLC, the number pair's room shared with calls and voicemail, signed webhooks, the checks before a send, opt-out, the system's texts |
 
 ## ai: Agents and Models
 

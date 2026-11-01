@@ -84,6 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Private" enumId="CrtPrivate" enumCode="private" enumTypeId="ChatRoomType" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Public" enumId="CrtPublic" enumCode="public" enumTypeId="ChatRoomType" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Record" enumId="CrtRecord" enumCode="record" enumTypeId="ChatRoomType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="External" enumId="CrtExternal" enumCode="external" enumTypeId="ChatRoomType" sequenceNum="5"/>
 
             <moqui.basic.EnumerationType description="Chat Room Visibility" enumTypeId="ChatRoomVisibility"/>
             <moqui.basic.Enumeration description="Members only" enumId="CrvMembers" enumCode="members" enumTypeId="ChatRoomVisibility" sequenceNum="1"/>

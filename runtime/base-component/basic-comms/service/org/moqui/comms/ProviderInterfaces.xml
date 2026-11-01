@@ -141,4 +141,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="idempotencyKey" required="true"/>
         </in-parameters>
     </service>
+    <service verb="sms" noun="Consent" type="interface">
+        <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber, as the
+            caller's user (org.moqui.impl.SmsServices check#SmsSend). consent true allows it, false refuses it whatever another
+            provider says; with no provider saying true, a promotional text is refused (consentRequired).</description>
+        <in-parameters>
+            <parameter name="fromNumber" required="true"/>
+            <parameter name="toNumber" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="consent" type="Boolean"/>
+        </out-parameters>
+    </service>
 </services>

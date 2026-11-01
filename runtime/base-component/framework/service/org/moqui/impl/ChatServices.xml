@@ -1711,8 +1711,8 @@ along with this software (see the LICENSE.md file). If not, see
             (as pushed).
 
             senderActorId (authorization disabled only) sends as an actor: an external actor of a bridge
-            (ChatBridgeServices.ingest#Event) posts as a current member of a room that is not archived, with no files,
-            forward, clientRef or mentions, and no link previews; its message reaches the room's agents only when the room's
+            (ChatBridgeServices.ingest#Event) posts as a current member of a room that is not archived, with no forward,
+            clientRef or mentions and only the files its bridge stored (no uploader), and no link previews; its message reaches the room's agents only when the room's
             agentsReadExternal is Y. sourceChatBridgeId is the bridge it came from, which it does not go back to.
 
             In an encrypted room (C7) the browser sends encrypted, the Megolm ciphertext of the message (the m.room.encrypted
@@ -1785,7 +1785,8 @@ along with this software (see the LICENSE.md file). If not, see
             let access
             if (externalActor) {
                 sender = null
-                if (clientRef || forwardOfChatRoomId || forwardOfEventSeq != null || (chatAttachmentIdList && chatAttachmentIdList.length)) {
+                // its files (C4-SMS: MMS) are those its bridge stored, with no uploader (ChatBridgeServices.store#BridgeMedia)
+                if (clientRef || forwardOfChatRoomId || forwardOfEventSeq != null) {
                     ec.message.addError(ec.l10n.localize('An external message carries text only')); return }
                 const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
                 const actorMember = roomRow ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
@@ -1894,7 +1895,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const rows = Array.from(ec.entity.find('moqui.chat.ChatAttachment').condition('chatAttachmentId', 'in', attachmentIds).list())
                 for (const id of attachmentIds) {
                     const row = rows.find((candidate) => candidate.chatAttachmentId === id)
-                    if (!row || row.chatRoomId !== chatRoomId || row.uploadedByUserId !== sender || row.eventSeq != null) {
+                    if (!row || row.chatRoomId !== chatRoomId || (row.uploadedByUserId ?? null) !== (sender ?? null) || row.eventSeq != null) {
                         ec.message.addError(`Attachment ${id} not found`); return }
                     attachmentRows.push(row)
                 }

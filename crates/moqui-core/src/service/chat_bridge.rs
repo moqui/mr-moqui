@@ -64,6 +64,7 @@ pub(in crate::service) fn register(
     rust_service!(map, run_bridge_deliveries)?;
     rust_service!(map, get_bridge_capabilities)?;
     rust_service!(map, check_bridge_token)?;
+    web::register(map)?;
     Ok(())
 }
 
@@ -126,6 +127,16 @@ pub enum DeliveryKind {
     Redaction,
 }
 
+/// A file of a message that goes out with it (an MMS picture): its `ChatAttachment`. An adapter that sends files by
+/// address gives the network [`media_url`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeliveryAttachment {
+    pub chat_attachment_id: String,
+    pub file_name: Option<String>,
+    pub content_type: Option<String>,
+    pub file_size: Option<i64>,
+}
+
 /// One delivery attempt.
 #[derive(Clone, Debug)]
 pub struct DeliveryRequest {
@@ -141,6 +152,10 @@ pub struct DeliveryRequest {
     /// The same as safe HTML, as the room keeps it.
     pub html: Option<String>,
     pub sender_name: Option<String>,
+    /// The local user who sent it (none for an external actor's event); an adapter checks its own sending rules by it.
+    pub sender_user_id: Option<String>,
+    /// The message's files, in order.
+    pub attachments: Vec<DeliveryAttachment>,
     /// The network's id of the message an edit, reaction or delete is about (of the reaction a reaction delete takes
     /// back).
     pub target_remote_id: Option<String>,
@@ -178,6 +193,24 @@ pub trait ChatBridgeAdapter: Send + Sync {
         let _ = chat_bridge_id;
     }
     fn deliver(&self, bridge: &BridgeInfo, request: &DeliveryRequest) -> DeliveryOutcome;
+    /// A request to the bridge's webhook route (`/channels/{chatBridgeId}/webhook` on the host, [`webhook`]): the raw
+    /// body, read within its bound, and the headers. The adapter checks the network's signature over the raw bytes
+    /// before it parses anything, then hands what came to `ChatBridgeServices.ingest#Event`. Called on a request worker
+    /// in a fresh context; the default answers 404 (the network sends no webhooks).
+    fn webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
+        let _ = (bridge, request);
+        WebhookResponse::text(404, "this network takes no webhooks")
+    }
+    /// The bytes of a file a message from the network names (`ChatBridgeServices.store#BridgeMedia`), up to
+    /// `max_bytes`. The default fetches nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the file could not be fetched.
+    fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
+        let _ = (bridge, url, max_bytes);
+        Err("this network's files are not fetched".to_string())
+    }
 }
 
 /// The adapters of a factory: the linked crates' ([`crate::extension::Extension::chat_bridge_adapters`]) and those
@@ -1194,6 +1227,10 @@ fn request_of(
         _ => None,
     };
     let sender_name = sender_name(facade, event)?;
+    let attachments = match kind {
+        DeliveryKind::Message => attachments_of(facade, &room_id, int_of(row, "eventSeq").unwrap_or(0))?,
+        _ => Vec::new(),
+    };
     Ok(Ok(DeliveryRequest {
         chat_bridge_delivery_id: text_of(row, "chatBridgeDeliveryId").unwrap_or_default(),
         idempotency_key: text_of(row, "idempotencyKey").unwrap_or_default(),
@@ -1204,10 +1241,32 @@ fn request_of(
         text: text_of(event, "bodyText"),
         html,
         sender_name,
+        sender_user_id: text_of(event, "senderUserId"),
+        attachments,
         target_remote_id,
         reaction_key,
         attempt: 0,
     }))
+}
+
+/// The files of a message, in their order.
+fn attachments_of(facade: &EntityFacade, room_id: &str, seq: i64) -> Result<Vec<DeliveryAttachment>, LibError> {
+    Ok(facade
+        .find("moqui.chat.ChatAttachment")?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("eventSeq", Value::I64(seq))
+        .order_by("attachmentSeq", false)
+        .disable_authz()
+        .list()?
+        .values()
+        .iter()
+        .map(|row| DeliveryAttachment {
+            chat_attachment_id: text_of(row, "chatAttachmentId").unwrap_or_default(),
+            file_name: text_of(row, "fileName"),
+            content_type: text_of(row, "contentType"),
+            file_size: int_of(row, "fileSize"),
+        })
+        .collect())
 }
 
 /// The network's id of event `target`: the remote id of its delivery to this mapping (the row's dependency), else its
@@ -1378,6 +1437,10 @@ fn push_state(room_id: &str, seq: i64) {
         tracing::warn!("Could not push the delivery state of chat event {room_id}::{seq}: {error}");
     }
 }
+
+#[path = "chat_bridge_web.rs"]
+mod web;
+pub use web::{media, media_token_valid, media_url, webhook, FetchedMedia, MediaFile, WebhookRequest, WebhookResponse};
 
 #[cfg(test)]
 #[path = "chat_bridge_tests.rs"]

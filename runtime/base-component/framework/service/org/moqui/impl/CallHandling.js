@@ -590,7 +590,7 @@ function inbound(p) {
   const ringSeconds = first.type === 'ring' ? first.seconds : callRingSeconds()
   const started = calls('startPhone', { userId: voicemailUser, direction: 'inbound', phoneNumber: p.fromNumber || p.rawFrom,
     displayName: p.displayName, mediaNodeId: p.instanceId, silent: true, ringing: true,
-    ringExpireSeconds: ringSeconds + RING_GRACE_SECONDS })
+    ringExpireSeconds: ringSeconds + RING_GRACE_SECONDS, chatRoomId: p.chatRoomId || null })
   const route = ec.entity.makeValue(ROUTE)
   route.setFields({ callSessionId: started.callSessionId, userId: p.userId || null, ringGroupId: p.ringGroupId || null,
     toNumber: p.toNumber || null, fromNumber: p.fromNumber || null, planJson: JSON.stringify(plan.steps), stepIndex: 0,

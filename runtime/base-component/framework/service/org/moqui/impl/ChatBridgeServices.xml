@@ -48,7 +48,9 @@ along with this software (see the LICENSE.md file). If not, see
             itemList: up to 200 items of {itemId (the item's name in the outcomes), type (message, edit, reaction or
             redaction), externalRoomId, externalEventId, externalUserId, displayName, avatarUrl, text (plain), originDate
             (millis), relatesToExternalEventId (an edit's, reaction's or delete's target), key (a reaction), replyToExternalEventId,
-            metadata (a map kept beside the event)}. A security failure rejects the whole batch (reasonCode unknownBridge,
+            metadata (a map kept beside the event), media (a message's files, up to 10: [{url, contentType, fileName, size}], each
+            fetched by the bridge's adapter when the item is worked, store#BridgeMedia)}. transportVerified: the bridge's adapter
+            checked the request's signature itself (its webhook, ChatBridgeAdapter::webhook), so no token is needed. A security failure rejects the whole batch (reasonCode unknownBridge,
             bridgeDisabled, badToken, badTransaction, batchTooLarge or localIdentity; an error, nothing stored). Else the
             batch is stored before this answers: accepted true, duplicate when the transaction id was sent before, and
             outcomeList [{itemId, outcome (accepted, duplicate, echo, waiting, stale, rejected), reasonCode, message, eventSeq}].</description>
@@ -56,6 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="transactionId" required="true"/>
             <parameter name="token"/>
+            <parameter name="transportVerified" type="Boolean" default="false"/>
             <parameter name="itemList" type="List" required="true"/>
         </in-parameters>
         <out-parameters>
@@ -71,9 +74,12 @@ along with this software (see the LICENSE.md file). If not, see
             const bridge = ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).one()
             if (!bridge) { refuse('unknownBridge', 'Unknown chat bridge'); return }
             if (bridge.statusId === 'CbsDisabled') { refuse('bridgeDisabled', 'The chat bridge is disabled'); return }
-            const check = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.check#BridgeToken')
-                    .parameters({chatBridgeId: chatBridgeId, token: token || ''}).call()
-            if (!check || check.valid !== true) { refuse('badToken', 'The chat bridge token does not match'); return }
+            // an adapter that checked the network's signature over the raw request (its webhook) needs no token
+            if (transportVerified !== true) {
+                const check = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.check#BridgeToken')
+                        .parameters({chatBridgeId: chatBridgeId, token: token || ''}).call()
+                if (!check || check.valid !== true) { refuse('badToken', 'The chat bridge token does not match'); return }
+            }
             if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(String(transactionId || ''))) { refuse('badTransaction', 'A transaction id is up to 128 letters, digits and _ . : -'); return }
             const items = Array.from(itemList || [])
             let batchJson
@@ -349,8 +355,14 @@ along with this software (see the LICENSE.md file). If not, see
             if (!TYPES.includes(type)) { reject('malformed', 'An item is a message, edit, reaction or redaction'); return }
             if (!externalRoomId || !externalEventId || !externalUserId) { reject('malformed', 'An item names its room, its event and its sender'); return }
             if ([displayName, avatarUrl, relatesTo, text, key, replyTo].some((value) => value === undefined)) { reject('malformed', 'A field of the item is too long'); return }
-            if (item.attachments != null && Array.from(item.attachments || []).length) { reject('attachmentsUnsupported', 'Files from a bridge are not taken yet'); return }
-            if ((type === 'message' || type === 'edit') && !(text && text.trim())) { reject('malformed', 'A message or edit has text'); return }
+            if (item.attachments != null && Array.from(item.attachments || []).length) { reject('attachmentsUnsupported', 'Files from a bridge come as media'); return }
+            // a message's files (C4-SMS: MMS), fetched below by the bridge's adapter
+            const media = item.media == null ? [] : Array.isArray(item.media) || (item.media && typeof item.media.length === 'number') ? Array.from(item.media) : null
+            if (media === null || media.length > 10 || (type !== 'message' && media.length)) { reject('malformed', 'A message has up to 10 files'); return }
+            if (media.some((file) => !file || typeof file !== 'object' || !/^https?:\/\//.test(String(file.url || '')) || String(file.url).length > 2048)) {
+                reject('malformed', 'A file names its address'); return }
+            if (type === 'edit' && !(text && text.trim())) { reject('malformed', 'A message or edit has text'); return }
+            if (type === 'message' && !(text && text.trim()) && !media.length) { reject('malformed', 'A message or edit has text'); return }
             if (type !== 'message' && !relatesTo) { reject('malformed', 'An edit, reaction or redaction names what it is about'); return }
             if (type === 'reaction' && (!key || Array.from(key).length > 32 || /[<>]/.test(key))) { reject('malformed', 'A reaction is an emoji or a short word'); return }
             const originMillis = item.originDate != null && !Number.isNaN(Number(item.originDate)) ? Number(item.originDate) : null
@@ -441,8 +453,29 @@ along with this software (see the LICENSE.md file). If not, see
                             .condition('externalEventId', replyTo).one()
                     if (replied && replied.eventSeq != null) replyToEventSeq = Number(replied.eventSeq)
                 }
-                out = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters(Object.assign({body: htmlOf(text),
-                    replyToEventSeq: replyToEventSeq}, common)).call()
+                // its files, each fetched on its own: one that cannot be fetched is named in the message and the rest go on
+                const attachmentIds = [], missed = []
+                for (const file of media) {
+                    ec.message.pushErrors()
+                    try {
+                        // in the item's transaction (a file that cannot be fetched answers error and rolls nothing back)
+                        const stored = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.store#BridgeMedia').parameters({chatBridgeId: chatBridgeId,
+                            chatRoomId: chatRoomId, url: String(file.url), contentType: file.contentType ? String(file.contentType).slice(0, 100) : null,
+                            fileName: file.fileName ? String(file.fileName).slice(0, 200) : null, maxBytes: file.maxBytes != null ? Number(file.maxBytes) : null}).call()
+                        if (ec.message.hasError() || !stored?.chatAttachmentId) throw new Error(ec.message.errorsString || stored?.error || 'not stored')
+                        attachmentIds.push(stored.chatAttachmentId)
+                    } catch (err) {
+                        ec.logger.warn(`Chat bridge ${chatBridgeId} event ${externalEventId}: a file was not fetched: ${err && err.message ? err.message : err}`)
+                        missed.push(file.contentType ? String(file.contentType).slice(0, 60) : 'file')
+                    } finally {
+                        ec.message.clearErrors()
+                        ec.message.popErrors()
+                    }
+                }
+                let bodyText = text ? text : ''
+                if (missed.length) bodyText = (bodyText ? bodyText + '\n' : '') + `[${missed.length === 1 ? 'A file' : missed.length + ' files'} not received: ${missed.join(', ')}]`
+                out = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters(Object.assign({body: bodyText.trim() ? htmlOf(bodyText) : null,
+                    replyToEventSeq: replyToEventSeq, chatAttachmentIdList: attachmentIds}, common)).call()
                 if (ec.message.hasError()) return
                 eventSeq = out.eventSeq
             } else {
@@ -486,6 +519,30 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="store" noun="BridgeMedia" type="rust" location="moqui_core::service::chat_bridge::web::store_bridge_media"
+            allow-remote="false">
+        <description>Internal (process#InboundItem): fetch a file a network's message names through the bridge's adapter, at
+            most maxBytes (5 MiB when empty), and keep it as a ChatAttachment of the room with no uploader and no event yet,
+            for send#Message as the external actor. A content type outside the safe list (images, audio, video, vCard, plain
+            text, PDF) is kept as application/octet-stream. An address that cannot be fetched answers error (no
+            chatAttachmentId), which is not an error of the call, so the message's transaction goes on.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="url" required="true"/>
+            <parameter name="contentType"/>
+            <parameter name="fileName"/>
+            <parameter name="maxBytes" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="chatAttachmentId"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="fileSize" type="Long"/>
+            <parameter name="error"/>
+        </out-parameters>
+    </service>
+
     <!-- ========== Delivery state ========== -->
 
     <service verb="get" noun="EventDeliveries" allow-remote="false">
@@ -512,6 +569,7 @@ along with this software (see the LICENSE.md file). If not, see
             const types = {}
             if (typeIds.length) for (const row of ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'in', typeIds).disableAuthz().list()) types[row.enumId] = row
             const STATE = {CdsPending: 'pending', CdsAccepted: 'accepted', CdsFailed: 'failed', CdsUncertain: 'uncertain'}
+            // C4-SMS: what the network's receipt said of one it took (delivered, sent, unconfirmed)
             const RANK = {failed: 4, uncertain: 3, pending: 2, accepted: 1}
             for (const row of rows) {
                 const state = STATE[row.statusEnumId] || 'pending'
@@ -519,7 +577,8 @@ along with this software (see the LICENSE.md file). If not, see
                 const entry = deliveryMap[Number(row.eventSeq)] = deliveryMap[Number(row.eventSeq)] || {state: 'accepted', retryable: false, destinations: []}
                 entry.destinations.push({chatBridgeDeliveryId: row.chatBridgeDeliveryId, chatBridgeId: row.chatBridgeId, bridgeName: bridge.name ?? null,
                     networkName: types[bridge.typeEnumId]?.description || null, state: state, reasonCode: row.reasonCode ?? null,
-                    error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain'})
+                    error: row.lastErrorText ?? null, attemptCount: Number(row.attemptCount || 0), retryable: state === 'failed' || state === 'uncertain',
+                    receipt: row.receiptStatus ?? null})
                 if (RANK[state] > RANK[entry.state]) entry.state = state
                 if (state === 'failed' || state === 'uncertain') entry.retryable = true
             }
@@ -565,6 +624,63 @@ along with this software (see the LICENSE.md file). If not, see
             ec.service.sync().name('org.moqui.impl.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
                 eventSeq: row.eventSeq}).disableAuthz().call()
         ]]></script></actions>
+    </service>
+
+    <service verb="note" noun="DeliveryReceipt" allow-remote="false">
+        <description>Internal (an adapter, for its network's delivery receipts): what became of message remoteEventId on bridge
+            chatBridgeId: status sent, delivered, unconfirmed or failed (with error), at receiptDate. A failed one fails its
+            delivery (reasonCode deliveryFailed, retryable); the others are kept as its receipt (receiptStatus) on an accepted
+            delivery. A receipt never takes a delivered message back to sent, and the same receipt again changes nothing. The
+            room hears of a change (push#DeliveryState). Out: found (a delivery of that message), changed.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="remoteEventId" required="true"/>
+            <parameter name="status" required="true"/>
+            <parameter name="error"/>
+            <parameter name="receiptDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="changed" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            found = false; changed = false
+            const RANK = {sent: 1, unconfirmed: 2, delivered: 3, failed: 3}
+            if (!RANK[status]) { ec.message.addError(`Unknown receipt status ${status}`); return }
+            const row = Array.from(ec.entity.find('moqui.chat.ChatBridgeDelivery').condition('chatBridgeId', chatBridgeId)
+                    .condition('remoteEventId', remoteEventId).forUpdate(true).disableAuthz().list())[0]
+            if (!row) return
+            found = true
+            if (row.receiptStatus === status || (RANK[row.receiptStatus] || 0) > RANK[status]) return
+            const fields = {receiptStatus: status, receiptDate: receiptDate || ec.user.nowTimestamp}
+            if (status === 'failed' && row.statusEnumId === 'CdsAccepted') Object.assign(fields, {statusEnumId: 'CdsFailed', reasonCode: 'deliveryFailed',
+                lastErrorText: error ? String(error).slice(0, 2000) : ec.l10n.localize('The network could not deliver it')})
+            row.setFields(fields, true, null, null)
+            row.update()
+            changed = true
+            ec.service.sync().name('org.moqui.impl.ChatBridgeServices.push#DeliveryState').parameters({chatRoomId: row.chatRoomId,
+                eventSeq: row.eventSeq}).disableAuthz().call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="BridgeDirect" type="rust" location="moqui_core::service::chat_bridge::web::send_bridge_direct"
+            allow-remote="false" transaction="ignore">
+        <description>Internal (SmsServices.send#SmsMessage): one message straight to a bridge's adapter, to externalRoomId,
+            outside any room: no delivery row, no retry, nothing kept. The caller has checked what the network's rules need.
+            Out: outcome (accepted, retry, failed or uncertain), remoteEventId, reasonCode, error.</description>
+        <in-parameters>
+            <parameter name="chatBridgeId" required="true"/>
+            <parameter name="externalRoomId" required="true"/>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="idempotencyKey"/>
+            <parameter name="senderUserId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="outcome"/>
+            <parameter name="remoteEventId"/>
+            <parameter name="reasonCode"/>
+            <parameter name="error"/>
+        </out-parameters>
     </service>
 
     <service verb="run" noun="BridgeDeliveries" type="rust" location="moqui_core::service::chat_bridge::run_bridge_deliveries"

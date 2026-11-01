@@ -723,4 +723,40 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="CALL_LEG_DIALED_BY"><index-field name="dialedByUserId"/><index-field name="offeredDate"/></index>
     </extend-entity>
     <!-- ========== end V5 ========== -->
+
+    <!-- ========== SMS and MMS (C4-SMS; plans/Comms-Framework.md §5.6, docs/interfaces/SMS.md) ==========
+        A number's texts go through its messagingBridgeId (a ChatBridge of type CbtSms) and land in the number pair's external
+        room (ChatRoom CrtExternal, one per our number and their number, mapped by a ChatRoomBridge whose externalRoomId is
+        "ours/theirs"). org.moqui.impl.SmsServices and Sms.js; the Telnyx adapter is crates/moqui-channels. -->
+    <entity entity-name="SmsOptOut" package="moqui.call" use="transactional" cache="never">
+        <description>Whether the person at otherNumber has opted out of texts from our phoneNumber: STOP (and its synonyms)
+            sets optedOut Y, START sets it N; HELP is kept as the last keyword. A send to an opted-out pair is refused before
+            the provider (reasonCode optedOut).</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="otherNumber" type="id" is-pk="true"/>
+        <field name="optedOut" type="text-indicator"/>
+        <field name="lastKeyword" type="text-short"/>
+        <field name="changedDate" type="date-time"/>
+    </entity>
+    <entity entity-name="SmsSendCount" package="moqui.call" use="transactional" cache="never">
+        <description>Texts sent a day, for the limits (VoicePolicy smsMaxPerUserPerDay, smsMaxPerDay): counterKey is
+            user:(userId), system (the sends with no user) or all; dayDate the day in UTC (yyyy-MM-dd).</description>
+        <field name="counterKey" type="id" is-pk="true"/>
+        <field name="dayDate" type="text-short" is-pk="true"/>
+        <field name="sentCount" type="number-integer"/>
+        <field name="lastSentDate" type="date-time"/>
+    </entity>
+    <extend-entity entity-name="VoicePolicy" package="moqui.call">
+        <field name="smsMaxPerUserPerDay" type="number-integer"><description>Texts a user may send a day (200 when empty)</description></field>
+        <field name="smsMaxPerDay" type="number-integer"><description>Texts the deployment sends a day (2000 when empty)</description></field>
+        <field name="smsSystemNumber" type="id"><description>The number the system's own texts (a sign-in code) go from;
+            it needs a messaging bridge</description></field>
+    </extend-entity>
+    <extend-entity entity-name="ChatBridgeDelivery" package="moqui.chat">
+        <field name="receiptStatus" type="text-short"><description>What the network's delivery receipt last said: sent,
+            delivered, failed or unconfirmed (C4-SMS)</description></field>
+        <field name="receiptDate" type="date-time"/>
+        <index name="CHAT_DELIVERY_REMOTE"><index-field name="chatBridgeId"/><index-field name="remoteEventId"/></index>
+    </extend-entity>
+    <!-- ========== end C4-SMS ========== -->
 </entities>

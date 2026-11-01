@@ -222,7 +222,7 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
     '👍', '👎', '👏', '🙌', '🙏', '💪', '👀', '🎉', '🔥', '✅', '❌', '⚠️', '❤️', '💡', '📌', '📎', '🚀', '☕', '🍕', '💬'];
 const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': 'Clears in an hour', '240': 'Clears in 4 hours', today: 'Clears today', week: 'Clears this week' };
-const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description' };
+const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description', CrtExternal: 'sym_o_sms' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
 const DRAFT_PREFIX = 'boss.chat.draft.';

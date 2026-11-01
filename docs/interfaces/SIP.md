@@ -150,7 +150,8 @@ current documentation; the live check will settle them.
 - Emergency: Telnyx's emergency calling is set up per number, with an address it validates. Enable it on the
   callback number in the portal, and put Telnyx's address id in the `EmergencyLocation`'s provider reference. Then
   mark the trunk emergency-capable.
-- SMS is through Telnyx's messaging API (C4), and does not need the SIP trunk.
+- SMS is through Telnyx's messaging API, and does not need the SIP trunk ([SMS](SMS.md)). A number with a messaging
+  bridge puts its calls and voicemail in the same room as its texts with each outside number (below).
 
 ### Other providers
 

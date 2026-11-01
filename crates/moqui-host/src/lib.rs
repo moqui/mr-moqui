@@ -37,6 +37,9 @@ use moqui_git as _;
 use moqui_mail as _;
 // The reports, in every build, the same way.
 use moqui_report as _;
+// The business messaging channels (the sms chat bridge adapter), the same way.
+#[cfg(feature = "channels")]
+use moqui_channels as _;
 
 pub mod chromium;
 // The database drivers (crates/moqui-drivers), at their old path.
@@ -84,6 +87,8 @@ mod worker;
 mod cluster_edge;
 mod cluster_notify;
 
+#[cfg(feature = "axum")]
+mod channels;
 #[cfg(feature = "axum")]
 mod dav_http;
 #[cfg(all(feature = "git", any(feature = "axum", feature = "ssh")))]

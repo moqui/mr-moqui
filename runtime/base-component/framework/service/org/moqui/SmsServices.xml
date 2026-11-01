@@ -12,8 +12,17 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- The system's sender of texts (plans/Comms-Framework.md §5.6, C4-SMS; docs/interfaces/SMS.md), with the interface of the
+    Java stub kept, so UserServices.send#AuthcCodeSms sends sign-in codes through it. The logic is
+    org/moqui/impl/Sms.js; the provider's adapter is crates/moqui-channels. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="send" noun="SmsMessage" authenticate="anonymous-view">
+    <service verb="send" noun="SmsMessage" authenticate="anonymous-view" allow-remote="false">
+        <description>Send a text from fromNumber (empty: the system's number, VoicePolicy.smsSystemNumber, which needs a
+            messaging bridge) straight to its provider, kept in no room, so a sign-in code is seen by nobody else. userId: who
+            it is from (their caller-ID grants and limits); empty, the system's limits. The checks before the provider are
+            SmsServices.check#SmsSend's: the destination's class (international and premium off until enabled), the person's
+            opt-out (STOP), the day's limits, and for isPromotional a yes from an sms-consent provider. A refusal is an error,
+            with reasonCode. Not callable from outside the server.</description>
         <in-parameters>
             <parameter name="countryCode" default-value="1"/>
             <parameter name="areaCode"/>
@@ -21,15 +30,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <description>If there is a single string for phone number pass it here, may include a country code if begins with '+'</description></parameter>
             <parameter name="message" required="true"/>
             <parameter name="isPromotional" default="false" type="Boolean"/>
+            <parameter name="fromNumber"><description>One of our numbers with messaging; empty for the system's</description></parameter>
+            <parameter name="userId"><description>Who sends it, for their grants and limits; empty for the system</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="successful" type="Boolean"/>
             <parameter name="messageId"/>
             <parameter name="errorMessage"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
-        <actions>
-            <log level="warn" message="No SMS implementation in place, attempt to send SMS message [${message}] to ${countryCode}-${areaCode}-${contactNumber}"/>
-            <return type="danger" message="No SMS implementation in place, not sending message"/>
-        </actions>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Sms.js').execute('sendMessage', context))</script></actions>
     </service>
 </services>

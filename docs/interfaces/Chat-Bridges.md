@@ -4,7 +4,7 @@ A chat room can reach outside Moqui: a connector maps it to a room or conversati
 Telegram, Slack and others), and a native endpoint (XMPP, Matrix) serves Moqui rooms to their clients. This is the layer
 under both: chat actors, the input from a network, and the durable delivery of what goes out. The design is
 [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.1, §4.3 and §4.4, milestone C1. C1 has no network adapter
-of its own: C4-SMS adds the first. The user guide is [Comms](../tools/Comms.md#bridged-rooms).
+of its own: C4-SMS adds the first, `sms` on Telnyx ([SMS](SMS.md)). The user guide is [Comms](../tools/Comms.md#bridged-rooms).
 
 - **Entities:** the C1 block at the end of `framework/entity/ChatEntities.xml` (`ChatActor`, `ChatExternalUser`,
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
@@ -48,7 +48,15 @@ A network adapter implements `ChatBridgeAdapter` (moqui-core `service/chat_bridg
 | `name` | The name a `ChatBridge` row selects it by: its `adapterName`, else its network's enumeration code (`sms`, `whatsapp`, `xmpp` and so on). |
 | `capabilities` | `edit`, `delete`, `reaction`, `idempotent` (the network dedupes a send by its idempotency key), `sends_per_minute` (0: no limit). Each implementation narrows these to the API version it verified. |
 | `start`, `stop` | Connect the bridge on this node, or disconnect it. An error marks the bridge not connected, with the error as its last error, and the next round tries again. |
-| `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room, the kind, the text and HTML, the sender's name, the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. |
+| `deliver` | Send one event (`DeliveryRequest`: the idempotency key, the external room, the kind, the text and HTML, the sender's name and local user, the message's files (`attachments`, its `ChatAttachment` rows in order), the network id of the message an edit, reaction or delete is about, the reaction key, the attempt) and answer `Accepted` (the network's id), `Retry` (with `not_connected`), `Failed` (a reason code) or `Uncertain`. A request with no room is a direct send (`send#BridgeDirect`, below). |
+| `webhook` | A request to the bridge's webhook route, `POST /channels/{chatBridgeId}/webhook` (C4-SMS): the raw body, read within its bound, and the headers. The adapter checks the network's signature over those bytes and its replay window before it parses anything, then hands what came to `ingest#Event`. The default answers 404. |
+| `fetch_media` | The bytes of a file a network's message names, within a bound (`store#BridgeMedia`). The default fetches nothing. |
+
+The web side is `chat_bridge_web.rs`: `chat_bridge::webhook` (the host's route; an unknown bridge or one with no adapter
+404, a disabled one 503), `media_url` and `media` (a file of a message that goes out by address, signed under
+`channels_media_key` for one bridge and an expiry, served only for a message delivered to that bridge),
+`store#BridgeMedia` and `send#BridgeDirect` (one message straight to an adapter outside any room, no delivery row: the
+system's sign-in codes by SMS).
 
 A framework crate lists its adapters in `Extension::chat_bridge_adapters` (`moqui_core::extension`);
 `chat_bridge::register_adapter` adds one to a factory at run time (the tests' in-memory adapter). Protocol I/O is the
@@ -66,7 +74,8 @@ session), hands a batch to `ChatBridgeServices.ingest#Event`, which follows the 
 contract:
 
 1. **Security first, for the whole batch.** An unknown or disabled bridge, a token that does not match the bridge's
-   `inboundTokenHash` (SHA-256, compared in constant time), a malformed transaction id, a batch over 200 items or 1 MB, or
+   `inboundTokenHash` (SHA-256, compared in constant time; not asked with `transportVerified`, which only an adapter that
+   checked the network's signature itself sets, from its webhook), a malformed transaction id, a batch over 200 items or 1 MB, or
    an item that names a local user (`userId`, `senderUserId`, `localUserId`, `chatActorId`, `senderActorId`) refuses the
    batch with its reason code before anything is stored.
 2. **Stored before it is acknowledged.** The batch is a `ChatBridgeInbound` row, unique on the bridge and transaction
@@ -76,7 +85,9 @@ contract:
    node's round) never turns a final outcome back into waiting or an accepted item into one rejected by the race it lost.
 3. **Each item on its own**, in order, in a transaction of its own (`process#InboundItem`): a malformed item is rejected
    by its `itemId` (`malformed`, `attachmentsUnsupported`, `noMapping`, `notInbound`, `notMember`, `archived`, `notOwn`)
-   and the others go on.
+   and the others go on. A message's files come as `media` (up to 10 addresses): each is fetched by the adapter in the
+   item's transaction (`store#BridgeMedia`, a safe content type, no uploader) and sent with the message; one that cannot
+   be fetched is named in the message's text and the rest go on. An `attachments` list is still refused.
 4. **Mapped once.** An item maps to a local event through `ChatEventExternal`, unique on the bridge, the external room
    and the external event id, written before the event: one seen before is a `duplicate`, and one this server sent there
    (origin outbound) is an `echo`. Both change nothing.
@@ -149,4 +160,5 @@ bridges and the failed deliveries with Send again, and disables or enables a bri
 - `basic-comms/test/BasicCommsBridges.spec.js`: a bridged room that is not connected in the browser, the terminal and the
   admin screen, and who may retry and administer.
 
-**Not checked live:** no real network. C1 has no network adapter; each one (C4-SMS on) is checked against its provider.
+**Not checked live:** no real network. C1 has no network adapter; each one is checked against its provider. C4-SMS's
+Telnyx adapter is checked against a fake Telnyx ([SMS, Tests](SMS.md#tests)), not Telnyx itself.

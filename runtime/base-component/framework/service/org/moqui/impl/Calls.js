@@ -186,7 +186,8 @@ function canSee(session, userId) {
   if (participant && participant.admissionStatusId !== 'CasRevoked') return true
   if (participant) return false
   if (linkOwner(session) === userId) return true
-  return session.kindEnumId !== 'CskDirect' && roomMember(session.chatRoomId, userId)
+  // a phone call in its number pair's room (C4-SMS) is shown there, but the room's members are not in it
+  return session.kindEnumId !== 'CskDirect' && session.kindEnumId !== 'CskPhone' && roomMember(session.chatRoomId, userId)
 }
 
 /** The owner of the call link a meeting was opened by. */
@@ -1754,7 +1755,8 @@ function makePhoneParticipant(session, displayName, admission) {
  * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee; silent (V2: the user is
  * busy, the call goes straight to voicemail) offers the user's leg without ringing it, and with no userId (V2: the
  * voicemail access number) nobody is rung and the call is active at once. ringExpireSeconds (V2) keeps an inbound call
- * ringing past call_ring_seconds while its voicemail waits for more rings.
+ * ringing past call_ring_seconds while its voicemail waits for more rings. chatRoomId (C4-SMS) is the room of the number
+ * pair (our number, theirs), where the call's start and end are shown with the pair's texts; it changes nothing else.
  */
 function startPhone(p) {
   const userId = p.userId
@@ -1779,9 +1781,10 @@ function startPhone(p) {
     directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
     video: 'N', startedByUserId: outbound ? userId : null, idempotencyKey: key, startedDate: now,
     ringExpireDate: new Date(nowMs() + expireSeconds * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
-    encryptionMode: 'dtls-srtp',
+    encryptionMode: 'dtls-srtp', chatRoomId: p.chatRoomId || null,
   }, true, null, null)
   session.create()
+  if (session.chatRoomId) roomEvent(session, 'started', { phoneNumber: p.phoneNumber || null })
   const name = p.displayName || p.phoneNumber
   let userLeg
   let phoneLeg

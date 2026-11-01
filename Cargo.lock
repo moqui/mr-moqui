@@ -4357,6 +4357,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-channels"
+version = "0.1.0"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.23.1",
+ "jiff",
+ "moqui-core",
+ "moqui-lib",
+ "reqwest",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "moqui-collab"
 version = "0.1.0"
 dependencies = [
@@ -4561,6 +4575,7 @@ dependencies = [
  "libc",
  "lsp-server",
  "lsp-types",
+ "moqui-channels",
  "moqui-collab",
  "moqui-core",
  "moqui-dav",
