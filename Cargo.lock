@@ -4720,6 +4720,7 @@ dependencies = [
  "rustls-webpki",
  "sasl",
  "serde_json",
+ "sha1 0.11.0",
  "sha2 0.11.1",
  "str0m",
  "tokio",

@@ -13,7 +13,7 @@
  */
 
 //! The local node's dialer (plans/Edge-Node.md §5.1): it opens the up connection (this node the HTTP/2 client, Hello
-//! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`]), keeps them alive with HTTP/2
+//! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`] and its web app, [`super::down`]), keeps them alive with HTTP/2
 //! PINGs and a Ping that measures the round trip, and dials again with a backoff when either drops. A panic in one
 //! attempt is caught and logged, and the loop goes on (docs/dev/Practices-Rust.md §8).
 
@@ -252,22 +252,17 @@ async fn connect_down(
     let mut role = vec![ROLE_DOWN];
     role.extend_from_slice(&generation.to_be_bytes());
     let stream = dial_role(prepared, config.connect_timeout, &role).await?;
-    let service = LocalLinkServer::new(LocalService {
+    let grpc = LocalLinkServer::new(LocalService {
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
     });
-    let mut builder = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new());
-    builder
-        .timer(hyper_util::rt::TokioTimer::new())
-        .keep_alive_interval(config.keepalive)
-        .keep_alive_timeout(config.keepalive);
+    // the link's calls, and this node's web app and tunnels (plans/Edge-Node.md §5.3)
+    let builder = super::down::builder(config.keepalive, config.web.as_ref());
+    let service = super::down::service(grpc, config.web.clone());
     let (ended_tx, ended) = watch::channel(false);
     let driver = tokio::spawn(async move {
         let served = builder
-            .serve_connection(
-                hyper_util::rt::TokioIo::new(stream),
-                hyper_util::service::TowerToHyperService::new(service),
-            )
+            .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
             .await;
         if let Err(err) = served {
             tracing::debug!("edge link down connection ended: {err}");

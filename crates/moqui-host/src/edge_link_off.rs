@@ -16,12 +16,17 @@
 //! `org.moqui.impl.EdgeServices` answers "edge link not built into this host", and the HTTPS listener has no hand-off.
 //! The same API as `edge_link/` for `http.rs`.
 
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use axum::response::Response;
 use moqui_core::context::ExecutionContextFactory;
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
+
+use crate::http::{DownServe, Peer};
 
 /// Never made: no connection is handed to the link.
 pub(crate) enum Acceptor {}
@@ -47,12 +52,42 @@ impl Acceptor {
     }
 }
 
+/// Never made: no host goes down a link.
+pub(crate) enum WebFront {}
+
+/// Never made.
+#[derive(Clone)]
+pub(crate) enum Target {}
+
+impl WebFront {
+    pub(crate) fn target<B>(&self, _request: &http::Request<B>) -> Option<Target> {
+        match *self {}
+    }
+
+    pub(crate) fn forward<B>(
+        &self,
+        target: Target,
+        _request: http::Request<B>,
+        _peer: &Peer,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        match target {}
+    }
+}
+
+/// What [`start`] gives the listeners: nothing.
+#[derive(Default)]
+pub(crate) struct Started {
+    pub acceptor: Option<Arc<Acceptor>>,
+    pub front: Option<Arc<WebFront>>,
+}
+
 /// Nothing to start; on an edge node, say that this binary cannot be one.
 pub(crate) fn start(
     _factory: &Arc<ExecutionContextFactory>,
     _resolver: Option<Arc<dyn rustls::server::ResolvesServerCert>>,
     _shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Option<Arc<Acceptor>> {
+    _down: DownServe,
+) -> Started {
     if moqui_core::edge::is_edge_node() {
         tracing::error!(
             "node_role is edge, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
@@ -66,5 +101,8 @@ pub(crate) fn start(
             "edge_node_url is set, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
-    None
+    Started::default()
 }
+
+/// Nothing to let go of.
+pub(crate) fn stopped(_factory: &ExecutionContextFactory) {}

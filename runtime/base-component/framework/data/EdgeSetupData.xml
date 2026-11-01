@@ -13,11 +13,15 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.impl.EdgeServices, plans/Edge-Node.md): the statuses of a
-    paired local node. -->
+    paired local node, and the modes of its public host names. -->
 <entity-facade-xml type="seed">
     <moqui.basic.StatusType statusTypeId="EdgeClient" description="Edge Client"/>
     <moqui.basic.StatusItem statusId="EdgeClientActive" statusTypeId="EdgeClient" sequenceNum="1" description="Active" statusColor="positive"/>
     <moqui.basic.StatusItem statusId="EdgeClientRevoked" statusTypeId="EdgeClient" sequenceNum="2" description="Revoked" statusColor="negative"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientActive" toStatusId="EdgeClientRevoked" transitionName="Revoke"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EdgeClientRevoked" toStatusId="EdgeClientActive" transitionName="Pair Again"/>
+
+    <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
+    <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>
+    <moqui.basic.Enumeration enumId="EdgeHostTerminate" enumTypeId="EdgeHostMode" sequenceNum="2" description="Terminate"/>
 </entity-facade-xml>

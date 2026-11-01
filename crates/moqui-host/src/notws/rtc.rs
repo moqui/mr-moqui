@@ -622,7 +622,7 @@ struct GuestScope {
 /// (revoked, expired, the guest denied or removed) the page is told the call ended and the socket closes.
 /// Adds `/callws` to the routes.
 pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
-    app.route("/callws", axum::routing::get(guest_upgrade))
+    app.route("/callws", axum::routing::get(guest_upgrade).connect(guest_upgrade))
 }
 
 pub(crate) async fn guest_upgrade(

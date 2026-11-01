@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::edge::{EdgeLink, LinkState, LinkStatus, PairResult, PairingCode};
+use crate::edge::{EdgeHostInfo, EdgeLink, LinkState, LinkStatus, PairResult, PairingCode};
 
 /// The tests install into the one process-wide slot, so they take turns.
 fn slot_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -76,6 +76,22 @@ impl EdgeLink for Fake {
     }
     fn ping_client(&self, _paired_node_id: &str) -> Result<f64, LibError> {
         Ok(2.0)
+    }
+    fn hosts(&self, paired_node_id: Option<&str>) -> Result<Vec<EdgeHostInfo>, LibError> {
+        Ok(vec![EdgeHostInfo {
+            host_name: "erp.example.com".to_string(),
+            paired_node_id: paired_node_id.unwrap_or("local-1").to_string(),
+            mode_enum_id: crate::edge::HOST_TERMINATE.to_string(),
+        }])
+    }
+    fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, LibError> {
+        Ok(EdgeHostInfo {
+            host_name: host.host_name.to_ascii_lowercase(),
+            ..host.clone()
+        })
+    }
+    fn remove_host(&self, host_name: &str) -> Result<bool, LibError> {
+        Ok(host_name == "erp.example.com")
     }
 }
 
@@ -148,5 +164,36 @@ fn the_services_pass_their_parameters_through_and_shape_the_answers() {
     assert_eq!(revoked["revoked"], Value::Bool(true));
     let ping = ping_edge_client(&params(&[("pairedNodeId", "local-1")]), &facade).unwrap();
     assert_eq!(ping["rttMs"], Value::F64(2.0));
+    let hosts = get_edge_hosts(&params(&[("pairedNodeId", "local-2")]), &facade).unwrap();
+    let Some(Value::List(list)) = hosts.get("hostList") else {
+        panic!("hostList")
+    };
+    let Some(Value::Map(row)) = list.first() else {
+        panic!("a host")
+    };
+    assert_eq!(to_plain_string(&row["pairedNodeId"]), "local-2");
+    assert_eq!(to_plain_string(&row["modeEnumId"]), "EdgeHostTerminate");
+    let added = add_edge_host(
+        &params(&[("hostName", "ERP.example.com"), ("pairedNodeId", "local-1")]),
+        &facade,
+    )
+    .unwrap();
+    assert_eq!(to_plain_string(&added["hostName"]), "erp.example.com");
+    assert_eq!(
+        to_plain_string(&added["modeEnumId"]),
+        "EdgeHostPassthrough",
+        "passthrough by default"
+    );
+    let bad = add_edge_host(
+        &params(&[
+            ("hostName", "a.test"),
+            ("pairedNodeId", "local-1"),
+            ("modeEnumId", "Other"),
+        ]),
+        &facade,
+    );
+    assert!(bad.is_err());
+    let removed = remove_edge_host(&params(&[("hostName", "erp.example.com")]), &facade).unwrap();
+    assert_eq!(removed["removed"], Value::Bool(true));
     crate::edge::clear_edge_link();
 }

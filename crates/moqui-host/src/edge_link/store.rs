@@ -29,7 +29,7 @@ use super::proto::Hello;
 
 const CLIENT: &str = "moqui.edge.EdgeClient";
 const PAIRING_CODE: &str = "moqui.edge.EdgePairingCode";
-const ACTIVE: &str = "EdgeClientActive";
+pub(crate) const ACTIVE: &str = "EdgeClientActive";
 const REVOKED: &str = "EdgeClientRevoked";
 /// One message for every code that does not pair, so a guess learns nothing.
 const BAD_CODE: &str = "the pairing code is unknown, used or expired";
@@ -46,14 +46,33 @@ fn text(value: Option<&Value>) -> String {
     value.map(to_plain_string).unwrap_or_default()
 }
 
-fn transaction<T>(
+pub(crate) fn transaction<T>(
     facade: &moqui_core::entity::EntityFacade,
     entity: &str,
     body: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
+    run(facade, entity, TransactionAttribute::UseOrBegin, body)
+}
+
+/// [`transaction`] in a transaction of its own, committed when it returns: for a change the caller then acts on in
+/// memory, which must not be rolled back by a caller's transaction after that.
+pub(crate) fn committed<T>(
+    facade: &moqui_core::entity::EntityFacade,
+    entity: &str,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    run(facade, entity, TransactionAttribute::ForceNew, body)
+}
+
+fn run<T>(
+    facade: &moqui_core::entity::EntityFacade,
+    entity: &str,
+    attribute: TransactionAttribute,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let tx = facade.transactions_for(entity)?;
-    tx.run(TransactionAttribute::UseOrBegin, Some(Duration::from_secs(30)), body)
+    tx.run(attribute, Some(Duration::from_secs(30)), body)
 }
 
 /// The paired node of an active key, with its next generation saved: the up connection's identity.

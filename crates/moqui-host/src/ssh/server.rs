@@ -274,7 +274,18 @@ pub fn start(
         dialog,
         git_password_auth,
     });
-    crate::edge::handle().spawn(accept_loop(listener, config, shared, watch, max_sessions));
+    let intake = Arc::new(Intake {
+        config,
+        shared,
+        counts: Arc::new(Counts {
+            preauth: AtomicUsize::new(0),
+            sessions: AtomicUsize::new(0),
+            max_sessions,
+        }),
+        shutdown: watch,
+    });
+    *moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0) = Some(Arc::clone(&intake));
+    crate::edge::handle().spawn(accept_loop(listener, intake));
     *moqui_lib::sync::lock(&factory.extension(|_| SshAddress::default()).0) = Some(address);
     tracing::info!("SSH server listening on {address}");
     // For the cluster member row: peers pin this key, and the ssh:// base URL defaults to this address.
@@ -382,18 +393,47 @@ async fn dialog_expired(slot: &Slot, since: tokio::time::Instant) {
     std::future::pending::<()>().await;
 }
 
-async fn accept_loop(
-    listener: TcpListener,
+/// What serves one connection: the server's settings, its shared state and counts, and its stop. The listener hands
+/// it each TCP connection, and an edge link's SSH tunnel hands it a tunnel stream with the client's address
+/// ([`serve_stream`], plans/Edge-Node.md §5.3).
+struct Intake {
     config: Arc<russh::server::Config>,
     shared: Arc<Shared>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-    max_sessions: usize,
-) {
-    let counts = Arc::new(Counts {
-        preauth: AtomicUsize::new(0),
-        sessions: AtomicUsize::new(0),
-        max_sessions,
-    });
+    counts: Arc<Counts>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+}
+
+/// The server's [`Intake`], kept on the factory while it runs.
+#[derive(Default)]
+struct IntakeSlot(std::sync::Mutex<Option<Arc<Intake>>>);
+
+/// Serve `stream` as a connection from `peer` to this factory's SSH server, as one the listener accepted: the edge
+/// link's SSH tunnel. False when no SSH server runs.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn serve_stream<S>(factory: &ExecutionContextFactory, stream: S, peer: SocketAddr) -> bool
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let intake = moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0).clone();
+    match intake {
+        Some(intake) if !*intake.shutdown.borrow() => {
+            intake.serve(stream, peer);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Whether this factory's SSH server runs, to take [`serve_stream`].
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn running(factory: &ExecutionContextFactory) -> bool {
+    moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0)
+        .as_ref()
+        .is_some_and(|intake| !*intake.shutdown.borrow())
+}
+
+async fn accept_loop(listener: TcpListener, intake: Arc<Intake>) {
+    let mut shutdown = intake.shutdown.clone();
     loop {
         let accepted = tokio::select! {
             _ = shutdown.changed() => return,
@@ -402,15 +442,26 @@ async fn accept_loop(
         let Ok((stream, peer)) = accepted else {
             continue;
         };
-        let Some(slot) = Slot::preauth(&counts) else {
+        let _ = stream.set_nodelay(true);
+        intake.serve(stream, peer);
+    }
+}
+
+impl Intake {
+    /// Serve one connection from `peer` in a task of its own, or close it when too many wait to log in.
+    fn serve<S>(&self, stream: S, peer: SocketAddr)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let Some(slot) = Slot::preauth(&self.counts) else {
             tracing::warn!("SSH connection from {peer} refused: {MAX_PREAUTH} connections are waiting to log in");
             drop(stream);
-            continue;
+            return;
         };
         let slot = Arc::new(slot);
         let since = tokio::time::Instant::now();
         let handler = Connection {
-            shared: Arc::clone(&shared),
+            shared: Arc::clone(&self.shared),
             slot: Arc::clone(&slot),
             peer,
             username: None,
@@ -426,10 +477,9 @@ async fn accept_loop(
             terminal_env: HashMap::new(),
             git_protocol: HashMap::new(),
         };
-        let config = Arc::clone(&config);
-        let mut stop = shutdown.clone();
+        let config = Arc::clone(&self.config);
+        let mut stop = self.shutdown.clone();
         tokio::spawn(async move {
-            let _ = stream.set_nodelay(true);
             // The version exchange waits on the client too, so the login deadline covers it.
             let deadline = since + PREAUTH_TIMEOUT;
             match tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler)).await {

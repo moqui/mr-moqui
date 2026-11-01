@@ -64,6 +64,9 @@ pub mod lsp;
 mod monitor;
 #[cfg(feature = "pdf")]
 pub mod pdf;
+// The PROXY header of the SMTP listener and of the edge link's passthrough tunnels.
+#[cfg(any(feature = "inbound-smtp", feature = "edge"))]
+mod proxy_header;
 pub mod qvt_report;
 pub mod search;
 #[cfg(feature = "inbound-smtp")]

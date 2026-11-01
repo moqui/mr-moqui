@@ -783,6 +783,14 @@ pub fn start_second(label: &str, data: Option<&str>, extra_conf: &str) -> Gate {
     )
 }
 
+/// [`start_second`] with more conf, process properties set before it boots (and cleared when it drops), and files
+/// written into its runtime directory first: another node beside the first, such as an edge node in front of it. The
+/// first gate's server has read its own properties already; the two still share every property neither sets.
+#[allow(dead_code)]
+pub fn start_second_with(label: &str, extra_conf: &str, properties: &[(&str, &str)], files: &[(&str, &str)]) -> Gate {
+    start_seeded_under(None, label, false, None, extra_conf, properties, files, &[])
+}
+
 /// Another member of a gate's cluster, in this process (a child process the gate's test started): a server on its own
 /// runtime directory against the gate's running database at `cluster_dir`, whose postmaster it adopts and leaves
 /// running. Its process properties are set first. Drop the server before the runtime directory.

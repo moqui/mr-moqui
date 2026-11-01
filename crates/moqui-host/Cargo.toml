@@ -90,6 +90,8 @@ edge = [
     "hyper/client",
     "hyper-util/http2",
     "hyper-util/service",
+    "axum/http2",
+    "dep:sha1",
 ]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
@@ -146,6 +148,8 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 rcgen = { workspace = true }
 sha2 = { workspace = true }
+# The WebSocket accept key of a forwarded upgrade on an edge node (src/edge_link/web.rs). Already in the graph.
+sha1 = { workspace = true, optional = true }
 base64 = { workspace = true }
 serde_json = { workspace = true }
 flate2 = { workspace = true, optional = true }

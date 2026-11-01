@@ -1,5 +1,5 @@
-// The edge link's System screens (plans/Edge-Node.md §5.7): Edge Node (its status, and the Pair wizard's two steps) and Edge
-// Clients render in qvt and tui with no error, each with the text of this node's case: no link in this process (a build
+// The edge link's System screens (plans/Edge-Node.md §5.3, §5.7): Edge Node (its status, and the Pair wizard's two steps) and Edge
+// Clients (with its host names) render in qvt and tui with no error, each with the text of this node's case: no link in this process (a build
 // without it, or one where no HTTP listener started it), a local node not paired yet, or an edge node (node_role=edge).
 // No edge node is reached. moqui test starts no HTTP listener, which installs the link, so a plain run is the first
 // case and the others skip. --serve starts the listener only after the specs, so the local and edge cases are checked
@@ -61,6 +61,35 @@ feature("on an edge node, Make a pairing code shows a new code once and keeps on
         first.includes("It is shown only this once")
         !second.includes("It is shown only this once")
         first.includes("This edge node&#39;s link key fingerprint") || first.includes("This edge node's link key fingerprint")
+    }
+})
+
+// A served run with a paired local node: the host name is removed again.
+feature("on an edge node, a host name is added for a paired node, listed, and removed", {
+    given() {
+        if (caseOf(linkStatus()) !== "edge") skip(NEEDS_EDGE)
+        const out = ec.service.sync().name("org.moqui.impl.EdgeServices.get#EdgeClients").disableAuthz().call() || {}
+        const node = Array.from(out.clientList || []).find((client) => client.statusId === "EdgeClientActive")
+        if (!node) skip("needs a local node paired with this edge node")
+        return {node: node.pairedNodeId}
+    },
+    when({node}) {
+        const hostName = "edge-spec-host.example.com"
+        const test = ec.screen.makeTest().rootScreen(systemRoot).renderMode("qvt").withStaticData()
+        const added = test.render("EdgeClients/addHost", {hostName: "Edge-Spec-Host.example.com", pairedNodeId: node, modeEnumId: "EdgeHostTerminate"}, "post")
+        const listed = String(test.render("EdgeClients", {lastStandalone: "-2"}, null).output || "")
+        const removed = test.render("EdgeClients/removeHost", {hostName}, "post")
+        const after = String(test.render("EdgeClients", {lastStandalone: "-2"}, null).output || "")
+        ec.message.clearErrors()
+        return {hostName, addedErrors: added.errorMessages.join(" | "), listed,
+            removedErrors: removed.errorMessages.join(" | "), after}
+    },
+    then({hostName, addedErrors, listed, removedErrors, after}) {
+        addedErrors == ""
+        listed.includes(hostName)
+        listed.includes("Terminate")
+        removedErrors == ""
+        !after.includes(hostName)
     }
 })
 

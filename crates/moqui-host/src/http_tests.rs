@@ -22,7 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use super::{header_map, http_port, serve, status_allowed, ListenLimits, TlsConnection};
+use super::{header_map, http_port, serve, status_allowed, ListenLimits, TlsConnection, WebApp};
 use crate::guard::Guard;
 use crate::tls;
 
@@ -343,9 +343,15 @@ async fn a_slow_request_head_is_closed_and_holds_no_connection_slot() {
     };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let permits = Arc::new(Semaphore::new(limits.connections));
-    let server = tokio::spawn(serve(listener, None, app, limits, unguarded(), permits, async move {
-        let _ = stopped.await;
-    }));
+    let server = tokio::spawn(serve(
+        listener,
+        None,
+        WebApp::new(app, limits, unguarded()),
+        permits,
+        async move {
+            let _ = stopped.await;
+        },
+    ));
 
     // The one slot is taken by a client that never finishes its request head.
     let started = Instant::now();
@@ -388,9 +394,15 @@ async fn a_stop_waits_for_open_requests_only_until_the_shutdown_deadline() {
     };
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let permits = Arc::new(Semaphore::new(limits.connections));
-    let server = tokio::spawn(serve(listener, None, app, limits, unguarded(), permits, async move {
-        let _ = stopped.await;
-    }));
+    let server = tokio::spawn(serve(
+        listener,
+        None,
+        WebApp::new(app, limits, unguarded()),
+        permits,
+        async move {
+            let _ = stopped.await;
+        },
+    ));
     let mut stuck = TcpStream::connect(address).await.unwrap();
     stuck.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -445,17 +457,21 @@ async fn a_request_over_tls_is_marked_secure() {
                     acceptor: tokio_rustls::TlsAcceptor::from(config),
                     edge: None,
                 }),
-                app.clone(),
-                limits,
-                unguarded(),
+                WebApp::new(app.clone(), limits, unguarded()),
                 Arc::clone(&permits),
                 async move {
                     let _ = secure_stopped.await;
                 },
             ),
-            serve(plain_listener, None, app, limits, unguarded(), permits, async move {
-                let _ = plain_stopped.await;
-            }),
+            serve(
+                plain_listener,
+                None,
+                WebApp::new(app, limits, unguarded()),
+                permits,
+                async move {
+                    let _ = plain_stopped.await;
+                }
+            ),
         );
     });
 
@@ -504,9 +520,15 @@ async fn guarded(
     let app = Router::new().fallback(|| async { "ok" });
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let permits = Arc::new(Semaphore::new(limits.connections));
-    let server = tokio::spawn(serve(listener, None, app, limits, guard, permits, async move {
-        let _ = stopped.await;
-    }));
+    let server = tokio::spawn(serve(
+        listener,
+        None,
+        WebApp::new(app, limits, guard),
+        permits,
+        async move {
+            let _ = stopped.await;
+        },
+    ));
     (address, stop, server)
 }
 
@@ -638,4 +660,36 @@ fn status_routes_allow_loopback_only() {
     assert!(status_allowed("", &mapped.to_canonical().to_string()));
     assert!(!status_allowed("127.0.0.1", "203.0.113.5"));
     assert!(status_allowed("10.0.0.9, 203.0.113.5", "203.0.113.5"));
+}
+
+#[tokio::test]
+async fn a_websocket_over_extended_connect_is_checked_as_a_get() {
+    let guard = crate::guard::tests::guard(
+        r#"<web-protection enabled="true"><requests methods="GET,POST"/></web-protection>"#,
+        "",
+    );
+    let app = Router::new().fallback(|| async { "ok" });
+    let web = WebApp::new(app, ListenLimits::defaults(), guard);
+    let peer = super::Peer {
+        remote: "203.0.113.9:4000".parse().unwrap(),
+        client: "203.0.113.9".parse().unwrap(),
+        secure: true,
+        https: true,
+        exporter: None,
+    };
+    let connect = || {
+        axum::http::Request::builder()
+            .method(axum::http::Method::CONNECT)
+            .uri("/notws")
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+    // a client's own CONNECT is not an allowed method
+    let refused = super::serve_request(&web, connect(), &peer).await.unwrap();
+    assert_eq!(refused.status(), 405);
+    // the down connection's WebSocket, marked as such, is checked as the GET of an upgrade
+    let mut websocket = connect();
+    websocket.extensions_mut().insert(super::ExtendedConnect);
+    let taken = super::serve_request(&web, websocket, &peer).await.unwrap();
+    assert_eq!(taken.status(), 200);
 }

@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
-<!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node. For now
-    it is the edge link only (E1): local nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by
-    ALPN); no web access, comms or PASS go over the link yet.
+<!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node. Local
+    nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by ALPN). It gives them web access: the host
+    names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port). No comms or PASS go over
+    the link yet. A client-ip-header here needs trusted-proxies, or it is ignored.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
     addresses, ports) go in .env.

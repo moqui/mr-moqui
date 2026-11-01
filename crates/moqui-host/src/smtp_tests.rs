@@ -347,12 +347,12 @@ async fn a_proxy_header_names_the_client_which_must_be_allowed_too() {
         "554 5.7.1 mx.test does not take mail from this address"
     );
     let mut v2 = Client::connect(address).await;
-    let mut header = PROXY_V2.to_vec();
+    let mut header = crate::proxy_header::V2_SIGNATURE.to_vec();
     header.extend_from_slice(&[0x21, 0x11, 0, 12, 192, 0, 2, 10, 127, 0, 0, 1, 0x9C, 0x40, 0, 25]);
     v2.send_bytes(&header).await;
     assert_eq!(v2.reply().await, "220 mx.test ESMTP mr-moqui");
     let mut local = Client::connect(address).await;
-    let mut header = PROXY_V2.to_vec();
+    let mut header = crate::proxy_header::V2_SIGNATURE.to_vec();
     header.extend_from_slice(&[0x20, 0x00, 0, 0]);
     local.send_bytes(&header).await;
     assert_eq!(local.reply().await, "220 mx.test ESMTP mr-moqui");

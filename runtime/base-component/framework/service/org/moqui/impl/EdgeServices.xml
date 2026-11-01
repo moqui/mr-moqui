@@ -12,8 +12,9 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (plans/Edge-Node.md §5.7) for the System app: on a local node its Edge Node screen (check, pair, status,
-    unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired local nodes, revoke). The
+<!-- The edge link (plans/Edge-Node.md §5.3, §5.7) for the System app: on a local node its Edge Node screen (check, pair,
+    status, unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired local nodes,
+    revoke, their public host names). The
     bodies are Rust (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/,
     the edge feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into
     this host", except get#LinkStatus, which answers state notBuilt (or notStarted in a binary with the link but no
@@ -146,5 +147,38 @@ along with this software (see the LICENSE.md file). If not, see
             trip.</description>
         <in-parameters><parameter name="pairedNodeId" required="true"/></in-parameters>
         <out-parameters><parameter name="rttMs" type="Double"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="EdgeHosts" type="rust" location="moqui_core::service::edge::get_edge_hosts"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: the public host names of the paired local nodes (moqui.edge.EdgeHost), of one
+            node when pairedNodeId is given.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters>
+            <parameter name="hostList" type="List"><parameter name="host" type="Map">
+                <parameter name="hostName"/><parameter name="pairedNodeId"/><parameter name="modeEnumId"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="add" noun="EdgeHost" type="rust" location="moqui_core::service::edge::add_edge_host"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: a public host name for a paired local node, EdgeHostPassthrough (the default) or
+            EdgeHostTerminate; for a name the node has already, its mode changes. The name is saved in lower case with no
+            port; a name another node has is refused. The edge node uses it at once.</description>
+        <in-parameters>
+            <parameter name="hostName" required="true"/>
+            <parameter name="pairedNodeId" required="true"/>
+            <parameter name="modeEnumId" default-value="EdgeHostPassthrough"/>
+        </in-parameters>
+        <out-parameters><parameter name="hostName"/><parameter name="modeEnumId"/></out-parameters>
+    </service>
+
+    <service verb="remove" noun="EdgeHost" type="rust" location="moqui_core::service::edge::remove_edge_host"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: remove a public host name; the edge node stops answering for it at once. removed
+            is false when there was no such name.</description>
+        <in-parameters><parameter name="hostName" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
     </service>
 </services>

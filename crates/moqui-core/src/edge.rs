@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link as the screens and services see it (plans/Edge-Node.md §5.7): the link's status, pairing and unpairing
-//! on a local node, and on an edge node its pairing codes and paired local nodes. Core has no network stack; a host
+//! The edge link as the screens and services see it (plans/Edge-Node.md §5.3, §5.7): the link's status, pairing and
+//! unpairing on a local node, and on an edge node its pairing codes, paired local nodes and their public host names. Core has no network stack; a host
 //! built with the `edge` feature installs an [`EdgeLink`] (`crates/moqui-host/src/edge_link/`). With none installed a
 //! call fails with [`NOT_BUILT`]. `org.moqui.impl.EdgeServices` (`crate::service::edge`) calls these.
 
@@ -34,6 +34,11 @@ pub const NODE_PIN: &str = "edge_node_pin";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
 pub const LINK_KEY: &str = "edge_link_key";
+
+/// A host whose TLS the edge node passes through to the local node, which ends it with its own certificate (§5.3).
+pub const HOST_PASSTHROUGH: &str = "EdgeHostPassthrough";
+/// A host whose TLS the edge node ends, forwarding each request down the link as HTTP/2 (§5.3).
+pub const HOST_TERMINATE: &str = "EdgeHostTerminate";
 
 /// `node_role`, trimmed and lowercase.
 pub fn node_role() -> String {
@@ -142,6 +147,16 @@ pub struct EdgeClientInfo {
     pub link_version: u32,
 }
 
+/// A public host name an edge node answers for a paired local node (`moqui.edge.EdgeHost`, §5.3).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EdgeHostInfo {
+    /// Lower case, with no port or trailing dot; unique across the paired nodes.
+    pub host_name: String,
+    pub paired_node_id: String,
+    /// [`HOST_PASSTHROUGH`] or [`HOST_TERMINATE`].
+    pub mode_enum_id: String,
+}
+
 /// The edge link of this process, installed by the host.
 pub trait EdgeLink: Send + Sync {
     /// The local node's link (unpaired on a node with no `edge_node_url`).
@@ -163,6 +178,13 @@ pub trait EdgeLink: Send + Sync {
     fn revoke(&self, paired_node_id: &str) -> Result<bool, Error>;
     /// On an edge node: a Ping down the local node's down connection, in milliseconds.
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error>;
+    /// On an edge node: the public host names of the paired nodes, of one node when `paired_node_id` is given.
+    fn hosts(&self, paired_node_id: Option<&str>) -> Result<Vec<EdgeHostInfo>, Error>;
+    /// On an edge node: add a host name for a paired node, or change the mode of one it has. A name another node has
+    /// is refused. The answer has the name as it was saved.
+    fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error>;
+    /// On an edge node: remove a host name. False when there was none.
+    fn remove_host(&self, host_name: &str) -> Result<bool, Error>;
 }
 
 static LINK: InstallSlot<dyn EdgeLink> = InstallSlot::new();

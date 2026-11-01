@@ -361,6 +361,15 @@
         certificate, so certificate renewal never breaks a link; local nodes pin it at pairing. Generated into
         runtime/.env; a new one means each local node pairs again. -->
     <default-property name="edge_link_key" value="CHANGEME" is-secret="true"/>
+    <!-- An edge node's web access (plans/Edge-Node.md §5.3). The paired nodes' host names and their modes are
+        moqui.edge.EdgeHost rows (System › Edge Clients). edge_offline_page is the location of the page a terminate host
+        shows while its node's link is down (503 with Retry-After); empty for the built-in one. edge_ssh_tunnel_port, when
+        set, is a TCP port on edge_ssh_tunnel_host (empty for every address) whose connections go down the link to the
+        local node's SSH server; edge_ssh_tunnel_node names the paired node, empty for the only one linked. -->
+    <default-property name="edge_offline_page" value=""/>
+    <default-property name="edge_ssh_tunnel_port" value=""/>
+    <default-property name="edge_ssh_tunnel_host" value=""/>
+    <default-property name="edge_ssh_tunnel_node" value=""/>
     <default-property name="entity_add_missing_runtime" value="false"/>
     <default-property name="entity_add_missing_startup" value="true"/>
     <default-property name="entity_lock_track" value="false"/>

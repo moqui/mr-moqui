@@ -60,14 +60,14 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use crate::proxy_header::ProxyError;
+
 /// The longest command line, with its CRLF. RFC 5321 asks for 512; extensions make it longer.
 const MAX_COMMAND: usize = 4096;
 /// A data line is read in chunks of at most this many bytes.
 const DATA_CHUNK: usize = 64 * 1024;
 /// Commands answered with a syntax or sequence error before the connection is closed (an unknown recipient is not one).
 const MAX_ERRORS: usize = 20;
-/// The PROXY v2 signature.
-const PROXY_V2: [u8; 12] = [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
 
 /// A connection's bytes: TCP, then TLS after STARTTLS.
 pub(crate) trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -878,58 +878,13 @@ impl<B: Backend> Session<'_, B> {
 
     /// The PROXY v1 or v2 header: the client's address, or none for a proxy's own connection (LOCAL, UNKNOWN).
     async fn read_proxy(&mut self) -> Result<Option<IpAddr>, End> {
-        let mut start = [0_u8; 6];
-        self.read_exact(&mut start).await?;
-        if &start == b"PROXY " {
-            let mut line = Vec::with_capacity(108);
-            self.read_line(102, &mut line).await?;
-            if !line.ends_with(b"\r\n") {
-                return Err(End::Proxy("a PROXY v1 header too long or not ended".to_string()));
-            }
-            let text = String::from_utf8_lossy(&line);
-            let parts: Vec<&str> = text.split_whitespace().collect();
-            return match parts.as_slice() {
-                ["UNKNOWN", ..] => Ok(None),
-                ["TCP4" | "TCP6", source, _, _, _] => source
-                    .parse::<IpAddr>()
-                    .map(Some)
-                    .map_err(|_| End::Proxy(format!("PROXY v1 source {source} is not an address"))),
-                _ => Err(End::Proxy("a PROXY v1 header that does not parse".to_string())),
-            };
-        }
-        if start != PROXY_V2[..6] {
-            return Err(End::Proxy("no PROXY header".to_string()));
-        }
-        let mut rest = [0_u8; 10];
-        self.read_exact(&mut rest).await?;
-        if rest[..6] != PROXY_V2[6..] || rest[6] >> 4 != 2 {
-            return Err(End::Proxy("a PROXY v2 header that does not parse".to_string()));
-        }
-        let command = rest[6] & 0x0F;
-        let family = rest[7] >> 4;
-        let length = usize::from(u16::from_be_bytes([rest[8], rest[9]]));
-        if length > 4096 {
-            return Err(End::Proxy("a PROXY v2 header too long".to_string()));
-        }
-        let mut addresses = vec![0_u8; length];
-        self.read_exact(&mut addresses).await?;
-        if command == 0 {
-            return Ok(None);
-        }
-        match family {
-            1 if length >= 12 => Ok(Some(IpAddr::from([
-                addresses[0],
-                addresses[1],
-                addresses[2],
-                addresses[3],
-            ]))),
-            2 if length >= 36 => {
-                let mut octets = [0_u8; 16];
-                octets.copy_from_slice(&addresses[..16]);
-                Ok(Some(IpAddr::from(octets)))
-            }
-            1 | 2 => Err(End::Proxy("a PROXY v2 address block too short".to_string())),
-            _ => Ok(None),
+        let wait = self.wait()?;
+        match tokio::time::timeout(wait, crate::proxy_header::read(&mut self.stream)).await {
+            Err(_) => Err(End::Timeout),
+            Ok(Ok(source)) => Ok(source.map(|source| source.ip())),
+            Ok(Err(ProxyError::Closed)) => Err(End::Closed),
+            Ok(Err(ProxyError::Io(text))) => Err(End::Io(text)),
+            Ok(Err(ProxyError::Invalid(text))) => Err(End::Proxy(text)),
         }
     }
 

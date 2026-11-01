@@ -152,10 +152,26 @@ impl ClientAddressing {
                 value
             }
         };
-        Self::new(
+        Self::for_node(
             &setting("client-ip-header", "webapp_client_ip_header"),
             parse_cidrs(&setting("trusted-proxies", "webapp_trusted_proxies"), "trusted-proxies"),
+            crate::edge::is_edge_node(),
         )
+    }
+
+    /// `header` and `trusted` as set, except that on an edge node a header with no trusted proxies is ignored, with an
+    /// error: an edge node faces the internet, a header believed from any peer would let each client name its own
+    /// address, and the edge node passes that address on to its local nodes (plans/Edge-Node.md §5.3).
+    fn for_node(header: &str, trusted: Vec<Cidr>, edge_node: bool) -> Self {
+        if edge_node && !header.trim().is_empty() && trusted.is_empty() {
+            tracing::error!(
+                "client-ip-header {} is set with no trusted-proxies on an edge node: it is ignored; name the proxies in \
+                 front in trusted-proxies (webapp_trusted_proxies) to use it",
+                header.trim()
+            );
+            return Self::new("", trusted);
+        }
+        Self::new(header, trusted)
     }
 
     /// From the properties alone, for a request with no factory.
@@ -268,6 +284,21 @@ mod tests {
         assert_eq!(parse_hop("::ffff:198.51.100.7"), Some(ip("198.51.100.7")));
         assert_eq!(parse_hop("unknown"), None);
         assert_eq!(parse_hop(""), None);
+    }
+
+    #[test]
+    fn an_edge_node_ignores_a_client_header_from_any_peer_but_believes_its_trusted_proxies() {
+        let header = Some("203.0.113.9");
+        let open = ClientAddressing::for_node("X-Forwarded-For", Vec::new(), true);
+        assert_eq!(open.header(), "");
+        assert_eq!(open.resolve(ip("198.51.100.20"), header), ip("198.51.100.20"));
+        // the same settings on another node keep believing any peer, as before
+        let normal = ClientAddressing::for_node("X-Forwarded-For", Vec::new(), false);
+        assert_eq!(normal.resolve(ip("198.51.100.20"), header), ip("203.0.113.9"));
+        // with trusted proxies, the edge node believes them only
+        let fronted = ClientAddressing::for_node("X-Forwarded-For", parse_cidrs("10.0.0.0/8", "test"), true);
+        assert_eq!(fronted.resolve(ip("10.0.0.2"), header), ip("203.0.113.9"));
+        assert_eq!(fronted.resolve(ip("198.51.100.20"), header), ip("198.51.100.20"));
     }
 
     #[test]

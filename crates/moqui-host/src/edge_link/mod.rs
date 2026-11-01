@@ -28,7 +28,10 @@
 //! - **Connections.** After the handshake the local node sends a one-byte role ([`ROLE_CHECK`], [`ROLE_PAIR`],
 //!   [`ROLE_UP`], [`ROLE_DOWN`]) and the edge node answers with a status ([`Answer`]). On **up** the local node is the HTTP/2 client
 //!   of the edge node's [`proto::link_server::Link`]; on **down** the roles flip and the edge node is the client of the
-//!   local node's [`proto::local_link_server::LocalLink`] (E2 adds the local node's router there).
+//!   local node's [`proto::local_link_server::LocalLink`] and of its web app ([`down`]).
+//! - **Web access** (§5.3). The edge node answers for the paired nodes' public host names ([`hosts`]). A terminate
+//!   host's requests go down the link as HTTP/2, WebSockets as extended CONNECT ([`web`]); a passthrough host's
+//!   connection, before any TLS, and the SSH tunnel port's go down as byte tunnels ([`tunnel`]).
 //! - **Generations.** Each new up connection bumps the local node's link generation on the edge node; the connections of
 //!   an older one are closed and their calls refused, so a stale connection cannot answer or acknowledge.
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
@@ -48,15 +51,21 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 pub(crate) mod accept;
 pub mod dial;
+pub(crate) mod down;
 pub(crate) mod hook;
+pub(crate) mod hosts;
 pub mod pair;
 pub(crate) mod proto;
 mod store;
+pub(crate) mod tunnel;
+pub(crate) mod web;
 
 pub(crate) use accept::{Acceptor, Secured};
 pub use dial::{connect_up, Dialer, UpLink};
-pub(crate) use hook::start;
+pub use down::{local_web, LocalWeb};
+pub(crate) use hook::{start, stopped};
 pub use pair::{check, new_key, pair, PairConfig, Paired};
+pub(crate) use web::{Target, WebFront};
 
 /// The ALPN protocol of the link's up and down connections on the edge node's HTTPS port: the link key's certificate.
 pub const ALPN: &[u8] = b"moqui-edge/1";
@@ -75,6 +84,22 @@ pub const ROLE_UP: u8 = b'U';
 /// The role byte of a down connection, followed by the generation (8 bytes, big-endian) of the up connection it belongs
 /// to: the edge node is the HTTP/2 client.
 pub const ROLE_DOWN: u8 = b'D';
+
+/// The request header in which the edge node names the client of a forwarded request (`ip:port`). The local node
+/// reads it only on the down connection, and the edge node removes any copy a client sent.
+pub(crate) const CLIENT_HEADER: &str = "x-moqui-edge-client";
+/// The request header in which the edge node says whether it took a forwarded request over TLS: `https` or `http`.
+pub(crate) const PROTO_HEADER: &str = "x-moqui-edge-proto";
+/// The `:protocol` of an extended CONNECT (RFC 8441) that opens a byte tunnel down the link.
+pub(crate) const TUNNEL_PROTOCOL: &str = "moqui-tunnel";
+/// The request header that names a tunnel's kind: [`TUNNEL_HTTPS`] or [`TUNNEL_SSH`]. The local node picks the
+/// listener; the edge node never names an address.
+pub(crate) const TUNNEL_HEADER: &str = "x-moqui-tunnel";
+/// A passthrough connection: a PROXY v2 header with the client's address, then the client's TLS, which the local node
+/// ends with its own certificate.
+pub(crate) const TUNNEL_HTTPS: &str = "https";
+/// A connection to the edge node's SSH tunnel port, piped to the local node's SSH server.
+pub(crate) const TUNNEL_SSH: &str = "ssh";
 
 /// The `:authority` of the link's gRPC requests. The connection is already the right one, so it only has to be a
 /// valid URI.
@@ -305,6 +330,14 @@ pub struct EdgeConfig {
     /// The Pair calls one address may make in `pair_window`.
     pub pair_attempts: u32,
     pub pair_window: Duration,
+    /// The port that pipes SSH down a link (`edge_ssh_tunnel_port` on `edge_ssh_tunnel_host`), none when empty.
+    pub ssh_tunnel: Option<std::net::SocketAddr>,
+    /// The paired node the SSH tunnel goes to (`edge_ssh_tunnel_node`); empty for the only paired node.
+    pub ssh_tunnel_node: String,
+    /// The page a terminate host answers with while its node's link is down (`edge_offline_page`, else the default).
+    pub offline_page: std::sync::Arc<str>,
+    /// How long opening a tunnel or forwarding a request head down a link may take.
+    pub open_timeout: Duration,
 }
 
 impl EdgeConfig {
@@ -325,8 +358,40 @@ impl EdgeConfig {
             pairing_calls: 4,
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
+            ssh_tunnel: ssh_tunnel(),
+            ssh_tunnel_node: moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_node")
+                .trim()
+                .to_string(),
+            offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
+            open_timeout: Duration::from_secs(10),
         }
     }
+}
+
+/// `edge_ssh_tunnel_port` on `edge_ssh_tunnel_host` (default all addresses), none when the port is empty or not a
+/// port.
+fn ssh_tunnel() -> Option<std::net::SocketAddr> {
+    let port = moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_port");
+    let port = port.trim();
+    if port.is_empty() {
+        return None;
+    }
+    let Ok(port) = port.parse::<u16>() else {
+        tracing::error!("edge_ssh_tunnel_port {port} is not a port; the SSH tunnel is off");
+        return None;
+    };
+    let host = moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_host");
+    let ip = match host.trim() {
+        "" => std::net::IpAddr::from([0, 0, 0, 0]),
+        host => match host.parse() {
+            Ok(ip) => ip,
+            Err(_) => {
+                tracing::error!("edge_ssh_tunnel_host {host} is not an IP address; the SSH tunnel is off");
+                return None;
+            }
+        },
+    };
+    Some(std::net::SocketAddr::new(ip, port))
 }
 
 /// A paired local node's link settings: from `edge_node_url`, `edge_node_key` and `edge_node_pin`, or from a test.
@@ -350,6 +415,9 @@ pub struct LocalConfig {
     pub ping_every: Duration,
     /// TCP connect and TLS handshake, and each call of the link's own.
     pub connect_timeout: Duration,
+    /// What the down connection serves besides the link's own calls: this node's web app and its listeners for
+    /// tunnels ([`local_web`]). With none, a forwarded request is answered 503 and a tunnel refused.
+    pub web: Option<LocalWeb>,
 }
 
 impl LocalConfig {
@@ -366,6 +434,7 @@ impl LocalConfig {
             keepalive: Duration::from_secs(15),
             ping_every: Duration::from_secs(15),
             connect_timeout: Duration::from_secs(10),
+            web: None,
         }
     }
 
@@ -403,6 +472,7 @@ impl std::fmt::Debug for LocalConfig {
             .field("keepalive", &self.keepalive)
             .field("ping_every", &self.ping_every)
             .field("connect_timeout", &self.connect_timeout)
+            .field("web", &self.web.is_some())
             .finish()
     }
 }

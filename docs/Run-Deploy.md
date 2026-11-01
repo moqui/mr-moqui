@@ -15,7 +15,7 @@ and the build packages are in [Build-Test](Build-Test.md).
     [HTTPS, ports and proxies](#https-ports-and-proxies);
   - deployments: [One production server](#one-production-server), [Cluster](#cluster),
     [PASS servers with a BOSS server or cluster](#pass-servers-with-a-boss-server-or-cluster),
-    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server), [Edge node](#edge-node) (the link only);
+    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server), [Edge node](#edge-node) (the link and web access);
   - reference: [Components](#components), [Moving from Moqui Java](#moving-from-moqui-java),
     [Directory layout](#directory-layout).
 
@@ -269,6 +269,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#edge-node)) |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
+| `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
+| `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -629,8 +631,8 @@ the Dev AIDE loads there.
 ## Edge node
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
-open ([plan](../plans/Edge-Node.md)). For now this is the link only: pairing, the link's state and revoking. No web
-access, mail, chat, calls or PASS go over it yet.
+open ([plan](../plans/Edge-Node.md)). For now this is the link and web access: pairing, the link's state and revoking,
+the local node's apps and its SSH server. No mail, chat, calls or PASS go over it yet.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -656,6 +658,24 @@ access, mail, chat, calls or PASS go over it yet.
 - **The local node** needs no role and no open port. In System › Edge Node, enter the edge node's address and the code,
   check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to
   `runtime/.env` and brings the link up; unpairing removes them.
+- **Web access.** In System › Edge Clients, add each public host name of a local node, such as `erp.example.com`,
+  and point its DNS at the edge node. In the office's DNS the same name can point at the local node. A name has a
+  mode:
+  - **Passthrough**, the default. The edge node reads the name the browser asks for, before any TLS, and sends the
+    connection down the link with a PROXY header that names the client. The local node ends the TLS with its own
+    certificate, so the edge node sees no content. The local node needs its HTTPS listener and a certificate for the
+    name (DNS-01 with an outside tool, or a copied one). While the link is down the connection is refused.
+  - **Terminate.** The edge node ends the TLS with its own certificate and forwards each request down the link, with
+    the client's address. Its web protection runs first. While the link is down it shows an offline page (503), or the
+    page at `edge_offline_page`.
+
+  The apps, `/notws` and the other sockets, DAV and git over HTTPS work in both. The local node's logs and web
+  protection see the client's address. If a proxy is in front of the edge node, name it in `webapp_trusted_proxies`;
+  on an edge node a client-IP header with no trusted proxies is ignored.
+- **SSH.** Set `edge_ssh_tunnel_port` on the edge node (and `edge_ssh_tunnel_host`, empty for every address). The edge
+  node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
+  local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than
+  one linked node, `edge_ssh_tunnel_node` names the one.
 
 ## Cluster
 

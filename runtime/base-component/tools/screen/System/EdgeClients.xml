@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     only its hash is kept. Near the top is this edge node's link key fingerprint (get#LinkStatus linkFingerprint), for the
     operator to compare with what a local node's Connect step shows. On a node that is not an edge node, and in a build
     without the edge link or a process where it is not running (no HTTPS listener started it), a notice instead. The menu cannot leave this screen out by node role, so it is listed on
-    every node. -->
+    every node. Host names (§5.3, get#EdgeHosts, add#EdgeHost, remove#EdgeHost) are the public names this edge node
+    answers for a paired node, each passthrough or terminate. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
 
@@ -34,6 +35,21 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><if condition="!ec.message.hasError()"><then>
             <if condition="revokeOut?.revoked"><then><message type="success">Revoked: the node's link is closed</message></then>
                 <else><message type="warning">No such node is paired</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="addHost">
+        <service-call name="org.moqui.impl.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} now goes to ${pairedNodeId}</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeHost">
+        <service-call name="org.moqui.impl.EdgeServices.remove#EdgeHost" in-map="{hostName:hostName}" out-map="removeOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="removeOut?.removed"><then><message type="success">Removed ${hostName}</message></then>
+                <else><message type="warning">No such host name</message></else></if>
         </then></if></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -56,14 +72,18 @@ along with this software (see the LICENSE.md file). If not, see
         isEdge = !notBuilt && !notStarted && !notEdge
         clientList = []
         clientsError = ''
+        hostList = []
+        nodeOptions = []
         // empty when the HTTPS listener is off: the link key is loaded with it
         linkKey = {linkFingerprint: isEdge ? link.linkFingerprint || '' : ''}
         if (!isEdge) return
         // a probe (Practices-App-Dev §4): an edge node whose HTTPS listener is off takes no links, and the page says so
         let out = {}
+        let hostsOut = {}
         ec.message.pushErrors()
         try {
             out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeClients').call() || {}
+            if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeHosts').call() || {}
             if (ec.message.hasError()) clientsError = ec.message.getErrorsString()
         } finally {
             ec.message.clearErrors()
@@ -82,6 +102,12 @@ along with this software (see the LICENSE.md file). If not, see
                 versionText: (client.binaryVersion || '') + (client.linkVersion ? ' · ' + L('link') + ' ' + client.linkVersion : ''),
                 keyFingerprint: client.keyFingerprint || '',
                 keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : ''}
+        })
+        nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
+        hostList = Array.from(hostsOut.hostList || []).map((host) => {
+            const terminate = host.modeEnumId === 'EdgeHostTerminate'
+            return {hostName: host.hostName, nodeId: host.pairedNodeId,
+                modeLabel: terminate ? L('Terminate') : L('Passthrough'), modeColor: terminate ? 'warning' : 'positive'}
         })
     ]]></script></actions>
     <widgets>
@@ -164,6 +190,42 @@ along with this software (see the LICENSE.md file). If not, see
                 </form-list>
                 <section name="NoClients" condition="!clientList.length"><widgets>
                     <label type="p" text="No local node is paired yet. Make a pairing code, then pair on the local node." style="m-muted q-pa-sm q-mb-none"/>
+                </widgets></section>
+            </box-body-nopad></container-box>
+
+            <container-box><box-header title="Host names"/><box-toolbar>
+                <container-dialog id="AddHostDialog" button-text="Add a host name" icon="sym_o_add" width="560" title="Add a host name" type="default" condition="nodeOptions.length">
+                    <form-single name="AddHost" transition="addHost">
+                        <field name="hostName"><default-field title="Host name" tooltip="A public name whose DNS points at this edge node, such as erp.example.com. A name goes to one local node"><text-line/></default-field></field>
+                        <field name="pairedNodeId"><default-field title="Local node"><drop-down>
+                            <list-options list="nodeOptions" key="${nodeId}" text="${nodeId}"/>
+                        </drop-down></default-field></field>
+                        <field name="modeEnumId"><default-field title="Mode" tooltip="Passthrough: the local node ends TLS with its own certificate, and this edge node sees no content; while its link is down the connection is refused. Terminate: this edge node ends TLS with its own certificate and forwards each request; while the link is down it shows an offline page"><drop-down no-current-selected-key="EdgeHostPassthrough">
+                            <option key="EdgeHostPassthrough" text="Passthrough"/>
+                            <option key="EdgeHostTerminate" text="Terminate"/>
+                        </drop-down></default-field></field>
+                        <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </box-toolbar><box-body-nopad>
+                <label type="p" style="m-muted q-pa-sm q-mb-none" text="The public names this edge node answers for its local nodes. A passthrough name's TLS goes to the local node unopened; a terminate name's requests are forwarded."/>
+                <form-list name="HostList" list="hostList" skip-form="true" paginate="false">
+                    <field name="hostName"><default-field title="Host name"><display style="text-weight-medium"/></default-field></field>
+                    <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                    <field name="mode"><default-field title="Mode">
+                        <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${modeColor}">${modeLabel}</q-chip>]]></text><text type="tui"><![CDATA[${JSON.stringify({t: "text", text: modeLabel})}]]></text></render-mode>
+                    </default-field></field>
+                    <field name="tools" align="right"><default-field title="">
+                        <link url="removeHost" link-type="hidden-form-link" icon="sym_o_delete" text="Remove" style="m-btn-flat" btn-type="danger"
+                                confirmation="Remove ${hostName}? This edge node stops answering for it." parameter-map="{hostName:hostName}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="hostName"/><field-ref name="nodeId"/></column>
+                        <column><field-ref name="mode"/><field-ref name="tools"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoHosts" condition="!hostList.length"><widgets>
+                    <label type="p" text="No host names yet. Add one for a paired local node, and point its DNS at this edge node." style="m-muted q-pa-sm q-mb-none"/>
                 </widgets></section>
             </box-body-nopad></container-box>
         </widgets></section>

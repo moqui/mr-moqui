@@ -1,9 +1,9 @@
 # Edge Node
 
-Status 2026-11-01: E1 built, the link with no comms over it. Every question in [§8](#8-decisions) is decided. E0 done:
-the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1 built, where it differs
-from the design, is in [§5.1](#51-the-edge-link) ("As built"), [§5.6](#56-moquiedgeconfxml-and-packaging) and
-[§5.7](#57-attaching-a-local-node-system-app).
+Status 2026-11-01: E2 built, web access over the link; no comms over it yet. Every question in [§8](#8-decisions) is
+decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1 built,
+where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"), [§5.6](#56-moquiedgeconfxml-and-packaging)
+and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in [§5.3](#53-web-access) ("As built").
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -372,6 +372,58 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   connection; it holds no certificate for the name.
 - **What rides on web access:** the apps and `/notws`, DAV (`/dav`), git over HTTPS, the LLM gateway, and MCP and A2A
   when they are on. SSH (SFTP, git, the TUI) goes through a TCP tunnel on an edge node port.
+
+**As built (E2).**
+- **Hosts.** `moqui.edge.EdgeHost` (in `EdgeEntities.xml`): a host name, keyed by the name, so one name belongs to one
+  node; its node; its mode, `EdgeHostPassthrough` or `EdgeHostTerminate`. Names are saved in lower case with no port.
+  `get#EdgeHosts`, `add#EdgeHost` and `remove#EdgeHost` manage them, and so does a Host names box on Edge Clients. The
+  edge node keeps them in memory: loaded at start, tried again with a backoff until a load works, and loaded again
+  after each change commits (the change runs in a transaction of its own). Only an active paired node gets a name. A
+  pushed `Configure` from the wizard is E10.
+- **The down connection serves the app.** It is one hyper HTTP/2 server with extended CONNECT
+  (`edge_link/down.rs`). Tunnels go by `:protocol` `moqui-tunnel`. A request that names a client in
+  `x-moqui-edge-client` is forwarded and goes to the local node's router, whatever its path or content type. The
+  link's own gRPC is taken only with no client named and only on `/moqui.edge.v1.LocalLink/`; anything else is 404.
+  `http/serve.rs` has the per-request part (`serve_request`) that the listeners and the down connection share.
+  `http::listen` keeps what the down connection serves per factory (`edge_link::local_web`), and the dialer takes it.
+  The listener now reports ready only after the edge link has started.
+- **Terminate** (`edge_link/web.rs`). A request whose `Host` is a terminate host goes down after the edge node's own
+  web protection, with the bodies streamed both ways. The edge node removes the hop-by-hop headers and every forwarding
+  header a client sent (`Forwarded`, `X-Forwarded-*`, `X-Real-IP`, its own client-IP header and its own link headers),
+  then names the client in `x-moqui-edge-client` and the scheme in `x-moqui-edge-proto`. The local node believes those
+  only on the down connection, removes them and the same forwarding headers, and serves the request as from that
+  client: `ClientAddr`, `ConnectInfo`, the visit and web protection all see it. On the edge node a forwarded request
+  goes through the router's request log and telemetry (a layer inside `log_http` sends it down). A client's own
+  `CONNECT` is answered 405. On an edge node a client-IP header with no trusted proxies is ignored, with an error
+  (`ClientAddressing::of_factory`). A WebSocket upgrade becomes an extended
+  CONNECT with `:protocol` `websocket`; axum's `WebSocketUpgrade` takes it (the `axum/http2` feature, and the socket
+  routes also take `CONNECT`), and web protection checks it as a GET. The edge node answers the browser 101 itself and
+  pipes the two. While the link is down: 503 with `Retry-After: 30`, the built-in page or `edge_offline_page`. A
+  passthrough host on plain HTTP is sent to its https URL; one asked for under another TLS name is answered 421.
+- **Passthrough** (`edge_link/tunnel.rs`). The edge node reads the ClientHello itself (rustls `Acceptor`), keeps the
+  bytes, and picks the link's settings, a passthrough host's tunnel or the web settings by it. A tunnel writes a PROXY
+  v2 header and the ClientHello's bytes, then pipes both ways. The local node reads the PROXY header (the parser moved
+  from `smtp.rs` to `proxy_header.rs`), has web protection admit the PROXY address, then ends TLS with its HTTPS
+  listener's own settings and serves the connection as that listener does. Nothing reads a PROXY header on a socket. With
+  the link down the connection is closed after the ClientHello.
+- **SSH tunnel.** `edge_ssh_tunnel_port` (on `edge_ssh_tunnel_host`) pipes each connection down a tunnel of kind ssh,
+  after the edge node's web protection admits it. The local node hands the stream to its own SSH server in process, as
+  a connection from the client's address, or refuses when it has none. The node is `edge_ssh_tunnel_node`, or the only
+  one linked. At most 64 at once.
+- **Limits.** A forwarded request's head is under the edge node's request deadline (sockets, git, DAV and uploads
+  exempt, as on the local node), and opening a tunnel or sending a request head down takes at most 10 s. A ClientHello
+  is at most 64 KiB (rustls's own buffer limit comes first). The down connection takes 1024 streams, of which tunnels
+  and forwarded WebSockets take at most 768 per node, so the link's calls and plain requests keep room; past that a new
+  one is refused. Its windows adapt to the link, and the local node's own body limits apply.
+- **Metrics.** `moqui.edgelink.forwards`, `moqui.edgelink.tunnels` (by kind: https, ssh, websocket),
+  `moqui.edgelink.offline`, `moqui.edgelink.refused` and the gauge `moqui.edgelink.tunnels.active`.
+- **Tests.** `tests/it/edge_web.rs` runs both ends as real servers in one process: the local node starts first, then
+  the edge node with `node_role=edge`. In both modes it checks an app page, a `/notws` socket, a DAV PROPFIND and git's
+  `info/refs`, and in terminate mode the local node's web protection and visit by the client's address. It also checks
+  the offline page, passthrough refused, PROXY refused on the local node's sockets, a forged client header, and the
+  SSH tunnel. `edge_link/down_tests.rs` checks the down connection on an in-memory connection: the client address in
+  both modes, and that a forwarded request never reaches the link's gRPC. `tunnel_tests.rs` checks that a passthrough
+  tunnel starts with the client's address, and `accept_tests.rs` the ClientHello reader.
 
 ### 5.4 Comms on the edge node
 

@@ -194,7 +194,7 @@ pub(crate) fn routes(
     );
     if property("xmpp_websocket_enabled") == "true" {
         tracing::info!("XMPP over WebSocket at {}", ws::PATH);
-        app.route(ws::PATH, axum::routing::get(ws::upgrade))
+        app.route(ws::PATH, axum::routing::get(ws::upgrade).connect(ws::upgrade))
     } else {
         app
     }

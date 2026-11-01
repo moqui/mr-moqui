@@ -28,17 +28,22 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use hyper_util::rt::{TokioIo, TokioTimer};
 use moqui_core::context::ErrorKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::transaction::PoolStats;
 use moqui_core::web::{WebRequest, WebResponse};
 use moqui_lib::error::Error;
 use tokio::net::TcpListener;
-use tower::ServiceExt as _;
 
 use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
+
+mod serve;
+use serve::{http1_builder, run_connection, Serving};
+pub(crate) use serve::{DownServe, Forward, Peer, WebApp};
+// the edge link's down connection and its tunnels use these, and the tests
+#[cfg_attr(not(feature = "edge"), allow(unused_imports))]
+pub(crate) use serve::{serve_request, serve_tunneled, ExtendedConnect};
 
 pub(crate) struct HttpState {
     pub factory: Arc<ExecutionContextFactory>,
@@ -196,6 +201,7 @@ pub(crate) async fn listen(
     let grpc = crate::monitor::grpc::bind_address(&factory, address)
         .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
     let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
+    let tls_config = https.as_ref().map(|https| Arc::clone(&https.config));
     let secure = match https {
         Some(https) => {
             let listener = TcpListener::bind(https.bind)
@@ -210,35 +216,12 @@ pub(crate) async fn listen(
         None => None,
     };
     let https_address = secure.as_ref().map(|(_, local, _)| *local);
-    let _ = ready.send(Ok(ListenReport {
-        http: address,
-        https: https_address,
-        cluster,
-        factory: Arc::clone(&factory),
-        posts,
-    }));
-    let https_text = https_address
-        .map(|secure| format!(", HTTPS on {secure}"))
-        .unwrap_or_default();
     let notws = endpoint_enabled(&factory, "/notws");
     let termws = cfg!(feature = "tui") && endpoint_enabled(&factory, "/termws");
-    tracing::info!(
-        "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /dav, {}{}{}the webapp's servlets; {:.3} seconds since start",
-        if notws { "/notws, " } else { "" },
-        if termws { "/termws, " } else { "" },
-        if cfg!(feature = "git") { "/git and " } else { "" },
-        crate::process_started().elapsed().as_secs_f64()
-    );
-    // systemd Type=notify, and a Podman quadlet with Notify=true, wait until this datagram.
-    // NOTIFY_SOCKET unset means a normal start: nothing is sent.
-    crate::systemd_notify::notify("READY=1");
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
     guard.log_start();
-    // the edge link (plans/Edge-Node.md §5.1): on an edge node the HTTPS listener's hand-off, and on a paired local
-    // node its dialer
-    let edge = crate::edge_link::start(&factory, certs, shutdown_rx.clone());
     crate::monitor::register_guard_gauges(&factory, &guard);
     tokio::spawn(sweep(Arc::clone(&guard), shutdown_rx.clone()));
     // Text responses are compressed when the client accepts gzip (`Compressible`).
@@ -253,7 +236,7 @@ pub(crate) async fn listen(
         notws::rtc::install(&factory, shutdown_rx.clone());
         // a call guest's socket (the /call/<token> page; notws/rtc.rs), with no session: the rtc feature
         let app = notws::rtc::guest_route(app);
-        app.route("/notws", get(notws::upgrade))
+        app.route("/notws", get(notws::upgrade).connect(notws::upgrade))
     } else {
         moqui_lib::env::set_property(notws::ENDPOINT_PROPERTY, "");
         app
@@ -263,7 +246,7 @@ pub(crate) async fn listen(
     #[cfg(feature = "tui")]
     let app = if termws {
         moqui_lib::env::set_property(crate::termws::ENDPOINT_PROPERTY, "/termws");
-        app.route("/termws", get(crate::termws::upgrade))
+        app.route("/termws", get(crate::termws::upgrade).connect(crate::termws::upgrade))
     } else {
         moqui_lib::env::set_property(crate::termws::ENDPOINT_PROPERTY, "");
         app
@@ -292,9 +275,12 @@ pub(crate) async fn listen(
     let request_telemetry = RequestTelemetry {
         telemetry: moqui_core::telemetry::for_factory(&factory),
     };
+    // inside the request log: on an edge node, a terminate host's request goes down its node's link here
+    let app = app.layer(axum::middleware::from_fn(edge_forward));
     let app = app.layer(axum::middleware::from_fn_with_state(request_telemetry, log_http));
     #[cfg(feature = "grpc")]
     let grpc_factory = Arc::clone(&factory);
+    let link_factory = Arc::clone(&factory);
     let app = app
         .layer(tower_http::compression::CompressionLayer::new().compress_when(Compressible))
         .with_state(Arc::new(HttpState {
@@ -303,6 +289,42 @@ pub(crate) async fn listen(
             limits,
             guard: Arc::clone(&guard),
         }));
+    let web = WebApp::new(app, limits, Arc::clone(&guard));
+    // the edge link (plans/Edge-Node.md §5.1, §5.3): on an edge node the HTTPS listener's hand-off and the terminate
+    // hosts' forward, and on a paired local node its dialer, whose down connection serves this app
+    let down = DownServe {
+        app: web.clone(),
+        tls: tls_config,
+        shutdown: shutdown_rx.clone(),
+    };
+    let started = crate::edge_link::start(&link_factory, certs, shutdown_rx.clone(), down);
+    let web = WebApp {
+        edge: started.front,
+        ..web
+    };
+    let edge = started.acceptor;
+    // ready once the routes and the edge link have read what they need of the properties: a test may set others for a
+    // second server as soon as this one is ready
+    let _ = ready.send(Ok(ListenReport {
+        http: address,
+        https: https_address,
+        cluster,
+        factory: Arc::clone(&link_factory),
+        posts,
+    }));
+    let https_text = https_address
+        .map(|secure| format!(", HTTPS on {secure}"))
+        .unwrap_or_default();
+    tracing::info!(
+        "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /dav, {}{}{}the webapp's servlets; {:.3} seconds since start",
+        if notws { "/notws, " } else { "" },
+        if termws { "/termws, " } else { "" },
+        if cfg!(feature = "git") { "/git and " } else { "" },
+        crate::process_started().elapsed().as_secs_f64()
+    );
+    // systemd Type=notify, and a Podman quadlet with Notify=true, wait until this datagram.
+    // NOTIFY_SOCKET unset means a normal start: nothing is sent.
+    crate::systemd_notify::notify("READY=1");
     // Both loops end when the watch turns true, which `shutdown` sets after a stop, Ctrl-C, or SIGTERM.
     let stopped = |mut rx: tokio::sync::watch::Receiver<bool>| async move {
         let _ = rx.wait_for(|stopped| *stopped).await;
@@ -323,9 +345,7 @@ pub(crate) async fn listen(
     let plain = serve(
         listener,
         None,
-        app.clone(),
-        limits,
-        Arc::clone(&guard),
+        web.clone(),
         Arc::clone(&permits),
         stopped(shutdown_rx.clone()),
     );
@@ -336,9 +356,7 @@ pub(crate) async fn listen(
                 serve(
                     listener,
                     Some(Tls { acceptor, edge }),
-                    app,
-                    limits,
-                    guard,
+                    web,
                     permits,
                     stopped(shutdown_rx)
                 )
@@ -346,6 +364,8 @@ pub(crate) async fn listen(
         }
         None => plain.await,
     }
+    // the app held for the edge link's down connections holds the factory
+    crate::edge_link::stopped(&link_factory);
     #[cfg(feature = "grpc")]
     if let Some(grpc) = grpc {
         let _ = grpc.await;
@@ -364,14 +384,8 @@ async fn sweep(guard: Arc<Guard>, mut stopped: tokio::sync::watch::Receiver<bool
     }
 }
 
-/// Serve `app` until `stop` resolves, taking one of `permits` for each open connection, then let every open connection finish, as `axum::serve` does, for up to
-/// `limits.shutdown`; the connections still open then are dropped with the runtime. Each
-/// connection is served here rather than by `axum::serve`, which gives hyper no timer, so that
-/// `header_read_timeout` takes effect. With `tls` the handshake runs in the connection's own task, so a slow
-/// client cannot hold up accepting. `guard` admits each connection before its handshake and checks each request
-/// before the router.
 /// The HTTPS listener's handshake: its own settings, or on an edge node the link's for a client that offers
-/// `moqui-edge/1` (`edge_link`).
+/// `moqui-edge/1`, and a passthrough host's connection handed to its link before any handshake (`edge_link`).
 #[derive(Clone)]
 struct Tls {
     acceptor: tokio_rustls::TlsAcceptor,
@@ -387,22 +401,22 @@ impl Tls {
     }
 }
 
+/// Serve `web` until `stop` resolves, taking one of `permits` for each open connection, then let every open connection
+/// finish, as `axum::serve` does, for up to `limits.shutdown`; the connections still open then are dropped with the
+/// runtime. Each connection is served here rather than by `axum::serve`, which gives hyper no timer, so that
+/// `header_read_timeout` takes effect. With `tls` the handshake runs in the connection's own task, so a slow client
+/// cannot hold up accepting. The guard admits each connection before its handshake and checks each request before the
+/// router.
 async fn serve(
     listener: TcpListener,
     tls: Option<Tls>,
-    app: Router,
-    limits: ListenLimits,
-    guard: Arc<Guard>,
+    web: WebApp,
     permits: Arc<tokio::sync::Semaphore>,
     stop: impl Future<Output = ()>,
 ) {
+    let limits = web.limits;
     let (closing, closing_rx) = tokio::sync::watch::channel(false);
-    let mut builder = hyper::server::conn::http1::Builder::new();
-    builder
-        .timer(TokioTimer::new())
-        .header_read_timeout(limits.header)
-        .max_buf_size(limits.max_header_bytes)
-        .max_headers(limits.max_headers);
+    let builder = http1_builder(&limits);
     let mut stop = std::pin::pin!(stop);
     loop {
         let permit = tokio::select! {
@@ -433,23 +447,20 @@ async fn serve(
             }
         };
         // a denied or banned client, or one over its connections, is closed before any handshake
-        let Some(slot) = guard.admit(remote.ip()) else {
+        let Some(slot) = web.guard.admit(remote.ip()) else {
             drop(stream);
             continue;
         };
         let _ = stream.set_nodelay(true);
-        let router = app.clone();
         let builder = builder.clone();
         let closing = closing_rx.clone();
         let tls = tls.clone();
-        let guard = Arc::clone(&guard);
+        let web = web.clone();
         tokio::spawn(async move {
             let serving = Serving {
                 remote,
-                router,
+                web,
                 builder,
-                limits,
-                guard,
                 closing,
                 exporter: None,
             };
@@ -462,11 +473,11 @@ async fn serve(
                         None => Some(handshake.await),
                     };
                     match secured {
-                        Some(Ok(crate::edge_link::Secured::Link(stream))) => {
-                            // the link ends with the listeners' stop on its own; it holds no HTTP connection open
+                        Some(Ok(crate::edge_link::Secured::Link(handoff))) => {
+                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own
                             drop(serving);
                             if let Some(edge) = &tls.edge {
-                                edge.serve(stream, remote).await;
+                                edge.serve(handoff, remote).await;
                             }
                         }
                         Some(Ok(crate::edge_link::Secured::Http(stream))) => {
@@ -500,218 +511,6 @@ async fn serve(
             }
         }
         None => closing.closed().await,
-    }
-}
-
-/// What one connection is served with.
-struct Serving {
-    remote: SocketAddr,
-    router: Router,
-    builder: hyper::server::conn::http1::Builder,
-    limits: ListenLimits,
-    guard: Arc<Guard>,
-    closing: tokio::sync::watch::Receiver<bool>,
-    /// The TLS session's exporter (RFC 9266), when the xmpp feature takes it at the handshake.
-    exporter: Option<Arc<Vec<u8>>>,
-}
-
-async fn run_connection<S>(stream: S, secure: bool, serving: Serving)
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
-    let Serving {
-        remote,
-        router,
-        builder,
-        limits,
-        guard,
-        mut closing,
-        exporter,
-    } = serving;
-    let service = hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| {
-        let client = guard.client_of(remote.ip(), request.headers());
-        #[cfg(feature = "xmpp")]
-        if let Some(exporter) = &exporter {
-            request
-                .extensions_mut()
-                .insert(crate::xmpp::ws::TlsExporter(Arc::clone(exporter)));
-        }
-        #[cfg(not(feature = "xmpp"))]
-        let _ = &exporter;
-        request.extensions_mut().insert(ConnectInfo(remote));
-        request.extensions_mut().insert(ClientAddr(client));
-        if secure {
-            request.extensions_mut().insert(TlsConnection);
-        }
-        if secure || forwarded_https(request.headers(), remote.ip(), guard.conf.addressing()) {
-            request.extensions_mut().insert(HttpsRequest);
-        }
-        let uri_length = request.uri().path_and_query().map_or(0, |whole| whole.as_str().len());
-        let refused = if uri_length > limits.max_uri {
-            Some(plain(414, "the request URI is too long"))
-        } else {
-            let (method, path) = (request.method().as_str(), request.uri().path());
-            guard
-                .check(remote.ip(), client, method, path, request.headers())
-                .err()
-                .map(|refused| *refused.response)
-        };
-        // a websocket, a git clone or push (which has its own idle timeout), an upload (whose screen has the
-        // deadline once it has arrived), and a model call of the LLM gateway (whose own timeout bounds it, answered in
-        // the OpenAI shape) run as long as they need
-        let upload = request
-            .headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.trim_start().to_ascii_lowercase().starts_with("multipart/"));
-        let socket = matches!(request.uri().path(), "/notws" | "/termws" | "/xmpp-websocket");
-        let path = request.uri().path();
-        let deadline = limits.request.filter(|_| {
-            !socket
-                && !path.starts_with("/xmpp-upload/")
-                && !path.starts_with("/git/")
-                && !path.starts_with("/dav/")
-                && !path.starts_with("/llm/v1")
-                && !upload
-        });
-        let call = refused.is_none().then(|| router.clone().oneshot(request));
-        async move {
-            let Some(call) = call else {
-                return Ok(refused.unwrap_or_else(|| plain(500, "refused")));
-            };
-            match deadline {
-                Some(deadline) => match tokio::time::timeout(deadline, call).await {
-                    Ok(response) => response,
-                    Err(_) => Ok(plain(504, "the request took too long")),
-                },
-                None => call.await,
-            }
-        }
-    });
-    let connection = builder
-        .serve_connection(TokioIo::new(Lingering::new(stream)), service)
-        .with_upgrades();
-    let mut connection = std::pin::pin!(connection);
-    tokio::select! {
-        result = connection.as_mut() => {
-            if let Err(err) = result {
-                tracing::trace!("http connection from {remote} ended: {err}");
-            }
-        }
-        _ = closing.changed() => {
-            connection.as_mut().graceful_shutdown();
-            let _ = connection.await;
-        }
-    }
-}
-
-/// How long a closed connection the client has not closed yet is read and dropped, after the write side is shut down.
-const LINGER: Duration = Duration::from_secs(2);
-
-/// A connection that closes as a lingering close does. A server that closes with request bytes still unread (a
-/// request head over `max-header-bytes`, answered 431) sends a reset, and a macOS or BSD client then discards the
-/// answer it has not read yet. So when the connection is dropped before the client has closed its side, the write
-/// side is shut down first and whatever the client still sends is read and dropped, for up to `LINGER`.
-struct Lingering<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> {
-    inner: Option<S>,
-    /// The client closed its side, or the connection failed: nothing is left to drain.
-    ended: bool,
-}
-
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> Lingering<S> {
-    fn new(inner: S) -> Self {
-        Self {
-            inner: Some(inner),
-            ended: false,
-        }
-    }
-
-    fn inner(&mut self) -> std::pin::Pin<&mut S> {
-        std::pin::Pin::new(self.inner.as_mut().expect("the stream is taken only on drop"))
-    }
-}
-
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> tokio::io::AsyncRead for Lingering<S> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let before = buf.filled().len();
-        let polled = self.inner().poll_read(cx, buf);
-        match &polled {
-            std::task::Poll::Ready(Ok(())) if buf.filled().len() == before && buf.remaining() > 0 => self.ended = true,
-            std::task::Poll::Ready(Err(_)) => self.ended = true,
-            _ => {}
-        }
-        polled
-    }
-}
-
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> tokio::io::AsyncWrite for Lingering<S> {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let polled = self.inner().poll_write(cx, buf);
-        if matches!(polled, std::task::Poll::Ready(Err(_))) {
-            self.ended = true;
-        }
-        polled
-    }
-
-    fn poll_write_vectored(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let polled = self.inner().poll_write_vectored(cx, bufs);
-        if matches!(polled, std::task::Poll::Ready(Err(_))) {
-            self.ended = true;
-        }
-        polled
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.inner.as_ref().is_some_and(|inner| inner.is_write_vectored())
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        self.inner().poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        self.inner().poll_shutdown(cx)
-    }
-}
-
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> Drop for Lingering<S> {
-    fn drop(&mut self) {
-        let Some(mut stream) = self.inner.take() else {
-            return;
-        };
-        if self.ended {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        runtime.spawn(async move {
-            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-            let _ = tokio::time::timeout(LINGER, async {
-                let _ = stream.shutdown().await;
-                let mut sink = [0u8; 4096];
-                while matches!(stream.read(&mut sink).await, Ok(read) if read > 0) {}
-            })
-            .await;
-        });
     }
 }
 
@@ -1100,6 +899,15 @@ pub(crate) fn internal_error(detail: &str) -> Response {
     );
     tracing::error!("request failed, error id {id}: {detail}");
     plain(500, &format!("internal error, id {id}"))
+}
+
+/// A request `serve_request` marked for an edge node's terminate forward goes down its node's link instead of to the
+/// route.
+async fn edge_forward(mut request: Request, next: Next) -> Response {
+    match request.extensions_mut().remove::<Forward>() {
+        Some(forward) => forward.send(request).await,
+        None => next.run(request).await,
+    }
 }
 
 /// One SERVER root span for every route but the OTLP receiver and probes, including refusals before the screen worker.

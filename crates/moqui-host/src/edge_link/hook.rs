@@ -14,15 +14,16 @@
 
 //! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local node's
 //! dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
-//! [`EdgeServer`]. Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as
-//! properties; unpairing removes them (plans/Edge-Node.md §5.1, §5.7).
+//! [`EdgeServer`] with its web front and SSH tunnel port. Pairing writes `edge_node_url`, `edge_node_key` and
+//! `edge_node_pin` to `runtime/.env` and sets them as properties; unpairing removes them (plans/Edge-Node.md §5.1,
+//! §5.3, §5.7).
 
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
-    EdgeClientInfo, EdgeInfo, EdgeLink, LinkStatus, PairResult, PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
+    EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, LinkStatus, PairResult, PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -31,31 +32,44 @@ use tokio::sync::watch;
 use super::accept::{Acceptor, EdgeServer};
 use super::dial::{is_linked, Dialer};
 use super::pair::{Identity, PairConfig};
+use super::web::WebFront;
 use super::{EdgeConfig, LocalConfig};
 
 /// How long pairing and checking wait for the edge node.
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Install the edge link of this process: the hook, the dialer when this node is paired, and on an edge node the
-/// listener's hand-off (`resolver` is the HTTPS listener's certificates; `None` when it has none). Called from
-/// `http::listen` on its runtime.
+/// What [`start`] gives the listeners on an edge node: the HTTPS listener's hand-off and the web front of the paired
+/// nodes' hosts.
+#[derive(Default)]
+pub(crate) struct Started {
+    pub acceptor: Option<Arc<Acceptor>>,
+    pub front: Option<Arc<WebFront>>,
+}
+
+/// Install the edge link of this process: the hook, the dialer when this node is paired (its down connection serves
+/// `down`), and on an edge node the listener's hand-off (`resolver` is the HTTPS listener's certificates; `None` when
+/// it has none), the web front and the SSH tunnel port. Called from `http::listen` on its runtime; [`stopped`] undoes
+/// what holds the app.
 pub(crate) fn start(
     factory: &Arc<ExecutionContextFactory>,
     resolver: Option<Arc<dyn rustls::server::ResolvesServerCert>>,
     shutdown: watch::Receiver<bool>,
-) -> Option<Arc<Acceptor>> {
+    down: crate::http::DownServe,
+) -> Started {
     let edge_node = moqui_core::edge::is_edge_node();
+    // the web protection, which also admits the SSH tunnel port's connections on an edge node
+    let guard = Arc::clone(&down.app.guard);
+    if !edge_node {
+        super::down::install(factory, down);
+    }
     let server = match (edge_node, resolver) {
         (true, Some(resolver)) => {
             let key = moqui_lib::env::get_prop_or_env(moqui_core::edge::LINK_KEY);
             match Identity::from_key(&key, "moqui-edge-link") {
                 Ok(identity) => {
-                    let server = EdgeServer::new(
-                        factory,
-                        EdgeConfig::from_properties(&instance_id(factory)),
-                        &identity.fingerprint,
-                        shutdown.clone(),
-                    );
+                    let mut config = EdgeConfig::from_properties(&instance_id(factory));
+                    config.offline_page = offline_page(factory);
+                    let server = EdgeServer::new(factory, config, &identity.fingerprint, shutdown.clone());
                     super::accept::acceptor(&server, resolver, &identity).map(|acceptor| (server, acceptor))
                 }
                 Err(err) => {
@@ -107,7 +121,41 @@ pub(crate) fn start(
         }
     }
     moqui_core::edge::install_edge_link(Arc::clone(&hook) as Arc<dyn EdgeLink>);
-    server.map(|(_, acceptor)| acceptor)
+    match server {
+        Some((server, acceptor)) => {
+            let loading = Arc::clone(&server);
+            tokio::spawn(async move { loading.load_hosts().await });
+            if let Some(bind) = server.config().ssh_tunnel {
+                super::tunnel::listen_ssh(&server, bind, guard);
+            }
+            Started {
+                acceptor: Some(acceptor),
+                front: Some(Arc::new(WebFront::new(&server))),
+            }
+        }
+        None => Started::default(),
+    }
+}
+
+/// The listeners have stopped: let go of the app this node's down connections served.
+pub(crate) fn stopped(factory: &ExecutionContextFactory) {
+    super::down::clear(factory);
+}
+
+/// The page a terminate host shows while its node's link is down: the text at `edge_offline_page`, else the default.
+fn offline_page(factory: &ExecutionContextFactory) -> Arc<str> {
+    let location = moqui_lib::env::get_prop_or_env("edge_offline_page");
+    let location = location.trim();
+    if location.is_empty() {
+        return Arc::from(super::web::DEFAULT_OFFLINE_PAGE);
+    }
+    match factory.resource().location_text(location) {
+        Ok(text) => Arc::from(text),
+        Err(err) => {
+            tracing::error!("edge_offline_page {location} could not be read ({err}); the default page is used");
+            Arc::from(super::web::DEFAULT_OFFLINE_PAGE)
+        }
+    }
 }
 
 fn instance_id(factory: &ExecutionContextFactory) -> String {
@@ -139,11 +187,12 @@ impl Hook {
             .ok_or_else(|| Error::new("this edge node takes no links: its HTTPS listener is off"))
     }
 
-    fn start_dialer(&self, config: LocalConfig) -> Result<(), String> {
-        let telemetry = self
-            .factory
-            .upgrade()
-            .map(|factory| moqui_core::telemetry::for_factory(&factory));
+    fn start_dialer(&self, mut config: LocalConfig) -> Result<(), String> {
+        let factory = self.factory.upgrade();
+        if config.web.is_none() {
+            config.web = factory.as_deref().and_then(super::down::local_web);
+        }
+        let telemetry = factory.map(|factory| moqui_core::telemetry::for_factory(&factory));
         let dialer = Dialer::start(config, &self.runtime, self.shutdown.clone(), telemetry)?;
         // the dialer it replaces stops when dropped
         *lock(&self.dialer) = Some(dialer);
@@ -246,6 +295,36 @@ impl EdgeLink for Hook {
 
     fn revoke(&self, paired_node_id: &str) -> Result<bool, Error> {
         self.server()?.revoke(paired_node_id)
+    }
+
+    fn hosts(&self, paired_node_id: Option<&str>) -> Result<Vec<EdgeHostInfo>, Error> {
+        self.server()?;
+        super::hosts::list(&*self.factory()?, paired_node_id)
+    }
+
+    fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error> {
+        let server = self.server()?;
+        let factory = self.factory()?;
+        let saved = super::hosts::add(&factory, host)?;
+        server.hosts.load(&factory)?;
+        tracing::info!(
+            "Edge node: host {} goes to local node {} ({})",
+            saved.host_name,
+            saved.paired_node_id,
+            saved.mode_enum_id
+        );
+        Ok(saved)
+    }
+
+    fn remove_host(&self, host_name: &str) -> Result<bool, Error> {
+        let server = self.server()?;
+        let factory = self.factory()?;
+        let removed = super::hosts::remove(&factory, host_name)?;
+        server.hosts.load(&factory)?;
+        if removed {
+            tracing::info!("Edge node: host {} removed", host_name.trim());
+        }
+        Ok(removed)
     }
 
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {

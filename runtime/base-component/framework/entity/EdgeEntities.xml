@@ -54,4 +54,22 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
         <index name="EDGE_CLIENT_KEY"><index-field name="keyFingerprint"/></index>
     </entity>
+
+    <entity entity-name="EdgeHost" package="moqui.edge" use="configuration" cache="never">
+        <description>A public host name this edge node answers for a paired local node (plans/Edge-Node.md §5.3), lower
+            case with no port. A name belongs to one node. In EdgeHostPassthrough mode the edge node reads the TLS
+            ClientHello's server name and pipes the connection down the node's link, where the local node ends TLS with
+            its own certificate; while the link is down the connection is refused. In EdgeHostTerminate mode the edge
+            node ends TLS with its own certificate and forwards each request down the link as HTTP/2, adding the
+            client's address; while the link is down it answers with the offline page. The edge node keeps these in
+            memory and loads them again when org.moqui.impl.EdgeServices changes one.</description>
+        <field name="hostName" type="text-medium" is-pk="true"/>
+        <field name="pairedNodeId" type="id" not-null="true"/>
+        <field name="modeEnumId" type="id" not-null="true"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.edge.EdgeClient"/>
+        <relationship type="one" title="EdgeHostMode" related="moqui.basic.Enumeration" short-alias="mode">
+            <key-map field-name="modeEnumId"/></relationship>
+        <index name="EDGE_HOST_NODE"><index-field name="pairedNodeId"/></index>
+    </entity>
 </entities>

@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
-use crate::edge::{EdgeClientInfo, EdgeInfo};
+use crate::edge::{EdgeClientInfo, EdgeHostInfo, EdgeInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use crate::entity::EntityFacade;
 use crate::user::stamp_value;
 
@@ -37,6 +37,9 @@ pub(in crate::service) fn register(
     rust_service!(map, get_edge_clients)?;
     rust_service!(map, revoke_edge_client)?;
     rust_service!(map, ping_edge_client)?;
+    rust_service!(map, get_edge_hosts)?;
+    rust_service!(map, add_edge_host)?;
+    rust_service!(map, remove_edge_host)?;
     Ok(())
 }
 
@@ -195,6 +198,52 @@ fn ping_edge_client(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     let paired_node_id = required(parameters, "pairedNodeId")?;
     let rtt = crate::edge::link()?.ping_client(&paired_node_id)?;
     Ok(BTreeMap::from([("rttMs".to_string(), Value::F64(rtt))]))
+}
+
+fn host_value(host: &EdgeHostInfo) -> Value {
+    let mut row = indexmap::IndexMap::new();
+    row.insert("hostName".to_string(), Value::string(&host.host_name));
+    row.insert("pairedNodeId".to_string(), Value::string(&host.paired_node_id));
+    row.insert("modeEnumId".to_string(), Value::string(&host.mode_enum_id));
+    Value::Map(row)
+}
+
+/// `get#EdgeHosts`: on an edge node, the public host names of the paired nodes (of one with `pairedNodeId`).
+fn get_edge_hosts(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let node = text(parameters, "pairedNodeId");
+    let hosts = crate::edge::link()?.hosts(node.as_deref())?;
+    Ok(BTreeMap::from([(
+        "hostList".to_string(),
+        Value::List(hosts.iter().map(host_value).collect()),
+    )]))
+}
+
+/// `add#EdgeHost`: on an edge node, a public host name for a paired node, passthrough unless `modeEnumId` says
+/// terminate; for a name the node has already, its mode changes.
+fn add_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let mode = text(parameters, "modeEnumId").unwrap_or_else(|| HOST_PASSTHROUGH.to_string());
+    if mode != HOST_PASSTHROUGH && mode != HOST_TERMINATE {
+        return Err(LibError::new(format!(
+            "modeEnumId must be {HOST_PASSTHROUGH} or {HOST_TERMINATE}"
+        )));
+    }
+    let host = EdgeHostInfo {
+        host_name: required(parameters, "hostName")?,
+        paired_node_id: required(parameters, "pairedNodeId")?,
+        mode_enum_id: mode,
+    };
+    let saved = crate::edge::link()?.add_host(&host)?;
+    Ok(BTreeMap::from([
+        ("hostName".to_string(), Value::string(&saved.host_name)),
+        ("modeEnumId".to_string(), Value::string(&saved.mode_enum_id)),
+    ]))
+}
+
+/// `remove#EdgeHost`: on an edge node, remove a public host name.
+fn remove_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let host_name = required(parameters, "hostName")?;
+    let removed = crate::edge::link()?.remove_host(&host_name)?;
+    Ok(BTreeMap::from([("removed".to_string(), Value::Bool(removed))]))
 }
 
 #[cfg(test)]

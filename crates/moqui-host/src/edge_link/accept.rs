@@ -21,23 +21,29 @@
 //! certificate of this node's link key (the up and down connections, which the local node pinned). Both ask for a
 //! client certificate without requiring it, and the presented key is looked up among the paired nodes after the
 //! handshake. Any other client gets the listener's own settings, so a browser is never asked for a certificate.
+//!
+//! A ClientHello whose server name is a passthrough host of a linked node gets no handshake here: the connection and
+//! the bytes read so far go down that node's link ([`super::tunnel`], plans/Edge-Node.md §5.3). The server name of a
+//! passthrough host whose node is not linked closes the connection.
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_core::edge::{EdgeClientInfo, PairingCode};
+use moqui_core::telemetry::Telemetry;
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
-use tokio::io::AsyncReadExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio_rustls::server::TlsStream;
 use tonic::{Request, Response, Status};
 
+use super::hosts::{self, Hosts, Route};
 use super::pair::Identity;
 use super::proto::link_server::{Link, LinkServer};
 use super::proto::local_link_client::LocalLinkClient;
@@ -109,39 +115,132 @@ pub(crate) fn acceptor(
     }))
 }
 
-/// A secured connection: to be served as HTTP, or a link.
+/// The most a ClientHello may take. It is read whole before any TLS settings are picked, and a passthrough tunnel
+/// replays it whole.
+const MAX_HELLO: usize = 64 * 1024;
+
+/// A connection the link takes over from the listener. It is moved once, from the accept to its serve, so the
+/// stream is not boxed; [`Secured`] then has two variants of a size.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Handoff {
+    /// An up, down, check or pairing connection, after its handshake.
+    Link(TlsStream<TcpStream>),
+    /// A passthrough host's connection before any handshake, with the bytes read from it so far (the ClientHello),
+    /// for its node's link.
+    Passthrough {
+        stream: TcpStream,
+        hello: Vec<u8>,
+        node: String,
+    },
+}
+
+/// A secured connection to be served as HTTP, or one the link takes.
 pub(crate) enum Secured {
     Http(TlsStream<TcpStream>),
-    Link(TlsStream<TcpStream>),
+    Link(Handoff),
+}
+
+/// Read the ClientHello from `stream`: rustls's view of it, and every byte read, which a passthrough tunnel replays.
+async fn read_hello<S>(stream: &mut S) -> std::io::Result<(rustls::server::Accepted, Vec<u8>)>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut acceptor = rustls::server::Acceptor::default();
+    let mut seen = Vec::with_capacity(2048);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        let fresh = &chunk[..read];
+        seen.extend_from_slice(fresh);
+        if seen.len() > MAX_HELLO {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "the ClientHello is too long",
+            ));
+        }
+        let mut rest = fresh;
+        while !rest.is_empty() {
+            if acceptor.read_tls(&mut rest)? == 0 {
+                break;
+            }
+        }
+        match acceptor.accept() {
+            Ok(Some(accepted)) => return Ok((accepted, seen)),
+            Ok(None) => {}
+            Err((err, mut alert)) => {
+                let mut out = Vec::new();
+                if alert.write_all(&mut out).is_ok() {
+                    let _ = stream.write_all(&out).await;
+                }
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
+            }
+        }
+    }
 }
 
 impl Acceptor {
-    /// The TLS handshake of a connection to the HTTPS listener: the link's settings when the client offers one of the
-    /// link's ALPN protocols, `http` otherwise.
-    pub(crate) async fn accept(&self, stream: TcpStream, http: &Arc<rustls::ServerConfig>) -> std::io::Result<Secured> {
-        let start = tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
-        let offered = |wanted: &[u8]| {
-            start
-                .client_hello()
-                .alpn()
-                .is_some_and(|mut offered| offered.any(|protocol| protocol == wanted))
+    /// The start of a connection to the HTTPS listener: the link's settings when the client offers one of the link's
+    /// ALPN protocols, a passthrough host's link when its server name is one, `http` otherwise.
+    pub(crate) async fn accept(
+        &self,
+        mut stream: TcpStream,
+        http: &Arc<rustls::ServerConfig>,
+    ) -> std::io::Result<Secured> {
+        let (accepted, hello) = read_hello(&mut stream).await?;
+        let (link, pairing, server_name) = {
+            let client_hello = accepted.client_hello();
+            let offered = |wanted: &[u8]| {
+                client_hello
+                    .alpn()
+                    .is_some_and(|mut offered| offered.any(|protocol| protocol == wanted))
+            };
+            (
+                offered(ALPN),
+                offered(ALPN_PAIR),
+                client_hello.server_name().map(str::to_string),
+            )
         };
-        let config = if offered(ALPN) {
+        let config = if link {
             Some(&self.link)
-        } else if offered(ALPN_PAIR) {
+        } else if pairing {
             Some(&self.pairing)
         } else {
             None
         };
-        match config {
-            Some(config) => Ok(Secured::Link(start.into_stream(Arc::clone(config)).await?)),
-            None => Ok(Secured::Http(start.into_stream(Arc::clone(http)).await?)),
+        if let Some(config) = config {
+            let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
+            let stream = start.into_stream(Arc::clone(config)).await?;
+            return Ok(Secured::Link(Handoff::Link(stream)));
         }
+        let passthrough = server_name
+            .as_deref()
+            .and_then(|name| self.server.hosts.route(name))
+            .filter(|route| route.mode == hosts::Mode::Passthrough);
+        if let Some(Route { node, .. }) = passthrough {
+            if self.server.down_sender(&node).is_none() {
+                self.server.count("moqui.edgelink.refused", super::TUNNEL_HTTPS);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    format!("a passthrough host of {node}, whose link is down"),
+                ));
+            }
+            return Ok(Secured::Link(Handoff::Passthrough { stream, hello, node }));
+        }
+        let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
+        Ok(Secured::Http(start.into_stream(Arc::clone(http)).await?))
     }
 
-    /// Serve a link connection until it closes.
-    pub(crate) async fn serve(&self, stream: TlsStream<TcpStream>, remote: SocketAddr) {
-        Arc::clone(&self.server).serve(stream, remote).await;
+    /// Serve a connection the link took until it closes.
+    pub(crate) async fn serve(&self, handoff: Handoff, remote: SocketAddr) {
+        match handoff {
+            Handoff::Link(stream) => Arc::clone(&self.server).serve(stream, remote).await,
+            Handoff::Passthrough { stream, hello, node } => {
+                super::tunnel::passthrough(Arc::clone(&self.server), stream, hello, &node, remote).await;
+            }
+        }
     }
 }
 
@@ -187,6 +286,31 @@ pub(crate) struct EdgeServer {
     /// Pair calls by address: when the window began, and how many since.
     pair_attempts: Mutex<HashMap<IpAddr, (Instant, u32)>>,
     shutdown: watch::Receiver<bool>,
+    /// The paired nodes' public host names (§5.3).
+    pub(crate) hosts: Hosts,
+    telemetry: Arc<Telemetry>,
+    /// The header the web protection reads a trusted proxy's client from, which a forwarded request never carries.
+    client_ip_header: String,
+    /// Tunnels and forwarded WebSockets open now.
+    active: Arc<AtomicI64>,
+    /// The places for tunnels and forwarded WebSockets, by node.
+    tunnel_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+}
+
+/// Tunnels and forwarded WebSockets open at once down one node's link: well under the down connection's stream limit
+/// (`down::MAX_STREAMS`), so the link's own calls and plain forwarded requests keep room.
+const MAX_TUNNELS_PER_NODE: usize = 768;
+
+/// A tunnel or forwarded WebSocket counted as open, holding its place among its node's, until dropped.
+pub(crate) struct Active {
+    active: Arc<AtomicI64>,
+    _slot: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl EdgeServer {
@@ -196,6 +320,8 @@ impl EdgeServer {
         link_fingerprint: &str,
         shutdown: watch::Receiver<bool>,
     ) -> Arc<Self> {
+        let telemetry = moqui_core::telemetry::for_factory(factory);
+        let active = Arc::new(AtomicI64::new(0));
         let server = Arc::new(Self {
             factory: Arc::downgrade(factory),
             config,
@@ -203,9 +329,20 @@ impl EdgeServer {
             registry: Mutex::new(Registry::default()),
             pair_attempts: Mutex::new(HashMap::new()),
             shutdown,
+            hosts: Hosts::default(),
+            telemetry: Arc::clone(&telemetry),
+            client_ip_header: factory
+                .extension(moqui_core::web::address::ClientAddressing::of_factory)
+                .header()
+                .to_string(),
+            active: Arc::clone(&active),
+            tunnel_slots: Mutex::new(HashMap::new()),
+        });
+        telemetry.observe_gauge("moqui.edgelink.tunnels.active", move || {
+            Some(active.load(Ordering::Acquire) as f64)
         });
         let weak = Arc::downgrade(&server);
-        moqui_core::telemetry::for_factory(factory).observe_gauge("moqui.edgelink.up", move || {
+        telemetry.observe_gauge("moqui.edgelink.up", move || {
             let server = weak.upgrade()?;
             let linked = lock(&server.registry)
                 .links
@@ -220,6 +357,92 @@ impl EdgeServer {
     /// The fingerprint of this node's link key: public, what local nodes pin.
     pub(crate) fn link_fingerprint(&self) -> &str {
         &self.link_fingerprint
+    }
+
+    pub(crate) fn config(&self) -> &EdgeConfig {
+        &self.config
+    }
+
+    /// The header the web protection reads a trusted proxy's client from.
+    pub(crate) fn client_ip_header(&self) -> &str {
+        &self.client_ip_header
+    }
+
+    /// The listeners' stop.
+    pub(crate) fn shutdown(&self) -> watch::Receiver<bool> {
+        self.shutdown.clone()
+    }
+
+    /// The sender of `node`'s down connection, while its link is up.
+    pub(crate) fn down_sender(&self, node: &str) -> Option<hyper::client::conn::http2::SendRequest<tonic::body::Body>> {
+        let registry = lock(&self.registry);
+        let down = registry.links.get(node)?.down.as_ref()?;
+        (!down.send.is_closed()).then(|| down.send.clone())
+    }
+
+    /// The nodes whose links are up, down connection and all.
+    pub(crate) fn linked_nodes(&self) -> Vec<String> {
+        lock(&self.registry)
+            .links
+            .iter()
+            .filter(|(_, link)| link.down.is_some())
+            .map(|(node, _)| node.clone())
+            .collect()
+    }
+
+    /// Add one to the counter `name`, of a tunnel or forward `kind`.
+    pub(crate) fn count(&self, name: &str, kind: &str) {
+        let mut attributes = moqui_core::entity::document::Document::new();
+        attributes.insert("kind".to_string(), moqui_lib::object::Value::string(kind));
+        self.telemetry.add_counter(name, 1, attributes);
+    }
+
+    /// A place for a tunnel or forwarded WebSocket of `kind` down `node`'s link, counted as open until the answer
+    /// drops; `None`, counted as refused, when the node has [`MAX_TUNNELS_PER_NODE`] open already.
+    pub(crate) fn opened(&self, node: &str, kind: &str) -> Option<Active> {
+        let slots = Arc::clone(
+            lock(&self.tunnel_slots)
+                .entry(node.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(MAX_TUNNELS_PER_NODE))),
+        );
+        let Ok(slot) = slots.try_acquire_owned() else {
+            self.count("moqui.edgelink.refused", kind);
+            tracing::warn!(
+                "Edge link of {node}: {MAX_TUNNELS_PER_NODE} tunnels open already; a new {kind} one is refused"
+            );
+            return None;
+        };
+        self.count("moqui.edgelink.tunnels", kind);
+        self.active.fetch_add(1, Ordering::AcqRel);
+        Some(Active {
+            active: Arc::clone(&self.active),
+            _slot: slot,
+        })
+    }
+
+    /// Load the host names, trying again with a backoff from 1 s to 30 s until a load works (the database may not be
+    /// ready yet), or the listeners stop.
+    pub(crate) async fn load_hosts(self: &Arc<Self>) {
+        let mut wait = Duration::from_secs(1);
+        let mut shutdown = self.shutdown.clone();
+        loop {
+            let server = Arc::clone(self);
+            let loaded = self.on_pool(move |factory| server.hosts.load(factory)).await;
+            match loaded {
+                Ok(count) => {
+                    tracing::info!("Edge node: answering for {count} host names of paired local nodes");
+                    return;
+                }
+                Err(err) => {
+                    tracing::error!("Edge node: the host names were not loaded ({err}); trying again in {wait:?}")
+                }
+            }
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                _ = shutdown.wait_for(|stopped| *stopped) => return,
+            }
+            wait = (wait * 2).min(Duration::from_secs(30));
+        }
     }
 
     fn factory(&self) -> Result<Arc<ExecutionContextFactory>, Error> {
@@ -539,11 +762,13 @@ impl EdgeServer {
         if write_answer(&mut stream, Answer::Ok, "").await.is_err() {
             return;
         }
+        // forwarded requests and tunnels share it, so the windows follow the link's bandwidth and delay
         let handshake = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
             .timer(hyper_util::rt::TokioTimer::new())
             .keep_alive_interval(self.config.keepalive)
             .keep_alive_timeout(self.config.keepalive)
             .keep_alive_while_idle(true)
+            .adaptive_window(true)
             .handshake(hyper_util::rt::TokioIo::new(stream))
             .await;
         let (send, connection) = match handshake {
@@ -857,3 +1082,7 @@ impl Link for LinkService {
         Ok(Response::new(UnpairReply {}))
     }
 }
+
+#[cfg(test)]
+#[path = "accept_tests.rs"]
+mod tests;
