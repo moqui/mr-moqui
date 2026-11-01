@@ -25,7 +25,8 @@ use super::xml::{attr, E};
 use super::{Session, State};
 use crate::ns;
 
-/// Unacknowledged stanzas kept at most; past this the stream ends, as the client does not acknowledge.
+/// Unacknowledged stanzas kept at most; past this the oldest are let go and the session can no longer be resumed (a
+/// resumption would silently miss them), so a dropped connection ends it.
 const MAX_UNACKED: usize = 1000;
 /// An acknowledgement is asked for after this many stanzas.
 const REQUEST_EVERY: u32 = 5;
@@ -37,6 +38,8 @@ pub(crate) struct Sm {
     h_out: u32,
     unacked: VecDeque<(u32, Element)>,
     since_request: u32,
+    /// Unacknowledged stanzas were let go: resumption is off.
+    pub lost: bool,
 }
 
 impl Sm {
@@ -48,6 +51,7 @@ impl Sm {
             h_out: 0,
             unacked: VecDeque::new(),
             since_request: 0,
+            lost: false,
         }
     }
 
@@ -57,6 +61,7 @@ impl Sm {
         self.since_request += 1;
         if self.unacked.len() > MAX_UNACKED {
             self.unacked.pop_front();
+            self.lost = true;
         }
     }
 
@@ -157,6 +162,8 @@ impl Session {
         self.binding.clone_from(&new.binding);
         self.peer = new.peer;
         self.stream_id.clone_from(&new.stream_id);
+        // the resuming connection signed in again, maybe with another app password
+        self.credential.clone_from(&new.credential);
         self.state = State::Bound;
         self.detached = false;
         self.last_push = None;

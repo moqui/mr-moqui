@@ -44,6 +44,8 @@ use crate::{jids, ns};
 
 /// The OMEMO payload's namespaces.
 const OMEMO: [&str; 2] = [ns::OMEMO_LEGACY, ns::OMEMO2];
+/// The most of one kind a single stanza acts on (reactions, invitations, linked uploads): each is a service call.
+const MOST_PER_STANZA: usize = 20;
 
 /// A clientRef as send#Message takes it.
 fn valid_ref(id: &str) -> bool {
@@ -292,6 +294,7 @@ impl Session {
             .filter(|child| child.is("x", ns::OOB))
             .map(|oob| child_text(oob, "url", ns::OOB))
             .filter(|url| url.starts_with(&format!("{}/xmpp-upload/", self.server.config.upload_base_url)))
+            .take(MOST_PER_STANZA)
             .collect();
         let mut attachments = Vec::new();
         for url in &links {
@@ -349,6 +352,7 @@ impl Session {
             .filter(|reaction| reaction.is("reaction", ns::REACTIONS))
             .map(|reaction| reaction.text().trim().to_string())
             .filter(|key| !key.is_empty())
+            .take(MOST_PER_STANZA)
             .collect();
         let found = self
             .call(services::FIND_EVENT, json!({"chatRoomId": room, "eventSeq": seq}))
@@ -397,7 +401,11 @@ impl Session {
         let Some(x) = message.get_child("x", ns::MUC_USER) else {
             return;
         };
-        for invite in x.children().filter(|child| child.is("invite", ns::MUC_USER)) {
+        for invite in x
+            .children()
+            .filter(|child| child.is("invite", ns::MUC_USER))
+            .take(MOST_PER_STANZA)
+        {
             if let Target::User(user_id, _) = self.target(&attr(invite, "to")).await {
                 if let Err(err) = self
                     .call(services::ADD_MEMBER, json!({"chatRoomId": room, "userId": user_id}))
@@ -944,7 +952,7 @@ impl Session {
             .get("xmppEncrypted")
             .and_then(|stored| stored.get("xml"))
             .and_then(Json::as_str)
-            .and_then(|xml| xml.parse::<Element>().ok());
+            .and_then(|xml| crate::framing::parse_element(xml).ok());
         if let Some(encrypted) = encrypted {
             let namespace = encrypted.ns();
             message = message

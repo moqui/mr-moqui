@@ -279,10 +279,19 @@ fn an_xmpp_users_credential_relays_to_public_addresses_only() {
         "fe80::1",
         "::ffff:10.0.0.1",
         "192.0.2.1",
+        "2002:0a00:0001::1",
+        "2002:7f00:0001::",
+        "::10.0.0.1",
+        "64:ff9b::a00:1",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
     ] {
         assert!(!super::is_public(ip.parse().unwrap()), "{ip}");
     }
     assert!(super::is_public("2a00:1450::1".parse().unwrap()));
+    assert!(
+        super::is_public("2002:0808:0404::1".parse().unwrap()),
+        "6to4 of a public address"
+    );
 }
 
 #[test]

@@ -18,7 +18,8 @@
 //! - **Listeners.** `xmpp_port` (STARTTLS) on `xmpp_host` and `xmpp_tls_port` (direct TLS, ALPN `xmpp-client`) on
 //!   `xmpp_tls_host`, each off while empty, on a small Tokio runtime of their own; the certificates from `runtime/cert`
 //!   by the name the client asks for ([`crate::tls::CertStore`]: the domain, `rooms.` and `upload.`, else `default`).
-//!   At most [`PER_SOURCE`] connections from one address at once. `/xmpp-websocket` (RFC 7395) on the HTTP listener
+//!   At most [`PER_SOURCE`] connections from one address at once and [`MAX_CONNECTIONS`] in all, WebSockets included.
+//!   `/xmpp-websocket` (RFC 7395) on the HTTP listener
 //!   when `xmpp_websocket_enabled` ([`ws`]), and `/xmpp-upload/` for files ([`upload`]).
 //! - **The backend.** Each service the session names runs on a request worker ([`crate::worker`]): as the signed-in
 //!   user, logged in by username (`internal_login_user`, which refuses a disabled account), or as internal work.
@@ -45,6 +46,11 @@ use tokio_rustls::TlsAcceptor;
 
 /// Connections from one address at once.
 const PER_SOURCE: usize = 20;
+/// Connections at once in all (TCP and WebSocket).
+const MAX_CONNECTIONS: usize = 10_000;
+
+/// Open connections by source address.
+type Sources = Arc<Mutex<HashMap<IpAddr, usize>>>;
 
 /// The running server of this process, for the HTTP routes and the tests.
 #[derive(Default)]
@@ -52,6 +58,50 @@ pub struct XmppSlot {
     pub server: Mutex<Option<Arc<Server>>>,
     /// The STARTTLS and direct TLS listeners' addresses.
     pub addresses: Mutex<(Option<SocketAddr>, Option<SocketAddr>)>,
+    /// The open connections by source, TCP and WebSocket.
+    sources: Sources,
+}
+
+/// A connection counted against its source and the total; dropping it gives the place back.
+pub(crate) struct Admitted {
+    sources: Sources,
+    ip: IpAddr,
+}
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        let mut open = lock(&self.sources);
+        if let Some(count) = open.get_mut(&self.ip) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                open.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// A place for a connection from `ip`; None when that source has [`PER_SOURCE`] open or the server
+/// [`MAX_CONNECTIONS`].
+fn admit(sources: &Sources, ip: IpAddr) -> Option<Admitted> {
+    let mut open = lock(sources);
+    let total: usize = open.values().sum();
+    let count = open.entry(ip).or_insert(0);
+    if *count >= PER_SOURCE || total >= MAX_CONNECTIONS {
+        if *count == 0 {
+            open.remove(&ip);
+        }
+        return None;
+    }
+    *count += 1;
+    Some(Admitted {
+        sources: Arc::clone(sources),
+        ip,
+    })
+}
+
+/// A place for a WebSocket connection from `ip`, counted with the TCP ones.
+pub(crate) fn admit_websocket(factory: &ExecutionContextFactory, ip: IpAddr) -> Option<Admitted> {
+    admit(&factory.extension(|_| XmppSlot::default()).sources, ip)
 }
 
 /// The XMPP server of this node; dropping it stops the listeners and the subscription.
@@ -184,7 +234,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     let slot = factory.extension(|_| XmppSlot::default());
     *lock(&slot.server) = Some(Arc::clone(&server));
     let runtime_dir = factory.runtime_dir().to_path_buf();
-    let sources: Arc<Mutex<HashMap<IpAddr, usize>>> = Arc::default();
+    let sources = Arc::clone(&slot.sources);
     let mut addresses = (None, None);
     for (port_name, host_name, direct) in [
         ("xmpp_port", "xmpp_host", false),
@@ -272,7 +322,7 @@ async fn accept_loop(
     server: Arc<Server>,
     acceptor: TlsAcceptor,
     direct: bool,
-    sources: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    sources: Sources,
 ) {
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -286,25 +336,14 @@ async fn accept_loop(
         if moqui_xmpp::conn::blocked(&server, peer.ip()) {
             continue;
         }
-        {
-            let mut open = lock(&sources);
-            let count = open.entry(peer.ip()).or_insert(0);
-            if *count >= PER_SOURCE {
-                tracing::debug!("XMPP connection from {peer} refused: {PER_SOURCE} are open from there");
-                continue;
-            }
-            *count += 1;
-        }
-        let (server, acceptor, sources) = (Arc::clone(&server), acceptor.clone(), Arc::clone(&sources));
+        let Some(admitted) = admit(&sources, peer.ip()) else {
+            tracing::debug!("XMPP connection from {peer} refused: too many are open from there or in all");
+            continue;
+        };
+        let (server, acceptor) = (Arc::clone(&server), acceptor.clone());
         tokio::spawn(async move {
             moqui_xmpp::conn::serve_tcp(server, stream, peer, acceptor, direct).await;
-            let mut open = lock(&sources);
-            if let Some(count) = open.get_mut(&peer.ip()) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    open.remove(&peer.ip());
-                }
-            }
+            drop(admitted);
         });
     }
 }

@@ -1,8 +1,9 @@
 // The services the XMPP server calls (org.moqui.impl.XmppServices; framework/entity/XmppEntities.xml; plans/Comms-Framework.md
 // §4.3, C3a; docs/interfaces/XMPP.md): an app password's SCRAM verifiers, made with it and sharing the user's salt; PLAIN
-// taking app passwords only; the archive, an event by its clientRef, an OMEMO message kept unreadable, PEP by access model,
-// and uploads attached only by their owner, each refused to another user with the very same parameters. The calls run
-// with authorization on, as the XMPP session makes them (XmppClientServices, granted to ALL_USERS).
+// taking app passwords only; a FAST token and a session's sign-in check going with the app password they came from; the
+// archive, an event by its clientRef, an OMEMO message kept unreadable, PEP by access model, and uploads attached only by
+// their owner, each refused to another user with the very same parameters. The calls run with authorization on, as the
+// XMPP session makes them (XmppClientServices, granted to ALL_USERS).
 // Run: ./moq test framework --spec XmppServices
 const A = "XMPP_SPEC_A"
 const B = "XMPP_SPEC_B"
@@ -51,7 +52,8 @@ spec({
     setupSpec() {
         for (const u of [A, B, C]) makeUser(u)
         sys(() => {
-            for (const entity of ["moqui.xmpp.XmppPepItem", "moqui.xmpp.XmppPepNode", "moqui.xmpp.XmppUpload", "moqui.security.UserAppPassword"]) {
+            for (const entity of ["moqui.xmpp.XmppPepItem", "moqui.xmpp.XmppPepNode", "moqui.xmpp.XmppUpload", "moqui.xmpp.XmppFastToken",
+                    "moqui.security.UserAppPassword"]) {
                 ec.entity.find(entity).condition("userId", "in", [A, B, C]).deleteAll()
             }
         })
@@ -84,11 +86,45 @@ feature("an app password gets SCRAM verifiers sharing the user's salt, and PLAIN
         credentials.salt == rows[0].scramSalt
         credentials.storedKeyList.length == 4
         credentials.serverKeyList.length == 4
+        credentials.appPasswordIdList.length == 4
+        credentials.appPasswordIdList.every((id) => rows.some((row) => row.appPasswordId == id))
         !nobody.salt
         plain.errors == ""
         plain.userId == A
+        rows.some((row) => row.appPasswordId == plain.appPasswordId)
         wrong.errors != ""
         other.errors != ""
+    }
+})
+
+feature("a session and its FAST token go with the app password signed in with: revoked, both are refused", {
+    when() {
+        const plain = as(null, "check#PlainPassword", {username: username(A), password: passwords.first})
+        const issued = as(null, "issue#FastToken", {userId: A, userAgentId: "spec-agent", mechanism: "HT-SHA-256-EXPR",
+            token: "spec-token-1", lifetimeSeconds: 600, appPasswordId: plain.appPasswordId})
+        const tokens = {username: username(A), userAgentId: "spec-agent"}
+        const check = {userId: A, appPasswordId: plain.appPasswordId}
+        const before = as(null, "get#FastToken", tokens)
+        const valid = as(null, "check#Credential", check)
+        const anotherUser = as(null, "check#Credential", Object.assign({}, check, {userId: B}))
+        // as on the user's App passwords screen
+        ec.user.internalLoginUser(username(A))
+        const revoked = as(null, "org.moqui.impl.UserServices.revoke#UserAppPassword", {appPasswordId: plain.appPasswordId})
+        const after = as(null, "get#FastToken", tokens)
+        const invalid = as(null, "check#Credential", check)
+        return {plain, issued, before, valid, anotherUser, revoked, after, invalid}
+    },
+    then({plain, issued, before, valid, anotherUser, revoked, after, invalid}) {
+        plain.errors == ""
+        issued.errors == ""
+        before.tokenList.length == 1
+        before.tokenList[0].token == "spec-token-1"
+        before.tokenList[0].appPasswordId == plain.appPasswordId
+        valid.valid == true
+        anotherUser.valid == false
+        revoked.errors == ""
+        after.tokenList.length == 0
+        invalid.valid == false
     }
 })
 

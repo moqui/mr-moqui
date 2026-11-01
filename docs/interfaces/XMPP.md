@@ -61,14 +61,36 @@ with a second factor signs in with an app password, which is made after it.
   (`UserAppPassword.scram*`): salted, 10,000 iterations, one for the password as shown and one without its dashes. A
   user's app passwords share one salt, so one challenge fits each. App passwords made before C3a have none; PLAIN
   takes them.
+- **STARTTLS is required** on `xmpp_port`: before it, anything but `<starttls/>` (a SASL `<auth>` included) ends the
+  stream, so a client whose STARTTLS offer was stripped on the way cannot be led to sign in in the clear.
 - **PLAIN** only over TLS, as a fallback for a client without SCRAM.
 - **SASL2** (XEP-0388) with **Bind 2** (XEP-0386): one round trip binds a resource from the client's tag and turns on
   carbons, stream management and client state. RFC 6120 SASL and resource binding work too.
 - **FAST** (XEP-0484): a client asks for a token at a SASL2 sign-in and comes back with one round trip,
   `HT-SHA-256-EXPR` (bound to the TLS session) or `HT-SHA-256-NONE` (whose count must grow each time). A token is kept
-  per user and client (the client's user-agent id), encrypted (the HMAC needs it), and expires.
+  per user and client (the client's user-agent id), encrypted (the HMAC needs it), and expires. A token stands for the
+  app password the client signed in with when it asked: revoking that app password refuses the token.
+- **Revocation.** A session remembers its app password and checks every minute (`check#Credential`) that it is not
+  revoked and the account may still sign in; when either fails the session ends (`not-authorized`).
 - **Failures** count against the source address, as the SIP engine counts failed digests (moqui-lib
   `source_guard.rs`): 5 in 10 minutes block the address (an IPv6 /64) for an hour. The account is never locked.
+
+## Limits
+
+- A stanza (or a stream header) is at most 256 KiB, nested at most 32 deep (`framing.rs` `MAX_DEPTH`; minidom works
+  on elements recursively, so a deeper one would overflow a thread's stack); past either the stream ends
+  (`policy-violation`). A WebSocket frame is at most 256 KiB, and parsed with the same depth limit.
+- A connection must sign in and bind a resource within a minute (closed at the next 30-second tick), and one with
+  nothing from the client for 10 minutes is closed.
+- At most 20 connections from one address (over WebSocket, the client a trusted proxy names) and 10,000 in all, TCP
+  and WebSocket counted together. Failed sign-ins are counted per address, as above.
+- Stream management keeps at most 1,000 unacknowledged stanzas; past that the oldest go and the session cannot be
+  resumed. A user has at most 10 sessions waiting for resumption.
+- A stanza acts on at most 20 reactions, invitations or linked uploads; a session asks a client about at most 4
+  capability hashes at a time.
+- MAM pages are at most 250 messages, a room join's history 100. PEP: 200 nodes a user, 256 items a node, 256 KiB an
+  item. Uploads: 60 slots a user an hour, asking for at most ten times `xmpp_upload_max_bytes` in all; a slot takes
+  its PUT within an hour.
 
 ## Chat
 
@@ -128,7 +150,7 @@ client). The bookmarks node lists the user's rooms too, with autojoin, so an app
 ## Files
 
 An upload slot (XEP-0363, `upload.<domain>`) is a URL under `/xmpp-upload/` that takes one PUT of the size asked
-for, then serves the file. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
+for, within an hour, then serves the file. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
 shows it. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`. The
 URL is the capability, as XEP-0363 has it: anyone it is passed to can read the file.
 
@@ -173,23 +195,25 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
 
 ## Tests
 
-- `cargo test -p moqui-xmpp` (17, under a second): the stream reader (stanzas split across reads, entities refused,
-  the size limit, WebSocket frames), SCRAM (RFC 7677's example, the binding to the exporter, a downgrade refused, an
+- `cargo test -p moqui-xmpp` (21, under a second): the stream reader (stanzas split across reads, entities refused,
+  the size limit, a deep stanza and a long stream header refused, WebSocket frames), SCRAM (RFC 7677's example, the binding to the exporter, a downgrade refused, an
   unknown user like a wrong password), FAST (bound to its TLS session, its count), and sessions on recorded stanzas
-  against an in-memory backend: STARTTLS first; SASL2 with SCRAM-PLUS, Bind 2 and a FAST token, then FAST, and the
-  token refused from another TLS session; failed sign-ins blocking the source and not the account, then RFC 6120
+  against an in-memory backend: STARTTLS first, and SASL before it refused; SASL2 with SCRAM-PLUS, Bind 2 and a FAST token, then FAST, and the
+  token refused from another TLS session; a revoked app password ending its session and refusing its token; failed
+  sign-ins blocking the source and not the account, then RFC 6120
   PLAIN and binding; a room message reflected with its id and reaching the other member, a correction, a reaction and
   the archive paged; a direct message, a carbon, and the roster; OMEMO kept as it came, refused in a bridged room, and
   an encrypted Moqui room refused; PEP for both OMEMO namespaces with notifications to who asked and a
   precondition refused; every advertised feature answering; stream management counts and resumption inside SASL2; a
-  detached session's text-free push.
+  detached session's text-free push; at most 10 detached sessions a user, and no resumption once unacknowledged
+  stanzas were let go.
 - `cargo test -p moqui-host --test it -- xmpp::` (about 4 s): a real server with tokio-xmpp as one client
   (SCRAM-SHA-256-PLUS over tls-exporter on direct TLS; a room joined, its message read on the web side and the web's
   answer back; the room's archive paged; an upload put and fetched over HTTP; an OMEMO device list published), and a
   raw SASL2 client for the other (SCRAM-PLUS with Bind 2, stream management and a FAST token; the device list read over
   PEP; the connection dropped, a message while away, FAST and resumption inside SASL2 with the message replayed).
-- `./moq test framework --spec XmppServices` (5): an app password's verifiers sharing the user's salt, PLAIN taking
-  app passwords only, and the archive, an event by clientRef, an OMEMO message, PEP by access model and an upload's
+- `./moq test framework --spec XmppServices` (6): an app password's verifiers sharing the user's salt, PLAIN taking
+  app passwords only, a FAST token and the session check refused once the app password is revoked, and the archive, an event by clientRef, an OMEMO message, PEP by access model and an upload's
   attachment, each refused to another user with the same parameters; the calls with authorization on, as the session
   makes them.
 - `cargo test -p moqui-rtc turn`: an XMPP user's TURN credential relays to public addresses only.

@@ -373,6 +373,7 @@ fn get_scram_credentials(
     let mut iterations = String::new();
     let mut stored = Vec::new();
     let mut server = Vec::new();
+    let mut ids = Vec::new();
     for row in rows.iter() {
         let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
         if field("scramSalt").is_empty() {
@@ -389,6 +390,7 @@ fn get_scram_credentials(
         for (stored_key, server_key) in keys.split_whitespace().zip(servers.split_whitespace()) {
             stored.push(Value::string(stored_key));
             server.push(Value::string(server_key));
+            ids.push(Value::string(field("appPasswordId")));
         }
     }
     if stored.is_empty() {
@@ -400,6 +402,7 @@ fn get_scram_credentials(
         ("iterations", Value::string(iterations)),
         ("storedKeyList", Value::List(stored)),
         ("serverKeyList", Value::List(server)),
+        ("appPasswordIdList", Value::List(ids)),
     ]))
 }
 
@@ -407,7 +410,7 @@ fn get_scram_credentials(
 /// (`login_app_password`: a refusal never counts toward the account's lockout); the account's userId and username.
 fn check_plain_password(
     parameters: &BTreeMap<String, Value>,
-    _facade: &EntityFacade,
+    facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let (Some(username), Some(password)) = (text(parameters, "username"), text(parameters, "password")) else {
         add_error("not an app password");
@@ -421,9 +424,19 @@ fn check_plain_password(
     }
     let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
     let username = crate::user::current_username().ok().flatten().unwrap_or(username);
+    // which app password it was, so the session and its FAST tokens go with it when it is revoked
+    let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let app_password_id = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("passwordHash", Value::string(hashed))
+        .one()?
+        .and_then(|row| row.get("appPasswordId").map(to_plain_string))
+        .unwrap_or_default();
     Ok(out([
         ("userId", Value::string(user_id)),
         ("username", Value::string(username)),
+        ("appPasswordId", Value::string(app_password_id)),
     ]))
 }
 

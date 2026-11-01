@@ -61,6 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="userId"/><parameter name="salt"/><parameter name="iterations"/>
             <parameter name="storedKeyList" type="List"/><parameter name="serverKeyList" type="List"/>
+            <parameter name="appPasswordIdList" type="List"><description>The app password of each verifier</description></parameter>
         </out-parameters>
     </service>
 
@@ -69,11 +70,29 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: SASL PLAIN, with an app password only (never the account password, whose failures would
             count toward its lockout and which cannot carry a second factor). An error when it does not match.</description>
         <in-parameters><parameter name="username" required="true"/><parameter name="password" required="true"/></in-parameters>
-        <out-parameters><parameter name="userId"/><parameter name="username"/></out-parameters>
+        <out-parameters><parameter name="userId"/><parameter name="username"/><parameter name="appPasswordId"/></out-parameters>
+    </service>
+
+    <service verb="check" noun="Credential" authenticate="false" allow-remote="false">
+        <description>Internal: whether a signed-in XMPP session may go on: the account may still sign in (get#Account's
+            canLogin) and the app password it signed in with (appPasswordId) is the user's and not revoked. The session
+            asks every minute and ends when valid is false.</description>
+        <in-parameters><parameter name="userId" required="true"/><parameter name="appPasswordId"/></in-parameters>
+        <out-parameters><parameter name="valid" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            valid = false
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).disableAuthz().one()
+            if (!account || !appPasswordId) return
+            const until = account.disabledDateTime ? Number(account.disabledDateTime) : null
+            if (account.disabled === 'Y' && !(until != null && until < Number(ec.user.nowTimestamp))) return
+            const password = ec.entity.find('moqui.security.UserAppPassword').condition('appPasswordId', appPasswordId).disableAuthz().one()
+            valid = !!password && password.userId === userId && !password.revokedDate
+        ]]></script></actions>
     </service>
 
     <service verb="get" noun="FastToken" authenticate="false" allow-remote="false">
-        <description>Internal: the unexpired FAST tokens of a user's client (userAgentId), decrypted, for the HMAC check.</description>
+        <description>Internal: the unexpired FAST tokens of a user's client (userAgentId), decrypted, for the HMAC check;
+            not one whose app password was revoked.</description>
         <in-parameters><parameter name="username" required="true"/><parameter name="userAgentId"/></in-parameters>
         <out-parameters><parameter name="tokenList" type="List"/></out-parameters>
         <actions><script><![CDATA[
@@ -82,15 +101,22 @@ along with this software (see the LICENSE.md file). If not, see
             if (!account?.userId || !account.canLogin || !userAgentId) return
             const rows = ec.entity.find('moqui.xmpp.XmppFastToken').condition('userId', account.userId)
                     .condition('userAgentId', String(userAgentId)).condition('expireDate', '>', ec.user.nowTimestamp).disableAuthz().list()
-            tokenList = Array.from(rows).map((row) => ({fastTokenId: row.fastTokenId, token: row.token}))
+            const live = (id) => {
+                if (!id) return false
+                const password = ec.entity.find('moqui.security.UserAppPassword').condition('appPasswordId', id).disableAuthz().one()
+                return !!password && password.userId === account.userId && !password.revokedDate
+            }
+            tokenList = Array.from(rows).filter((row) => live(row.appPasswordId))
+                    .map((row) => ({fastTokenId: row.fastTokenId, token: row.token, appPasswordId: row.appPasswordId}))
         ]]></script></actions>
     </service>
 
     <service verb="issue" noun="FastToken" authenticate="false" allow-remote="false">
-        <description>Internal: keep a new FAST token for a user's client, in place of the one it had; out expiry
-            (XEP-0082).</description>
+        <description>Internal: keep a new FAST token for a user's client, in place of the one it had, under the app
+            password the client signed in with; out expiry (XEP-0082).</description>
         <in-parameters>
             <parameter name="userId" required="true"/><parameter name="userAgentId" required="true"/>
+            <parameter name="appPasswordId" required="true"/>
             <parameter name="mechanism"/><parameter name="token" required="true"/>
             <parameter name="lifetimeSeconds" type="Long" default="1209600"/>
         </in-parameters>
@@ -100,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
             const expires = new Date(Number(ec.user.nowTimestamp) + Number(lifetimeSeconds) * 1000)
             const row = ec.entity.makeValue('moqui.xmpp.XmppFastToken')
             row.setSequencedIdPrimary()
-            row.setFields({userId: userId, userAgentId: userAgentId, mechanism: mechanism, token: token, lastCount: -1,
+            row.setFields({userId: userId, userAgentId: userAgentId, appPasswordId: appPasswordId, mechanism: mechanism, token: token, lastCount: -1,
                 createdDate: ec.user.nowTimestamp, expireDate: expires}, true, null, null)
             row.create()
             expiry = expires.toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -273,7 +299,10 @@ along with this software (see the LICENSE.md file). If not, see
             count = Number(base().count())
             const bound = (seq, roomId) => {
                 if (seq == null) return null
-                const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', roomId || chatRoomId).condition('eventSeq', seq).disableAuthz().one()
+                // a bound is an event of the rooms read here, never of another room
+                const boundRoom = roomId || chatRoomId
+                if (!rooms.includes(boundRoom)) return null
+                const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', boundRoom).condition('eventSeq', seq).disableAuthz().one()
                 return row ? row.sentDate : null
             }
             let find = base()
@@ -461,8 +490,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="publish" noun="PepItem">
         <description>Publish an item to one of the current user's PEP nodes, made on first publish with options
             (access_model, max_items; persist_items is always true). A node that exists keeps its options: a publish whose
-            access_model or max_items differs is not made (preconditionFailed true, XEP-0060 §7.1.5). Out the users to
-            notify (notifyUserIdList, who may read it).</description>
+            access_model or max_items differs is not made (preconditionFailed true, XEP-0060 §7.1.5). A user has at most
+            200 nodes, each with at most 256 items (the oldest go). Out the users to notify (notifyUserIdList, who may
+            read it).</description>
         <in-parameters>
             <parameter name="node" required="true"/><parameter name="itemId" required="true"/>
             <parameter name="payloadXml" required="true" allow-html="any"/><parameter name="options" type="Map"/>
@@ -480,7 +510,12 @@ along with this software (see the LICENSE.md file). If not, see
             const access = asked.access_model ? String(asked.access_model) : null
             if (access && !ACCESS.includes(access)) { preconditionFailed = true; return }
             const max = asked.max_items != null && asked.max_items !== '' ? (asked.max_items === 'max' ? 0 : Number(asked.max_items)) : null
+            // a user's PEP is bounded: so many nodes (an OMEMO bundle is one per device), so many items in each
+            const MAX_NODES = 200, MAX_ITEMS = 256
             let nodeRow = ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', me).condition('node', node).forUpdate(true).disableAuthz().one()
+            if (!nodeRow && ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', me).disableAuthz().count() >= MAX_NODES) {
+                ec.message.addError('Too many PEP nodes'); return
+            }
             if (!nodeRow) {
                 const omemo = String(node).startsWith('eu.siacs.conversations.axolotl') || String(node).startsWith('urn:xmpp:omemo:2')
                 const fallback = node === 'urn:xmpp:bookmarks:1' ? 'whitelist' : omemo ? 'open' : 'presence'
@@ -495,9 +530,10 @@ along with this software (see the LICENSE.md file). If not, see
             const item = ec.entity.makeValue('moqui.xmpp.XmppPepItem')
             item.setFields({userId: me, node: node, itemId: itemId, payloadXml: String(payloadXml), publishedDate: ec.user.nowTimestamp}, true, null, null)
             item.createOrUpdate()
-            if (nodeRow.maxItems != null && Number(nodeRow.maxItems) > 0) {
+            const keep = nodeRow.maxItems != null && Number(nodeRow.maxItems) > 0 ? Math.min(Number(nodeRow.maxItems), MAX_ITEMS) : MAX_ITEMS
+            if (ec.entity.find('moqui.xmpp.XmppPepItem').condition('userId', me).condition('node', node).disableAuthz().count() > keep) {
                 const extra = Array.from(ec.entity.find('moqui.xmpp.XmppPepItem').condition('userId', me).condition('node', node)
-                        .orderBy('-publishedDate').disableAuthz().list()).slice(Number(nodeRow.maxItems))
+                        .orderBy('-publishedDate').disableAuthz().list()).slice(keep)
                 for (const old of extra) old.delete()
             }
             notifyUserIdList = ec.service.sync().name('org.moqui.impl.XmppServices.get#PepReaders')
@@ -613,7 +649,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="create" noun="UploadSlot">
         <description>An upload slot (XEP-0363) for the current user: a token whose URL takes one PUT of fileSize bytes
-            (no more than xmpp_upload_max_bytes) within an hour. Out the token and the file name as it goes in the URL.</description>
+            (no more than xmpp_upload_max_bytes) within an hour. A user gets at most 60 slots an hour, asking for at most
+            ten times xmpp_upload_max_bytes in all. Out the token and the file name as it goes in the URL.</description>
         <in-parameters>
             <parameter name="fileName" required="true"/><parameter name="fileSize" type="Long" required="true"/>
             <parameter name="contentType"/>
@@ -622,6 +659,12 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const most = Number(System.getProperty('xmpp_upload_max_bytes') || 20971520)
             if (!(Number(fileSize) > 0) || Number(fileSize) > most) { ec.message.addError('The file is too large'); return }
+            // at most so many slots of a user's in an hour, and so many bytes asked for in them
+            const hourAgo = new Date(Number(ec.user.nowTimestamp) - 3600000)
+            const recent = Array.from(ec.entity.find('moqui.xmpp.XmppUpload').condition('userId', ec.user.userId)
+                    .condition('createdDate', '>=', hourAgo).selectField('fileSize').disableAuthz().list())
+            const askedBytes = recent.reduce((sum, row) => sum + Number(row.fileSize || 0), 0)
+            if (recent.length >= 60 || askedBytes + Number(fileSize) > most * 10) { ec.message.addError('Too many uploads; try again later'); return }
             let name = String(fileName || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
             if (!name || name === '.' || name === '..') name = 'file'
             urlName = name.replace(/[^A-Za-z0-9._-]/g, '_').slice(-100)

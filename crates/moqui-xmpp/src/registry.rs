@@ -35,6 +35,8 @@ use tokio::sync::{mpsc, oneshot, Notify};
 
 /// How many pushes may wait for one session before it is closed as too slow (the client resumes or reconnects).
 pub const QUEUE: usize = 512;
+/// How many detached sessions one user may have waiting for resumption; a session dropped past this ends.
+pub const DETACHED_PER_USER: usize = 10;
 
 /// What reaches a session from outside its connection.
 #[derive(Debug)]
@@ -150,9 +152,15 @@ impl Registry {
         }
     }
 
-    /// Keep a detached session for its user under its stream management id.
-    pub fn detach(&self, sm_id: &str, user_id: &str, handover: Handover) {
-        lock(&self.detached).insert(sm_id.to_string(), (user_id.to_string(), handover));
+    /// Keep a detached session for its user under its stream management id; false when the user has
+    /// [`DETACHED_PER_USER`] waiting already, and this one is not kept.
+    pub fn detach(&self, sm_id: &str, user_id: &str, handover: Handover) -> bool {
+        let mut detached = lock(&self.detached);
+        if detached.values().filter(|(owner, _)| owner == user_id).count() >= DETACHED_PER_USER {
+            return false;
+        }
+        detached.insert(sm_id.to_string(), (user_id.to_string(), handover));
+        true
     }
 
     pub fn forget_detached(&self, sm_id: &str) {

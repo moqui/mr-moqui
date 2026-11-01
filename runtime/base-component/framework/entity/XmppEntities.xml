@@ -23,9 +23,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A FAST token (XEP-0484) of a user's client (userAgentId, the client's own stable id), asked for at a
             SASL2 sign-in and good until expireDate. The token is kept encrypted: the HMAC it signs in with needs it.
             lastCount is the highest count used without channel binding (HT-SHA-256-NONE), so a captured exchange cannot
-            be replayed. A new token for the same client replaces the one before.</description>
+            be replayed. A new token for the same client replaces the one before. appPasswordId is the app password the
+            client signed in with when it asked: revoking it refuses the token.</description>
         <field name="fastTokenId" type="id" is-pk="true"/>
         <field name="userId" type="id" not-null="true"/>
+        <field name="appPasswordId" type="id" not-null="true"/>
         <field name="userAgentId" type="text-medium"/>
         <field name="mechanism" type="text-short"/>
         <field name="token" type="text-medium" encrypt="true"/>

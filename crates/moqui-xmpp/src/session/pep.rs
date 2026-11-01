@@ -252,7 +252,7 @@ fn publish_options(form: Option<&Element>) -> Json {
 /// A stored item as an element in `namespace`.
 fn item_element(item: &Json, namespace: &str) -> Element {
     let mut built = E::new("item", namespace).a("id", backend::text(item, "itemId"));
-    if let Ok(payload) = backend::text(item, "payloadXml").parse::<Element>() {
+    if let Ok(payload) = crate::framing::parse_element(&backend::text(item, "payloadXml")) {
         built = built.c(payload);
     }
     built.build()

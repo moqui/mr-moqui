@@ -38,6 +38,9 @@ use crate::Server;
 
 /// A connection with nothing from the client for this long is closed (clients ping or send whitespace well within it).
 const IDLE: Duration = Duration::from_secs(600);
+/// A connection that has not signed in and bound a resource this long after it opened is closed, so one that only
+/// trickles keepalives cannot hold a connection slot (it is closed at the first tick past this).
+pub const SIGN_IN_WITHIN: Duration = Duration::from_secs(60);
 const TICK: Duration = Duration::from_secs(30);
 
 /// Whether `ip` is blocked for failed sign-ins.
@@ -208,6 +211,7 @@ async fn run(server: Arc<Server>, mut session: Session, mut link: Link) {
     let mut tick = tokio::time::interval(TICK);
     tick.tick().await;
     let mut last_heard = Instant::now();
+    let opened = Instant::now();
     loop {
         if !flush(&mut session, &mut link).await {
             break;
@@ -235,6 +239,7 @@ async fn run(server: Arc<Server>, mut session: Session, mut link: Link) {
                         }
                     }
                     Read::Error(FramingError::TooLarge) => session.fail("policy-violation", Some("stanza too large")),
+                    Read::Error(FramingError::TooDeep) => session.fail("policy-violation", Some("stanza nested too deeply")),
                     Read::Error(FramingError::NotWellFormed(_)) => session.fail("not-well-formed", None),
                     Read::Gone => break,
                 }
@@ -247,6 +252,8 @@ async fn run(server: Arc<Server>, mut session: Session, mut link: Link) {
             _ = tick.tick() => {
                 if last_heard.elapsed() > IDLE {
                     session.fail("connection-timeout", None);
+                } else if !session.is_bound() && opened.elapsed() > SIGN_IN_WITHIN {
+                    session.fail("connection-timeout", Some("not signed in"));
                 } else {
                     session.tick().await;
                 }
@@ -299,7 +306,11 @@ async fn wait_detached(server: Arc<Server>, mut session: Session) {
         .map(|account| account.user_id.clone())
         .unwrap_or_default();
     let (handover_tx, mut handover_rx) = oneshot::channel();
-    server.registry.detach(&id, &user_id, handover_tx);
+    if !server.registry.detach(&id, &user_id, handover_tx) {
+        tracing::debug!("XMPP: a session of {user_id} not kept for resumption: too many wait already");
+        session.detached = false;
+        return session.end().await;
+    }
     let mut rx = session.take_receiver();
     let deadline = tokio::time::sleep(server.config.resume_timeout);
     tokio::pin!(deadline);
@@ -318,8 +329,11 @@ async fn wait_detached(server: Arc<Server>, mut session: Session) {
             inbound = next_inbound(&mut rx) => match inbound {
                 Some(inbound) => {
                     session.on_inbound(inbound).await;
-                    // kept as unacknowledged stanzas for the resumption
+                    // kept as unacknowledged stanzas for the resumption, while they fit
                     session.take_out();
+                    if session.resumable().is_none() {
+                        break;
+                    }
                 }
                 None => rx = None,
             },

@@ -537,7 +537,8 @@ impl Session {
 
     /// A capabilities hash (XEP-0115) this session has not resolved: ask the client what it means.
     pub(super) fn ask_caps(&mut self, node: &str, ver: &str) {
-        if ver.is_empty() || self.caps_asked.values().any(|asked| asked == ver) {
+        // a few questions at a time: a client that keeps changing its hash is not asked each one
+        if ver.is_empty() || self.caps_asked.len() >= 4 || self.caps_asked.values().any(|asked| asked == ver) {
             return;
         }
         let id = super::xml::random_id();

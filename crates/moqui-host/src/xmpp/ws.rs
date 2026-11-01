@@ -16,19 +16,19 @@
 //! web clients (Converse.js and the like). It signs in with SASL like any client: no cookie, so no origin check is
 //! needed. Over this process's own HTTPS the TLS session's exporter, taken at the accept ([`TlsExporter`]), gives
 //! SCRAM-SHA-256-PLUS; behind a proxy that ends TLS there is none, and the plain SCRAM mechanism is offered. Exempt
-//! from the request deadline, as `/notws` is.
+//! from the request deadline, as `/notws` is. The client is the address a trusted proxy names (`ClientAddr`), so
+//! failed sign-ins and the connection limits count per client, not against the proxy.
 
 use std::future::Future;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{Extension, State};
 use axum::http::request::Parts;
 use axum::response::Response;
 
-use crate::http::{plain, HttpState, HttpsRequest};
+use crate::http::{plain, ClientAddr, HttpState, HttpsRequest};
 
 pub(crate) const PATH: &str = "/xmpp-websocket";
 
@@ -58,23 +58,27 @@ impl axum::extract::FromRequestParts<Arc<HttpState>> for Secured {
 
 pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(ClientAddr(client)): Extension<ClientAddr>,
     secured: Secured,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
     let Some(server) = super::server_of(&state.factory) else {
         return plain(404, "not found");
     };
-    if moqui_xmpp::conn::blocked(&server, peer.ip()) {
+    if moqui_xmpp::conn::blocked(&server, client) {
         return plain(429, "too many failed sign-ins");
     }
+    let Some(admitted) = super::admit_websocket(&state.factory, client) else {
+        return plain(429, "too many XMPP connections");
+    };
     let limit = server.config.max_stanza_bytes;
     ws.protocols(["xmpp"])
         .max_message_size(limit)
         .max_frame_size(limit)
         .on_upgrade(move |socket| async move {
             let frames: Box<dyn moqui_xmpp::conn::FrameIo> = Box::new(Frames(socket));
-            moqui_xmpp::conn::serve_frames(server, frames, peer.ip(), secured.https, secured.exporter).await;
+            moqui_xmpp::conn::serve_frames(server, frames, client, secured.https, secured.exporter).await;
+            drop(admitted);
         })
 }
 

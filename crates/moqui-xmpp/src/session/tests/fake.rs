@@ -46,7 +46,10 @@ pub type PepNode = (String, Vec<(String, String)>);
 #[derive(Default)]
 pub struct State {
     pub rooms: Vec<Room>,
-    pub fast: Vec<(String, String, String, i64)>,
+    /// (fastTokenId, userId, token, lastCount, appPasswordId)
+    pub fast: Vec<(String, String, String, i64, String)>,
+    /// The app passwords revoked (`AP-<userId>`).
+    pub revoked: Vec<String>,
     pub pep: HashMap<(String, String), PepNode>,
     pub calls: Vec<String>,
     pub statuses: HashMap<String, String>,
@@ -195,9 +198,14 @@ impl Fake {
                 // as created: the password as shown, and without its dashes
                 let shown = scram::derive(password, SALT, 4096);
                 let key = scram::derive(&password.replace('-', ""), SALT, 4096);
+                let id = format!("AP-{}", Fake::user_id_of(&username).unwrap_or_default());
+                if state.revoked.contains(&id) {
+                    return Ok(json!({}));
+                }
                 Ok(json!({"salt": STANDARD.encode(SALT), "iterations": 4096,
                     "storedKeyList": [STANDARD.encode(&shown.stored_key), STANDARD.encode(&key.stored_key)],
-                    "serverKeyList": [STANDARD.encode(&shown.server_key), STANDARD.encode(&key.server_key)]}))
+                    "serverKeyList": [STANDARD.encode(&shown.server_key), STANDARD.encode(&key.server_key)],
+                    "appPasswordIdList": [id.clone(), id]}))
             }
             services::CHECK_PLAIN => {
                 let (username, password) = (text(p, "username"), text(p, "password"));
@@ -205,13 +213,21 @@ impl Fake {
                     .into_iter()
                     .find(|(_, name, pw)| name.eq_ignore_ascii_case(&username) && *pw == password)
                 {
-                    Some((id, name, _)) => Ok(json!({"userId": id, "username": name})),
+                    Some((id, name, _)) => {
+                        Ok(json!({"userId": id, "username": name, "appPasswordId": format!("AP-{id}")}))
+                    }
                     None => refuse("not an app password"),
                 }
             }
             services::ISSUE_FAST_TOKEN => {
                 let id = format!("F{}", state.fast.len() + 1);
-                state.fast.push((id, text(p, "userId"), text(p, "token"), -1));
+                let credential = text(p, "appPasswordId");
+                if credential.is_empty() {
+                    return refuse("appPasswordId is required");
+                }
+                state
+                    .fast
+                    .push((id, text(p, "userId"), text(p, "token"), -1, credential));
                 Ok(json!({"expiry": "2030-01-01T00:00:00Z"}))
             }
             services::FAST_TOKEN => {
@@ -221,8 +237,8 @@ impl Fake {
                 let list: Vec<Json> = state
                     .fast
                     .iter()
-                    .filter(|(_, owner, _, _)| owner == user)
-                    .map(|(id, _, token, _)| json!({"fastTokenId": id, "token": token}))
+                    .filter(|(_, owner, _, _, credential)| owner == user && !state.revoked.contains(credential))
+                    .map(|(id, _, token, _, credential)| json!({"fastTokenId": id, "token": token, "appPasswordId": credential}))
                     .collect();
                 Ok(json!({"tokenList": list}))
             }
@@ -240,6 +256,11 @@ impl Fake {
                     }
                 }
                 Ok(json!({}))
+            }
+            services::CHECK_CREDENTIAL => {
+                let credential = text(p, "appPasswordId");
+                let valid = !credential.is_empty() && !state.revoked.contains(&credential);
+                Ok(json!({"valid": valid}))
             }
             services::INVALIDATE_FAST_TOKEN => {
                 let id = text(p, "fastTokenId");

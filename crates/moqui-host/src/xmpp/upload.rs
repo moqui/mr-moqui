@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `/xmpp-upload/<token>/<name>` (XEP-0363): an upload slot takes one PUT of the size it was asked for, then serves
-//! the file at the same URL; a chat file sent to an XMPP client is served the same way (`XmppServices`). The token is
+//! `/xmpp-upload/<token>/<name>` (XEP-0363): an upload slot takes one PUT of the size it was asked for, within an hour,
+//! then serves the file at the same URL; a chat file sent to an XMPP client is served the same way (`XmppServices`). The token is
 //! the capability, compared by its hash (`XmppUpload.tokenHash`). A file is served as an attachment, with no sniffing
 //! and a sandbox, so a page uploaded here cannot run as this site; images, audio and video inline. CORS is open, as
 //! web clients upload and fetch from their own origin.
@@ -31,6 +31,8 @@ use crate::http::HttpState;
 
 pub(crate) const PREFIX: &str = "/xmpp-upload/";
 const UPLOAD: &str = "moqui.xmpp.XmppUpload";
+/// How long an upload slot takes its PUT.
+const SLOT_LIFETIME_MS: i64 = 3_600_000;
 
 fn cors(mut response: Response) -> Response {
     let headers = response.headers_mut();
@@ -77,7 +79,12 @@ pub(crate) async fn handle(
     let Some(server) = super::server_of(&state.factory) else {
         return status(StatusCode::NOT_FOUND, "not found");
     };
-    if token.is_empty() || token.len() > 64 || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if token.is_empty()
+        || token.len() > 64
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return status(StatusCode::NOT_FOUND, "not found");
     }
     let factory = Arc::downgrade(&state.factory);
@@ -103,6 +110,11 @@ pub(crate) async fn handle(
         if put {
             if !field(&row, "completedDate").is_empty() {
                 return Ok(status(StatusCode::CONFLICT, "already uploaded"));
+            }
+            // a slot is good for an hour (clean#Uploads removes it later)
+            let made = row.get("createdDate").and_then(moqui_core::user::value_millis);
+            if made.is_none_or(|made| moqui_core::user::now_millis() - made > SLOT_LIFETIME_MS) {
+                return Ok(status(StatusCode::NOT_FOUND, "not found"));
             }
             let size = field(&row, "fileSize").parse::<u64>().unwrap_or(0);
             if body.len() as u64 != size || size > max {

@@ -63,7 +63,9 @@ const MAX_WAIT: Duration = Duration::from_secs(1);
 pub const XMPP_LEG: &str = "xmpp.";
 
 /// A public unicast address: not unspecified, loopback, private, shared (100.64/10), link-local, multicast, broadcast,
-/// documentation, benchmarking or unique-local; an IPv4-mapped IPv6 address as its IPv4 one.
+/// documentation, benchmarking or unique-local; an IPv4-mapped IPv6 address and a 6to4 one (2002::/16) as the IPv4
+/// address they carry; no IPv4-compatible (::/96), NAT64 (64:ff9b::/96 and /48) or Teredo (2001::/32) address, which
+/// carry an IPv4 address that may be inside.
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -85,13 +87,21 @@ pub fn is_public(ip: IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_public(IpAddr::V4(v4));
             }
-            let first = v6.segments()[0];
+            let segments = v6.segments();
+            let first = segments[0];
+            if first == 0x2002 {
+                let [a, b] = segments[1].to_be_bytes();
+                let [c, d] = segments[2].to_be_bytes();
+                return is_public(IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
             !(v6.is_unspecified()
                 || v6.is_loopback()
                 || v6.is_multicast()
+                || segments[..6].iter().all(|segment| *segment == 0)
                 || (first & 0xfe00) == 0xfc00
                 || (first & 0xffc0) == 0xfe80
-                || first == 0x2001 && v6.segments()[1] == 0x0db8
+                || first == 0x2001 && segments[1] == 0x0db8
+                || first == 0x2001 && segments[1] == 0
                 || first == 0x0064)
         }
     }

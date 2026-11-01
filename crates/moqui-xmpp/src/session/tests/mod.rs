@@ -251,6 +251,58 @@ async fn scram_plus_with_bind_2_then_fast_with_its_binding() {
 }
 
 #[tokio::test]
+async fn sasl_before_starttls_is_refused_on_the_plain_port() {
+    let (server, _) = server();
+    // a client whose STARTTLS offer was stripped on the way tries SCRAM in the clear
+    let mut client = Client::new(&server, Transport::Tcp { tls: false }, None);
+    client.open().await;
+    let (_, first) = ClientExchange::new("john.doe", JOHN_PASSWORD, None);
+    let out = client
+        .send(&format!(
+            "<auth xmlns='urn:ietf:params:xml:ns:xmpp-sasl' mechanism='SCRAM-SHA-256'>{}</auth>",
+            STANDARD.encode(first)
+        ))
+        .await;
+    assert!(find(&out, "error", ns::STREAM).is_some(), "{}", text_of(&out));
+    assert!(find(&out, "challenge", ns::SASL).is_none(), "{}", text_of(&out));
+    assert!(client.session.is_closed());
+}
+
+#[tokio::test]
+async fn revoking_the_app_password_ends_the_session_and_its_fast_token() {
+    let (server, fake) = server();
+    let (mut client, token) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Conversations").await;
+    assert_eq!(client.session.credential.as_deref(), Some("AP-U1"));
+    assert_eq!(
+        fake.state.lock().unwrap().fast[0].4,
+        "AP-U1",
+        "the token goes with the app password"
+    );
+    client.session.tick().await;
+    assert!(!client.session.is_closed(), "a valid sign-in goes on");
+
+    fake.state.lock().unwrap().revoked.push("AP-U1".to_string());
+    client.session.last_check = None;
+    client.session.tick().await;
+    let out = client.out();
+    assert!(client.session.is_closed(), "{}", text_of(&out));
+    assert!(text_of(&out).contains("not-authorized"), "{}", text_of(&out));
+
+    // the token issued under it is refused, with the same parameters that worked before
+    let mut again = Client::new(&server, Transport::Tcp { tls: true }, Some(EXPORTER.to_vec()));
+    again.open().await;
+    let out = again
+        .send(&format!(
+            "<authenticate xmlns='urn:xmpp:sasl:2' mechanism='HT-SHA-256-EXPR'><initial-response>{}</initial-response>\
+             <user-agent id='d4565fa7-4d72-4749-b3d3-740edbf87770'/><fast xmlns='urn:xmpp:fast:0' count='1'/>\
+             <bind xmlns='urn:xmpp:bind:0'><tag>Conversations</tag></bind></authenticate>",
+            STANDARD.encode(fast::initial_response("john.doe", &token, &EXPORTER))
+        ))
+        .await;
+    assert!(find(&out, "failure", ns::SASL2).is_some(), "{}", text_of(&out));
+}
+
+#[tokio::test]
 async fn failed_sign_ins_block_the_source_not_the_account() {
     let (server, _) = server();
     for attempt in 0..6 {
@@ -642,7 +694,7 @@ async fn stream_management_counts_and_resumes_inside_sasl2() {
         old.give_receiver(rx);
     }
     let (handover_tx, handover_rx) = tokio::sync::oneshot::channel();
-    server.registry.detach(&id, "U1", handover_tx);
+    assert!(server.registry.detach(&id, "U1", handover_tx));
     jane.send("<message type='chat' to='john.doe@moqui.local' id='while-away'><body>Still there?</body></message>")
         .await;
     let waiter = tokio::spawn(async move {
@@ -680,4 +732,30 @@ async fn stream_management_counts_and_resumes_inside_sasl2() {
         .collect();
     let text = text_of(&out);
     assert!(text.contains("resumed") && text.contains("Still there?"), "{text}");
+}
+
+#[tokio::test]
+async fn resumption_is_bounded_per_user_and_by_what_was_kept() {
+    let (server, _) = server();
+    for n in 0..crate::registry::DETACHED_PER_USER {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        assert!(server.registry.detach(&format!("sm{n}"), "U1", tx));
+    }
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    assert!(
+        !server.registry.detach("one-more", "U1", tx),
+        "past the limit a dropped session ends"
+    );
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    assert!(server.registry.detach("jane", "U2", tx), "another user's is kept");
+
+    // a client that never acknowledges: once stanzas are let go, the session cannot be resumed
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Monal").await;
+    assert!(john.session.resumable().is_some());
+    for n in 0..1001 {
+        john.session
+            .send(stanza(&format!("<message to='john.doe@moqui.local' id='m{n}'/>")));
+    }
+    assert!(john.session.resumable().is_none());
+    assert!(!john.session.detach(), "not kept to resume with stanzas missing");
 }

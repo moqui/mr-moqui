@@ -134,6 +134,9 @@ pub struct Session {
     pub(crate) stream_id: String,
     pub(crate) auth: auth::AuthState,
     pub(crate) account: Option<Account>,
+    /// The app password signed in with (`UserAppPassword.appPasswordId`), checked again now and then.
+    pub(crate) credential: Option<String>,
+    pub(crate) last_check: Option<Instant>,
     pub(crate) resource: Option<String>,
     pub(crate) entry_id: u64,
     pub(crate) rx: Option<mpsc::Receiver<Inbound>>,
@@ -170,6 +173,8 @@ pub struct Session {
 
 /// How often presence is refreshed (`heartbeat#UserStatus`) while the session is available.
 const HEARTBEAT: Duration = Duration::from_secs(60);
+/// How often a session checks that its app password is not revoked and its account may still sign in.
+const CREDENTIAL_CHECK: Duration = Duration::from_secs(60);
 /// How many sent clientRefs are remembered.
 const SENT_REFS: usize = 200;
 
@@ -185,6 +190,8 @@ impl Session {
             stream_id: xml::random_id(),
             auth: auth::AuthState::default(),
             account: None,
+            credential: None,
+            last_check: None,
             resource: None,
             entry_id: 0,
             rx: None,
@@ -219,6 +226,11 @@ impl Session {
 
     pub fn is_closed(&self) -> bool {
         self.state == State::Closed
+    }
+
+    /// Signed in with a resource bound: stanzas flow.
+    pub fn is_bound(&self) -> bool {
+        self.state == State::Bound
     }
 
     pub fn is_websocket(&self) -> bool {
@@ -461,9 +473,34 @@ impl Session {
         }
     }
 
-    /// The periodic tick: presence refreshed, so the user stays online while connected.
+    /// The periodic tick: the sign-in checked again (a revoked app password or a disabled account ends the session),
+    /// and presence refreshed, so the user stays online while connected.
     pub async fn tick(&mut self) {
-        if self.state != State::Bound || !self.available.load(Ordering::Relaxed) {
+        if self.state != State::Bound {
+            return;
+        }
+        if self.last_check.is_none_or(|at| at.elapsed() >= CREDENTIAL_CHECK) {
+            self.last_check = Some(Instant::now());
+            let checked = self
+                .call_internal(
+                    services::CHECK_CREDENTIAL,
+                    json!({"userId": self.user_id(), "appPasswordId": self.credential}),
+                )
+                .await;
+            // a check that could not run (the database away) leaves the session be; a refusal ends it
+            if checked.is_ok_and(|found| !backend::flag(&found, "valid")) {
+                tracing::info!(
+                    "XMPP session of {} ended: its sign-in is no longer valid",
+                    self.my_bare()
+                );
+                self.fail(
+                    "not-authorized",
+                    Some("the app password was revoked or the account may not sign in"),
+                );
+                return;
+            }
+        }
+        if !self.available.load(Ordering::Relaxed) {
             return;
         }
         if self.last_beat.is_some_and(|at| at.elapsed() < HEARTBEAT) {
@@ -498,13 +535,19 @@ impl Session {
 
     /// Whether the session can wait for resumption.
     pub fn resumable(&self) -> Option<String> {
-        self.sm.as_ref().filter(|sm| sm.resumable).map(|sm| sm.id.clone())
+        self.sm
+            .as_ref()
+            .filter(|sm| sm.resumable && !sm.lost)
+            .map(|sm| sm.id.clone())
     }
 
     pub(crate) fn remember_ref(&mut self, client_ref: &str) {
         self.sent_refs.push_back(client_ref.to_string());
         if self.sent_refs.len() > SENT_REFS {
-            self.sent_refs.pop_front();
+            // a client's own id is kept as long as its clientRef is, so neither grows without end
+            if let Some(old) = self.sent_refs.pop_front() {
+                self.ids.remove(&old);
+            }
         }
     }
 

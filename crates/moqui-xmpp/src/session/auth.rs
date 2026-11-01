@@ -25,6 +25,10 @@
 //!
 //! A failed exchange is counted against the source address ([`crate::conn::note_failure`]); enough of them block the
 //! address for a while. The account is never locked by them.
+//!
+//! The session remembers the app password it signed in with (a FAST token keeps the one it was issued under), and
+//! [`Session::tick`] checks it now and then (`check#Credential`): revoking that app password, or disabling the
+//! account, ends the session and refuses its FAST tokens.
 
 use std::sync::OnceLock;
 
@@ -51,6 +55,8 @@ struct Pending {
     sasl2: bool,
     scram: ServerExchange,
     request: Option<Sasl2Request>,
+    /// The app password of each verifier, by index.
+    credential_ids: Vec<String>,
 }
 
 /// The parts of a SASL2 `<authenticate>` that act once it succeeds.
@@ -126,6 +132,11 @@ impl Session {
 
     pub(super) async fn pre_auth(&mut self, element: Element) {
         let namespace = element.ns();
+        // TLS is required on the plain port: nothing but STARTTLS is taken before it, so a client whose STARTTLS offer
+        // was stripped on the way cannot be led to sign in in the clear
+        if matches!(self.transport, super::Transport::Tcp { tls: false }) && !element.is("starttls", ns::TLS) {
+            return self.fail("policy-violation", Some("STARTTLS is required first"));
+        }
         match (element.name(), namespace.as_str()) {
             ("starttls", ns::TLS) => {
                 if matches!(self.transport, super::Transport::Tcp { tls: false }) {
@@ -205,19 +216,24 @@ impl Session {
             Ok(first) => first,
             Err(_) => return self.sasl_failure(sasl2, "not-authorized").await,
         };
-        let credentials = self.credentials(&first).await;
+        let (credentials, credential_ids) = match self.credentials(&first).await {
+            Some((credentials, ids)) => (Some(credentials), ids),
+            None => (None, Vec::new()),
+        };
         let binding = if plus { self.binding.clone() } else { None };
         let (exchange, challenge) = ServerExchange::start(first, credentials, binding, decoy_key());
         self.auth.pending = Some(Pending {
             sasl2,
             scram: exchange,
             request,
+            credential_ids,
         });
         let ns = if sasl2 { ns::SASL2 } else { ns::SASL };
         self.send(text_el("challenge", ns, STANDARD.encode(challenge)));
     }
 
-    async fn credentials(&self, first: &ClientFirst) -> Option<Credentials> {
+    /// The user's verifiers, and the app password of each.
+    async fn credentials(&self, first: &ClientFirst) -> Option<(Credentials, Vec<String>)> {
         // the account's own username: a JID's localpart is in lower case, the username may not be
         let username = self.account_of(&jids::unescape_node(&first.username)).await?.username;
         let found = self
@@ -238,11 +254,18 @@ impl Session {
             .zip(decode_list("serverKeyList"))
             .map(|(stored_key, server_key)| Verifier { stored_key, server_key })
             .collect();
-        (!verifiers.is_empty()).then_some(Credentials {
-            salt,
-            iterations,
-            verifiers,
-        })
+        let ids: Vec<String> = backend::list(&found, "appPasswordIdList")
+            .iter()
+            .map(|id| id.as_str().unwrap_or_default().to_string())
+            .collect();
+        (!verifiers.is_empty()).then_some((
+            Credentials {
+                salt,
+                iterations,
+                verifiers,
+            },
+            ids,
+        ))
     }
 
     async fn respond(&mut self, data: &[u8]) {
@@ -250,11 +273,12 @@ impl Session {
             return self.sasl_failure(false, "not-authorized").await;
         };
         match pending.scram.finish(data) {
-            Ok((_, server_final)) => {
+            Ok((index, server_final)) => {
                 let username = jids::unescape_node(pending.scram.username());
+                let credential = pending.credential_ids.get(index).filter(|id| !id.is_empty()).cloned();
                 match self.account_of(&username).await {
                     Some(account) => {
-                        self.succeed(pending.sasl2, account, server_final, pending.request)
+                        self.succeed(pending.sasl2, account, credential, server_final, pending.request)
                             .await
                     }
                     None => self.sasl_failure(pending.sasl2, "not-authorized").await,
@@ -299,8 +323,13 @@ impl Session {
                 json!({"username": username, "password": password}),
             )
             .await;
+        let credential = checked
+            .as_ref()
+            .ok()
+            .map(|found| backend::text(found, "appPasswordId"))
+            .filter(|id| !id.is_empty());
         match checked.ok().as_ref().and_then(Account::from_json) {
-            Some(account) => self.succeed(sasl2, account, Vec::new(), request).await,
+            Some(account) => self.succeed(sasl2, account, credential, Vec::new(), request).await,
             None => self.sasl_failure(sasl2, "not-authorized").await,
         }
     }
@@ -345,6 +374,7 @@ impl Session {
         let Some(account) = self.account_of(&username).await else {
             return self.sasl_failure(true, "not-authorized").await;
         };
+        let credential = Some(backend::text(&token, "appPasswordId")).filter(|id| !id.is_empty());
         let responder = fast::responder(&backend::text(&token, "token"), &binding);
         if request.invalidate_token {
             let _ = self
@@ -354,7 +384,7 @@ impl Session {
                 )
                 .await;
         }
-        self.succeed(true, account, responder, Some(request)).await;
+        self.succeed(true, account, credential, responder, Some(request)).await;
     }
 
     async fn sasl_failure(&mut self, sasl2: bool, condition: &str) {
@@ -372,9 +402,17 @@ impl Session {
         }
     }
 
-    async fn succeed(&mut self, sasl2: bool, account: Account, additional: Vec<u8>, request: Option<Sasl2Request>) {
+    async fn succeed(
+        &mut self,
+        sasl2: bool,
+        account: Account,
+        credential: Option<String>,
+        additional: Vec<u8>,
+        request: Option<Sasl2Request>,
+    ) {
         tracing::info!("XMPP sign-in of {} from {}", account.username, self.peer);
         self.account = Some(account);
+        self.credential = credential;
         if !sasl2 {
             let data = if additional.is_empty() {
                 String::new()
@@ -413,14 +451,15 @@ impl Session {
         }
         let mut token = None;
         if let Some(mechanism) = request.request_token.as_deref() {
-            if fast::binds(mechanism).is_some() {
+            // a token stands for the app password signed in with, and goes with it
+            if let (Some(_), Some(credential)) = (fast::binds(mechanism), self.credential.clone()) {
                 let secret = fast::new_token();
                 let lifetime = self.server.config.fast_token_lifetime.as_secs();
                 let issued = self
                     .call_internal(
                         services::ISSUE_FAST_TOKEN,
                         json!({"userId": user_id, "userAgentId": request.user_agent_id, "mechanism": mechanism,
-                            "token": secret, "lifetimeSeconds": lifetime}),
+                            "token": secret, "lifetimeSeconds": lifetime, "appPasswordId": credential}),
                     )
                     .await;
                 if let Ok(issued) = issued {

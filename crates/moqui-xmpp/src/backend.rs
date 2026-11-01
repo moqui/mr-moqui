@@ -57,6 +57,7 @@ pub mod services {
     pub const ISSUE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.issue#FastToken";
     pub const USE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.use#FastToken";
     pub const INVALIDATE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.invalidate#FastToken";
+    pub const CHECK_CREDENTIAL: &str = "org.moqui.impl.XmppServices.check#Credential";
     pub const USERS: &str = "org.moqui.impl.XmppServices.get#Users";
     pub const ROSTER: &str = "org.moqui.impl.XmppServices.get#Roster";
     pub const DIRECT_ROOM: &str = "org.moqui.impl.XmppServices.get#DirectRoom";
