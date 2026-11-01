@@ -46,9 +46,14 @@
     <!-- Mantle Business Artifacts, the data model and services (no MR Moqui releases yet) -->
     <component name="mr-mantle" group="moqui" version="" branch="master"/>
     <!-- Applications -->
+    <!-- Old School Marble ERP, ported to MR Moqui -->
     <component name="mr-marble" group="moqui" version="" branch="master"/>
+    <!-- IronStone BOSS (Business OS Suite) -->
     <component name="mr-boss" group="moqui" version="" branch="master"/>
+    <!-- IronStone PASS (Public App Software Suite) -->
     <component name="mr-pass" group="moqui" version="" branch="master"/>
+    <!-- IronStone HOME (Home Organization-Mechanization Ensuite) - depends on mr-boss -->
+    <component name="mr-home" group="moqui" version="" branch="master"/>
     <!-- Localization -->
     <component name="mr-l10n" group="moqui" version="" branch="master"/>
 
