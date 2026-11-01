@@ -100,3 +100,45 @@ fn a_failed_boot_again_keeps_the_index_read_before() {
     assert!(again.describe("entity:proj.ProjThing").is_some());
     clean(&root);
 }
+
+/// An allowed project is read on a production instance too (the row is the admin's decision), into its own index, and
+/// its stamp follows its files: the same files give the same stamp, a changed file a new one.
+#[test]
+fn an_allowed_project_is_read_anywhere_and_its_stamp_follows_its_files() {
+    let root = mr_clone("allowed");
+    let ctx = ExecutionContextFactory::test_context();
+    let own = Arc::clone(ctx.factory());
+    moqui_core::web::TEST_PRODUCTION.with(|production| production.set(Some(true)));
+    let project = allowed(&root.display().to_string(), false, &own, false).unwrap();
+    moqui_core::web::TEST_PRODUCTION.with(|production| production.set(None));
+    assert!(project.describe("entity:proj.ProjThing").is_some());
+    let first = project.stamp();
+    assert!(
+        first.files > 0 && first.hash.len() == 24 && first.built_at > 0,
+        "{first:?}"
+    );
+    assert_eq!(project.stamp(), first);
+
+    let entities = root.join("runtime/component/proj-a/entity/ProjEntities.xml");
+    std::fs::write(
+        &entities,
+        r#"<entities><entity entity-name="ProjOther" package="proj"><field name="otherId" type="id" is-pk="true"/></entity></entities>"#,
+    )
+    .unwrap();
+    std::thread::sleep(RECHECK + Duration::from_millis(100));
+    let again = allowed(&root.display().to_string(), false, &own, false).unwrap();
+    assert!(again.describe("entity:proj.ProjOther").is_some());
+    assert!(again.describe("entity:proj.ProjThing").is_none(), "a miss is a miss");
+    let changed = again.stamp();
+    assert_ne!(changed.hash, first.hash);
+    assert_eq!(changed.files, first.files);
+
+    for refused in [
+        "relative/dir",
+        "/no/such/moqui/project",
+        &format!("{}/../x", root.display()),
+    ] {
+        assert!(allowed(refused, false, &own, false).is_err(), "{refused}");
+    }
+    clean(&root);
+}

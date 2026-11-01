@@ -16,7 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The framework's development tools (crates/moqui-core/src/devtools; plans/design-dev-aide.md 17), for the
         dev-aide component, the command line and agents outside the server. Each answers only when instance_purpose is
         dev, for a user with the DEV_AIDE permission or in the ADMIN group; the pure text services (the XML operations,
-        the outline, the schema digest) and the index's reads for any dev-aide permission. -->
+        the outline, the schema digest) and the index's reads for any dev-aide permission. The index's reads
+        (find#Artifacts and get#Artifact*) also answer on any instance for a user with the AIDE_READ permission, about
+        the projects an admin allowed (DevArtifactProject) named by projectId, also over REST at
+        /rest/s1/moqui/aide/projects/{projectId} (plans/design-dev-aide.md 7.4). -->
     <service verb="apply" noun="XmlOps" type="rust" location="moqui_devkit::service::apply_xml_ops"
             allow-remote="false" read-only="true">
         <description>The operations of the lossless XML layer (plans/design-dev-aide.md 5.2) on a text: set, remove and
@@ -62,13 +65,19 @@ along with this software (see the LICENSE.md file). If not, see
                 field, service, screen, transition, form, anchor, seca, eeca, rest, data, script, skill ...</description></parameter>
             <parameter name="components" type="Object"/>
             <parameter name="limit" type="Integer" default-value="50"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
             <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
                 Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
-                files; left out, this server's own runtime.</description></parameter>
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
             <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
                 sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="artifacts" type="List"/></out-parameters>
+        <out-parameters><parameter name="artifacts" type="List"/>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
     </service>
     <service verb="get" noun="Artifact" type="rust" location="moqui_devkit::service::get_artifact"
             allow-remote="false" read-only="true">
@@ -77,9 +86,13 @@ along with this software (see the LICENSE.md file). If not, see
             parameters.</description>
         <in-parameters>
             <parameter name="artifactId" required="true"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
             <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
                 Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
-                files; left out, this server's own runtime.</description></parameter>
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
             <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
                 sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
@@ -88,6 +101,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="parts" type="List"/>
             <parameter name="parameters" type="Map"><description>A service's: in and out, each a list of name, type
                 and required.</description></parameter>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter>
         </out-parameters>
     </service>
     <service verb="get" noun="ArtifactRefs" type="rust" location="moqui_devkit::service::get_artifact_refs"
@@ -98,13 +113,19 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="artifactId" required="true"/>
             <parameter name="direction" default-value="in"/>
             <parameter name="kinds" type="Object"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
             <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
                 Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
-                files; left out, this server's own runtime.</description></parameter>
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
             <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
                 sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="refs" type="List"/></out-parameters>
+        <out-parameters><parameter name="refs" type="List"/>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
     </service>
     <service verb="get" noun="ArtifactAt" type="rust" location="moqui_devkit::service::get_artifact_at"
             allow-remote="false" read-only="true">
@@ -114,13 +135,19 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="path" required="true"/>
             <parameter name="line" type="Integer" required="true"/>
             <parameter name="word"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
             <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
                 Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
-                files; left out, this server's own runtime.</description></parameter>
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
             <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
                 sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/></out-parameters>
+        <out-parameters><parameter name="reference" type="Map"/><parameter name="artifact" type="Map"/>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
     </service>
     <service verb="get" noun="ArtifactExtensions" type="rust" location="moqui_devkit::service::get_artifact_extensions"
             allow-remote="false" read-only="true">
@@ -128,13 +155,19 @@ along with this software (see the LICENSE.md file). If not, see
             another's service or entity) with whether each target is there, broken first.</description>
         <in-parameters>
             <parameter name="components" type="Object"/>
+            <parameter name="projectId"><description>An allowed project (DevArtifactProject) by its id, read on any
+                instance with the AIDE_READ permission (or a Dev AIDE one on a dev instance); its own index only, never
+                this server's. An unknown or disallowed id is an error.</description></parameter>
             <parameter name="project"><description>Another Moqui project on this machine by its absolute directory (a Java
                 Moqui checkout, an MR Moqui clone or runtime), read into memory on first use and kept fresh with its
-                files; left out, this server's own runtime.</description></parameter>
+                files; left out, this server's own runtime. Either only on a dev instance for a Dev AIDE permission;
+                elsewhere name the project by projectId.</description></parameter>
             <parameter name="projectLayout"><description>java: read the project as a Java Moqui checkout whatever its
                 sources; left out, its layout is found from its marker paths.</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="extensions" type="List"/><parameter name="brokenCount" type="Integer"/></out-parameters>
+        <out-parameters><parameter name="extensions" type="List"/><parameter name="brokenCount" type="Integer"/>
+            <parameter name="indexStamp" type="Map"><description>The state of the index read: hash (of each
+                file's location and content hash), builtAt (epoch milliseconds) and files.</description></parameter></out-parameters>
     </service>
     <service verb="rebuild" noun="ArtifactIndex" type="rust" location="moqui_devkit::service::rebuild_artifact_index"
             allow-remote="false">
