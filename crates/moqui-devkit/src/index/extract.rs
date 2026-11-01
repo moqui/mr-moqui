@@ -30,10 +30,14 @@ use crate::ArtifactKind;
 pub struct ArtifactRow {
     /// `entity:<full name>`, `field:<entity>.<field>`, `service:<name>`, `screen:<location>`,
     /// `transition:<screen location>#<name>:<method>` (default `any`), `form:<screen location>#<name>`,
-    /// `anchor:<screen location>#<name>`,
-    /// `screen-extend:<location>`, `extend-entity:<location>#<entity>`, `seca:<location>#<id or position>` (and
-    /// `eeca`, `emeca`, `giteca`), `rest:<path>`, `rest:<path>:<method>` (lowercase HTTP method),
-    /// `data:<location>`, `script:<location>`, `skill:<location>`, and
+    /// `form-field:<screen location>#<form>@<field>`, `subscreen:<screen location>#<item>`,
+    /// `ext:<screen location>#<ext-action|ext-panel>:<name>`, `anchor:<screen location>#<name>` (a `screen-extend`'s
+    /// own transitions, forms, form fields, subscreens items and ext items by its location), `screen-extend:<location>`,
+    /// `extend-entity:<location>#<entity>`, `relationship:<entity>@<[title#]related entity>`, `index:<entity>@<name>`,
+    /// `view-member:<view entity>@<entity alias>`, `seca:<location>#<key>` (and `eeca`, `emeca`, `giteca`; the key is
+    /// [`eca_key`]), `rest:<path>`, `rest:<path>:<method>` (lowercase HTTP method), `data:<location>`,
+    /// `record:<entity>:<pk values>` ([`record_id`]), `widget-template:<location>#<name>`, `script:<location>`,
+    /// `skill:<location>`, and
     /// `parameter:<owner id>@<in|out|path>.<name>` ([`parameter_id`]): a service's in or out parameter
     /// (`parameter:service:a.B.verb#Noun@in.aId`, a nested one by its dotted path, `@in.order.items`), a screen's
     /// (`parameter:screen:component://c/screen/A.xml@in.aId`), a transition's (`parameter:transition:<screen>#save:post@in.aId`,
@@ -135,6 +139,33 @@ pub struct FileIndex {
     pub refs: Vec<RefRow>,
 }
 
+/// What reading a data record needs of the entity model: an entity's full name and primary key, and where a nested
+/// record's relationship leads. The server's and a project's index answer from their entity model; without one
+/// ([`NoModel`]) records are not indexed, and a relationship keeps its related entity's name as written.
+pub trait RecordModel {
+    /// The full name and the primary key field names of the entity `name` (full, short or short alias).
+    fn keys(&self, name: &str) -> Option<(String, Vec<String>)>;
+    /// The full name of the entity the relationship `name` of `entity` leads to, with its key map (a field of `entity`,
+    /// the field of the related entity it fills).
+    fn related(&self, entity: &str, name: &str) -> Option<(String, Vec<(String, String)>)>;
+}
+
+/// No entity model: records are not indexed.
+pub struct NoModel;
+
+impl RecordModel for NoModel {
+    fn keys(&self, _name: &str) -> Option<(String, Vec<String>)> {
+        None
+    }
+
+    fn related(&self, _entity: &str, _name: &str) -> Option<(String, Vec<(String, String)>)> {
+        None
+    }
+}
+
+/// The longest id the index keeps (`DevArtifact.artifactId` is `text-medium`); a record with a longer one is left out.
+const MAX_ID: usize = 255;
+
 /// The file being read: where it is and what kind of file it is.
 #[derive(Clone, Debug)]
 pub struct FileInfo<'a> {
@@ -159,24 +190,39 @@ pub fn file_kind(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Data => "data",
         ArtifactKind::Script => "script",
         ArtifactKind::Skill => "skill",
+        // a template directory's widget templates (the index reads its XML files only)
+        ArtifactKind::ScreenText => "template",
         _ => return None,
     })
 }
 
-/// Read `text`, the content of the file `info` describes. A file that does not parse is an error naming why.
+/// Read `text`, the content of the file `info` describes, with no entity model ([`NoModel`]). A file that does not
+/// parse is an error naming why.
 ///
 /// # Errors
 ///
 /// Returns the parse error's text when an XML file does not parse.
 pub fn extract(info: &FileInfo<'_>, text: &str) -> Result<FileIndex, String> {
+    extract_with(info, text, &NoModel)
+}
+
+/// [`extract`] with the entity model `model`, which names a data record's entity and primary key.
+///
+/// # Errors
+///
+/// Returns the parse error's text when an XML file does not parse.
+pub fn extract_with(info: &FileInfo<'_>, text: &str, model: &dyn RecordModel) -> Result<FileIndex, String> {
     let mut out = Reader {
         info,
+        model,
         index: FileIndex::default(),
     };
     match info.kind {
         ArtifactKind::Script => out.script_file(text),
         ArtifactKind::Skill => out.skill_file(text),
         ArtifactKind::Data if !info.path.ends_with(".xml") => {}
+        // a template directory's other files are no widget templates
+        ArtifactKind::ScreenText if !info.path.ends_with(".xml") || !text.contains("<widget-templates") => {}
         _ => {
             let root = MNode::parse_text(info.path, text).map_err(|err| err.to_string())?;
             out.xml_file(&root);
@@ -187,6 +233,7 @@ pub fn extract(info: &FileInfo<'_>, text: &str) -> Result<FileIndex, String> {
 
 struct Reader<'a> {
     info: &'a FileInfo<'a>,
+    model: &'a dyn RecordModel,
     index: FileIndex,
 }
 
@@ -298,6 +345,7 @@ impl Reader<'_> {
                         self.reference(&id, ToKind::Entity, &name, "", "data", node.line(), node.column());
                     }
                 }
+                self.records(root, &id);
                 return;
             }
             _ => self.file_id(),
@@ -381,6 +429,150 @@ impl Reader<'_> {
                 );
                 None
             }
+            (ArtifactKind::Entity, "relationship") => {
+                let entity = entity_of(from)?.to_string();
+                let related = node
+                    .attribute("related")
+                    .or_else(|| node.attribute("related-entity-name"))
+                    .filter(|name| !name.is_empty())?;
+                // Moqui's relationship name: `title#` and the related entity's full name
+                let full = self
+                    .model
+                    .keys(&related)
+                    .map_or_else(|| related.clone(), |(full, _)| full);
+                let key = match node.attribute("title").filter(|title| !title.is_empty()) {
+                    Some(title) => format!("{title}#{full}"),
+                    None => full,
+                };
+                let mut summary = format!("{} {related}", node.attribute("type").unwrap_or_default());
+                if let Some(alias) = node.attribute("short-alias").filter(|alias| !alias.is_empty()) {
+                    summary.push_str(&format!(", short-alias {alias}"));
+                }
+                let id = format!("relationship:{entity}@{key}");
+                self.artifact(
+                    id.clone(),
+                    "relationship",
+                    &format!("{entity}@{key}"),
+                    Some(node),
+                    summary,
+                    Some(format!("entity:{entity}")),
+                );
+                Some(id)
+            }
+            (ArtifactKind::Entity, "index") => {
+                let entity = entity_of(from)?.to_string();
+                let name = node.attribute("name").filter(|name| !name.is_empty())?;
+                let fields: Vec<String> = node
+                    .child_iter()
+                    .filter(|child| child.has_name("index-field"))
+                    .filter_map(|child| child.attribute("name"))
+                    .collect();
+                let unique = if node.attribute_is("unique", "true") {
+                    "unique: "
+                } else {
+                    ""
+                };
+                let id = format!("index:{entity}@{name}");
+                self.artifact(
+                    id.clone(),
+                    "index",
+                    &format!("{entity}@{name}"),
+                    Some(node),
+                    format!("{unique}{}", fields.join(", ")),
+                    Some(format!("entity:{entity}")),
+                );
+                Some(id)
+            }
+            (ArtifactKind::Entity, "index-field") if parent == "index" => {
+                let entity = from.strip_prefix("index:")?.rsplit_once('@')?.0.to_string();
+                let name = node.attribute("name").filter(|name| refs::is_literal(name))?;
+                self.reference(
+                    from,
+                    ToKind::Field,
+                    &name,
+                    &entity,
+                    "index-field",
+                    node.line(),
+                    node.column(),
+                );
+                None
+            }
+            (ArtifactKind::Entity, "member-entity" | "member-relationship") if parent == "view-entity" => {
+                let view = from.strip_prefix("entity:")?.to_string();
+                let alias = node.attribute("entity-alias").filter(|alias| !alias.is_empty())?;
+                let joined = node
+                    .attribute("join-from-alias")
+                    .filter(|alias| !alias.is_empty())
+                    .map(|alias| format!(" from {alias}"))
+                    .unwrap_or_default();
+                let summary = if element == "member-entity" {
+                    format!("{}{joined}", node.attribute("entity-name").unwrap_or_default())
+                } else {
+                    format!(
+                        "relationship {}{joined}",
+                        node.attribute("relationship").unwrap_or_default()
+                    )
+                };
+                let id = format!("view-member:{view}@{alias}");
+                self.artifact(
+                    id.clone(),
+                    "view-member",
+                    &format!("{view}@{alias}"),
+                    Some(node),
+                    summary,
+                    Some(format!("entity:{view}")),
+                );
+                Some(id)
+            }
+            (ArtifactKind::Entity, "seed-data") => {
+                // seed records declared with an entity are its children
+                let parent_id = entity_of(from).map(|entity| format!("entity:{entity}"));
+                if let Some(parent_id) = parent_id {
+                    self.records(node, &parent_id);
+                }
+                None
+            }
+            (ArtifactKind::Service, "service-include") if parent == "services" => {
+                // a service by this file's name whose definition is the same verb and noun in another file
+                let verb = node.attribute("verb").unwrap_or_default();
+                let noun = node
+                    .attribute("noun")
+                    .map(|noun| format!("#{noun}"))
+                    .unwrap_or_default();
+                let name = if prefix.is_empty() {
+                    format!("{verb}{noun}")
+                } else {
+                    format!("{prefix}.{verb}{noun}")
+                };
+                let location = node.attribute("location").unwrap_or_default();
+                let included_prefix = service_prefix(&location);
+                let included = if included_prefix.is_empty() {
+                    format!("{verb}{noun}")
+                } else {
+                    format!("{included_prefix}.{verb}{noun}")
+                };
+                let id = format!("service:{name}");
+                self.artifact(
+                    id.clone(),
+                    "service",
+                    &name,
+                    Some(node),
+                    format!("includes {included}"),
+                    None,
+                );
+                if refs::is_literal(&location) && !included_prefix.is_empty() {
+                    self.reference(
+                        &id,
+                        ToKind::Service,
+                        &included,
+                        "",
+                        "service-include",
+                        node.line(),
+                        node.column(),
+                    );
+                }
+                Some(id)
+            }
             (ArtifactKind::Service, "service") if parent == "services" => {
                 let verb = node.attribute("verb").unwrap_or_default();
                 let noun = node
@@ -413,9 +605,7 @@ impl Reader<'_> {
                 None
             }
             (ArtifactKind::Seca | ArtifactKind::Eeca, "seca" | "eeca" | "emeca" | "giteca") if parent != element => {
-                let position = counts.entry(element.to_string()).or_insert(0);
-                *position += 1;
-                let key = node.attribute("id").unwrap_or_else(|| position.to_string());
+                let key = eca_key(node, element, counts);
                 let id = format!("{element}:{location}#{key}");
                 let on = match element {
                     "seca" => node
@@ -537,7 +727,7 @@ impl Reader<'_> {
                 );
                 None
             }
-            (ArtifactKind::Screen, "parameter" | "path-parameter")
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "parameter" | "path-parameter")
                 if matches!(parent, "screen" | "transition" | "transition-include") =>
             {
                 let name = node.attribute("name")?;
@@ -568,7 +758,7 @@ impl Reader<'_> {
                 );
                 None
             }
-            (ArtifactKind::Screen, "transition" | "transition-include") => {
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "transition" | "transition-include") => {
                 let name = node.attribute("name")?;
                 let method = node
                     .attribute("method")
@@ -586,15 +776,18 @@ impl Reader<'_> {
                     &name,
                     Some(node),
                     summary,
-                    Some(format!("screen:{location}")),
+                    Some(self.screen_owner()),
                 );
                 Some(id)
             }
-            (ArtifactKind::Screen, "form-single" | "form-list") => {
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "form-single" | "form-list") => {
                 let name = node.attribute("name")?;
                 let id = format!("form:{location}#{name}");
-                if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
-                    self.transition_refs(node, &id, &transition, "form");
+                // a screen-extend's form may post to a transition of the base screen: not read as one of its own
+                if self.info.kind == ArtifactKind::Screen {
+                    if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
+                        self.transition_refs(node, &id, &transition, "form");
+                    }
                 }
                 self.artifact(
                     id.clone(),
@@ -602,8 +795,61 @@ impl Reader<'_> {
                     &name,
                     Some(node),
                     element.to_string(),
-                    Some(format!("screen:{location}")),
+                    Some(self.screen_owner()),
                 );
+                Some(id)
+            }
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "field")
+                if matches!(parent, "form-single" | "form-list") =>
+            {
+                // the references in a field stay the form's, so a screen's list of references keeps them
+                let form = from.strip_prefix("form:")?;
+                let name = node.attribute("name").filter(|name| !name.is_empty())?;
+                let form_name = form.rsplit_once('#').map_or(form, |(_, name)| name);
+                self.artifact(
+                    format!("form-field:{form}@{name}"),
+                    "form-field",
+                    &format!("{form_name}@{name}"),
+                    Some(node),
+                    form_field_summary(node),
+                    Some(from.to_string()),
+                );
+                None
+            }
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "subscreens-item") => {
+                let name = node.attribute("name").filter(|name| !name.is_empty())?;
+                let id = format!("subscreen:{location}#{name}");
+                let summary = node.attribute("location").unwrap_or_default();
+                self.artifact(
+                    id.clone(),
+                    "subscreen",
+                    &name,
+                    Some(node),
+                    summary,
+                    Some(self.screen_owner()),
+                );
+                Some(id)
+            }
+            (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "ext-action" | "ext-panel") => {
+                let name = node.attribute("name").filter(|name| !name.is_empty())?;
+                let id = format!("ext:{location}#{element}:{name}");
+                let mut summary = format!("{element}, slot {}", node.attribute("slot").unwrap_or_default());
+                if let Some(label) = node.attribute("label").filter(|label| !label.is_empty()) {
+                    summary.push_str(&format!(", {label}"));
+                }
+                if self.info.kind == ArtifactKind::Screen {
+                    if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
+                        self.transition_refs(node, &id, &transition, element);
+                    }
+                }
+                self.artifact(id.clone(), "ext", &name, Some(node), summary, Some(self.screen_owner()));
+                Some(id)
+            }
+            (ArtifactKind::ScreenText, "widget-template") if parent == "widget-templates" => {
+                let name = node.attribute("name").filter(|name| !name.is_empty())?;
+                let id = format!("widget-template:{location}#{name}");
+                let summary = node.child_iter().next().map(|child| child.name()).unwrap_or_default();
+                self.artifact(id.clone(), "widget-template", &name, Some(node), summary, None);
                 Some(id)
             }
             (
@@ -629,6 +875,76 @@ impl Reader<'_> {
                 None
             }
             _ => None,
+        }
+    }
+
+    /// The artifact a screen file's transitions, forms and items belong to: its screen, or its `screen-extend`.
+    fn screen_owner(&self) -> String {
+        if self.info.kind == ArtifactKind::ScreenExtend {
+            format!("screen-extend:{}", self.info.location)
+        } else {
+            format!("screen:{}", self.info.location)
+        }
+    }
+
+    /// The records of a data file or a `seed-data` element, under `parent`. An element the model names no entity for
+    /// is skipped, and the others go on.
+    fn records(&mut self, container: &MNode, parent: &str) {
+        for node in container.child_iter() {
+            if let Some((entity, pk)) = self.model.keys(&node.name()) {
+                self.record(&node, &entity, &pk, &std::collections::BTreeMap::new(), parent);
+            }
+        }
+    }
+
+    /// One record, `record:<entity>:<pk values>` ([`record_id`]), and the records nested in it: a child element that is
+    /// a relationship of `entity` (or the name of its related entity) is a record of the related entity whose key-map
+    /// fields come from this one, as the data loader reads it. A record with a primary key value missing (one the
+    /// loader sequences) or an id too long is not indexed; its nested records still are.
+    fn record(
+        &mut self,
+        node: &MNode,
+        entity: &str,
+        pk: &[String],
+        inherited: &std::collections::BTreeMap<String, String>,
+        parent: &str,
+    ) {
+        let value_of = |field: &str| {
+            node.attribute(field)
+                .or_else(|| node.first_named(field).and_then(|child| child.text()))
+                .map(|value| value.trim().to_string())
+                .or_else(|| inherited.get(field).cloned())
+                .filter(|value| !value.is_empty())
+        };
+        let values: Option<Vec<String>> = pk.iter().map(|field| value_of(field)).collect();
+        if let Some(values) = values.filter(|values| !values.is_empty()) {
+            let id = record_id(entity, &values);
+            if id.len() <= MAX_ID {
+                let short = entity.rsplit('.').next().unwrap_or(entity);
+                let summary = match node.attribute("description").filter(|text| !text.is_empty()) {
+                    Some(description) => format!("{short}: {}", description.chars().take(160).collect::<String>()),
+                    None => short.to_string(),
+                };
+                let name = id.strip_prefix("record:").unwrap_or(&id).to_string();
+                self.artifact(id, "record", &name, Some(node), summary, Some(parent.to_string()));
+            }
+        }
+        for child in node.child_iter() {
+            let name = child.name();
+            if pk.contains(&name) {
+                continue;
+            }
+            let Some((related, pairs)) = self.model.related(entity, &name) else {
+                continue;
+            };
+            let Some((related, related_pk)) = self.model.keys(&related) else {
+                continue;
+            };
+            let carried: std::collections::BTreeMap<String, String> = pairs
+                .iter()
+                .filter_map(|(field, related_field)| value_of(field).map(|value| (related_field.clone(), value)))
+                .collect();
+            self.record(&child, &related, &related_pk, &carried, parent);
         }
     }
 
@@ -817,6 +1133,88 @@ pub fn script_names(text: &str) -> Vec<ScriptName> {
     found
 }
 
+/// The entity whose fields, relationships and indexes the element at `from` declares: an `entity:` or `view-entity`'s, or
+/// an `extend-entity:<location>#<entity>`'s.
+fn entity_of(from: &str) -> Option<&str> {
+    from.strip_prefix("entity:")
+        .or_else(|| from.split_once('#').map(|(_, entity)| entity))
+        .filter(|entity| !entity.is_empty())
+}
+
+/// The key of an ECA rule in its file: its `id`, else its `rule-name` (an EmECA's or gitECA's), else what it runs on
+/// and when, with an ordinal from the second rule on the same target and event (`mantle.order.OrderServices.place#Order:post-service`,
+/// `mantle.order.OrderHeader:create+update:2`). A rule added or removed elsewhere in the file keeps the others' keys.
+fn eca_key(node: &MNode, element: &str, counts: &mut std::collections::BTreeMap<String, u32>) -> String {
+    if let Some(key) = node
+        .attribute("id")
+        .or_else(|| node.attribute("rule-name"))
+        .filter(|key| !key.is_empty())
+    {
+        return key;
+    }
+    let target = match element {
+        "seca" => format!(
+            "{}:{}",
+            node.attribute("service").unwrap_or_default(),
+            node.attribute("when").unwrap_or_default()
+        ),
+        "eeca" => {
+            let events: Vec<&str> = [
+                ("on-create", "create"),
+                ("on-update", "update"),
+                ("on-delete", "delete"),
+                ("on-find-one", "find-one"),
+                ("on-find-list", "find-list"),
+                ("on-find-iterator", "find-iterator"),
+                ("on-find-count", "find-count"),
+            ]
+            .into_iter()
+            .filter(|(attribute, _)| node.attribute_is(attribute, "true"))
+            .map(|(_, event)| event)
+            .collect();
+            format!("{}:{}", node.attribute("entity").unwrap_or_default(), events.join("+"))
+        }
+        "giteca" => node.attribute("event").unwrap_or_default(),
+        _ => String::new(),
+    };
+    let ordinal = counts.entry(format!("{element} {target}")).or_insert(0);
+    *ordinal += 1;
+    if *ordinal == 1 {
+        target
+    } else {
+        format!("{target}:{ordinal}")
+    }
+}
+
+/// A form field's widget and title: the first widget of its `default-field` (else its first `conditional-field`, else
+/// its `header-field`), and the title that field gives.
+fn form_field_summary(node: &MNode) -> String {
+    let Some(field) = node
+        .first_named("default-field")
+        .or_else(|| node.first_named("conditional-field"))
+        .or_else(|| node.first_named("header-field"))
+    else {
+        return String::new();
+    };
+    let widget = field.child_iter().next().map(|child| child.name()).unwrap_or_default();
+    match field.attribute("title").filter(|title| !title.is_empty()) {
+        Some(title) if widget.is_empty() => format!("title {title}"),
+        Some(title) => format!("{widget}, title {title}"),
+        None => widget,
+    }
+}
+
+/// The id of a data record: `record:<entity full name>:<primary key values>`, the values in the order of the entity's
+/// primary key fields, comma separated, with `%` and `,` in a value written `%25` and `%2C`.
+#[must_use]
+pub fn record_id(entity: &str, values: &[String]) -> String {
+    let values: Vec<String> = values
+        .iter()
+        .map(|value| value.replace('%', "%25").replace(',', "%2C"))
+        .collect();
+    format!("record:{entity}:{}", values.join(","))
+}
+
 /// Whether a screen element is a widget a `screen-extend` may anchor to by its `name` or `id`: inside `widgets` (or
 /// `fail-widgets`), and not a form's own field or column.
 fn in_widgets(node: &MNode) -> bool {
@@ -926,6 +1324,17 @@ pub fn short_of(kind: &str, name: &str) -> String {
         "entity" | "view-entity" | "extend-entity" | "field" | "parameter" => {
             name.rsplit('.').next().unwrap_or(name).to_string()
         }
+        // `title#` and the related entity's last segment: `Owner#Party`
+        "relationship" => {
+            let key = name.rsplit_once('@').map_or(name, |(_, key)| key);
+            match key.split_once('#') {
+                Some((title, related)) => format!("{title}#{}", related.rsplit('.').next().unwrap_or(related)),
+                None => key.rsplit('.').next().unwrap_or(key).to_string(),
+            }
+        }
+        "index" | "view-member" | "form-field" => name.rsplit_once('@').map_or(name, |(_, own)| own).to_string(),
+        // the primary key values
+        "record" => name.split_once(':').map_or(name, |(_, values)| values).to_string(),
         "service" => match name.split_once('#') {
             Some((head, noun)) => format!("{}#{noun}", head.rsplit('.').next().unwrap_or(head)),
             None => name.rsplit('.').next().unwrap_or(name).to_string(),
