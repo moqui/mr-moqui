@@ -189,6 +189,12 @@ pub struct ServerExchange {
     binding: Option<Vec<u8>>,
 }
 
+/// The name a decoy salt is derived from: the account lookup's form of it (XEP-0106 unescaped, trimmed, without case),
+/// so every spelling that would find one account gets one salt, for a name that is no account's as for one that is.
+fn decoy_name(username: &str) -> String {
+    crate::jids::unescape_node(username).trim().to_lowercase()
+}
+
 impl ServerExchange {
     /// Start with what the server has for the user (None for one it does not know: the exchange goes on with a salt
     /// derived from `decoy_key` and the name, and fails at the end), and the connection's exporter, if it binds.
@@ -201,7 +207,10 @@ impl ServerExchange {
         let nonce = format!("{}{}", first.client_nonce, nonce());
         let (salt, iterations) = match &credentials {
             Some(found) => (found.salt.clone(), found.iterations),
-            None => (hmac(decoy_key, first.username.as_bytes())[..16].to_vec(), ITERATIONS),
+            None => (
+                hmac(decoy_key, decoy_name(&first.username).as_bytes())[..16].to_vec(),
+                ITERATIONS,
+            ),
         };
         let server_first = format!("r={nonce},s={},i={iterations}", STANDARD.encode(salt));
         let out = server_first.clone().into_bytes();

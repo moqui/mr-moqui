@@ -69,7 +69,8 @@ with a second factor signs in with an app password, which is made after it.
   takes them. `get#UserAppPasswords` says which have them (`xmppReady`), and Chat apps marks the others.
 - **Unknown users** go through the SCRAM exchange with a salt derived from their name and `xmpp_scram_decoy_key`
   (is-secret, generated when unset), and fail at its end as a wrong password does: the salt is the same across
-  restarts and nodes, so it does not tell a name that is no user's apart.
+  restarts and nodes, and for every spelling of the name the account lookup takes as one (without case, XEP-0106
+  escaped), so it does not tell a name that is no user's apart.
 - **STARTTLS is required** on `xmpp_port`: before it, anything but `<starttls/>` (a SASL `<auth>` included) ends the
   stream, so a client whose STARTTLS offer was stripped on the way cannot be led to sign in in the clear.
 - **PLAIN** only over TLS, as a fallback for a client without SCRAM.
@@ -160,10 +161,11 @@ client). The bookmarks node lists the user's rooms too, with autojoin, so an app
 
 An upload slot (XEP-0363, `upload.<domain>`) is a URL under `/xmpp-upload/` that takes one PUT of the size asked
 for, within an hour, then serves the file. A PUT is checked (the token, an open slot, a declared length and type that
-are the slot's) before any of its body is read; the body is then streamed to storage, never past the slot's size (a
-longer one is 413, a shorter one 400), within `xmpp_upload_seconds` (408 after), with the slot's row locked for update
-in the transaction that marks it done, so of two PUTs at once one writes and the other gets 409. A PUT that fails
-leaves no file and the slot open. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
+are the slot's) before any of its body is read; a second PUT of a slot while one is coming to this node is 409 at
+once. The body is spooled as it arrives (`runtime/tmp/upload`, so a slow client holds no request worker, database
+connection or memory), never past the slot's size (a longer one is 413, a shorter one 400), within
+`xmpp_upload_seconds` (408 after); then stored with the slot's row locked for update in the transaction that marks it
+done, so of PUTs to two nodes one writes and the other gets 409. A PUT that fails leaves no file and the slot open. A message that links it gets it as a chat file of the room (`attach#Upload`), so the web
 shows it. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`. The
 URL is the capability, as XEP-0363 has it: anyone it is passed to can read the file.
 

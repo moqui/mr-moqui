@@ -19,15 +19,21 @@
 //! web clients upload and fetch from their own origin.
 //!
 //! A PUT is checked before its body is read: the token names an open slot (not put yet, within its hour), and a declared
-//! length and content type are the slot's. Then the body is streamed to storage, never more than the slot's size (a
-//! longer body is 413, a shorter one 400), within `xmpp_upload_seconds` (300; past it 408). The slot's row is locked
-//! for update while the body goes in, in the transaction that marks it done, so of two PUTs at once one writes and the
-//! other, once the lock is let go, finds it done (409). A PUT that fails leaves no file and the slot open.
+//! length and content type are the slot's. A second PUT of a slot while one is coming on this node is 409 at once. The
+//! body is spooled as it arrives (under `runtime/tmp/upload`, so no request worker, database connection or memory is
+//! held while a slow client sends), never more than the slot's size (a longer body is 413, a shorter one 400), within
+//! `xmpp_upload_seconds` (300; past it 408). Then it is stored with the slot's row locked for update, in the
+//! transaction that marks it done, so of PUTs on two nodes one writes and the other finds it done (409). A PUT that
+//! fails leaves no file and the slot open.
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::io::Write as _;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -43,8 +49,10 @@ const UPLOAD: &str = "moqui.xmpp.XmppUpload";
 const SLOT_LIFETIME_MS: i64 = 3_600_000;
 /// The longest a PUT may take, by default (`xmpp_upload_seconds`).
 const DEFAULT_PUT_SECONDS: u64 = 300;
-/// Body chunks waiting for the writer.
-const CHUNKS_WAITING: usize = 8;
+/// Bytes of a body gathered before they are written to its spool file.
+const SPOOL_FEED: usize = 256 * 1024;
+/// The longest the transaction that stores a spooled body may take.
+const STORE_SECONDS: Duration = Duration::from_secs(120);
 
 fn cors(mut response: Response) -> Response {
     let headers = response.headers_mut();
@@ -100,6 +108,8 @@ enum Cut {
     Broken,
     /// Past the PUT's deadline.
     Late,
+    /// It could not be spooled here.
+    Failed,
 }
 
 impl Cut {
@@ -108,45 +118,8 @@ impl Cut {
             Cut::TooLong => status(StatusCode::PAYLOAD_TOO_LARGE, "the body is over the slot's size"),
             Cut::TooShort | Cut::Broken => status(StatusCode::BAD_REQUEST, "the size is not the slot's"),
             Cut::Late => status(StatusCode::REQUEST_TIMEOUT, "the upload took too long"),
+            Cut::Failed => status(StatusCode::INTERNAL_SERVER_ERROR, "not stored"),
         }
-    }
-}
-
-/// The body as the storage writer reads it: chunks from the request, at most the slot's size, ending exactly there.
-struct SlotBody {
-    chunks: tokio::sync::mpsc::Receiver<Result<Bytes, Cut>>,
-    current: Bytes,
-    left: u64,
-    cut: Arc<Mutex<Option<Cut>>>,
-}
-
-impl SlotBody {
-    fn fail(&self, cut: Cut) -> std::io::Error {
-        *moqui_lib::sync::lock(&self.cut) = Some(cut);
-        std::io::Error::other(format!("{cut:?}"))
-    }
-}
-
-impl std::io::Read for SlotBody {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        while self.current.is_empty() {
-            match self.chunks.blocking_recv() {
-                Some(Ok(chunk)) => {
-                    let length = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
-                    if length > self.left {
-                        return Err(self.fail(Cut::TooLong));
-                    }
-                    self.left -= length;
-                    self.current = chunk;
-                }
-                Some(Err(cut)) => return Err(self.fail(cut)),
-                None if self.left > 0 => return Err(self.fail(Cut::TooShort)),
-                None => return Ok(0),
-            }
-        }
-        let taken = out.len().min(self.current.len());
-        out[..taken].copy_from_slice(&self.current.split_to(taken));
-        Ok(taken)
     }
 }
 
@@ -180,7 +153,17 @@ pub(crate) async fn handle(
     }
     let factory = Arc::downgrade(&state.factory);
     if method == Method::PUT {
-        return put(&factory, token, &headers, body, server.config.upload_max_bytes).await;
+        // spooled with the web's uploads, under runtime/tmp/upload (swept at start)
+        let spool_dir = state.factory.runtime_dir().join("tmp").join("upload");
+        return put(
+            &factory,
+            spool_dir,
+            token,
+            &headers,
+            body,
+            server.config.upload_max_bytes,
+        )
+        .await;
     }
     drop(body);
     let done = crate::worker::on_pool(&factory, move |factory| {
@@ -240,10 +223,12 @@ pub(crate) async fn handle(
     })
 }
 
-/// A PUT to a slot: the token checked before the body is read, then the body streamed to storage under the slot's
-/// size and the PUT's deadline, with the slot's row locked. See the module notes.
+/// A PUT to a slot: the token checked before the body is read, then the body spooled under the slot's size and the
+/// PUT's deadline (no request worker or transaction held while it comes), then stored with the slot's row locked. See
+/// the module notes.
 async fn put(
     factory: &std::sync::Weak<ExecutionContextFactory>,
+    spool_dir: PathBuf,
     token: String,
     headers: &HeaderMap,
     body: Body,
@@ -305,64 +290,141 @@ async fn put(
         }
     };
 
-    // 2. the body, chunk by chunk to the writer, until the deadline
-    let deadline = put_deadline();
-    let (sender, chunks) = tokio::sync::mpsc::channel::<Result<Bytes, Cut>>(CHUNKS_WAITING);
-    let cut = Arc::new(Mutex::new(None));
-    let reader = SlotBody {
-        chunks,
-        current: Bytes::new(),
-        left: slot.size,
-        cut: Arc::clone(&cut),
+    // 2. one PUT of a slot at a time on this node: another while one is coming is 409 at once
+    let Some(_claim) = Claim::take(&slot.id) else {
+        return status(StatusCode::CONFLICT, "being uploaded");
     };
-    let forward = {
-        let sender = sender.clone();
-        async move {
-            let mut stream = body.into_data_stream();
-            while let Some(chunk) = stream.next().await {
-                let item = chunk.map_err(|_| Cut::Broken);
-                let stop = item.is_err();
-                if sender.send(item).await.is_err() || stop {
-                    break;
-                }
-            }
-        }
+
+    // 3. the body, spooled as it comes, never past the slot's size, until the deadline
+    let spool = match spool_body(&spool_dir, &slot, body, put_deadline()).await {
+        Ok(spool) => spool,
+        Err(cut) => return cut.response(),
     };
-    let forward = async move {
-        if tokio::time::timeout(deadline, forward).await.is_err() {
-            let _ = sender.send(Err(Cut::Late)).await;
-        }
-    };
-    let write = crate::worker::on_pool(factory, move |factory| Ok(store(factory, &slot, reader, deadline)));
-    let ((), written) = tokio::join!(forward, write);
-    match written {
-        Ok(response) => response,
-        Err(err) => {
-            tracing::warn!("XMPP upload failed: {}", err.message());
-            match *moqui_lib::sync::lock(&cut) {
-                Some(cut) => cut.response(),
-                None => status(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
-            }
-        }
+
+    // 4. stored, with the slot's row locked in the transaction that marks it done
+    let written = crate::worker::on_pool(factory, move |factory| Ok(store(factory, &slot, &spool))).await;
+    written.unwrap_or_else(|err| {
+        tracing::warn!("XMPP upload failed: {}", err.message());
+        status(StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    })
+}
+
+/// The slots with a PUT coming on this node.
+fn in_flight() -> &'static Mutex<HashSet<String>> {
+    static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// A slot's PUT in flight on this node, let go when dropped (so a PUT that failed can be tried again).
+struct Claim(String);
+
+impl Claim {
+    fn take(slot_id: &str) -> Option<Self> {
+        moqui_lib::sync::lock(in_flight())
+            .insert(slot_id.to_string())
+            .then(|| Self(slot_id.to_string()))
     }
 }
 
-/// Write a slot's body with its row locked, in the transaction that marks it done; a body that does not go in whole
-/// leaves no file and the slot open. The answer: 201, or why not.
-fn store(factory: &ExecutionContextFactory, slot: &Slot, mut reader: SlotBody, deadline: Duration) -> Response {
+impl Drop for Claim {
+    fn drop(&mut self) {
+        moqui_lib::sync::lock(in_flight()).remove(&self.0);
+    }
+}
+
+/// A body spooled to a file of its own, removed when dropped.
+struct Spooled(PathBuf);
+
+impl Drop for Spooled {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Spool a slot's body under `dir` as it comes: never more than the slot's size, the whole of it, within `deadline`.
+/// The file is written on blocking threads a batch at a time; no request worker waits on the client.
+async fn spool_body(dir: &std::path::Path, slot: &Slot, body: Body, deadline: Duration) -> Result<Spooled, Cut> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name: String = slot
+        .id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .collect();
+    let path = dir.join(format!(
+        "xmpp-{name}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let spool = Spooled(path.clone());
+    let failed = |err: &dyn std::fmt::Display| {
+        tracing::warn!("XMPP upload {}: not spooled: {err}", slot.location);
+        Cut::Failed
+    };
+    let file = {
+        let (dir, path) = (dir.to_path_buf(), path.clone());
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&dir)?;
+            std::fs::File::create(&path)
+        })
+        .await
+        .map_err(|err| failed(&err))?
+        .map_err(|err| failed(&err))?
+    };
+    let file = Arc::new(file);
+    let size = slot.size;
+    let read = async {
+        let mut stream = body.into_data_stream();
+        let mut pending: Vec<u8> = Vec::new();
+        let mut total = 0_u64;
+        loop {
+            let done = match stream.next().await {
+                Some(Ok(chunk)) => {
+                    total = total.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+                    if total > size {
+                        return Err(Cut::TooLong);
+                    }
+                    pending.extend_from_slice(&chunk);
+                    false
+                }
+                Some(Err(_)) => return Err(Cut::Broken),
+                None => true,
+            };
+            if pending.len() >= SPOOL_FEED || (done && !pending.is_empty()) {
+                let batch = std::mem::take(&mut pending);
+                let file = Arc::clone(&file);
+                tokio::task::spawn_blocking(move || (&*file).write_all(&batch))
+                    .await
+                    .map_err(|err| failed(&err))?
+                    .map_err(|err| failed(&err))?;
+            }
+            if done {
+                return if total < size { Err(Cut::TooShort) } else { Ok(()) };
+            }
+        }
+    };
+    match tokio::time::timeout(deadline, read).await {
+        Ok(Ok(())) => Ok(spool),
+        Ok(Err(cut)) => Err(cut),
+        Err(_) => Err(Cut::Late),
+    }
+}
+
+/// Store a spooled body with the slot's row locked, in the transaction that marks it done: of PUTs on two nodes one
+/// writes and the other finds it done (409). A body that does not go in whole leaves no file and the slot open. The
+/// answer: 201, or why not.
+fn store(factory: &ExecutionContextFactory, slot: &Slot, spool: &Spooled) -> Response {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let Some(facade) = factory.entity() else {
         return status(StatusCode::SERVICE_UNAVAILABLE, "unavailable");
     };
-    let cut = Arc::clone(&reader.cut);
     let mut refused: Option<Response> = None;
     let mut wrote = false;
     let outcome = facade.transactions_for(UPLOAD).and_then(|tx| {
         tx.run(
             moqui_core::transaction::TransactionAttribute::ForceNew,
-            Some(deadline + Duration::from_secs(60)),
+            Some(STORE_SECONDS),
             || {
-                // the lock: a second PUT waits here, then finds the slot done
+                // the lock: a PUT of the same slot on another node waits here, then finds the slot done
                 let row = facade
                     .find(UPLOAD)?
                     .eq("xmppUploadId", Value::string(&slot.id))
@@ -376,21 +438,14 @@ fn store(factory: &ExecutionContextFactory, slot: &Slot, mut reader: SlotBody, d
                     refused = Some(status(StatusCode::CONFLICT, "already uploaded"));
                     return Ok(());
                 }
+                let mut input = std::fs::File::open(&spool.0).map_err(|err| {
+                    moqui_lib::error::Error::new(format!("the spooled upload could not be read: {err}"))
+                })?;
                 wrote = true;
-                if let Err(err) = factory
+                factory
                     .resource()
-                    .write_from(&slot.location, &mut reader, Some(slot.size))
-                {
-                    let cut = *moqui_lib::sync::lock(&cut);
-                    if cut.is_none() {
-                        tracing::warn!("XMPP upload {} not stored: {}", slot.location, err.message());
-                    }
-                    refused = Some(cut.map_or_else(
-                        || status(StatusCode::INTERNAL_SERVER_ERROR, "not stored"),
-                        Cut::response,
-                    ));
-                    return Err(moqui_lib::error::Error::new("the upload did not go in whole"));
-                }
+                    .write_from(&slot.location, &mut input, Some(slot.size))
+                    .map_err(|err| moqui_lib::error::Error::new(err.message().to_string()))?;
                 let mut done = facade.make_value(UPLOAD)?;
                 done.set("xmppUploadId", Value::string(&slot.id));
                 done.set("completedDate", moqui_core::user::now_value());
@@ -400,6 +455,10 @@ fn store(factory: &ExecutionContextFactory, slot: &Slot, mut reader: SlotBody, d
         )
     });
     if let Some(refused) = refused {
+        return refused;
+    }
+    if let Err(err) = outcome {
+        tracing::warn!("XMPP upload {} not stored: {err}", slot.location);
         if wrote {
             // a file cut off goes (a database resource went with the rollback)
             if let Err(err) = factory.resource().delete(&slot.location) {
@@ -409,13 +468,6 @@ fn store(factory: &ExecutionContextFactory, slot: &Slot, mut reader: SlotBody, d
                     err.message()
                 );
             }
-        }
-        return refused;
-    }
-    if let Err(err) = outcome {
-        tracing::warn!("XMPP upload {} not kept: {err}", slot.location);
-        if wrote {
-            let _ = factory.resource().delete(&slot.location);
         }
         return status(StatusCode::INTERNAL_SERVER_ERROR, "not stored");
     }

@@ -584,26 +584,34 @@ fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_pu
     let mut slow = put_open(http, &first, headers, b"hello");
     assert_eq!(status_within(&mut slow, Duration::from_secs(5)), Some(408));
 
-    // two PUTs at once: the first holds the slot's row while its body comes; the second waits for it, then finds the
-    // slot done
+    // two PUTs at once: while the first's body comes (spooled, holding no request worker), the second is 409 at once;
+    // then the first goes in, and a third finds the slot done
     let mut one = put_open(http, &first, headers, b"hello");
     std::thread::sleep(Duration::from_millis(300));
     let mut two = put_open(http, &first, headers, b"other words");
-    assert_eq!(
-        status_within(&mut two, Duration::from_millis(400)),
-        None,
-        "the second waits for the first"
-    );
+    assert_eq!(status_within(&mut two, Duration::from_secs(5)), Some(409));
     {
         use std::io::Write as _;
         one.write_all(b" world").unwrap();
     }
     assert_eq!(status_within(&mut one, Duration::from_secs(5)), Some(201));
-    assert_eq!(status_within(&mut two, Duration::from_secs(5)), Some(409));
+    let mut three = put_open(http, &first, headers, b"other words");
+    assert_eq!(status_within(&mut three, Duration::from_secs(5)), Some(409));
     let fetched = crate::common::exchange(
         http,
         &format!("GET {first} HTTP/1.1\r\nHost: moqui.local\r\nConnection: close\r\n\r\n"),
     );
     assert_eq!((fetched.0, fetched.2.as_str()), (200, "hello world"));
+    // nothing of the PUTs refused or stored is left spooled
+    let spooled: Vec<_> = std::fs::read_dir(factory.runtime_dir().join("tmp").join("upload"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("xmpp-"))
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(spooled.is_empty(), "{spooled:?}");
     assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
 }

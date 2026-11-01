@@ -183,12 +183,25 @@ fn replay_key(bridge_id: &str, signature: &str) -> String {
     format!("chatBridge:{bridge_id}:{}", signature.trim())
 }
 
-/// The replay window a webhook can have: `wanted_ms`, or the replay cache's live time when that is shorter (a
-/// signature must be held for as long as its timestamp is taken).
+/// The replay window a webhook can have, either side of now: `wanted_ms`, or half the time the replay cache holds an
+/// entry (its live or idle time, the shorter) when that is less. A timestamp up to the window ahead of now is taken
+/// until the window past it, so a signature must be held for twice the window from when it is first seen.
 pub fn replay_window_ms(wanted_ms: i64) -> i64 {
-    match replay_cache().map(|cache| cache.info().expire_live_ms) {
-        Ok(live) if live > 0 => wanted_ms.min(live),
-        _ => wanted_ms,
+    match replay_cache() {
+        Ok(cache) => {
+            let info = cache.info();
+            window_within(wanted_ms, info.expire_live_ms, info.expire_idle_ms)
+        }
+        Err(_) => wanted_ms,
+    }
+}
+
+/// [`replay_window_ms`] for a cache that holds an entry `live_ms` from when it is made and `idle_ms` from when it is
+/// last read (0: no limit).
+pub(super) fn window_within(wanted_ms: i64, live_ms: i64, idle_ms: i64) -> i64 {
+    match [live_ms, idle_ms].into_iter().filter(|ms| *ms > 0).min() {
+        Some(held) => wanted_ms.min(held / 2),
+        None => wanted_ms,
     }
 }
 

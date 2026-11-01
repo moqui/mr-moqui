@@ -40,7 +40,7 @@ with a messaging bridge and no trunk texts.
    | `maxTextLength` | 1600 characters |
    | `maxMediaCount`, `maxMediaBytes` | 10 files and 1 MiB in all for an MMS that goes out |
    | `maxInboundMediaBytes` | 5 MiB (at most 20 MiB), the largest file taken from a text that comes in: each fetch reads no further |
-   | `webhookToleranceSeconds` | 300, at most the replay cache's live time (300) |
+   | `webhookToleranceSeconds` | 300, at most half the replay cache's live time (150 under its default 300 s), as a timestamp ahead of now is taken until the window past it |
    | `sendsPerMinute` | 60 (the bridge's own field wins); Telnyx's long-code rate is lower per number, so set it to what the account allows |
    | `allowInternalAddresses` | false; only a test's fake provider needs it |
 

@@ -1113,3 +1113,15 @@ fn a_local_message_names_no_source_bridge() {
     );
     assert_eq!(bed.deliveries_of(seq), 2);
 }
+
+#[test]
+fn a_webhooks_replay_window_is_at_most_half_the_time_its_signature_is_held() {
+    // a timestamp up to the window ahead of now is taken until the window past it, so the replay cache must hold a
+    // signature twice the window: the default cache (300 s live) gives 150 s either side of now
+    assert_eq!(super::web::window_within(300_000, 300_000, 0), 150_000);
+    assert_eq!(super::web::window_within(300_000, 900_000, 0), 300_000);
+    // the shorter of the live and idle times
+    assert_eq!(super::web::window_within(300_000, 900_000, 200_000), 100_000);
+    // a cache that holds entries for good leaves the wanted window
+    assert_eq!(super::web::window_within(300_000, 0, 0), 300_000);
+}

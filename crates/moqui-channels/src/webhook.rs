@@ -19,8 +19,8 @@
 //!    bridge with no key, is refused with the one answer an unknown bridge gets too
 //!    ([`WebhookResponse::not_signed`]: 401, counted by the host's web protection). A disabled bridge checks the same
 //!    ([`verify`]) before it answers its network 503.
-//! 2. **The replay window.** The timestamp must be within `webhookToleranceSeconds` (300, at most the replay cache's
-//!    live time) of now, and a signature seen before in that window is not worked again: a copy of one worked is
+//! 2. **The replay window.** The timestamp must be within `webhookToleranceSeconds` (300, at most half the
+//!    time the replay cache holds a signature, so 150 under the default 300 s cache) of now, and a signature seen before in that window is not worked again: a copy of one worked is
 //!    answered 200 (`duplicate`), one still being worked on another worker 409 (so the provider tries again later).
 //!    Neither counts as a refused signature: the signature is the provider's, and counting it could block the
 //!    provider's own address. A signature is held from the moment its request is taken and let go when it was not

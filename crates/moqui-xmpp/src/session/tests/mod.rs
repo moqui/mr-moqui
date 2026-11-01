@@ -731,6 +731,13 @@ async fn an_unknown_users_salt_is_the_same_from_a_restarted_server_with_the_same
     assert_eq!(salt, decoy_salt(&restarted, "nobody").await);
     assert_ne!(salt, decoy_salt(&other, "nobody").await);
     assert_ne!(salt, decoy_salt(&first, "somebody.else").await);
+    // the account lookup takes a name without case and XEP-0106 escaped, so an unknown name's salt does too (else the
+    // spellings of a name would tell an unknown one from a real one, whose salt is the same for every spelling)
+    assert_eq!(salt, decoy_salt(&first, "NoBody").await);
+    assert_eq!(
+        decoy_salt(&first, "no body").await,
+        decoy_salt(&first, "No\\20Body").await
+    );
 }
 
 /// Stanzas for other servers, kept.
