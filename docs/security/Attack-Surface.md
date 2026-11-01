@@ -575,6 +575,31 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
 - **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
   under a second is dropped.
 
+### Chat bridges
+
+The bridge layer ([Chat bridges](../interfaces/Chat-Bridges.md), C1) opens no port and routes no endpoint: a network
+adapter (C4 on) brings its own transport, and C1 ships none.
+
+- **Input.** `ChatBridgeServices.ingest#Event` is `allow-remote="false"`: only code in the server (an adapter, after its
+  own checks of a webhook's signature or a gateway's session) calls it. It authenticates the bridge by its inbound token
+  (`check#BridgeToken`: the SHA-256 against `ChatBridge.inboundTokenHash`, in constant time; a bridge with no hash takes
+  none) and refuses the whole batch, storing nothing, for an unknown or disabled bridge, a wrong token, a malformed
+  transaction id, more than 200 items or 1 MB, or an item that names a local user. An item posts only as an external
+  actor (no login, no `UserAccount`) into a room an administrator mapped to that bridge (`noMapping` otherwise), as a
+  member a moderator has not taken out, edits and deletes only its own messages, and carries plain text only (escaped to
+  HTML; files are refused). A puppet link to a local user is provenance, never authority. Its messages fetch no link
+  previews, reach a room's agents only under the room's `agentsReadExternal`, and never start the framework's agents.
+- **Output.** A room's messages go only to the networks an administrator mapped it to; a link to an external room grants
+  no rights. Delivery rows keep no message text.
+- **Administration.** `find#Bridges`, `store#Bridge`, `store#RoomBridge` and `end#RoomBridge` need `ChatBridgeAdmin`.
+  `ChatBridge.configJson` is an encrypted field and never returned; the inbound token is kept only as its hash.
+  `retry#Delivery`: the message's sender, a moderator of the room, or `ChatBridgeAdmin`; anyone else is told "not found"
+  or "not allowed" with the same parameters.
+- **Internal services.** `send#Message`, `edit#Message`, `react#Message` and `redact#Message` take `senderActorId` only
+  with authorization disabled. `get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
+  `get#BridgeCapabilities`, `wake#BridgeDelivery`, `run#BridgeDeliveries`, `migrate#ChatActors` and the
+  `ChatBridgeServices` internals are `allow-remote="false"`.
+
 ### Database
 
 `entity_ds_db_conf` default `h2` (and an empty name) selects the embedded Postgres cluster. There is no H2 driver and no H2 TCP server.

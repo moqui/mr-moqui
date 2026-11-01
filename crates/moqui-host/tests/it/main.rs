@@ -39,6 +39,7 @@ mod agent_remote;
 mod agent_screens;
 mod assist;
 mod backup;
+mod chat_actors;
 mod cluster_notify;
 mod collab;
 mod component_load;

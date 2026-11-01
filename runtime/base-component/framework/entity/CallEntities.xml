@@ -110,7 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="identityKindEnumId" type="id"/>
         <field name="userId" type="id"/>
         <field name="callGuestId" type="id"/>
-        <field name="chatActorId" type="id"><description>The chat actor, once chat has actors (C1)</description></field>
+        <field name="chatActorId" type="id"><description>The chat actor of a local user (ChatServices.get#LocalActors)</description></field>
         <field name="displayName" type="text-medium"/>
         <field name="roleEnumId" type="id"/>
         <field name="admissionStatusId" type="id"/>

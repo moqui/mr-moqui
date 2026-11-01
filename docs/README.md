@@ -50,6 +50,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [TURN.md](interfaces/TURN.md) | ICE-TCP and the embedded TURN server for browsers behind NAT and firewalls; coturn instead |
 | [SIP.md](interfaces/SIP.md) | Phone calls through SIP trunks: the settings, provider profiles (Telnyx), fraud controls, emergency readiness |
 | [Voicemail.md](interfaces/Voicemail.md) | Voicemail on the SIP engine: when a call goes there, the greeting and recording, phone access with a PIN and its limits, notices, transcription, the prompts an admin supplies |
+| [Chat-Bridges.md](interfaces/Chat-Bridges.md) | Chat actors and the bridge layer: the adapter contract, input stored before it is acknowledged, durable delivery with leases and idempotency keys, the C1 migration |
 
 ## ai: Agents and Models
 

@@ -316,10 +316,13 @@ function setLog(callSessionId, userId, fields) {
 }
 
 function makeParticipant(session, userId, role, admission) {
+  // the user's chat actor (C1): a local actor's id is its userId, made on first use
+  const chatActorId = userId ? (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors')
+    .parameter('userIdList', [userId]).disableAuthz().call()?.actorMap || {})[userId] || null : null
   const p = ec.entity.makeValue(PARTICIPANT)
   p.setSequencedIdPrimary()
   p.setFields({
-    callSessionId: session.callSessionId, identityKindEnumId: 'CikLocal', userId, roleEnumId: role,
+    callSessionId: session.callSessionId, identityKindEnumId: 'CikLocal', userId, chatActorId, roleEnumId: role,
     admissionStatusId: admission, admittedDate: admission === 'CasAdmitted' ? ec.user.nowTimestamp : null,
   }, true, null, null)
   p.create()
@@ -499,7 +502,7 @@ function start(p) {
     const isDirect = room.roomTypeEnumId === 'CrtDirect'
     invitees = Array.from(find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).selectField('userId')
       .selectField('leftDate').selectField('roleEnumId').list())
-      .filter((m) => (isDirect || !m.leftDate) && m.userId !== me && m.roleEnumId !== 'CmrAgent').map((m) => m.userId)
+      .filter((m) => m.userId && (isDirect || !m.leftDate) && m.userId !== me && m.roleEnumId !== 'CmrAgent').map((m) => m.userId)
     kind = isDirect && invitees.length === 1 ? 'CskDirect' : 'CskGroup'
   } else {
     if (isExternal(me)) return refuse('notAllowed', 'Start a call from a chat room you are in')

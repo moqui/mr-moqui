@@ -1151,6 +1151,7 @@
         <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
+        <load-data location="component://framework/data/ChatBridgeSetupData.xml"/>
         <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/VoiceSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>

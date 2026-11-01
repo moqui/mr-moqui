@@ -189,6 +189,18 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a message's delivery to a bridge sent again (C1): its sender, a moderator, or ChatBridgeAdmin; a refusal answers
+        reasonCode in its own transaction, so the answer still goes out -->
+    <transition name="retryDelivery">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId',
+                chatBridgeDeliveryId || '').requireNewTransaction(true).call()
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(errors ? {reasonCode: out?.reasonCode || 'refused', error: errors} : {retried: true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="pin">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.impl.ChatServices.pin#Message').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0),
@@ -348,8 +360,9 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="removeMember">
         <actions><script><![CDATA[
-            if (!userId) ec.message.addError(ec.l10n.localize('Who to take out?'))
-            else ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId}).call()
+            if (!userId && !chatActorId) ec.message.addError(ec.l10n.localize('Who to take out?'))
+            else ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId || null,
+                chatActorId: userId ? null : chatActorId}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>

@@ -32,6 +32,13 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
   and status in the account menu. The tray's Chat tab is the same view, smaller.
+- <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
+  XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
+  header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
+  messages carry it. Each of your messages says whether it was delivered there, is being sent, was not delivered (with
+  why) or may not have arrived; the sender or a moderator can Send again. When the bridge is not connected the room says
+  so and keeps its messages, which go out once it is back. An edit, a delete or a reaction the network cannot carry is
+  not offered. The terminal shows the same, with Send again. See [Chat bridges](../interfaces/Chat-Bridges.md).
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
   members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
   audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
@@ -132,6 +139,10 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   prompt (uploaded; without them, tones: Moqui ships no music or recorded speech). Numbers route to a menu or a queue too.
   The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
+- **Chat bridges** (System, Chat Bridges; the ChatBridgeAdmin permission, which ADMIN has). Each bridge with its
+  network, its status (connected, not connected, disabled) and last error, its rooms and its deliveries waiting, failed
+  and uncertain; the deliveries that did not go, with Send again; Disable and Enable. A network's bridge is set up with
+  its adapter ([Chat bridges](../interfaces/Chat-Bridges.md#administration)).
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
@@ -189,7 +200,8 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), the mail settings and Inbox of a
+`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
+Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
 provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the

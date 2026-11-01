@@ -17,8 +17,10 @@ along with this software (see the LICENSE.md file). If not, see
     tab load them: pinned first, then by the last message; limit for the tab's short list) with their unread and mention
     counts and last message, each opening its room in Chat, and Mark all read. With chatRoomId, the room (get#RoomView, which
     refuses a room the user may not read: "not found") with its latest messages, a Send form posting through send#ChatMessage
-    as the user (a member of the room), Mark read, and Join for a room the user may join. Threads, reactions, files, polls and
-    the room's settings are the browser's. -->
+    as the user (a member of the room), Mark read, and Join for a room the user may join. A bridged room (C1) says where else
+    its messages go and whether a bridge is not connected; an external member's messages carry their network, and each message
+    of a bridged room its delivery, with Send again for one that failed or is uncertain (its sender or a moderator). Threads,
+    reactions, files, polls and the room's settings are the browser's. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-include="false">
 
@@ -33,6 +35,17 @@ along with this software (see the LICENSE.md file). If not, see
             if (!text) ec.message.addError(ec.l10n.localize('Write a message first'))
             else ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '',
                 body: text.split(/\n{2,}/).map((part) => '<p>' + part.split('\n').map(escape).join('<br>') + '</p>').join('')}).call()
+        ]]></script></actions>
+        <default-response url="../Chat"><parameter name="chatRoomId"/></default-response>
+    </transition>
+    <!-- a message's failed or uncertain deliveries sent again (deliveryIds, comma separated) -->
+    <transition name="retryDelivery">
+        <actions><script><![CDATA[
+            for (const id of String(deliveryIds || '').split(',').map((part) => part.trim()).filter((part) => part)) {
+                ec.service.sync().name('org.moqui.impl.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId', id).call()
+                if (ec.message.hasError()) break
+            }
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Sending again'), 'success')
         ]]></script></actions>
         <default-response url="../Chat"><parameter name="chatRoomId"/></default-response>
     </transition>
@@ -65,12 +78,19 @@ along with this software (see the LICENSE.md file). If not, see
             canPost = false
             canJoin = false
             unreadTotal = 0
+            bridgeText = ''
+            notConnected = false
             if (chatRoomId) {
                 const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#RoomView').parameters({chatRoomId: chatRoomId, limit: 30}).call()
                 if (!ec.message.hasError() && out.room) {
                     room = out.room
                     canPost = !!(out.access && out.access.canPost)
                     canJoin = !!(out.access && out.access.canJoin)
+                    const canModerate = !!(out.access && out.access.canModerate)
+                    const networks = Array.from(new Set(Array.from(room.bridges || []).map((bridge) => bridge.networkName || bridge.name).filter((name) => name)))
+                    bridgeText = networks.length ? ec.resource.expand(ec.l10n.localize('Messages here also go to ${names}'), '', {names: networks.join(', ')}) : ''
+                    notConnected = !!room.notConnected
+                    const STATES = {accepted: 'Delivered', pending: 'Sending', failed: 'Not delivered', uncertain: 'May not have arrived'}
                     const page = out.timeline || {}
                     const names = page.userNames || {}
                     eventList = Array.from(page.eventList || []).map((event) => {
@@ -85,7 +105,15 @@ along with this software (see the LICENSE.md file). If not, see
                         }
                         if (event.edited) text += ' ' + ec.l10n.localize('(edited)')
                         if (Number(event.threadReplyCount || 0) > 0) text += ' · ' + event.threadReplyCount + ' ' + ec.l10n.localize(event.threadReplyCount == 1 ? 'reply' : 'replies')
-                        return {eventSeq: event.eventSeq, senderName: event.senderName || names[event.senderUserId] || '', timeText: when(event.sentDate), text: text}
+                        const delivery = event.delivery || null
+                        const failed = delivery ? Array.from(delivery.destinations || []).find((destination) => destination.error && destination.state !== 'accepted') : null
+                        const retryIds = delivery && delivery.retryable && (event.senderUserId === ec.user.userId || canModerate)
+                                ? Array.from(delivery.destinations || []).filter((destination) => destination.retryable).map((destination) => destination.chatBridgeDeliveryId).join(',') : ''
+                        return {eventSeq: event.eventSeq, senderName: (event.senderName || names[event.senderUserId] || '')
+                                + (event.senderExternal ? ' (' + (event.senderExternal.networkName || ec.l10n.localize('Outside')) + ')' : ''),
+                            timeText: when(event.sentDate), text: text,
+                            deliveryText: delivery ? ec.l10n.localize(STATES[delivery.state] || delivery.state) + (failed ? ': ' + failed.error : '') : '',
+                            retryIds: retryIds}
                     })
                 }
             } else {
@@ -96,7 +124,10 @@ along with this software (see the LICENSE.md file). If not, see
                         const last = item.lastMessage || null
                         const counts = [Number(item.unreadCount || 0) > 0 ? item.unreadCount + ' ' + ec.l10n.localize('unread') : '',
                             Number(item.mentionCount || 0) > 0 ? '@' + item.mentionCount : ''].filter((part) => part).join(' ')
-                        return {chatRoomId: item.chatRoomId, nameText: (item.isPinned ? '* ' : '') + (item.displayName || item.roomName || item.chatRoomId) + (item.isMuted ? ' ' + ec.l10n.localize('(muted)') : ''),
+                        const bridged = item.bridged ? ' [' + (Array.from(item.bridgeNetworkNames || []).join(', ') || ec.l10n.localize('bridged'))
+                                + (item.notConnected ? ', ' + ec.l10n.localize('not connected') : '') + ']' : ''
+                        return {chatRoomId: item.chatRoomId, nameText: (item.isPinned ? '* ' : '') + (item.displayName || item.roomName || item.chatRoomId) + bridged
+                                + (item.isMuted ? ' ' + ec.l10n.localize('(muted)') : ''),
                             countText: counts, lastText: last ? (last.senderName ? last.senderName + ': ' : '') + (last.snippet || '') : '',
                             timeText: last ? when(last.sentDate) : ''}
                     })
@@ -135,10 +166,17 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="join" link-type="hidden-form-link" text="Join" condition="canJoin" parameter-map="{chatRoomId:chatRoomId}"/>
             </container>
             <section name="ChatTuiTopic" condition="roomTopic"><widgets><label type="p" text="${roomTopic}" style="text-caption m-muted"/></widgets></section>
+            <section name="ChatTuiBridged" condition="bridgeText"><widgets><label type="p" text="${bridgeText}" style="text-caption text-info"/></widgets></section>
+            <section name="ChatTuiNotConnected" condition="notConnected"><widgets>
+                <label type="p" text="Not connected: messages stay here and go out once it is back" style="text-caption text-warning"/></widgets></section>
             <form-list name="ChatTuiEvents" list="eventList" skip-form="true" paginate="false">
                 <field name="senderName"><default-field title="From"><display style="text-weight-medium"/></default-field></field>
                 <field name="timeText"><default-field title="When"><display style="text-caption"/></default-field></field>
                 <field name="text"><default-field title="Message"><display/></default-field></field>
+                <field name="deliveryText"><default-field title="Delivery"><display style="text-caption"/></default-field></field>
+                <field name="retryIds"><default-field title="">
+                    <link url="retryDelivery" link-type="hidden-form-link" text="Send again" condition="retryIds.length &gt; 0"
+                            parameter-map="{chatRoomId:chatRoomId, deliveryIds:retryIds}"/></default-field></field>
             </form-list>
             <section name="ChatTuiNoEvents" condition="!eventList.length"><widgets>
                 <label type="p" text="No messages yet" style="m-muted"/>

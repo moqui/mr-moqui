@@ -17,9 +17,10 @@
      Widgets             │   [ ] AgsfA2a                      A2A                             Agent Surface                         Ordered a2a             3
      Editor              │   [ ] GmaMergeable                 Able to merge                   Git Mergeability                      Ordered mergeable       2
      Message             │   [ ] EspAboveQuote                Above the quote                 Email Signature Placement             Ordered                 2
-     Views               │   [ ] ChrSelectiveAccept           Accept only callers on a list   Call Handling Kind                    Ordered selectiveAccept 3
-     Handheld            │   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain
- ▾ Home                  │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                       System
+     Views               │   [ ] CdsAccepted                  Accepted                        Chat Delivery Status                  Ordered accepted        2
+     Handheld            │   [ ] ChrSelectiveAccept           Accept only callers on a list   Call Handling Kind                    Ordered selectiveAccept 3
+ ▾ Home                  │   [ ] EMT_ACCOUNT_INVITE           Account Invitation              Email Type                            Plain
+                         │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type Email Type                            Child                       System
                          │   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain
                          │   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent           4
                          │   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL
@@ -33,8 +34,7 @@
                          │   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered                 3
                          │   [ ] PnrIvr                       An IVR menu                     Phone Number Route                    Ordered ivr             3
                          │   [ ] RgfGroup                     Another group                   Ring Group Fallback                   Ordered group           2
-                         │   [ ] CtgMenu                      Another menu                    Call Target                           Ordered menu            4
-                         │   Rows 1–20 of 421 · Page 1/22
+                         │   Rows 1–20 of 446 · Page 1/23
                          │ Back to the Landing
                          │
                          │
