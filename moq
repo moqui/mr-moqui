@@ -3384,8 +3384,12 @@ task_archive() {
     fi
     valid_name "$name" || die "archive name '$name' may use only letters, digits, '.', '_' and '-'"
     [ -d "$(dirname "$out")" ] || die "no directory $(rel "$(dirname "$out")") for $(basename "$out")"
-    case $out in
-        "$RUNTIME_DIR"/*) die "$(rel "$out") is inside $(rel "$RUNTIME_DIR"), which the archive holds" ;;
+    # compared as physical paths: the runtime through a symlink, or a path with //, is still inside it
+    local out_dir runtime_dir
+    out_dir=$(cd -P "$(dirname "$out")" && pwd)
+    runtime_dir=$(cd -P "$RUNTIME_DIR" 2>/dev/null && pwd) || runtime_dir=$RUNTIME_DIR
+    case $out_dir/ in
+        "$runtime_dir"/*) die "$(rel "$out") is inside $(rel "$RUNTIME_DIR"), which the archive holds" ;;
     esac
     if [ -e "$out" ] && [ -z "$force" ]; then
         die "$(rel "$out") is there already; -f replaces it"
