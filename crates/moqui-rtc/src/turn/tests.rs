@@ -382,3 +382,28 @@ fn a_stream_is_split_into_stun_messages_and_channel_data() {
     assert_eq!(frame_len(&[0x40, 0x00, 0x00, 0x05]), Some(12));
     assert_eq!(frame_len(&[0x00, 0x01]), None);
 }
+
+#[test]
+fn an_xmpp_users_credential_reaches_no_other_port_of_the_servers_own_addresses() {
+    let media: SocketAddr = "9.9.9.9:10000".parse().unwrap();
+    let listen: SocketAddr = "1.0.0.1:3478".parse().unwrap();
+    let config = TurnConfig {
+        secret: SECRET.to_vec(),
+        allowed_peers: vec![media],
+        ..TurnConfig::default()
+    };
+    let turn = Turn::new(config, &[(Proto::Udp, listen)]);
+    // public addresses, so the XMPP rule would take them but for a media node's or a listener's address
+    let xmpp = Some("xmpp.U1");
+    assert!(turn.peer_allowed(media, false, xmpp));
+    assert!(turn.peer_allowed(media, false, Some("LEG1")));
+    for other in ["9.9.9.9:22", "[::ffff:9.9.9.9]:22", "1.0.0.1:5060", "1.0.0.1:3478"] {
+        let other: SocketAddr = other.parse().unwrap();
+        assert!(!turn.peer_allowed(other, false, xmpp), "{other}");
+        assert!(!turn.peer_allowed(other, false, Some("LEG1")), "{other}");
+    }
+    // a permission for the media node's address is taken; its other ports still are not relayed to
+    assert!(turn.peer_allowed("[::ffff:9.9.9.9]:1".parse().unwrap(), true, Some("LEG1")));
+    // an XMPP peer on the internet still is
+    assert!(turn.peer_allowed("8.8.4.4:50000".parse().unwrap(), false, xmpp));
+}

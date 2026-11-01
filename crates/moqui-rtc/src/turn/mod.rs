@@ -25,8 +25,9 @@
 //!   it, and nothing is relayed to or from one (another port on a media node's address included). Standard TURN credentials do
 //!   not bind a relay to one call; this rule does. The one exception is an XMPP user's own credential (leg
 //!   `xmpp.<userId>`, `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may relay to public
-//!   unicast addresses too, never to loopback, private, link-local, shared or documentation ranges ([`is_public`]), so
-//!   it cannot reach into the server's own networks.
+//!   unicast addresses too, never to loopback, private, link-local, shared or documentation ranges ([`is_public`]), nor
+//!   another port of a media node's address or of the listeners' own, so it cannot reach into the server's own networks
+//!   or the server itself.
 //! - **Quotas:** allocations per username and in all, and a bandwidth per allocation, past which data is dropped.
 //! - **Revocation** ([`Turn::revoke_leg`]): the leg's username is refused from then on, its allocations' relay sockets
 //!   close, and nothing more is relayed for them.
@@ -296,13 +297,26 @@ impl Turn {
 
     /// A peer `addr` may be relayed to: a media node's media port, or for an XMPP user's own credential a public
     /// address. With `any_port` (a permission, which RFC 8656 keys by address alone) only the address is matched.
+    /// The XMPP rule never reaches a media node's other ports, nor this server's own addresses (its listeners' ports
+    /// or any other): a relay there would come from inside, past a firewall that keeps the outside off them.
     fn peer_allowed(&self, addr: SocketAddr, any_port: bool, leg: Option<&str>) -> bool {
-        let ip = addr.ip();
-        self.config
-            .allowed_peers
-            .iter()
-            .any(|p| p.ip() == ip && (any_port || p.port() == addr.port()))
-            || (leg.is_some_and(|leg| leg.starts_with(XMPP_LEG)) && is_public(ip))
+        let ip = addr.ip().to_canonical();
+        let mut media_node = false;
+        for p in &self.config.allowed_peers {
+            if p.ip().to_canonical() == ip {
+                if any_port || p.port() == addr.port() {
+                    return true;
+                }
+                media_node = true;
+            }
+        }
+        leg.is_some_and(|leg| leg.starts_with(XMPP_LEG))
+            && is_public(ip)
+            && !media_node
+            && !self
+                .servers
+                .iter()
+                .any(|s| s.listen_address().ip().to_canonical() == ip)
     }
 
     fn is_revoked(&self, leg: &str) -> bool {

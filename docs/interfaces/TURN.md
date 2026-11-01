@@ -50,7 +50,9 @@ Open these ports on the firewall:
   `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>` (`make#IceServers`), and such a relay may reach
   public unicast addresses too, never loopback, private, unique-local, link-local, shared (100.64/10), multicast or
   documentation ranges, nor an IPv6 address carrying an inside IPv4 one (6to4, IPv4-compatible, NAT64, Teredo)
-  (`moqui-rtc` `turn::is_public`). It is not revoked with a call, as there is none; it expires.
+  (`moqui-rtc` `turn::is_public`), nor another port of a media node's address or of the TURN server's own address
+  (a relay there comes from the server itself, past a firewall that keeps the outside off those ports). It is not
+  revoked with a call, as there is none; it expires.
   coturn sees it as any other credential, so its own peer rule decides there.
 - When a leg leaves or the call ends, the media node revokes the leg. Its credential is refused from then on, its
   relays close, and nothing more is relayed for it. An expired credential is refused too, refreshes included.

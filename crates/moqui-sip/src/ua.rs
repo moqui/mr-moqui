@@ -86,6 +86,9 @@ const REGISTER_WAIT: Duration = Duration::from_secs(32);
 const TRUNK_PING: Duration = Duration::from_secs(60);
 /// How long an OPTIONS ping waits for its answer, at most.
 const PING_WAIT: Duration = Duration::from_secs(8);
+/// The OPTIONS pings in a row with no answer before a trunk is told failed: a failed trunk is left out of the emergency
+/// readiness and the calls' capabilities, so one lost ping must not do that.
+const PING_FAILURES: u32 = 3;
 /// The early answers kept at most, and how long one waits for its leg.
 const MAX_EARLY: usize = 1_000;
 const EARLY_TTL: Duration = Duration::from_secs(30);
@@ -991,13 +994,14 @@ impl Inner {
         }
     }
 
-    /// Pings a trunk that does not register with OPTIONS: its status (reachable, or failed with why) is told when it
-    /// changes, and again every ten pings.
+    /// Pings a trunk that does not register with OPTIONS: its status (reachable, or failed with why once
+    /// [`PING_FAILURES`] pings in a row had no answer) is told when it changes, and again every ten pings.
     async fn ping_loop(self: Arc<Self>, trunk: TrunkConfig, stop: CancellationToken) {
         let call_id = format!("{}@moqui", random_text(16));
         let mut seq = 0u32;
         let mut last: Option<TrunkState> = None;
         let mut unchanged = 0u32;
+        let mut failures = 0u32;
         let wait = PING_WAIT.min(self.trunk_ping / 2);
         loop {
             let state = match tokio::time::timeout(wait, self.ping_once(&trunk, &call_id, &mut seq)).await {
@@ -1005,8 +1009,13 @@ impl Inner {
                 Ok(Err(err)) => TrunkState::Failed(format!("no answer to OPTIONS: {err}")),
                 Err(_) => TrunkState::Failed("no answer to OPTIONS in time".to_string()),
             };
+            failures = if matches!(state, TrunkState::Failed(_)) {
+                failures + 1
+            } else {
+                0
+            };
             unchanged += 1;
-            if last.as_ref() != Some(&state) || unchanged >= 10 {
+            if (failures == 0 || failures >= PING_FAILURES) && (last.as_ref() != Some(&state) || unchanged >= 10) {
                 if let TrunkState::Failed(err) = &state {
                     if last.as_ref() != Some(&state) {
                         tracing::warn!("SIP trunk {}: {err}", trunk.id);

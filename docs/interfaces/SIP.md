@@ -113,8 +113,9 @@ its status and last error are on the trunk. The admins get a `VoiceAlert` notifi
 
 **OPTIONS pings.** A trunk that does not register (an IP-authenticated trunk, a PBX) is sent OPTIONS every minute, so
 System, Voice, Trunks shows it Reachable or Failed before a call fails. Any final answer counts as up (a 200, a 405, a
-challenge); no answer within 8 seconds is down, with the reason as the trunk's last error, and the admins hear of it as
-of a failed registration. The status is sent when it changes, and every ten pings.
+challenge); no answer within 8 seconds is no answer, and three pings in a row with none are down (one lost ping is
+not: a failed trunk is left out of the emergency readiness and the calls' capabilities), with the reason as the trunk's
+last error, and the admins hear of it as of a failed registration. The status is sent when it changes, and every ten pings.
 
 **Incoming calls** are taken:
 
@@ -655,7 +656,7 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
 - `cargo test -p moqui-sip stun`, `…stun_keepalive`: the Binding answer (RFC 5769's mapped address, IPv6, what is not
   a Binding request left alone), and a UDP phone's keepalive answered on the SIP socket beside its CRLF keepalive.
 - `cargo test -p moqui-sip pinged_with_options`: a trunk that does not register shows Reachable when it answers OPTIONS
-  and Failed when it stops.
+  and Failed when three pings in a row had no answer.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, prompts queued one after
   another, the registrar's settings and a phone's ring time; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk

@@ -46,7 +46,8 @@ pub fn binding_response(request: &[u8], from: SocketAddr) -> Option<Vec<u8>> {
     }
     let transaction = &request[8..HEADER];
     let port = from.port() ^ (COOKIE >> 16) as u16;
-    let (family, address): (u8, Vec<u8>) = match from.ip() {
+    // an IPv4 phone on a dual-stack socket is answered with its IPv4 address, as it sees itself
+    let (family, address): (u8, Vec<u8>) = match from.ip().to_canonical() {
         IpAddr::V4(v4) => (0x01, (u32::from(v4) ^ COOKIE).to_be_bytes().to_vec()),
         IpAddr::V6(v6) => {
             let mut mask = COOKIE.to_be_bytes().to_vec();
@@ -95,6 +96,12 @@ mod tests {
         let answer = binding_response(&request(transaction), v6).expect("an answer");
         assert_eq!(answer.len(), 20 + 4 + 20);
         assert_eq!(answer[25], 0x02);
+        // an IPv4 phone seen on a dual-stack socket: its IPv4 address
+        let mapped: SocketAddr = "[::ffff:192.0.2.1]:32853".parse().unwrap();
+        assert_eq!(
+            binding_response(&request(transaction), mapped),
+            binding_response(&request(transaction), from)
+        );
         // not STUN: SIP, a CRLF keepalive, a Binding answer, a request with a wrong length
         assert!(binding_response(b"OPTIONS sip:a@b SIP/2.0\r\n\r\n", from).is_none());
         assert!(binding_response(b"\r\n\r\n", from).is_none());

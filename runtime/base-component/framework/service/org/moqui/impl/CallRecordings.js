@@ -137,7 +137,6 @@ function recordingView(recording) {
   }
 }
 
-/** The rtc frame every leg of the room gets (and a late joiner, from the media node). */
 // ---------- the drive quota ----------
 
 /** The bytes the stored files of the recordings userId owns take. */
@@ -171,6 +170,7 @@ function quotaLeft(userId) {
   return Number(drive.quotaBytes) - files - recordingBytes(userId)
 }
 
+/** The rtc frame every leg of the room gets (and a late joiner, from the media node). */
 function noticeFrame(recording) {
   const view = recordingView(recording)
   return {

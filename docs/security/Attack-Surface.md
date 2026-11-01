@@ -490,7 +490,8 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
   credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
   relay to public unicast addresses too, never to loopback, private (RFC 1918, unique-local), link-local, shared
   (100.64/10), multicast or documentation ranges, nor an IPv6 address that carries an inside IPv4 one (6to4 of one,
-  IPv4-compatible, NAT64, Teredo).
+  IPv4-compatible, NAT64, Teredo), nor another port of a media node's address or of the TURN listeners' own address
+  (a relay there would come from the server itself, past a firewall that keeps the outside off those ports).
 - **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
   allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
   peers are offered.

@@ -1137,11 +1137,18 @@ async fn a_trunk_that_does_not_register_is_pinged_with_options_and_shows_up_or_d
     assert!(options.uri.to_string().starts_with("sip:127.0.0.1"));
     trunk.reply(&options, from, 200, "p1", "", "").await;
     assert_eq!(status(&mut events).await, ("T1".to_string(), TrunkState::Reachable));
-    // then it answers nothing: down, with why
+    // then it answers nothing: down, with why, once three pings in a row had no answer (one lost is no failure)
+    let started = tokio::time::Instant::now();
     match status(&mut events).await {
         (id, TrunkState::Failed(why)) => {
             assert_eq!(id, "T1");
             assert!(why.contains("OPTIONS"), "{why}");
+            // three pings: each waits 150 ms for its answer, 300 ms apart
+            assert!(
+                started.elapsed() >= Duration::from_millis(900),
+                "{:?}",
+                started.elapsed()
+            );
         }
         other => panic!("{other:?}"),
     }
