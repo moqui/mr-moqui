@@ -569,6 +569,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="home-source"/>
             <xs:element ref="external-conversation"/>
             <xs:element ref="sms-consent"/>
+            <xs:element ref="call-target"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -612,6 +613,10 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="sms-consent" type="provider-type"><xs:annotation><xs:documentation>Whether a promotional text may go
         from one of our numbers to a number (consent: true or false); with no provider saying yes it is
         refused.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="call-target" type="provider-type"><xs:annotation><xs:documentation>Which of the users the current
+        user would call, transfer a call to or add to a call are refused (refusedUserIdList), for an app that keeps them to
+        the user's own organizations; with no provider any enabled user may be reached, and a provider that fails refuses
+        them all.</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">

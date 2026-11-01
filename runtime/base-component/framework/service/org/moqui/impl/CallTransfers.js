@@ -156,6 +156,11 @@ function resolveTarget(type, id, me) {
     const account = blank(id) ? null : one(ACCOUNT, { userId: id })
     if (!account || account.disabled === 'Y') return { refusal: refuse('notFound', 'User not found') }
     if (account.userId === me) return { refusal: refuse('badTarget', 'Choose someone else') }
+    // an app's call-target providers may keep transfer and add targets to the user's own (Calls.js refusedTargets): the
+    // same answer as for no such user
+    if (calls('refusedTargets', { userIdList: [account.userId] }).refusedUserIdList?.length) {
+      return { refusal: refuse('notFound', 'User not found') }
+    }
     return { type: 'user', id: account.userId, name: userName(account.userId) }
   }
   if (type === 'queue') {

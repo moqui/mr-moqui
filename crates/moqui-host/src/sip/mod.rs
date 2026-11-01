@@ -412,6 +412,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         registrar: settings
             .registrar
             .map(|limits| phones::registrar_config(factory, limits, &settings.domain)),
+        trunk_ping: None,
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
         Ok(ua) => ua,
@@ -932,7 +933,7 @@ impl Engine {
             UaEvent::DeviceAnswered { leg, answer, source } => self.device_answered(&leg, &answer, source),
             UaEvent::Ringing { .. } => {}
             // V5: a desk phone's blind transfer
-            UaEvent::Refer { leg, target } => self.refer(&leg, &target),
+            UaEvent::Refer { leg, target, reply } => self.refer(&leg, &target, reply),
             UaEvent::Answered { leg, answer } => {
                 let Some(entry) = self.legs.get(&leg) else {
                     // the leg was hung up here as the answer came: end the answered call too
@@ -976,6 +977,7 @@ impl Engine {
             UaEvent::TrunkStatus { trunk, state } => {
                 let (status, error) = match state {
                     TrunkState::Registered => ("registered", String::new()),
+                    TrunkState::Reachable => ("ok", String::new()),
                     TrunkState::Failed(err) => ("failed", err),
                     TrunkState::Unregistered => ("unregistered", String::new()),
                 };

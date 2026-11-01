@@ -47,6 +47,19 @@
         ]]></script></actions>
     </service>
 
+    <!-- A call-target provider of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3):
+        of the users the signed-in user would call, transfer a call to or add to one, it refuses those whose username ends
+        with .offlimits, as an app keeping them to the user's organizations would refuse another organization's. -->
+    <service verb="get" noun="GalleryCallTarget">
+        <implements service="org.moqui.comms.ProviderInterfaces.call#Target"/>
+        <actions><script><![CDATA[
+            const ids = Array.from(userIdList || []).map((id) => String(id))
+            refusedUserIdList = ids.length ? Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', ids)
+                .selectField('userId').selectField('username').disableAuthz().list())
+                .filter((account) => String(account.username || '').endsWith('.offlimits')).map((account) => account.userId) : []
+        ]]></script></actions>
+    </service>
+
     <!-- A palette source of the suite shell (the shell-providers of screen/Gallery.xml), run by the shellSearch transition of
         webroot.xml: enumerations whose id or description has the text, linked to the Detail gallery screen. The contract of a
         palette source is in docs/ui/Qvt-Client.md ("Shell data and providers"). -->

@@ -28,7 +28,7 @@ const ADMISSION_CODES = {
 const END_CODES = {
   CerHangup: 'hangup', CerDeclined: 'declined', CerNoAnswer: 'noAnswer', CerCanceled: 'canceled',
   CerConnectionLost: 'connectionLost', CerMediaNodeLost: 'mediaNodeLost', CerEmpty: 'empty', CerFailed: 'failed',
-  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred',
+  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred', CerRefused: 'refused',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
 // V5: transfers, queues (CallTransfers.js, CallQueues.js)
@@ -325,9 +325,14 @@ function linkEdge(session, node) {
 
 /**
  * The call's recording (W5, CallRecordings.js) hears of a leg bound (a late joiner's notice), a leg gone, or the end;
- * only while one is going. It never fails the call's own change.
+ * only while one is going. A leg bound while captions are on gets their notice (W6). It never fails the call's own change.
  */
 function recordingChange(callSessionId, change, callLegId) {
+  // W6: a leg that joins while captions are on gets their notice, logged per leg (CallCaptions.js)
+  if (change === 'legBound' && callLegId && find('moqui.call.CallCaptions').condition({ callSessionId, captionsOn: 'Y' }).count() > 0) {
+    ec.service.sync().name('org.moqui.impl.CallCaptionServices.note#CaptionsLeg').parameters({ callSessionId, callLegId })
+      .disableAuthz().call()
+  }
   if (find('moqui.call.CallRecording').condition('callSessionId', callSessionId)
     .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).count() === 0) return
   ec.service.sync().name('org.moqui.impl.CallRecordingServices.note#CallChange')
@@ -632,6 +637,38 @@ function deviceRevoked(p) {
 
 // ---------- operations ----------
 
+/**
+ * The call-target providers' answer for the users the current user would call, transfer a call to or add to one (an app
+ * keeps them to the user's organizations, IronStone BOSS): the ones refused. With no provider every enabled user may be
+ * called; a provider that says allowed false refuses that user, and one that fails refuses them all (strict: this guards
+ * who may be reached).
+ */
+function refusedTargets(userIds) {
+  const ids = Array.from(new Set((userIds || []).filter((id) => id)))
+  if (!ids.length) return []
+  ec.message.pushErrors()
+  try {
+    const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({ hook: 'call-target',
+      parameters: { userIdList: ids } }).call() || {}
+    if (out.unavailable === true) return []
+    if (Array.from(out.failedParts || []).length) {
+      ec.logger.warn(`The call-target providers failed for ${ids.join(', ')}: every one is refused`)
+      return ids
+    }
+    const refused = new Set()
+    for (const answer of Array.from(out.results || [])) {
+      for (const id of Array.from(answer?.refusedUserIdList || [])) if (ids.includes(String(id))) refused.add(String(id))
+    }
+    return Array.from(refused)
+  } catch (err) {
+    ec.logger.warn(`The call-target providers failed for ${ids.join(', ')}: ${err && err.message ? err.message : err}`)
+    return ids
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
 function start(p) {
   const me = currentUser()
   if (!me) return refuse('notSignedIn', 'Sign in to make a call')
@@ -674,6 +711,8 @@ function start(p) {
     const known = Array.from(find('moqui.security.UserAccount').condition('userId', 'in', invitees)
       .selectField('userId').selectField('disabled').list()).filter((a) => a.disabled !== 'Y').map((a) => a.userId)
     if (known.length !== invitees.length) return refuse('noCallee', 'Choose someone to call')
+    // an app's call-target providers may keep the people called to the user's own (the same answer as for no such user)
+    if (refusedTargets(invitees).length) return refuse('noCallee', 'Choose someone to call')
     const room = ec.service.sync().name('org.moqui.impl.ChatServices.create#Room')
       .parameters({ roomTypeEnumId: 'CrtDirect', memberUserIdList: invitees }).call()
     if (ec.message.hasError() || !room?.chatRoomId) return { reasonCode: 'failed' }
@@ -1586,6 +1625,8 @@ function history(p) {
       role: log.roleEnumId === 'CurCaller' ? 'caller' : 'callee',
       kind: KIND_CODES[session.kindEnumId] || null,
       video: session.video === 'Y',
+      // W8: an end-to-end encrypted call is called back encrypted (History's Call back)
+      e2ee: isE2ee(session),
       status: STATUS_CODES[session.statusId] || null,
       chatRoomId: session.chatRoomId || null,
       startedDate: ms(log.logDate || session.startedDate),
@@ -1727,15 +1768,10 @@ function phoneControl(session, action, extra) {
 
 /**
  * A phone leg that answered hears the call's notices, as a browser leg that binds gets their rtc frames: the recording's
- * (note#CallChange, logged per leg) and, while captions are on, the captions' (VoiceServices.notify#PhoneLeg).
+ * (note#CallChange) and, while captions are on, the captions' (note#CaptionsLeg), each logged per leg.
  */
 function phoneJoined(session, leg) {
   recordingChange(session.callSessionId, 'legBound', leg.callLegId)
-  const captions = one('moqui.call.CallCaptions', { callSessionId: session.callSessionId })
-  if (captions && captions.captionsOn === 'Y') {
-    ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
-      .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
-  }
 }
 
 function makePhoneParticipant(session, displayName, admission) {
@@ -2050,11 +2086,14 @@ function forwardEvent(session, leg, p) {
   return {}
 }
 
-/** Internal (Voice.js dialForward): a forwarded leg that was not dialed (refused by the policy) closes as failed. */
+/**
+ * Internal (Voice.js dialForward): a forwarded leg that was not dialed (refused by the policy or the limits) closes as
+ * failed, CerRefused, so it does not count toward the limits.
+ */
 function closeForward(p) {
   const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
   if (!leg || leg.statusId !== 'ClsOffered') return {}
-  closeLeg(leg, 'ClsFailed', 'CerFailed')
+  closeLeg(leg, 'ClsFailed', 'CerRefused')
   return {}
 }
 
@@ -2407,6 +2446,7 @@ function context(p) {
 const operations = {
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
+  refusedTargets: (p) => ({ refusedUserIdList: refusedTargets(Array.from(p.userIdList || [])) }),
   start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),

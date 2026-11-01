@@ -159,16 +159,35 @@ feature("someone in the call turns captions on and someone else turns them off",
     when() {
         provider(true)
         return on(() => {
+            const notices = () => sys(() => Array.from(ec.entity.find("moqui.call.CallCaptionsNotice")
+                .condition("callSessionId", theCall.callSessionId).list()))
             const started = captions(A, "start#Captions", theCall)
+            const atStart = notices()
             const again = captions(A, "start#Captions", theCall)
+            const afterAgain = notices()
+            // C is added and answers: the leg bound while captions are on gets the notice, logged for its leg
+            as(A, "org.moqui.impl.CallTransferServices.add#CallParticipant", {callSessionId: theCall.callSessionId, userId: C})
+            as(C, "org.moqui.impl.CallServices.answer#Call", theCall)
+            const cLeg = sys(() => {
+                const p = ec.entity.find("moqui.call.CallParticipant").condition({callSessionId: theCall.callSessionId, userId: C}).one()
+                return Array.from(ec.entity.find(LEG).condition({callParticipantId: p.callParticipantId, statusId: "ClsAnswered"}).list())[0]
+            })
+            const bound = as(C, "org.moqui.impl.CallServices.bind#Connection", {callSessionId: theCall.callSessionId, callLegId: cLeg.callLegId})
+            const afterJoin = notices()
             const seenByB = captions(B, "get#CaptionState", theCall)
             const stopped = captions(B, "stop#Captions", theCall)
             const stoppedAgain = captions(B, "stop#Captions", theCall)
             const row = sys(() => ec.entity.find("moqui.call.CallCaptions").condition("callSessionId", theCall.callSessionId).one())
-            return {started, again, seenByB, stopped, stoppedAgain, row}
+            return {started, atStart, again, afterAgain, cLeg, bound, afterJoin, seenByB, stopped, stoppedAgain, row}
         })
     },
-    then({started, again, seenByB, stopped, stoppedAgain, row}) {
+    then({started, atStart, again, afterAgain, cLeg, bound, afterJoin, seenByB, stopped, stoppedAgain, row}) {
+        atStart.length == 2
+        atStart.every(n => n.noticeMethodEnumId == "CnmWeb" && n.noticeDate != null && n.providerLabel != null)
+        afterAgain.length == 2
+        bound.errors == ""
+        afterJoin.length == 3
+        afterJoin.some(n => n.callLegId == cLeg.callLegId)
         started.errors == ""
         started.captions.on == true
         started.repeated == false

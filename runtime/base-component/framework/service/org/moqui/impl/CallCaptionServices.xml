@@ -63,4 +63,15 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('getState', context))</script></actions>
     </service>
+
+    <service verb="note" noun="CaptionsLeg" authenticate="false" allow-remote="false">
+        <description>Internal (Calls.js, in its transaction): a leg joined a call (a browser's leg bound, a phone answered)
+            while its captions are on: its notice is logged (CallCaptionsNotice), and a phone hears it as a prompt (a browser
+            has the rtc frame from its media node). Nothing when captions are off.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallCaptions.js').execute('legJoined', context))</script></actions>
+    </service>
 </services>

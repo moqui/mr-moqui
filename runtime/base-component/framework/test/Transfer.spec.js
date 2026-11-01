@@ -407,6 +407,35 @@ feature("a person is added; a number is not added to an encrypted call; calls on
     }
 })
 
+feature("a desk phone's REFER is checked before the phone is answered: refused with an error (the engine answers 403), the same REFER to a domestic number taken (202)", {
+    when() {
+        endAll()
+        return withProperty("sip_registrar_enabled", "true", () => {
+            const made = as(A, "org.moqui.impl.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
+            const device = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", made.sipDeviceId).one())
+            engine("org.moqui.impl.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",
+                sipDeviceId: device.sipDeviceId, instanceId: NODE, contactUri: "sip:" + device.username + "@192.168.1.20:5060",
+                transport: "udp", sourceAddress: "198.51.100.7", sourcePort: 61000, sipCallId: "reg-xfer-refer-1", cseq: 2,
+                credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000, lastRefreshDate: Date.now(),
+                userAgent: "Spec Phone/1.0"})
+            const call = engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
+            const phoneLeg = sys(() => Array.from(ec.entity.find(LEG).condition({callSessionId: call.callSessionId, legTypeEnumId: "CltSipDevice"}).list()))[0]
+            const answered = note(call.callSessionId, phoneLeg.callLegId, "answered")
+            const refused = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: ABROAD})
+            const taken = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: "+15550199977"})
+            as(A, "org.moqui.impl.SipDeviceServices.revoke#SipDevice", {sipDeviceId: made.sipDeviceId})
+            return {answered, refused, taken}
+        })
+    },
+    then({answered, refused, taken}) {
+        answered.errors == ""
+        refused.reasonCode == "internationalNotEnabled"
+        refused.errors != ""
+        taken.errors == ""
+        taken.callTransferId != null
+    }
+})
+
 feature("the numbers a user adds count toward their limit of calls at once; an external user neither adds to a call nor transfers it", {
     when() {
         endAll()
@@ -439,5 +468,56 @@ feature("the numbers a user adds count toward their limit of calls at once; an e
         dQueues.queueList.length == 0
         aAdds.errors == ""
         cRinging.statusId == "ClsOffered"
+    }
+})
+
+// the call-target hook (Calls.js refusedTargets): an app's provider may keep the people a user transfers a call to, adds or
+// calls to the user's own. The example gallery's refuses users named *.offlimits; A opens the gallery through a group of this
+// spec's. With the very same requests, C is reached and the off-limits user is refused as a user that does not exist.
+// Skipped when the example component is not loaded.
+const OFFLIMITS = "XFER_SPEC_OFFLIMITS"
+const GALLERY_GROUP = "XFER_SPEC_GALLERY"
+const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
+feature("a call-target provider refuses a transfer, an add and a call to a user it keeps out; the same to another user goes", {
+    when() {
+        if (!exampleInstalled) return {skip: true}
+        endAll()
+        sys(() => {
+            if (ec.entity.find("moqui.security.UserAccount").condition("userId", OFFLIMITS).count() === 0) {
+                const account = ec.entity.makeValue("moqui.security.UserAccount")
+                account.setFields({userId: OFFLIMITS, username: "xfer.spec.offlimits", userFullName: "Xfer off limits", disabled: "N"}, true, null, null)
+                account.create()
+            }
+            if (!ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GALLERY_GROUP).one()) {
+                const group = ec.entity.makeValue("moqui.security.UserGroup")
+                group.setFields({userGroupId: GALLERY_GROUP, description: "Xfer spec gallery"}, true, null, null)
+                group.create()
+                const authz = ec.entity.makeValue("moqui.security.ArtifactAuthz")
+                authz.setFields({artifactAuthzId: GALLERY_GROUP, userGroupId: GALLERY_GROUP, artifactGroupId: "EXAMPLE_GALLERY",
+                    authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL"}, true, null, null)
+                authz.create()
+            }
+        })
+        makeUser(A, GALLERY_GROUP)
+        const asked = as(A, "org.moqui.impl.ShellServices.call#Providers", {hook: "call-target", parameters: {userIdList: [OFFLIMITS, C]}})
+        const call = inbound()
+        const transferOff = transfer(call, "user", OFFLIMITS)
+        const addOff = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: OFFLIMITS})
+        const addNobody = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: "XFER_SPEC_NO_SUCH_USER"})
+        const addC = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: C})
+        const callOff = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [OFFLIMITS]})
+        const callC = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [C]})
+        endAll()
+        sys(() => ec.entity.find("moqui.security.UserGroupMember").condition({userId: A, userGroupId: GALLERY_GROUP}).deleteAll())
+        return {asked, transferOff, addOff, addNobody, addC, callOff, callC}
+    },
+    then({skip, asked, transferOff, addOff, addNobody, addC, callOff, callC}) {
+        skip || asked.results.find((r) => r.sourceId == "gallery.callTarget").refusedUserIdList.join() == OFFLIMITS
+        skip || transferOff.reasonCode == "notFound"
+        skip || addOff.reasonCode == "notFound"
+        skip || addOff.errors == addNobody.errors
+        skip || addC.errors == ""
+        skip || callOff.reasonCode == "noCallee"
+        skip || callC.errors == ""
     }
 })

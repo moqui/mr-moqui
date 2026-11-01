@@ -68,7 +68,7 @@ impl Net {
         let now = Instant::now();
         let config = TurnConfig {
             secret: SECRET.to_vec(),
-            allowed_peers: vec![media().ip()],
+            allowed_peers: vec![media()],
             max_per_user,
             ..TurnConfig::default()
         };
@@ -241,6 +241,45 @@ fn a_peer_that_is_no_media_node_is_refused() {
     net.run(&mut [&mut c], Duration::from_millis(100));
     assert!(net.at_peers.iter().all(|(_, to, _)| *to != elsewhere));
     assert!(c.received.is_empty());
+}
+
+#[test]
+fn another_port_on_a_media_node_is_refused() {
+    let mut net = Net::new(2);
+    let (user, pass) = credential(SECRET, "LEG1", unix_now() + 600);
+    let mut c = net.client(5000, &user, &pass);
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    let relayed = c.allocated().expect("an allocation");
+    // the permission is by address (RFC 8656), so the media node's is taken
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, media().ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    assert!(c.permitted(media().ip()));
+    // but nothing goes to or comes from another port of it: ssh, its database, the HTTP port
+    let other = SocketAddr::new(media().ip(), 22);
+    assert!(c.send(&mut net, other, b"to another port"));
+    net.turn.handle_peer(net.now, other, relayed, b"from another port");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert!(net.at_peers.iter().all(|(_, to, _)| *to != other));
+    assert!(c.received.is_empty());
+    // the media port still relays both ways
+    assert!(c.send(&mut net, media(), b"to the media port"));
+    net.turn.handle_peer(net.now, media(), relayed, b"from the media port");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert!(net.at_peers.iter().any(|(_, to, _)| *to == media()));
+    assert_eq!(c.received, vec![b"from the media port".to_vec()]);
+    // and a channel to another port is refused before the server sees it
+    let tnow = net.tnow();
+    let bound = c.client.bind_channel(TransportType::Udp, other, tnow);
+    if bound.is_ok() {
+        net.run(&mut [&mut c], Duration::from_secs(45));
+        assert!(!c
+            .events
+            .iter()
+            .any(|e| matches!(e, turn_client_proto::api::TurnEvent::ChannelCreated(_, p) if *p == other)));
+    }
 }
 
 #[test]

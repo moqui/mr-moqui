@@ -465,7 +465,8 @@ along with this software (see the LICENSE.md file). If not, see
             noticeMethodEnumId: CnmWeb (the browser's indicator and prompt, the rtc recording frame) or CnmVoice (a voice
             prompt on a phone leg, notify#LegRecording). ackRequired: the policy asked this leg to acknowledge
             (call_recording_ack_required); ackDate and ackMethodEnumId (CamClick, CamDtmf) once it did. Staying on the call
-            after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording.</description>
+            after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording. An
+            acknowledgement after a withdrawal keeps the answer it replaces as a CallRecordingConsentHistory row.</description>
         <field name="callRecordingConsentId" type="id" is-pk="true"/>
         <field name="callRecordingId" type="id"/>
         <field name="callSessionId" type="id"/>
@@ -498,6 +499,24 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Keypad (DTMF)" enumId="CamDtmf" enumCode="dtmf" enumTypeId="CallRecordingAckMethod" sequenceNum="2"/>
         </seed-data>
     </entity>
+    <entity entity-name="CallRecordingConsentHistory" package="moqui.call" use="transactional" cache="never">
+        <description>A leg's earlier answer to a recording notice, kept when it acknowledges again after a withdrawal: the
+            acknowledgement (ackDate, ackMethodEnumId; none when the leg had not acknowledged) and the withdrawal that
+            ended it. CallRecordingConsent holds the current answer; with these rows every acknowledgement and withdrawal
+            stays. Deleted with the recording.</description>
+        <field name="callRecordingConsentHistoryId" type="id" is-pk="true"/>
+        <field name="callRecordingConsentId" type="id"/>
+        <field name="callRecordingId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="ackDate" type="date-time"/>
+        <field name="ackMethodEnumId" type="id"/>
+        <field name="withdrawnDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallRecordingConsent" short-alias="consent"/>
+        <relationship type="one-nofk" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one" title="CallRecordingAckMethod" related="moqui.basic.Enumeration" short-alias="ackMethod">
+            <key-map field-name="ackMethodEnumId"/></relationship>
+        <index name="CALL_REC_CONSENT_HIST"><index-field name="callRecordingId"/><index-field name="callLegId"/></index>
+    </entity>
 
     <!-- ========== W6: captions and transcripts (plans/Comms-Framework.md §5.4, §6.4) ==========
         After W5's recording block. voicemailId is a plain id until V2 adds Voicemail and its relationship here (type
@@ -517,6 +536,27 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one-nofk" title="StartedBy" related="moqui.security.UserAccount" short-alias="startedBy">
             <key-map field-name="startedByUserId" related="userId"/></relationship>
+    </entity>
+
+    <entity entity-name="CallCaptionsNotice" package="moqui.call" use="transactional" cache="never">
+        <description>The captions notice one leg got, as CallRecordingConsent logs the recording's: each time captions
+            are turned on, for every leg then in the call, and for a leg that joins while they are on. noticeMethodEnumId:
+            CnmWeb (the browser's notice, the rtc captions frame) or CnmVoice (a prompt on a phone leg); providerLabel and
+            providerLocal: the provider the notice named; captionsStartedDate: the CallCaptions startedDate it belongs to.</description>
+        <field name="callCaptionsNoticeId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="captionsStartedDate" type="date-time"/>
+        <field name="noticeDate" type="date-time"/>
+        <field name="noticeMethodEnumId" type="id"/>
+        <field name="providerLabel" type="text-medium"/>
+        <field name="providerLocal" type="text-indicator"/>
+        <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one" title="CallRecordingNoticeMethod" related="moqui.basic.Enumeration" short-alias="noticeMethod">
+            <key-map field-name="noticeMethodEnumId"/></relationship>
+        <index name="CALL_CAPT_NOTICE_SES"><index-field name="callSessionId"/><index-field name="callLegId"/></index>
     </entity>
 
     <entity entity-name="CallTranscript" package="moqui.call" use="transactional" cache="never">

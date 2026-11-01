@@ -167,6 +167,26 @@ pub(crate) fn command(command: Command) -> Result<(), &'static str> {
     }
 }
 
+/// A command that must not be dropped (a recording's notice to its legs): when the queue is full it waits for room, up to
+/// `wait`, instead of answering `overloaded` at once.
+pub(crate) fn command_waiting(mut command: Command, wait: Duration) -> Result<(), &'static str> {
+    let sender = lock(media()).clone().ok_or("noMedia")?;
+    let until = std::time::Instant::now() + wait;
+    loop {
+        match sender.try_send(command) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => return Err("noMedia"),
+            Err(TrySendError::Full(back)) => {
+                if std::time::Instant::now() >= until {
+                    return Err("overloaded");
+                }
+                command = back;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+}
+
 /// This node's id for calls: its cluster instance id.
 pub(crate) fn own_node(factory: &ExecutionContextFactory) -> String {
     moqui_core::cluster::instance_id(factory).unwrap_or_else(|| "local".to_string())
@@ -328,7 +348,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         }
     }
     // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
-    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, config.bind.ip(), public, &[]) {
+    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, bound, public, &[]) {
         Ok(Some(settings)) => match turn::start(factory.runtime_dir(), &settings) {
             Ok(node) => {
                 tracing::info!("TURN started: {}", turn::urls(&settings, &node.bound).join(", "));

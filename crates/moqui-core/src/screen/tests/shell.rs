@@ -563,7 +563,7 @@ fn shell_data_lists_the_apps_the_user_may_open_with_their_menus_providers_theme_
     assert_eq!(
         data["shell"],
         json!({"trayToday": "/qapps/open/List", "trayChat": null, "trayNotifications": null, "trayDialer": null, "quickCreate": "/qapps/open/QuickCreate",
-            "mailScreen": null, "messagesScreen": null, "chatterScreen": "Chatter", "recordFilesScreen": null})
+            "mailScreen": null, "messagesScreen": null, "callsScreen": null, "chatterScreen": "Chatter", "recordFilesScreen": null})
     );
     assert_eq!(data["counts"], json!({"today": 3, "chat": 1, "user": "plain"}));
     // the tui values: every key row, and the rows that do not read are left out and logged

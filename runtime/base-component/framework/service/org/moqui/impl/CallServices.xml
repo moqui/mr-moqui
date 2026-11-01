@@ -211,7 +211,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="Calls">
         <description>The current user's call history, newest first, a page at a time (pageIndex, pageSize up to 100): each call
-            with the others in it (otherNames, otherUserIdList), its kind and whether it had video, the user's outcome (placed,
+            with the others in it (otherNames, otherUserIdList), its kind, whether it had video and whether its media was
+            end-to-end encrypted (e2ee: History's Call back starts an encrypted call again), the user's outcome (placed,
             answered, missed, declined), when (startedDate) and how long the user was in it (durationSeconds), and for a
             missed call whether it is unseen. outcome filters by one of those. callListCount counts every row of the filter.</description>
         <in-parameters>

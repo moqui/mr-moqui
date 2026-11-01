@@ -26,6 +26,7 @@ const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling
 const IVR = 'component://framework/service/org/moqui/impl/Ivr.js'
 const PARTICIPANT = 'moqui.call.CallParticipant'
 const SMS = 'component://framework/service/org/moqui/impl/Sms.js'
+const LIMIT_LOCK = 'moqui.call.CallLimitLock'
 
 /** The key a phone presses to acknowledge the recording notice (docs/interfaces/Call-Recording.md). */
 const PHONE_ACK_KEY = '1'
@@ -294,6 +295,26 @@ function notifyEmergency(userId, location, callSessionId) {
 
 // ---------- placing and receiving calls ----------
 
+/**
+ * The one reservation for the call limits: the CallLimitLock row, locked until the caller's transaction ends, before the
+ * calls at once and in a day are counted. The counts are the call rows the caller then makes in that transaction, so two
+ * calls placed at once are counted one after the other and cannot pass a limit together; a call refused or never placed
+ * rolls back, or closes as CerRefused, and so no longer counts.
+ */
+function lockLimits() {
+  const row = find(LIMIT_LOCK).condition('lockKey', 'all').forUpdate(true).one()
+  if (row) return
+  // the seed row is missing (data not loaded): made now, and locked as made
+  const made = ec.entity.makeValue(LIMIT_LOCK)
+  made.setFields({ lockKey: 'all', lastLockedDate: ec.user.nowTimestamp }, true, null, null)
+  made.create()
+}
+
+/** A condition leaving out the phone legs refused by the limits or the policy (CerRefused): they were never placed. */
+function notRefused() {
+  return ec.entity.conditionFactory.makeCondition('endReasonEnumId', 'not-equals', 'CerRefused', true)
+}
+
 function countPhoneCalls(fields, sinceMs) {
   let f = find(SESSION).condition('kindEnumId', 'CskPhone')
   for (const [k, v] of Object.entries(fields)) f = f.condition(k, v)
@@ -362,18 +383,6 @@ function place(p, viaNode) {
   if (dest.destinationClass === 'premium' && !(pol.premiumEnabled === 'Y' && setting.premiumEnabled === 'Y')) {
     return refuse('premiumNotEnabled', 'Calls to premium numbers are not enabled for you')
   }
-  // a user's own setting can lower the policy's limits, never raise them
-  const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
-  // the user's forwards (V3) count with the calls they place
-  if (countPhoneCalls({ startedByUserId: me }) + forwardLegCount(me, null) >= perUser || countPhoneCalls({}) >= pol.maxConcurrentCalls) {
-    return refuse('tooManyCalls', 'Too many phone calls at once; try again when one ends')
-  }
-  const dayStart = nowMs() - 86400000
-  const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
-  if (countPhoneCalls({ startedByUserId: me, directionEnumId: 'CdrOutbound' }, dayStart) + forwardLegCount(me, dayStart) >= perDay ||
-    countPhoneCalls({ directionEnumId: 'CdrOutbound' }, dayStart) >= pol.maxCallsPerDay) {
-    return refuse('dailyLimit', 'The limit of phone calls for a day is reached')
-  }
   const number = one(NUMBER, { phoneNumber: fromNumber })
   const trunk = number?.voiceTrunkId ? one(TRUNK, { voiceTrunkId: number.voiceTrunkId }) : null
   if (!trunk || trunk.disabled === 'Y') return refuse('noTrunk', 'Your number has no trunk to call out through')
@@ -383,6 +392,24 @@ function place(p, viaNode) {
   const pair = pairRoom(fromNumber, dest.number)
   const started = calls('startPhone', { userId: me, direction: 'outbound', phoneNumber: dest.number, displayName: dest.number,
     mediaNodeId: nodes[0].instanceId, idempotencyKey: key, chatRoomId: pair })
+  // the limits, counted under the one lock with this call already made (lockLimits): taken after the call's rows, as a
+  // call coming in takes it after its own (its room, its number), so the locks come in one order. A refusal rolls the
+  // call back, so it never counts.
+  lockLimits()
+  // a user's own setting can lower the policy's limits, never raise them
+  const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
+  // the user's forwards (V3) and the numbers they added or transferred to (V5) count with the calls they place
+  if (countPhoneCalls({ startedByUserId: me }) + forwardLegCount(me, null) + dialedLegCount(me, null) > perUser ||
+    countPhoneCalls({}) > pol.maxConcurrentCalls) {
+    return refuse('tooManyCalls', 'Too many phone calls at once; try again when one ends')
+  }
+  const dayStart = nowMs() - 86400000
+  const perDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
+  if (countPhoneCalls({ startedByUserId: me, directionEnumId: 'CdrOutbound' }, dayStart) + forwardLegCount(me, dayStart) +
+    dialedLegCount(me, dayStart) > perDay ||
+    countPhoneCalls({ directionEnumId: 'CdrOutbound' }, dayStart) > pol.maxCallsPerDay) {
+    return refuse('dailyLimit', 'The limit of phone calls for a day is reached')
+  }
   started.mediaNodeId = nodes[0].instanceId
   const privacy = hideCallerId(p, me)
   dial(started, trunk, dest, fromNumber, privacy ? null : userName(me), me, false, null, privacy)
@@ -474,7 +501,8 @@ function forwardLegCount(userId, sinceMs) {
     .orderBy('-callParticipantId').limit(500).list()).map((x) => x.callParticipantId)
   if (!participants.length) return 0
   let f = find(LEG).condition('callParticipantId', 'in', participants).condition('legTypeEnumId', 'CltPstn')
-  f = sinceMs != null ? f.condition('offeredDate', '>=', new Date(sinceMs)) : f.condition('statusId', 'in', ['ClsOffered', 'ClsAnswered'])
+  f = sinceMs != null ? f.condition('offeredDate', '>=', new Date(sinceMs)).condition(notRefused())
+    : f.condition('statusId', 'in', ['ClsOffered', 'ClsAnswered'])
   return f.count()
 }
 
@@ -484,7 +512,7 @@ function forwardLegCount(userId, sinceMs) {
  */
 function dialedLegCount(userId, sinceMs) {
   const f = find(LEG).condition('dialedByUserId', userId).condition('legTypeEnumId', 'CltPstn')
-  if (sinceMs != null) return f.condition('offeredDate', '>=', new Date(sinceMs)).count()
+  if (sinceMs != null) return f.condition('offeredDate', '>=', new Date(sinceMs)).condition(notRefused()).count()
   const open = Array.from(f.condition('statusId', 'in', ['ClsOffered', 'ClsAnswered']).selectField('callSessionId').limit(200).list())
   if (!open.length) return 0
   const live = new Set(Array.from(find(SESSION).condition('callSessionId', 'in', Array.from(new Set(open.map((l) => l.callSessionId))))
@@ -507,6 +535,9 @@ function dialForward(p) {
   if (!check.allowed) return refused(check.reasonCode || 'notAllowed')
   const pol = policy()
   const dayStart = nowMs() - 86400000
+  // counted under the one lock (lockLimits): the leg being dialed is in this transaction, those of other forwards,
+  // transfers and adds at once are counted once theirs commit
+  lockLimits()
   if (!p.byAdmin && p.userId) {
     const setting = userSetting(p.userId)
     const perUser = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
@@ -523,7 +554,8 @@ function dialForward(p) {
   }
   // the deployment's calls out in a day, for every forward (a ring group's fallback too): the phone legs offered since,
   // less the far ends of the calls that came in, are the calls placed and the forwards (with the one being dialed)
-  const outToday = find(LEG).condition('legTypeEnumId', 'CltPstn').condition('offeredDate', '>=', new Date(dayStart)).count() -
+  const outToday = find(LEG).condition('legTypeEnumId', 'CltPstn').condition('offeredDate', '>=', new Date(dayStart))
+    .condition(notRefused()).count() -
     countPhoneCalls({ directionEnumId: 'CdrInbound' }, dayStart)
   if (outToday > pol.maxCallsPerDay) return refused('dailyLimit')
   const fromNumber = toE164(p.fromNumber, pol.homeCountryCode)

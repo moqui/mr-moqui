@@ -470,7 +470,10 @@ BasicComms Calls `Recordings` screen's `recordingFile` transition: the one who r
 file, anyone else "not found" (an empty JSON answer) for the same id. No route serves those `dbresource://` locations
 to users, and an app's record links (BOSS) go through the same services. The guest page's `ackRecording` and
 `withdrawRecording` take the guest's credential and act on its own leg only. Every leg gets the notice, and each is
-logged (`CallRecordingConsent`). Retention deletes the files and rows (`expire_Recordings_hourly`).
+logged (`CallRecordingConsent`, with every earlier acknowledgement and withdrawal in `CallRecordingConsentHistory`).
+The files count toward the owner's personal drive quota: a full drive refuses a start, and a recording that fills it
+stops, so recording cannot fill the database past the quota by more than a segment. Retention deletes the files and
+rows (`expire_Recordings_hourly`).
 
 ### TURN
 
@@ -481,8 +484,9 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
 - **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
   when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
   is refused, and so is one of a leg that left (revoked by the media node).
-- **Relay peers** are only the media nodes (and `turn_allowed_peers`). A permission or channel to any other address
-  is dropped before the server sees it, and nothing is relayed to or from one. The exception is an XMPP user's own
+- **Relay peers** are only the media nodes' media ports (and `turn_allowed_peers`, by address and port). A permission
+  to any other address, or a channel to any other address or port, is dropped before the server sees it, and nothing
+  is relayed to or from one, another port of a media node's address included. The exception is an XMPP user's own
   credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
   relay to public unicast addresses too, never to loopback, private (RFC 1918, unique-local), link-local, shared
   (100.64/10), multicast or documentation ranges, nor an IPv6 address that carries an inside IPv4 one (6to4 of one,
@@ -561,8 +565,12 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   deployment's and the user's permission, emergency numbers refused (they are dialed directly), the user's limits at
   once and per day (which count every number they added or transferred to, `CallLeg.dialedByUserId`, so adding numbers
   one by one does not get past them), the deployment's calls in a day, and the engine's own check of the class and its calls at once
-  before the INVITE. A REFER is taken only from a registered phone's answered leg in a call, as its user; its target is
-  a username or a number under those checks; an attended REFER (Replaces) is refused. Only someone in the call (an
+  before the INVITE. The limits are counted under one lock (`CallLimitLock`), so calls placed at once cannot pass them
+  together. A REFER is taken only from a registered phone's answered leg in a call, as its user; its target is
+  a username or a number under those checks, checked before the phone is answered (403 when refused, so it keeps the
+  call); an attended REFER (Replaces) is refused. A person called, transferred to or added must pass the apps'
+  `call-target` providers (IronStone: someone of the user's organizations), answered as a user that does not exist when
+  refused. Only someone in the call (an
   answered leg of theirs) may transfer, add or merge; a call that still rings is not transferred; a stale revision or
   a second open transfer is refused. An external user (`EXTERNAL_USER`) neither transfers nor adds. An end-to-end encrypted call adds no phone legs. An IVR option, a menu's or a
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved

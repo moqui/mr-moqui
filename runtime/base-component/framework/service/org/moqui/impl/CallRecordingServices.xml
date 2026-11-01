@@ -272,6 +272,15 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('callChange', context))</script></actions>
     </service>
 
+    <service verb="get" noun="RecordingBytes" authenticate="false" allow-remote="false">
+        <description>Internal (FileServices): the bytes the stored files of the recordings userId owns take. They count toward
+            the quota of that user's personal drive, with its files: start#Recording refuses (quotaFull) when it is full, and
+            a recording stops when it fills it.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="recordingBytes" type="Long"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('recordingBytes', context))</script></actions>
+    </service>
+
     <service verb="store" noun="RecordingSegment" authenticate="false" allow-remote="false">
         <description>Internal (the media node's recorder): a closed segment file at tempPath (under runtime/tmp/call-recording)
             is stored at dbresource://moqui/call/recording/(callRecordingId)/(segment id).(ogg or webm) through

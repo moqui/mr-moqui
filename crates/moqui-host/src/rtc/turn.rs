@@ -60,9 +60,9 @@ fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
 /// The TURN settings, None while neither `turn_port` nor `turn_tls_port` nor `turn_tls443_host` is set.
 pub(crate) fn settings(
     property: &dyn Fn(&str) -> String,
-    media_bind: IpAddr,
+    media_bind: SocketAddr,
     media_public: SocketAddr,
-    extra_peers: &[IpAddr],
+    extra_peers: &[SocketAddr],
 ) -> Result<Option<TurnSettings>, String> {
     let udp = port(&property("turn_port"), "turn_port")?;
     let tls_port = port(&property("turn_tls_port"), "turn_tls_port")?;
@@ -82,7 +82,7 @@ pub(crate) fn settings(
     }
     let bind = property("turn_host");
     let bind = if bind.trim().is_empty() {
-        media_bind
+        media_bind.ip()
     } else {
         bind.trim()
             .parse()
@@ -130,21 +130,29 @@ pub(crate) fn settings(
         return Err("turn_auth_secret is not set".to_string());
     }
     let number = |name: &str, default: u64| property(name).trim().parse::<u64>().unwrap_or(default);
-    let mut allowed_peers = vec![media_public.ip()];
-    if media_bind != media_public.ip() && !media_bind.is_unspecified() {
+    // the media port only, not every port of the media node's address
+    let mut allowed_peers = vec![media_public];
+    if media_bind != media_public && !media_bind.ip().is_unspecified() {
         allowed_peers.push(media_bind);
     }
     allowed_peers.extend_from_slice(extra_peers);
+    // another media node: `address:port`, or an address alone on this node's media port
     for extra in property("turn_allowed_peers")
         .split(',')
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
-        allowed_peers.push(
-            extra
-                .parse()
-                .map_err(|_| format!("turn_allowed_peers {extra} is not an address"))?,
-        );
+        let peer = extra
+            .parse::<SocketAddr>()
+            .ok()
+            .or_else(|| {
+                extra
+                    .parse::<IpAddr>()
+                    .ok()
+                    .map(|ip| SocketAddr::new(ip, media_public.port()))
+            })
+            .ok_or_else(|| format!("turn_allowed_peers {extra} is not an address"))?;
+        allowed_peers.push(peer);
     }
     let config = TurnConfig {
         realm: public_host.clone(),
@@ -539,7 +547,7 @@ mod tests {
         let property = move |name: &str| map.get(name).cloned().unwrap_or_default();
         settings(
             &property,
-            "127.0.0.1".parse().unwrap(),
+            "127.0.0.1:10000".parse().unwrap(),
             "203.0.113.5:10000".parse().unwrap(),
             &[],
         )
@@ -554,7 +562,20 @@ mod tests {
             .unwrap();
         assert_eq!(s.public_host, "203.0.113.5");
         assert_eq!(s.relay_ports, (49152, 65535));
-        assert!(s.config.allowed_peers.contains(&"203.0.113.5".parse().unwrap()));
+        assert_eq!(
+            s.config.allowed_peers,
+            vec!["203.0.113.5:10000".parse().unwrap(), "127.0.0.1:10000".parse().unwrap()]
+        );
+        // another media node by address alone is on the media port, or as given
+        let s = of(&[
+            ("turn_port", "3478"),
+            ("turn_auth_secret", "s3cret"),
+            ("turn_allowed_peers", "198.51.100.7, 198.51.100.8:11000"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(s.config.allowed_peers.contains(&"198.51.100.7:10000".parse().unwrap()));
+        assert!(s.config.allowed_peers.contains(&"198.51.100.8:11000".parse().unwrap()));
     }
 
     #[test]

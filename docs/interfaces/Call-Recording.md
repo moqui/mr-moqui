@@ -50,7 +50,7 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
 
 1. `start#Recording` (the host's Record button) makes the `CallRecording`, logs the notice for every current leg, and
    tells the call's media node (`CallSession.mediaNodeId`) with `send#MediaControl`
-   (`{action: 'recording', op: 'start', callRecordingId, kind, period, paused, notice}`) after the commit.
+   (`{action: 'recording', op: 'start', callRecordingId, kind, period, paused, maxBytes, notice}`) after the commit.
 2. The media node starts a recorder thread. It takes every frame of the room through a bounded queue
    (`call_recording_queue_frames`) and decodes the audio for the mix on its own thread, never on the media thread. It
    writes each file to a spool under `runtime/tmp/call-recording/`.
@@ -58,12 +58,23 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
    `dbresource://moqui/call/recording/<callRecordingId>/<segment id>.ogg` (or `.webm`) and writes its track and segment
    rows. A leg that leaves (`TapEvent::Left`) closes its tracks.
 4. `pause#`, `resume#` and `stop#Recording` send the same control (`op: pause | resume | stop`). The call's end stops
-   the recording, and the last segments are stored.
+   the recording, and the last segments are stored. A control never shares the frames' bounded queue: it goes to the
+   recorder on a channel of its own, which takes every one, and the notice it carries to the legs waits up to half a
+   second for room in the media queue. One that still does not arrive (the recorder ended, the media node is gone) is
+   logged with the recording's id.
 
 **Failure ends the recording, not the call.** A full queue, a file error or a store error stops the recorder: its
 partial files are removed, and `note#RecorderEnd` marks the recording failed with `lastErrorText`. Reaching
 `call_recording_max_mb` stops it with that as its text. Either way every leg is told the recording stopped, and the
 call goes on.
+
+**The drive quota.** A recording's stored files count toward the quota of its owner's personal drive (My files,
+`ResourceDrive.quotaBytes`), with the drive's own files: the drive's usage (`get#DriveUsage`), uploads and copies into
+it count them (`get#RecordingBytes`). A host whose drive is full cannot start a recording (`quotaFull`). One that
+starts gets what is left as its recorder's limit (`maxBytes`), where it stops as at `call_recording_max_mb`; and a
+stored segment that fills the drive (its other files grew meanwhile) stops it, "the drive quota of its owner is full".
+A drive with no quota limits nothing. The last segment may pass the quota by up to a segment of each track
+(`call_recording_segment_mb`).
 
 ## The notice and consent
 
@@ -96,6 +107,9 @@ call goes on.
   acknowledged when they start it. Any leg can withdraw (`withdraw#RecordingConsent`), which pauses the recording while
   it is in the call; acknowledging again takes it back. A leg that leaves no longer holds the recording. Resuming
   always starts a new period.
+- The history stays. A withdrawal sets the leg's `withdrawnDate` and keeps its acknowledgement; acknowledging again
+  first copies that acknowledgement and its withdrawal to a `CallRecordingConsentHistory` row, so every answer a leg gave
+  is kept, deleted only with the recording.
 
 ## Who may do what
 
@@ -123,6 +137,10 @@ logged.
 - `cargo test -p moqui-host --lib rtc::recorder`: the recorder with frames in memory, its failure and clean-up.
 - `cargo test -p moqui-host --test it rtc::`: a short recorded call on a real server, with its tracks, segments, files
   and the mixed audio.
+- `cargo test -p moqui-host --lib rtc::recorder::tests::pause_and_resume_are_never_dropped`: 201 controls waiting for
+  a busy recorder, none dropped.
 - `./moq test framework --spec CallRecording`: the policy, the notice per leg (a late joiner too), the acknowledgement
-  and withdrawal pauses, access, retention, a recorder failure, and recovery after a media node restart.
+  and withdrawal pauses with every earlier answer kept as history, access, retention, a recorder failure, the drive
+  quota (a segment that fills it stops the recording, a full drive refuses a start that records once there is room),
+  and recovery after a media node restart.
 - `./moq test basic-comms --spec BasicCommsCalls`: the Recordings screen and its file transition.

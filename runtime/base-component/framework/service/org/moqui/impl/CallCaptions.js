@@ -12,6 +12,8 @@ const SESSION = 'moqui.call.CallSession'
 const PARTICIPANT = 'moqui.call.CallParticipant'
 const LEG = 'moqui.call.CallLeg'
 const CAPTIONS = 'moqui.call.CallCaptions'
+const NOTICE = 'moqui.call.CallCaptionsNotice'
+const PHONE_LEGS = ['CltPstn', 'CltSipDevice']
 
 /** The media protection captions work with: hop-by-hop DTLS-SRTP through the SFU. Anything else is end to end. */
 const SERVER_READABLE = ['', 'dtls-srtp']
@@ -92,16 +94,39 @@ function pushState(session, captions) {
 }
 
 /**
- * The phones in the call hear the captions notice as a prompt (VoiceServices.notify#PhoneLeg), as browsers get the rtc
- * frame; a phone that answers later hears it from Calls.js.
+ * A leg gets the captions notice (row: the CallCaptions turned on), logged as a CallCaptionsNotice once per turning on: a
+ * phone hears it as a prompt (VoiceServices.notify#PhoneLeg), a browser has the rtc frame from the media node.
  */
-function noticePhones(session) {
-  const legs = find(LEG).condition({ callSessionId: session.callSessionId, statusId: 'ClsAnswered' })
-    .condition('legTypeEnumId', 'in', ['CltPstn', 'CltSipDevice']).list()
-  for (const leg of legs) {
+function noticeLeg(row, leg) {
+  if (one(NOTICE, { callSessionId: row.callSessionId, callLegId: leg.callLegId, captionsStartedDate: row.startedDate })) return
+  const phone = PHONE_LEGS.includes(leg.legTypeEnumId)
+  const notice = ec.entity.makeValue(NOTICE)
+  notice.setSequencedIdPrimary()
+  notice.setFields({
+    callSessionId: row.callSessionId, callParticipantId: leg.callParticipantId || null, callLegId: leg.callLegId,
+    captionsStartedDate: row.startedDate, noticeDate: ec.user.nowTimestamp, noticeMethodEnumId: phone ? 'CnmVoice' : 'CnmWeb',
+    providerLabel: row.providerLabel || null, providerLocal: row.providerLocal || null,
+  }, true, null, null)
+  notice.create()
+  if (phone) {
     ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
       .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
   }
+}
+
+/** Every leg in the call gets the notice (captions just turned on); one that joins later gets it from legJoined. */
+function noticeLegs(session, row) {
+  for (const leg of find(LEG).condition({ callSessionId: session.callSessionId, statusId: 'ClsAnswered' }).list()) noticeLeg(row, leg)
+}
+
+/** Internal (Calls.js): a leg joined while captions are on: its notice, logged. */
+function legJoined({ callSessionId, callLegId }) {
+  const row = callSessionId ? one(CAPTIONS, { callSessionId }) : null
+  if (!row || row.captionsOn !== 'Y') return {}
+  const leg = callLegId ? one(LEG, { callLegId }) : null
+  if (!leg || leg.callSessionId !== callSessionId || leg.statusId !== 'ClsAnswered') return {}
+  noticeLeg(row, leg)
+  return {}
 }
 
 function start({ callSessionId }) {
@@ -132,7 +157,7 @@ function start({ callSessionId }) {
   const captions = state(session)
   if (!repeated) {
     pushState(session, captions)
-    noticePhones(session)
+    noticeLegs(session, row)
   }
   return { captions, repeated }
 }
@@ -162,7 +187,7 @@ function getState({ callSessionId }) {
   return { captions: Object.assign({ allowed: !reasonCode }, current), reasonCode }
 }
 
-const operations = { start, stop, getState }
+const operations = { start, stop, getState, legJoined }
 
 function execute(op, parameters) {
   if (!operations[op]) throw new Error('Unknown caption operation ' + op)

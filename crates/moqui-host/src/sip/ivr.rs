@@ -739,16 +739,23 @@ impl Engine {
     }
 
     /// A desk phone's REFER: its user's blind transfer of the call (`refer#Call`); a refusal is logged.
-    pub(super) fn refer(&self, leg: &str, target: &str) {
+    /// A phone's REFER: the services decide, and `reply` tells the phone (202 and NOTIFY, or 403) once they have.
+    pub(super) fn refer(&self, leg: &str, target: &str, reply: tokio::sync::oneshot::Sender<bool>) {
         if !self.legs.contains_key(leg) {
+            let _ = reply.send(false);
             return;
         }
         let parameters = serde_json::json!({"callLegId": leg, "target": target});
         let (factory, leg) = (Arc::clone(&self.factory), leg.to_string());
         tokio::spawn(async move {
-            if let Err(err) = call_service(&factory, REFER_SERVICE, parameters).await {
-                tracing::info!("SIP leg {leg}: its REFER was refused: {err}");
-            }
+            let taken = match call_service(&factory, REFER_SERVICE, parameters).await {
+                Ok(_) => true,
+                Err(err) => {
+                    tracing::info!("SIP leg {leg}: its REFER was refused: {err}");
+                    false
+                }
+            };
+            let _ = reply.send(taken);
         });
     }
 

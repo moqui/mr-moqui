@@ -8755,7 +8755,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", close: "Close",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", missedCalls: "Missed calls", close: "Close",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
@@ -9369,7 +9369,7 @@
                     { key: "dialer", icon: "sym_o_dialpad", label: labels.dialer, url: values.trayDialer }]
                     .filter((tab) => tab.url).map((tab) => Object.assign(tab, { loadUrl: this.shellLoadPath(tab.url) }));
             },
-            // the header's count buttons in their order: Today, Chat, Mail and Messages (links), Notifications, each when its theme
+            // the header's count buttons in their order: Today, Chat, Mail and Messages (links), Missed calls (a link), Notifications, each when its theme
             // value is set; `counts` are the shellCounts keys of its badge. Below 600 px Mail and Messages are one button to the mail
             // screen with the two counts summed, and the tray tabs (Today, Chat, Notifications) one tray button (key tray, any: it
             // opens the tray on its last tab, whose tabs switch) with their counts summed, so a phone header does not overflow. The
@@ -9393,6 +9393,10 @@
                 } else {
                     if (mail) out.push(mail);
                     if (messages) out.push(messages);
+                }
+                // the missed calls (the calls count, Comms W2), to the theme's calls screen; below 600 px only while there are some
+                if (values.callsScreen && (!narrow || this.countOf("calls") > 0)) {
+                    out.push({ key: "calls", icon: "sym_o_phone_missed", label: this.labels.missedCalls, url: values.callsScreen, tray: false, counts: ["calls"] });
                 }
                 const notifications = tray("notifications");
                 if (notifications && !foldTray) out.push({ key: "notifications", icon: notifications.icon, label: notifications.label, tray: true, counts: ["notifications"] });

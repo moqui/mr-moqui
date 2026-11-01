@@ -588,6 +588,10 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="usageList" type="List"/></out-parameters>
         <actions><script><![CDATA[
+            // a personal drive's owner's call recordings count toward its quota (CallRecordings.js)
+            const recordingBytesOf = (drive) => drive.driveKindEnumId === 'RdkPersonal' && drive.ownerUserId
+                ? Number(ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingBytes')
+                    .parameter('userId', drive.ownerUserId).disableAuthz().call()?.recordingBytes || 0) : 0
             usageList = []
             const ids = Array.from(new Set((driveIdList ? Array.from(driveIdList) : (driveId ? [driveId] : [])).map((id) => String(id))))
             let reached = 0
@@ -597,7 +601,7 @@ along with this software (see the LICENSE.md file). If not, see
                 reached++
                 if (access.drive.driveKindEnumId === 'RdkRecords' && access.level < 3) continue
                 let usedBytes = null
-                try { usedBytes = ec.resource.getTreeSize(access.drive.rootLocation) }
+                try { usedBytes = ec.resource.getTreeSize(access.drive.rootLocation) + recordingBytesOf(access.drive) }
                 catch (e) { ec.logger.warn(`Drive ${id} at ${access.drive.rootLocation} could not be sized: ${e}`) }
                 const quota = access.drive.quotaBytes != null ? Number(access.drive.quotaBytes) : null
                 usageList.push({driveId: id, usedBytes: usedBytes, quotaBytes: quota,
@@ -1184,7 +1188,10 @@ along with this software (see the LICENSE.md file). If not, see
                 uploadedList.push(row)
             })
             if (drive.quotaBytes != null && written.length) {
-                const used = ec.resource.getTreeSize(root)
+                // a personal drive's owner's call recordings count toward its quota (CallRecordings.js)
+                const used = ec.resource.getTreeSize(root) + (drive.driveKindEnumId === 'RdkPersonal' && drive.ownerUserId
+                    ? Number(ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingBytes')
+                        .parameter('userId', drive.ownerUserId).disableAuthz().call()?.recordingBytes || 0) : 0)
                 if (used - replacedBytes + newBytes > drive.quotaBytes) {
                     ec.message.addError(ec.l10n.localize('Upload refused: it would pass the quota of drive') +
                             ` ${drive.driveName} (${drive.quotaBytes} bytes; ${used} used, ${newBytes - replacedBytes} more)`)
@@ -1493,7 +1500,10 @@ along with this software (see the LICENSE.md file). If not, see
                 planned.push({path: item, newPath: target})
             }
             if (!planned.length) return
-            if (targetAccess.drive.quotaBytes != null && ec.resource.getTreeSize(targetRoot) + bytes > targetAccess.drive.quotaBytes) {
+            const recordingBytes = targetAccess.drive.driveKindEnumId === 'RdkPersonal' && targetAccess.drive.ownerUserId
+                ? Number(ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingBytes')
+                    .parameter('userId', targetAccess.drive.ownerUserId).disableAuthz().call()?.recordingBytes || 0) : 0
+            if (targetAccess.drive.quotaBytes != null && ec.resource.getTreeSize(targetRoot) + recordingBytes + bytes > targetAccess.drive.quotaBytes) {
                 ec.message.addError(ec.l10n.localize('Copy refused: it would pass the quota of drive') + ` ${targetAccess.drive.driveName}`)
                 copiedList = []
                 return

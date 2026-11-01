@@ -20,8 +20,9 @@
 //!   ([`password`]). The call services make them only for an admitted leg (`get#IceServers`). A username is taken the
 //!   first time it is seen while it has not expired and its leg is not revoked; an expired or revoked one is refused,
 //!   refreshes and new allocations included.
-//! - **Relay peers** are only the media nodes ([`TurnConfig::allowed_peers`]): a permission or channel to any other
-//!   address is refused before the server sees it, and nothing is relayed to or from one. Standard TURN credentials do
+//! - **Relay peers** are only the media nodes' media ports ([`TurnConfig::allowed_peers`], address and port): a
+//!   permission to any other address, or a channel to any other address and port, is refused before the server sees
+//!   it, and nothing is relayed to or from one (another port on a media node's address included). Standard TURN credentials do
 //!   not bind a relay to one call; this rule does. The one exception is an XMPP user's own credential (leg
 //!   `xmpp.<userId>`, `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may relay to public
 //!   unicast addresses too, never to loopback, private, link-local, shared or documentation ranges ([`is_public`]), so
@@ -139,8 +140,9 @@ pub fn frame_len(buf: &[u8]) -> Option<usize> {
 pub struct TurnConfig {
     pub realm: String,
     pub secret: Vec<u8>,
-    /// The only addresses relayed to and from: the media nodes.
-    pub allowed_peers: Vec<IpAddr>,
+    /// The only addresses and ports relayed to and from: the media nodes' media ports. A permission (by address
+    /// alone, RFC 8656) is taken for any of their addresses; a channel and the data need the port too.
+    pub allowed_peers: Vec<SocketAddr>,
     pub max_allocations: usize,
     pub max_per_user: usize,
     /// Each allocation's relayed data, each way, in kilobits a second.
@@ -292,8 +294,15 @@ impl Turn {
             .find(|s| s.listen_address() == listen && s.transport() == transport)
     }
 
-    fn peer_allowed(&self, ip: IpAddr, leg: Option<&str>) -> bool {
-        self.config.allowed_peers.contains(&ip) || (leg.is_some_and(|leg| leg.starts_with(XMPP_LEG)) && is_public(ip))
+    /// A peer `addr` may be relayed to: a media node's media port, or for an XMPP user's own credential a public
+    /// address. With `any_port` (a permission, which RFC 8656 keys by address alone) only the address is matched.
+    fn peer_allowed(&self, addr: SocketAddr, any_port: bool, leg: Option<&str>) -> bool {
+        let ip = addr.ip();
+        self.config
+            .allowed_peers
+            .iter()
+            .any(|p| p.ip() == ip && (any_port || p.port() == addr.port()))
+            || (leg.is_some_and(|leg| leg.starts_with(XMPP_LEG)) && is_public(ip))
     }
 
     fn is_revoked(&self, leg: &str) -> bool {
@@ -373,9 +382,9 @@ impl Turn {
             let leg = self.allocations.get(&(listen, from)).map(|a| Arc::clone(&a.leg));
             let mut n = 0;
             while let Ok(peer) = message.nth_attribute::<XorPeerAddress>(n) {
-                let ip = peer.addr(transaction).ip();
-                if !self.peer_allowed(ip, leg.as_deref()) {
-                    tracing::debug!("TURN permission refused for {ip}: not a media node");
+                let peer = peer.addr(transaction);
+                if !self.peer_allowed(peer, method == CREATE_PERMISSION, leg.as_deref()) {
+                    tracing::debug!("TURN permission refused for {peer}: not a media node's media port");
                     return false;
                 }
                 n += 1;
@@ -396,7 +405,7 @@ impl Turn {
             return;
         };
         let leg = self.allocations.get(&(listen, client)).map(|a| Arc::clone(&a.leg));
-        if !self.peer_allowed(from.ip(), leg.as_deref()) {
+        if !self.peer_allowed(from, false, leg.as_deref()) {
             return;
         }
         let Some(transport) = self
@@ -529,7 +538,7 @@ impl Turn {
     fn send_out(&mut self, now: Instant, proto: Proto, from: SocketAddr, to: SocketAddr, data: Vec<u8>) {
         if let Some(&key) = self.relays.get(&from) {
             let leg = self.allocations.get(&key).map(|a| Arc::clone(&a.leg));
-            if !self.peer_allowed(to.ip(), leg.as_deref()) || !self.take_tokens(&key, data.len(), now) {
+            if !self.peer_allowed(to, false, leg.as_deref()) || !self.take_tokens(&key, data.len(), now) {
                 return;
             }
         } else if self.servers.iter().all(|s| s.listen_address() != from) {

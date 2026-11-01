@@ -109,9 +109,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="callBack">
         <actions><script><![CDATA[
             const room = chatRoomId && String(isRoomCall) === 'true' ? chatRoomId : null
+            // an end-to-end encrypted call (W8) is called back encrypted, never as a plain call
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({chatRoomId: room,
                 calleeUserIdList: room ? null : String(otherUserIds || '').split(',').filter((id) => id),
-                video: String(video) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'false', requireE2ee: String(e2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -238,7 +239,7 @@ along with this software (see the LICENSE.md file). If not, see
             outcomeIcon: row.outcome === 'missed' ? 'sym_o_phone_missed' : row.role === 'caller' ? 'sym_o_call_made' : 'sym_o_call_received',
             kindText: row.video ? L('Video') : L('Audio'), whenText: when(row.startedDate), lengthText: minutes(row.durationSeconds),
             otherUserIds: Array.from(row.otherUserIdList || []).join(','), chatRoomId: row.chatRoomId, isRoomCall: row.kind === 'group' ? 'true' : 'false',
-            video: row.video ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
+            video: row.video ? 'true' : 'false', e2ee: row.e2ee ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
             unseen: !!row.unseen}))
         historyCount = Number(found.callListCount || 0)
 
@@ -374,7 +375,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="lengthText"><default-field title="Length"><display/></default-field></field>
                 <field name="actions"><default-field title="">
                     <link url="callBack" text="Call back" icon="sym_o_call" condition="canCallBack">
-                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/></link>
+                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/>
+                        <parameter name="e2ee"/></link>
                 </default-field></field>
             </form-list>
             <link url="." text="More" condition="hasMore" btn-type="default"><parameter name="outcome" from="shownOutcome"/><parameter name="pageIndex" from="nextPage"/></link>

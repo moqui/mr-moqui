@@ -916,7 +916,13 @@ async fn a_call_over_tls_with_srtp_between_two_user_agents() {
     })
     .unwrap();
     let (far_socket, far_addr) = media_socket().await;
-    let far_side = match tokio::time::timeout(WAIT, far_events.recv()).await.unwrap().unwrap() {
+    let incoming = loop {
+        match tokio::time::timeout(WAIT, far_events.recv()).await.unwrap().unwrap() {
+            UaEvent::TrunkStatus { .. } => continue,
+            other => break other,
+        }
+    };
+    let far_side = match incoming {
         UaEvent::Incoming(call) => {
             assert!(call.offer.contains("RTP/SAVP") && call.offer.contains("a=crypto"));
             let (answer, settled) = sdp::answer(
@@ -938,7 +944,7 @@ async fn a_call_over_tls_with_srtp_between_two_user_agents() {
     let answer = loop {
         match tokio::time::timeout(WAIT, near_events.recv()).await.unwrap().unwrap() {
             UaEvent::Answered { answer, .. } => break answer,
-            UaEvent::Ringing { .. } => continue,
+            UaEvent::Ringing { .. } | UaEvent::TrunkStatus { .. } => continue,
             other => panic!("{other:?}"),
         }
     };
@@ -994,4 +1000,150 @@ fn a_refer_target_is_the_user_of_its_uri_and_an_attended_one_is_not_taken() {
         None
     );
     assert_eq!(refer_target("<sip:@pbx>"), None);
+}
+
+#[tokio::test]
+async fn a_refer_the_host_refuses_is_answered_403_and_one_it_takes_202_and_notify() {
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    let mut h = Harness::start().await;
+    h.ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    let local = LocalMedia::new("127.0.0.1".parse().unwrap(), 20_008, None);
+    h.ua.dial(DialRequest {
+        leg: "L9".to_string(),
+        trunk: "T1".to_string(),
+        to: "+15551230000".to_string(),
+        from: "+15559870000".to_string(),
+        from_name: None,
+        offer: sdp::offer(&local),
+        ring_timeout: Duration::from_secs(30),
+        headers: Vec::new(),
+    })
+    .unwrap();
+    let (invite, from) = trunk.request(Method::Invite).await;
+    let their_local = LocalMedia::new("127.0.0.1".parse().unwrap(), 40_010, None);
+    let (answer, _) = sdp::answer(
+        &sdp::parse(&String::from_utf8_lossy(&invite.body)).unwrap(),
+        &their_local,
+    )
+    .unwrap();
+    trunk.reply(&invite, from, 200, "r1", "", &answer).await;
+    assert!(matches!(h.main_event().await, UaEvent::Answered { .. }));
+    trunk.request(Method::Ack).await;
+
+    let contact = header_values(&invite.headers, "Contact")[0].clone();
+    let contact = contact.trim_start_matches('<').trim_end_matches('>').to_string();
+    let from_header = invite.from_header().unwrap().value().to_string();
+    let to_header = format!("{};tag=r1", invite.to_header().unwrap().value());
+    let call_id = invite.call_id_header().unwrap().value().to_string();
+    let refer = |cseq: u32| {
+        format!(
+            "REFER {contact} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-refer{cseq}\r\nMax-Forwards: 70\r\n\
+             From: {to_header}\r\nTo: {from_header}\r\nCall-ID: {call_id}\r\nCSeq: {cseq} REFER\r\n\
+             Contact: <sip:trunk@{}>\r\nRefer-To: <sip:bob@{}>\r\nContent-Length: 0\r\n\r\n",
+            trunk.addr, trunk.addr, trunk.addr
+        )
+    };
+
+    // refused by the host (the services): 403, and no NOTIFY, so the phone keeps the call
+    trunk.send(&refer(20), h.addr).await;
+    match h.main_event().await {
+        UaEvent::Refer { leg, target, reply } => {
+            assert_eq!((leg.as_str(), target.as_str()), ("L9", "bob"));
+            reply.send(false).unwrap();
+        }
+        other => panic!("{other:?}"),
+    }
+    trunk.response(403).await;
+    assert!(trunk
+        .try_request(Method::Notify, Duration::from_millis(300))
+        .await
+        .is_none());
+
+    // taken: 202, then a NOTIFY whose sipfrag says it went
+    trunk.send(&refer(21), h.addr).await;
+    match h.main_event().await {
+        UaEvent::Refer { reply, .. } => reply.send(true).unwrap(),
+        other => panic!("{other:?}"),
+    }
+    trunk.response(202).await;
+    let (notify, _) = trunk.request(Method::Notify).await;
+    assert!(
+        String::from_utf8_lossy(&notify.body).starts_with("SIP/2.0 200"),
+        "{}",
+        String::from_utf8_lossy(&notify.body)
+    );
+    h.ua.shutdown();
+}
+
+#[tokio::test]
+async fn a_udp_phone_s_stun_keepalive_is_answered_on_the_sip_socket() {
+    let h = Harness::start().await;
+    let phone = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut request = vec![0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xA4, 0x42];
+    request.extend_from_slice(b"keepalive-01");
+    phone.send_to(&request, h.addr).await.unwrap();
+    let mut buf = [0u8; 512];
+    let (len, from) = tokio::time::timeout(WAIT, phone.recv_from(&mut buf))
+        .await
+        .expect("an answer in time")
+        .unwrap();
+    assert_eq!(from, h.addr);
+    assert_eq!(&buf[..2], &[0x01, 0x01], "a Binding success");
+    assert_eq!(&buf[8..20], b"keepalive-01");
+    assert_eq!(
+        buf[..len].to_vec(),
+        crate::stun::binding_response(&request, phone.local_addr().unwrap()).unwrap()
+    );
+    // the SIP stack still answers on the same socket
+    phone.send_to(b"\r\n\r\n", h.addr).await.unwrap();
+    let (len, _) = tokio::time::timeout(WAIT, phone.recv_from(&mut buf))
+        .await
+        .expect("the CRLF keepalive's answer")
+        .unwrap();
+    assert_eq!(&buf[..len], b"\r\n");
+    h.ua.shutdown();
+}
+
+/// The next trunk status, skipping other events.
+async fn status(events: &mut mpsc::UnboundedReceiver<UaEvent>) -> (String, TrunkState) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(UaEvent::TrunkStatus { trunk, state })) => return (trunk, state),
+            Ok(Some(_)) => continue,
+            _ => panic!("no trunk status"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_trunk_that_does_not_register_is_pinged_with_options_and_shows_up_or_down() {
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    let (tx, mut events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            trunk_ping: Some(Duration::from_millis(300)),
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    // the provider answers (a 200; a 405 or a challenge would do as well): up
+    let (options, from) = trunk.request(Method::Options).await;
+    assert!(options.uri.to_string().starts_with("sip:127.0.0.1"));
+    trunk.reply(&options, from, 200, "p1", "", "").await;
+    assert_eq!(status(&mut events).await, ("T1".to_string(), TrunkState::Reachable));
+    // then it answers nothing: down, with why
+    match status(&mut events).await {
+        (id, TrunkState::Failed(why)) => {
+            assert_eq!(id, "T1");
+            assert!(why.contains("OPTIONS"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
+    ua.shutdown();
 }

@@ -33,6 +33,7 @@
 //! - [`registrar`] (V4): the bindings of desk and soft phones, sans-IO; the user agent's side of the registrar
 //!   (digest against stored verifiers, the flows, forking a call to a device's bindings, a device's own calls) is
 //!   `ua_phones.rs`.
+//! - [`stun`]: the STUN Binding answer to a UDP phone's keepalive on the SIP socket (RFC 5626).
 
 pub mod dial;
 pub mod digest;
@@ -45,6 +46,7 @@ pub mod registrar;
 pub mod rtp;
 pub mod sdp;
 pub mod srtp;
+pub mod stun;
 pub mod ua;
 
 /// The attribute [`ua::DeviceDirectory`] is implemented with, so the host needs no dependency of its own for it.

@@ -165,6 +165,18 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="alertedDate" type="date-time"/>
     </entity>
 
+    <entity entity-name="CallLimitLock" package="moqui.call" use="transactional" cache="never">
+        <description>The row placing a phone call, a forward, a transfer to a number or an added number locks (lockKey
+            all) before it counts the calls at once and in a day against the VoicePolicy and VoiceUserSetting limits, held
+            until its transaction ends, so calls placed at once cannot pass a limit together. The count is the call rows
+            themselves: a refused call or one never placed rolls back or closes as CerRefused, which does not count.</description>
+        <field name="lockKey" type="id" is-pk="true"/>
+        <field name="lastLockedDate" type="date-time"/>
+        <seed-data>
+            <moqui.call.CallLimitLock lockKey="all"/>
+        </seed-data>
+    </entity>
+
     <entity entity-name="SipNode" package="moqui.call" use="nontransactional" cache="never">
         <description>A server whose SIP engine is up: its instance id (the cluster's), the SIP and SIP-over-TLS addresses
             it listens on, its RTP port range, and the last time it said it was up (every 20 seconds, as a CallMediaNode).
@@ -712,6 +724,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusItem statusId="CtsFailed" statusTypeId="CallTransfer" sequenceNum="5" description="Failed"/>
             <moqui.basic.Enumeration description="Merged into another call" enumId="CerMerged" enumCode="merged" enumTypeId="CallEndReason" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Transferred" enumId="CerTransferred" enumCode="transferred" enumTypeId="CallEndReason" sequenceNum="11"/>
+            <moqui.basic.Enumeration description="Refused by the call limits or policy" enumId="CerRefused" enumCode="refused" enumTypeId="CallEndReason" sequenceNum="12"/>
         </seed-data>
     </entity>
 

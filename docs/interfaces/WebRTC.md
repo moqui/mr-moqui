@@ -37,6 +37,11 @@ The Calls screen says when calls are unavailable (`get#Capabilities`): supported
 
 1. `start#Call` (the Calls screen, the page's call store) makes the CallSession, a leg for the caller and an offered leg
    per callee. It rings each callee's tabs on `chatUser:<userId>` and by Web Push, and appends a call event to the room.
+   The callees are enabled users whom no `call-target` provider of the caller's apps refuses: an app with
+   organizations keeps them to the caller's own (IronStone BOSS: the users of the parties the caller may see), and a
+   refused one is answered as one that does not exist (`noCallee`). Transfer and Add (`transfer#Call`,
+   `add#CallParticipant`) ask the same hook (`notFound`); without a provider anyone enabled may be reached; a provider
+   that fails refuses.
 2. The callee answers (`answer#Call`). The first answer wins, and the other tabs hear it.
 3. Each page sends `{rtc: 'join', callSessionId, callLegId, sdp}` on its notification socket. The socket's node runs
    `bind#Connection` as the socket's user. That checks the leg and claims its next connection generation, and the frame
@@ -103,7 +108,10 @@ How they work:
    `moqui-llm`). The call counts against the quota of the user who turned captions on, and each is an `LlmCall`.
 3. Every leg gets the notice, `{rtc: 'captions', state: 'on', provider, local}`, which names who hears the audio; a leg
    that joins later gets it when it joins, a guest's too. A phone leg hears it as a prompt, when captions turn on or when
-   it answers while they are on ([SIP, Notices](SIP.md#notices)). Captions go to every leg in the order they were spoken:
+   it answers while they are on ([SIP, Notices](SIP.md#notices)). Each notice is logged for its leg, as the recording's
+   is: a `CallCaptionsNotice` row each time captions turn on for every leg then in the call, and for a leg that binds or
+   answers while they are on (`note#CaptionsLeg`), with the method (`CnmWeb` or `CnmVoice`), the time and the provider
+   it named. Captions go to every leg in the order they were spoken:
    `{rtc: 'caption', leg, participant, name, seq, text}`.
 4. A slow provider never holds the call up. When the queue is full the oldest waiting chunk is dropped and its place
    goes out as `{rtc: 'caption', leg, seq, gap: true}`. A provider error or timeout goes out once as
@@ -135,7 +143,8 @@ as end to end, never as plain.
 
 - **Asking for it.** `start#Call` with `requireE2ee` (New call, End-to-end encrypted); a room whose owner or moderator
   set `ChatRoom.callE2eeRequired` (`set#RoomCallEncryption`; Room settings in Chat), for every call of the room and the
-  links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings.
+  links made for it; a call link with `requireE2ee` (`CallLink.e2eeRequired`), for its meetings. Call back from History
+  of an encrypted call (`find#Calls` `e2ee`) asks for it again.
 - **No downgrade.** The mode is set at the start and nothing lowers it. A room's call going on that is not encrypted is
   refused to a start that asks for encryption, or in a room whose policy asks for it (`callNotEncrypted`), never
   answered in its place. A browser drops a frame that does not decrypt instead of playing it, sends nothing before it
@@ -257,7 +266,10 @@ own multiplexing of rooms; that waits for a measured need.
   and revoking the link ending it.
 - `./moq test framework --spec Calls`: the call state machine, and the node of a leg with cascading on: its signaling
   node, the call's node when that is no media node or its relay was refused, and an edge lost ending only its legs.
-  `--spec Transfer` merges calls on two nodes; `--spec SipDevice` rings a phone registered with another node.
+  `--spec Transfer` merges calls on two nodes, and refuses a transfer, an add and a call to a user a `call-target`
+  provider keeps out (the example gallery's); `--spec SipDevice` rings a phone registered with another node.
+  `./moq test mr-boss --spec CallTarget`: IronStone's provider, another organization's user refused with the same calls
+  that reach a user of a shared party. `--spec CallCaptions` logs the captions notice per leg, a late joiner's too.
 - `cargo test -p moqui-rtc sfu::relay_tests`: two SFUs on the in-memory network: media both ways over one link, a track
   crossing once in the layers up to the highest wanted (a layer change at the edge, nothing wanted), an edge's tracks
   reaching the origin's taps in every layer, the caps refusing a link, a lost link reported and replaced (an old link's

@@ -68,8 +68,10 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   share the screen, raise a hand, reactions, the participants, the grid or the speaker view (the one speaking, or a
   screen share, large), and Leave; the host of a group call can end it for everyone. A person whose bandwidth is too low
   gets audio only, and their tile says so. Going to another screen keeps the call in the small window at the bottom
-  right. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back; Home counts the
-  missed calls until the Missed tab is opened.
+  right. Calls lists the calls ringing now and the history (All, Missed, Placed, Answered) with Call back (an end-to-end
+  encrypted call is called back encrypted); Home counts the missed calls until the Missed tab is opened, and so does the
+  header's Missed calls badge where the theme names its screen (`STRT_CALLS_SCREEN`; IronStone: Calls, Missed) and the
+  app's shell counts have `calls` (Mantle's).
 - **Call links.** A link to a meeting for people with no account (Calls, Call links): they open it in a browser and give
   their name, then wait in the lobby until someone in the call lets them in (or come straight in, as the link says).
   The link's address is shown once, when it is made; Open starts its meeting with you as host, and Revoke takes its
@@ -227,6 +229,7 @@ records drive's folders by their records.
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
 | `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out); Mantle answers from its consent records) |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
+| `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
 
 The other hooks (`invitation`, `contact-card`, `home-source`,
 `external-conversation`) are declared for the work after this one. A provider runs with the app's authorization and

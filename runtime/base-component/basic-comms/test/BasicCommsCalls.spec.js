@@ -120,7 +120,7 @@ feature("the terminal twin shows the call and leaves it", {
     }
 })
 
-feature("an end-to-end encrypted call through the transitions: a browser without its device does not answer; the terminal twin shows the encryption and no Answer", {
+feature("an end-to-end encrypted call through the transitions: a browser without its device does not answer; the terminal twin shows the encryption and no Answer; Call back from History is encrypted again", {
     when() {
         // a device of john.doe's with its keys uploaded (opaque here); the browser names it with RTCRtpScriptTransform
         const johnId = john()
@@ -143,9 +143,24 @@ feature("an end-to-end encrypted call through the transitions: a browser without
         const answered = post(root, "answerCall", {callSessionId: encryptedId, cryptoDeviceId: "BCCSPECDEV", scriptTransform: "true"})
         const recording = post(root, "startRecording", {callSessionId: encryptedId})
         post(root, "leaveCall", {callSessionId: encryptedId})
-        return {started, text, plainly, answered, recording}
+        sys(() => {
+            const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", encryptedId).one()
+            if (s.statusId !== "CssEnded") { s.set("statusId", "CssEnded"); s.update() }
+        })
+        // History's Call back of the encrypted call starts an encrypted call again, with the row's own parameters
+        const row = (sys(() => call("org.moqui.impl.CallServices.find#Calls", {pageSize: 25})).callList || []).find((c) => c.callSessionId == encryptedId)
+        const before = Date.now() - 1000
+        request(root, "Calls/History/callBack", {otherUserIds: row.otherUserIdList.join(","), chatRoomId: row.chatRoomId || "",
+            isRoomCall: "false", video: row.video ? "true" : "false", e2ee: row.e2ee ? "true" : "false"}, "post")
+        const calledBack = sys(() => Array.from(ec.entity.find("moqui.call.CallSession").condition("startedByUserId", johnId)
+            .condition("startedDate", ">=", new Date(before)).orderBy("-startedDate").limit(1).list())[0])
+        if (calledBack) post(root, "endCall", {callSessionId: calledBack.callSessionId})
+        return {started, text, plainly, answered, recording, row, calledBack}
     },
-    then({started, text, plainly, answered, recording}) {
+    then({started, text, plainly, answered, recording, row, calledBack}) {
+        row.e2ee == true
+        calledBack.callSessionId != encryptedId
+        calledBack.encryptionMode == "e2ee-sframe"
         started.json.call.e2ee == true
         started.json.call.encryptionMode == "e2ee-sframe"
         text.includes("End-to-end encrypted")

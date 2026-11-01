@@ -262,6 +262,51 @@ feature("the limits at once and per day", {
     }
 })
 
+// six places at once, each in its own transaction on its own thread: under the one limits lock (Voice.js lockLimits)
+// only as many as the limit go out, the rest are refused, and a refused one does not count
+function placeAtOnce(n) {
+    return Array.from(parallel(n, (threadNum, args) => {
+        ec.user.internalLoginUser(args.user)
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            const out = ec.service.sync().name("org.moqui.impl.VoiceServices.place#PhoneCall").requireNewTransaction(true)
+                .parameters({phoneNumber: args.dest, fromNumber: args.from}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : ""
+            ec.message.clearErrors()
+            return {placed: !!out.callSessionId, reasonCode: out.reasonCode || null, errors}
+        } catch (err) {
+            return {placed: false, reasonCode: null, errors: String(err.message || err)}
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
+    }, {user: username(A), dest: DEST, from: MINE}, {transaction: false}))
+}
+
+feature("calls placed at once cannot pass the limits at once and per day together", {
+    when() {
+        endAll()
+        policy({maxConcurrentPerUser: 2, maxCallsPerUserPerDay: 100})
+        const atOnce = placeAtOnce(6)
+        endAll()
+        const today = sys(() => ec.entity.find(SESSION).condition({kindEnumId: "CskPhone", startedByUserId: A})
+            .condition("startedDate", ">=", new Date(Date.now() - 86400000)).count())
+        policy({maxConcurrentPerUser: 10, maxCallsPerUserPerDay: today + 2})
+        const perDay = placeAtOnce(6)
+        endAll()
+        const after = sys(() => ec.entity.find(SESSION).condition({kindEnumId: "CskPhone", startedByUserId: A})
+            .condition("startedDate", ">=", new Date(Date.now() - 86400000)).count())
+        policy({maxConcurrentPerUser: 2, maxCallsPerUserPerDay: 100})
+        return {atOnce, perDay, today, after}
+    },
+    then({atOnce, perDay, today, after}) {
+        atOnce.filter(r => r.placed).length == 2
+        atOnce.filter(r => !r.placed).every(r => r.reasonCode == "tooManyCalls")
+        perDay.filter(r => r.placed).length == 2
+        perDay.filter(r => !r.placed).every(r => r.reasonCode == "dailyLimit")
+        after == today + 2
+    }
+})
+
 feature("failed digest attempts block their source, not the account", {
     when() {
         policy({authFailureLimit: 3})
