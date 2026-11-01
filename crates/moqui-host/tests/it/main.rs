@@ -109,3 +109,4 @@ mod wasm_browser;
 mod web_protection;
 mod web_scripts;
 mod web_streaming;
+mod xmpp;

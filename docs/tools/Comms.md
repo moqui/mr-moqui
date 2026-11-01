@@ -13,7 +13,8 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
 `org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
 `org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
-([SIP](../interfaces/SIP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
+([SIP](../interfaces/SIP.md)); XMPP clients reach chat through `moqui-xmpp`, the host's `xmpp` feature and
+`org.moqui.impl.XmppServices` (`XmppEntities.xml`, [XMPP](../interfaces/XMPP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
 menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices`.
 
 ## For users
@@ -53,6 +54,14 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
   who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
   administrator allows them. See [SMS](../interfaces/SMS.md).
+- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
+  app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Make an app password
+  in the account settings and sign in as `username@domain` with it (an email-style username has its `@` written as
+  `\40`). The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
+  the people of direct messages as contacts, the history of both, reactions, replies, edits and deletes, files, typing
+  and read markers, and the same presence as the web. A room that is end-to-end encrypted in Moqui does not open in an
+  XMPP app. Messages two XMPP apps encrypt with OMEMO stay between them: the web shows "Encrypted message (OMEMO)". See
+  [XMPP](../interfaces/XMPP.md).
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
   members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
   audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
@@ -249,5 +258,7 @@ the strategies, the shared box, and the first answer winning. `./moq test framew
 their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
 Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
 policy and every refusal of end-to-end encrypted calls; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
-an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
+an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). `cargo test -p moqui-xmpp` and
+`cargo test -p moqui-host --test it -- xmpp::`: XMPP clients against recorded stanzas and on a real server ([XMPP,
+Tests](../interfaces/XMPP.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

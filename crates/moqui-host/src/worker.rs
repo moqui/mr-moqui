@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Run a blocking framework job on a request worker from async code (the SSH server and the SMTP listener), without
-//! blocking the async runtime. The tasks hold the factory weakly, so a server that stopped is not kept alive by them, and
-//! its database clients are never dropped on a runtime thread.
+//! Run a blocking framework job on a request worker from async code (the SSH server, the SMTP listener and the XMPP
+//! server), without blocking the async runtime. The tasks hold the factory weakly, so a server that stopped is not kept
+//! alive by them, and its database clients are never dropped on a runtime thread.
 
 use std::sync::{Arc, Weak};
 
@@ -46,6 +46,7 @@ where
 
 /// [`on_pool`] with authorization off for the whole job, for SFTP: its calls run as no user, and the `SSH_SFTP`
 /// permission checked at login is the gate.
+#[cfg(any(feature = "ssh", feature = "inbound-smtp"))]
 pub(crate) async fn on_pool_without_authz<T, F>(factory: &Weak<ExecutionContextFactory>, job: F) -> Result<T, CoreError>
 where
     T: Send + 'static,

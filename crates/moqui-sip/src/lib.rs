@@ -37,7 +37,8 @@
 pub mod dial;
 pub mod digest;
 pub mod dtmf;
-pub mod guard;
+/// The per-source block of failed digests and the request caps, shared with the XMPP server (moqui-lib).
+pub use moqui_lib::source_guard as guard;
 pub mod media;
 pub mod race;
 pub mod registrar;

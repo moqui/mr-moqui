@@ -4,7 +4,7 @@
 # Dev, Lite, Maximal and Enterprise packages of the binary, the host with no features (`cargo lint-min`) and with only
 # the terminal client (the client-only build of `moqui tui --server`) and with only the SMTP listener (which shares the
 # SSH server's request worker handoff and must build without SSH) and with only phone calls (sip, with the call media it
-# joins), and the framework with none (what the browser build links); the entity crate alone (without the test-support the workspace's tests turn on); the report crate without
+# joins) and with only XMPP (xmpp, without the call media), and the framework with none (what the browser build links); the entity crate alone (without the test-support the workspace's tests turn on); the report crate without
 # xlsx (as the browser links it); the dev kit without its file watcher (as Lite links it); the drivers with no
 # database client, with their tests; the mail crate without imap (the send half alone, as Lite and Dev link it); the
 # terminal client on its own feature sets (the model alone is what moqui-core's tests link); then the scripted TUI
@@ -25,6 +25,7 @@ run -p moqui-host --no-default-features --all-targets "$@"
 run -p moqui-host --no-default-features --features tui --all-targets "$@"
 run -p moqui-host --no-default-features --features inbound-smtp --all-targets "$@"
 run -p moqui-host --no-default-features --features sip --all-targets "$@"
+run -p moqui-host --no-default-features --features xmpp --all-targets "$@"
 run -p moqui-core --no-default-features --all-targets "$@"
 run -p moqui-entity --all-targets "$@"
 run -p moqui-report --no-default-features --all-targets "$@"

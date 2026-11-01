@@ -174,6 +174,8 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | Chat bridge media | `GET /channels/{chatBridgeId}/media/{token}` | off, with the webhook | the token: the attachment id and an expiry, HMAC-SHA-256 under `channels_media_key` (generated) | only a file of a message with a delivery to that bridge, until the expiry (`channels_media_minutes`, 60) | For the provider to fetch an MMS picture that goes out. Sent as an attachment with `nosniff` and `no-store`; any other token, bridge or file is 404. |
 | Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. Call signaling frames (`rtc`, the rtc feature) bind the socket to a leg only through `CallServices.bind#Connection` as the socket's user (the leg must be theirs and in the call); a frame of a leg the socket did not bind is refused (`notJoined`), each carries the claimed connection generation, which the media node fences, and an SDP or candidate grants nothing. At most 4 bound legs a socket, 128 KiB a frame. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
+| XMPP WebSocket | `GET /xmpp-websocket` (RFC 7395, subprotocol `xmpp`) | off; with the `xmpp` feature, `xmpp_domain` and `xmpp_websocket_enabled` `true` | SASL inside the stream (no cookie, so no origin check): see [XMPP](#xmpp) | as the XMPP listeners | Exempt from the request deadline. Stanzas up to 256 KiB. A source blocked for failed sign-ins gets 429. |
+| XMPP uploads | `PUT`, `GET`, `OPTIONS /xmpp-upload/{token}/{name}` | while the XMPP server runs | the token in the URL is the capability (XEP-0363), compared by its hash | none beyond it | A slot takes one PUT of the size it was given, within `xmpp_upload_max_bytes`; served as an attachment (images, audio and video inline, not SVG) with `nosniff` and `Content-Security-Policy: sandbox`; CORS open. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`, so anyone the URL is passed to can read that file. Exempt from the request deadline. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |
 | LLM routes | `/a2a`, `/mcp`, `/llm/v1`, Assist streams, public cards | compiled with `llm`; several answer 404 while their flag is false | see [LLM, A2A, MCP, Assist, git, and DAV](#llm-a2a-mcp-assist-git-and-dav) | see that section | Registration is not gated again by the conf flag. A protocol that is off answers 404. |
 | DAV | `ANY /dav`, `/dav/`, `/dav/{*rest}` | route always registered; server default enabled | see [DAV](#dav) | the signed-in user's own path | Exempt from the request deadline. |
@@ -480,7 +482,10 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
   when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
   is refused, and so is one of a leg that left (revoked by the media node).
 - **Relay peers** are only the media nodes (and `turn_allowed_peers`). A permission or channel to any other address
-  is dropped before the server sees it, and nothing is relayed to or from one.
+  is dropped before the server sees it, and nothing is relayed to or from one. The exception is an XMPP user's own
+  credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
+  relay to public unicast addresses too, never to loopback, private (RFC 1918, unique-local), link-local, shared
+  (100.64/10), multicast or documentation ranges.
 - **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
   allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
   peers are offered.
@@ -576,6 +581,36 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   going on are not cut. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
+
+### XMPP
+
+The XMPP server (`crates/moqui-xmpp`, host `src/xmpp/`, [XMPP](../interfaces/XMPP.md)) runs only in a binary with the
+`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp_domain` is set. Each listener is off unless set:
+`xmpp_port` (STARTTLS, required before anything else) on `xmpp_host`, `xmpp_tls_port` (direct TLS) on
+`xmpp_tls_host`, and `/xmpp-websocket` with `xmpp_websocket_enabled`. Local users only: no server-to-server.
+
+- **Sign-in** takes app passwords only, never the account password (which would count toward the account's lockout
+  and cannot carry a second factor): SCRAM-SHA-256 and SCRAM-SHA-256-PLUS against the verifiers stored when the
+  app password was made (salted, 10,000 iterations), with tls-exporter channel binding where the connection has its
+  own TLS session and a downgrade (`y` where the server binds) refused; PLAIN over TLS only; FAST tokens (XEP-0484)
+  bound to the client's user-agent id, kept encrypted, expiring (`xmpp_fast_token_days`), and without channel binding
+  refused unless their count grows. An unknown user gets a salt derived from the name, so the exchange does not tell it
+  apart. A disabled account cannot sign in, and each service call logs the user in again by name.
+- **Failures** are counted per source address (moqui-lib `source_guard.rs`, as the SIP engine counts failed digests):
+  5 in 10 minutes block the address for an hour, a /64 for IPv6; the account is never locked. At most 20 connections
+  from one address at once; a stanza over 256 KiB ends the stream; a session whose pushes back up (512) is closed.
+- **Authorization** is the user's: each stanza becomes a service call as the signed-in user, through
+  `XmppClientServices` (granted to `ALL_USERS`), and every service checks the room (`get#RoomAccess`) or works on the
+  user's own rows. An external user (`EXTERNAL_USER`) learns only the usernames of the people of their own rooms.
+- **XML** is parsed by rxml, which refuses DTDs, entity declarations and processing instructions.
+- **End-to-end encrypted Moqui rooms** (C7) are not served; OMEMO messages are kept as they came, unreadable to Moqui,
+  never in a bridged room, with no text in snippets, search, notifications or agents. PEP items (OMEMO bundles hold
+  public keys) are read by access model: `open` any local user, `presence` the people the owner shares a room with,
+  `whitelist` the owner.
+- **TURN for XMPP calls** (XEP-0215): a credential keyed to the user (`xmpp.<userId>`) may relay to public unicast
+  addresses only, never loopback, private, link-local, shared or documentation ranges ([TURN](#turn)).
+- **Push** (XEP-0357) registrations are stored, with their app server's secret encrypted; a notification has the message
+  count only, and goes nowhere until federation (C3b).
 
 ### Voicemail
 

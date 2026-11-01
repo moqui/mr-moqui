@@ -488,7 +488,7 @@ gate.
 - **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
   dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
   `sip_max_connections_per_source` from one source, are closed
-  ([Settings](#settings); `moqui-sip` `guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
+  ([Settings](#settings); moqui-lib `source_guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
     replayed (`moqui-sip` `digest.rs`).

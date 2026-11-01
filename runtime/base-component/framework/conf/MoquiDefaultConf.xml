@@ -248,6 +248,28 @@
     <default-property name="sip_registrar_max_expires" value="3600"/>
     <default-property name="sip_registrar_default_expires" value="600"/>
     <default-property name="sip_registrar_nat_expires" value="60"/>
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
+        xmpp_domain is empty. xmpp_domain is the domain of the users' JIDs (user@domain), with the rooms on
+        rooms.<domain> and uploads on upload.<domain> (xmpp_rooms_domain, xmpp_upload_domain to name others); xmpp_port
+        (STARTTLS, 5222 by convention) on xmpp_host and xmpp_tls_port (direct TLS with ALPN xmpp-client, 5223) on
+        xmpp_tls_host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
+        upload.<domain>, else default). xmpp_websocket_enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
+        xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
+        largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
+        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts. -->
+    <default-property name="xmpp_domain" value=""/>
+    <default-property name="xmpp_rooms_domain" value=""/>
+    <default-property name="xmpp_upload_domain" value=""/>
+    <default-property name="xmpp_port" value=""/>
+    <default-property name="xmpp_host" value="0.0.0.0"/>
+    <default-property name="xmpp_tls_port" value=""/>
+    <default-property name="xmpp_tls_host" value=""/>
+    <default-property name="xmpp_websocket_enabled" value="false"/>
+    <default-property name="xmpp_upload_url" value=""/>
+    <default-property name="xmpp_upload_max_bytes" value="20971520"/>
+    <default-property name="xmpp_upload_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="xmpp_resume_seconds" value="300"/>
+    <default-property name="xmpp_fast_token_days" value="14"/>
 
     <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
@@ -1175,6 +1197,8 @@
         <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/VoiceSetupData.xml"/>
         <load-data location="component://framework/data/ChatKeySetupData.xml"/>
+        <load-data location="component://framework/data/XmppSetupData.xml"/>
+        <load-data location="component://framework/data/XmppSecurityData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

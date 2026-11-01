@@ -80,8 +80,8 @@ mod tui_cmd;
 pub mod tui_remote;
 pub mod types;
 pub mod usage;
-// The request-worker handoff of the SSH server and the SMTP listener.
-#[cfg(any(feature = "ssh", feature = "inbound-smtp"))]
+// The request-worker handoff of the SSH server, the SMTP listener and the XMPP server.
+#[cfg(any(feature = "ssh", feature = "inbound-smtp", feature = "xmpp"))]
 mod worker;
 
 mod cluster_edge;
@@ -125,6 +125,11 @@ mod systemd_notify;
 mod termws;
 #[cfg(any(feature = "axum", feature = "inbound-smtp"))]
 mod tls;
+#[cfg(feature = "xmpp")]
+mod xmpp;
+#[cfg(not(feature = "xmpp"))]
+#[path = "xmpp_off.rs"]
+mod xmpp;
 
 /// No arguments start the HTTP listener and block until it stops.
 ///
@@ -271,6 +276,23 @@ impl Server {
         #[cfg(not(feature = "sip"))]
         {
             None
+        }
+    }
+
+    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp_domain`
+    /// with `xmpp_port` or `xmpp_tls_port` is set.
+    #[must_use]
+    pub fn xmpp_addresses(&self) -> (Option<std::net::SocketAddr>, Option<std::net::SocketAddr>) {
+        #[cfg(feature = "xmpp")]
+        {
+            match self.factory.as_ref() {
+                Some(factory) => *lock(&factory.extension(|_| xmpp::XmppSlot::default()).addresses),
+                None => (None, None),
+            }
+        }
+        #[cfg(not(feature = "xmpp"))]
+        {
+            (None, None)
         }
     }
 
@@ -1495,6 +1517,7 @@ fn boot_server_factory(
             notify_listener: None,
             rtc: None,
             sip: None,
+            xmpp: None,
             factory: Some(factory),
             search,
             facade: Some(facade),
@@ -1562,6 +1585,8 @@ fn boot_server_factory(
     let rtc = rtc::start(&factory);
     // phone calls (sip_port, sip_tls_port), beside the call media they join
     let sip = sip::start(&factory);
+    // XMPP for local users (xmpp_domain): its listeners, and the chat pushes to its sessions
+    let xmpp = xmpp::start(&factory);
     // last, so mail is taken only once everything it runs is up
     let smtpd = start_smtp(&factory);
     // the webapp's listeners and after-startup actions, as Java's MoquiContextListener runs them
@@ -1584,6 +1609,7 @@ fn boot_server_factory(
         notify_listener,
         rtc,
         sip,
+        xmpp,
         factory: Some(factory),
         search,
         facade: Some(facade),
@@ -1614,6 +1640,8 @@ struct ServeProcess {
     rtc: Option<crate::rtc::RtcNode>,
     /// The SIP engine, stopped before the call media its legs are in.
     sip: Option<crate::sip::SipNode>,
+    /// The XMPP listeners and their subscription to the notification bus.
+    xmpp: Option<crate::xmpp::XmppNode>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     search: Option<crate::search::SearchStore>,
     facade: Option<moqui_core::entity::EntityFacade>,
@@ -1628,6 +1656,7 @@ impl Drop for ServeProcess {
             // The listener has already waited out its shutdown deadline; a blocking task still running is left.
             runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
         }
+        self.xmpp.take();
         self.sip.take();
         self.rtc.take();
         if let Some(factory) = &self.factory {
@@ -1743,6 +1772,7 @@ pub fn build_features() -> Vec<&'static str> {
         ("rtc", cfg!(feature = "rtc")),
         ("speech-local", cfg!(feature = "speech-local")),
         ("sip", cfg!(feature = "sip")),
+        ("xmpp", cfg!(feature = "xmpp")),
     ]
     .into_iter()
     .filter_map(|(name, built)| built.then_some(name))
