@@ -567,6 +567,9 @@ database loads on its own; an existing one loads it once.
    actor, rebuilds the three tables on their new keys with every row (all or nothing per table, the counts checked), and
    checks that every actor a row names exists and is its user's. A table with a row it could not give an actor is not
    rebuilt; the log says which, and the old shape keeps working for local users until it is fixed and loaded again.
+   A row is given an actor only when its user's actor was made, so a user whose actor failed holds its table back. On
+   MySQL a rebuild cut off after the new table was made leaves it empty beside its `*_PRE_C1` copy; a later load says so
+   (`... is empty and ..._PRE_C1 has N rows`) and leaves the copy for you to restore.
 4. Start the server. The chat search document gains the sender's actor and external name: reload
    `ChatSetupData.xml` (`types=seed-initial` rows, so `location=` it) to have them in the index.
 5. **Rollback.** The old rows stay in `CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1` and `CHAT_POLL_VOTE_PRE_C1`

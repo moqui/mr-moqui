@@ -953,3 +953,163 @@ fn an_unsupported_edit_is_refused_before_the_change() {
         ],
     );
 }
+
+/// A delivery's outcome is kept only by the worker that holds the row's attempt: one whose lease ran out while it sent
+/// (another took the row over) changes nothing, but an acceptance is kept over any outcome, and nothing overwrites it.
+#[test]
+fn a_stale_worker_does_not_overwrite_the_next_ones_outcome() {
+    let bed = bed("stale", true);
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let seq = bed.send("<p>hello</p>");
+    let _authz = bed.ctx.disable_authz();
+    let row = bed
+        .facade
+        .find("moqui.chat.ChatBridgeDelivery")
+        .unwrap()
+        .eq("chatRoomId", text(&bed.room))
+        .eq("eventSeq", Value::I64(seq))
+        .eq("chatRoomBridgeId", text("MB"))
+        .one()
+        .unwrap()
+        .unwrap();
+    let id = row.get("chatBridgeDeliveryId").map(to_plain_string).unwrap();
+    // another worker took the row over: its attempt 2
+    bed.facade
+        .find("moqui.chat.ChatBridgeDelivery")
+        .unwrap()
+        .eq("chatBridgeDeliveryId", text(&id))
+        .update_all([
+            ("attemptCount".to_string(), Value::I64(2)),
+            ("leaseOwner".to_string(), text("other-node")),
+        ])
+        .unwrap();
+    let finish = |attempt: i64, status: &str, remote: Option<&str>| {
+        super::finish(
+            &bed.facade,
+            &id,
+            attempt,
+            status,
+            Some("late"),
+            Some("late"),
+            remote,
+            bed.now,
+        )
+        .unwrap();
+        bed.delivery(seq, "MB")
+    };
+    let (state, _, attempts, _) = finish(1, super::FAILED, None);
+    assert_eq!(
+        (state.as_str(), attempts),
+        ("CdsPending", 2),
+        "the first worker's late failure"
+    );
+    let (state, _, _, _) = finish(2, super::UNCERTAIN, None);
+    assert_eq!(state, "CdsUncertain", "the holder's outcome");
+    let (state, _, _, remote) = finish(1, super::ACCEPTED, Some("net-1"));
+    assert_eq!(
+        (state.as_str(), remote.as_str()),
+        ("CdsAccepted", "net-1"),
+        "the network had it after all"
+    );
+    let (state, _, _, remote) = finish(3, super::ACCEPTED, Some("net-2"));
+    assert_eq!((state.as_str(), remote.as_str()), ("CdsAccepted", "net-1"));
+    let (state, _, _, _) = finish(3, super::FAILED, None);
+    assert_eq!(state, "CdsAccepted");
+}
+
+/// A transaction sent again while it is still being worked answers its outcomes so far and works nothing twice; a second
+/// worker's stale outcomes never undo the first's; a batch done keeps its items' names, not their text.
+#[test]
+fn a_repeated_transaction_works_nothing_twice_and_a_done_batch_keeps_no_text() {
+    let bed = bed("tombstone", true);
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let batch = json!([
+        {"itemId": "i1", "type": "message", "externalRoomId": "+1555000A", "externalEventId": "t-m1",
+            "externalUserId": "+15557", "text": "secret words"},
+        {"itemId": "i2", "type": "edit", "externalRoomId": "+1555000A", "externalEventId": "t-e1",
+            "externalUserId": "+15557", "relatesToExternalEventId": "t-m0", "text": "edited secret"}
+    ]);
+    let first = bed.ingest("BA", "token-a", "W1", batch.clone());
+    assert_eq!(errors(), "");
+    let states = |out: &BTreeMap<String, Value>| outcomes(out).into_iter().map(|item| item.1).collect::<Vec<_>>();
+    assert_eq!(states(&first), vec!["accepted", "waiting"]);
+    let messages = || {
+        bed.count(
+            "moqui.chat.ChatEvent",
+            &[("chatRoomId", text(&bed.room)), ("eventTypeEnumId", text("CetMessage"))],
+        )
+    };
+    let again = bed.ingest("BA", "token-a", "W1", batch);
+    assert_eq!(out_text(&again, "duplicate"), "true");
+    assert_eq!(states(&again), vec!["accepted", "waiting"]);
+    assert_eq!(messages(), 1);
+    // a second worker that saw i1 waiting and lost the race on it
+    {
+        let _authz = bed.ctx.disable_authz();
+        ok(
+            &format!("{BRIDGES}.update#InboundOutcomes"),
+            &[
+                ("chatBridgeId", text("BA")),
+                ("transactionId", text("W1")),
+                (
+                    "outcomesJson",
+                    text(r#"{"i1":{"outcome":"rejected","reasonCode":"failed"},"i2":{"outcome":"waiting"}}"#),
+                ),
+                ("waitingCount", Value::I64(1)),
+            ],
+        );
+    }
+    let kept = || {
+        call(
+            &format!("{BRIDGES}.get#InboundOutcomes"),
+            &[("chatBridgeId", text("BA")), ("transactionId", text("W1"))],
+        )
+    };
+    assert_eq!(states(&kept()), vec!["accepted", "waiting"]);
+    // the edit's message comes: the batch is done, and keeps no text
+    let target = bed.ingest(
+        "BA",
+        "token-a",
+        "W2",
+        json!([{"itemId": "m0", "type": "message", "externalRoomId": "+1555000A", "externalEventId": "t-m0",
+            "externalUserId": "+15557", "text": "first words"}]),
+    );
+    assert_eq!(states(&target), vec!["accepted"]);
+    assert_eq!(states(&kept()), vec!["accepted", "accepted"]);
+    let _authz = bed.ctx.disable_authz();
+    let row = bed
+        .facade
+        .find("moqui.chat.ChatBridgeInbound")
+        .unwrap()
+        .eq("chatBridgeId", text("BA"))
+        .eq("transactionId", text("W1"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.get("statusEnumId").map(to_plain_string).as_deref(), Some("CbiDone"));
+    let stored = row.get("batchJson").map(to_plain_string).unwrap_or_default();
+    assert!(!stored.contains("secret"), "a done batch keeps no text: {stored}");
+    assert!(stored.contains("i2"), "its items' names: {stored}");
+}
+
+/// The bridge an event came from is an external actor's only: a local user who names one still sends to every bridge.
+#[test]
+fn a_local_message_names_no_source_bridge() {
+    let bed = bed("source", true);
+    let _entered = bed.ctx.enter();
+    login("alice");
+    let seq = out_number(
+        &ok(
+            &format!("{CHAT}.send#Message"),
+            &[
+                ("chatRoomId", text(&bed.room)),
+                ("body", text("<p>to everyone</p>")),
+                ("sourceChatBridgeId", text("BA")),
+            ],
+        ),
+        "eventSeq",
+    );
+    assert_eq!(bed.deliveries_of(seq), 2);
+}

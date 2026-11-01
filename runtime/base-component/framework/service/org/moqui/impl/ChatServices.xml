@@ -575,11 +575,11 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>Move a database from before chat actors (C1) to them; run once, in a maintenance window, with no server
             on the old code (docs/Run-Deploy.md "Chat actors"). A local actor for each user the chat rows name (a deleted
-            account's history too), each row given its actor (user by user: one that fails is logged and the rest go on),
+            account's history too), each row given its actor (table by table: one that fails is logged and the rest go on),
             ChatRoomMember, ChatEventMention and ChatPollVote rebuilt on their new keys with their rows (the old rows kept in
             CHAT_ROOM_MEMBER_PRE_C1, CHAT_EVENT_MENTION_PRE_C1 and CHAT_POLL_VOTE_PRE_C1; a table with a row lacking an
-            actor is not rebuilt), then the references checked. Running it again changes nothing. ChatMigrateData.xml calls
-            it on a load.</description>
+            actor is not rebuilt), then the references checked. Running it again changes nothing. ChatBridgeSetupData.xml
+            calls it on a load.</description>
         <out-parameters>
             <parameter name="actorCount" type="Long"/>
             <parameter name="filledCount" type="Long"/>
@@ -1251,9 +1251,11 @@ along with this software (see the LICENSE.md file). If not, see
             if (!access.isMember) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             const room = access.room
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const self = !!userId && userId === me
             const row = userId ? ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', userId).one()
                     : ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('chatActorId', chatActorId).one()
+            // a local user's actor named by chatActorId is that user: the same checks, and the user hears of it
+            if (row && !userId && row.userId) userId = row.userId
+            const self = !!userId && userId === me
             if (!row || row.leftDate) { if (!self) ec.message.addError(`User ${userId || chatActorId} is not in the room`); return }
             if (!self) {
                 if (isDirect) { ec.message.addError(ec.l10n.localize('A direct room has fixed members')); return }
@@ -1710,6 +1712,8 @@ along with this software (see the LICENSE.md file). If not, see
                 else externalActor = actorRow
             }
             if (!sender && !externalActor) { ec.message.addError(ec.l10n.localize('No user to send the message')); return }
+            // the bridge a message came from is an external actor's only: a local user's message goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
             let access
             if (externalActor) {
                 sender = null
@@ -1983,6 +1987,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
             }
             const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
             let access
             if (externalActor) {
                 const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
@@ -2131,6 +2137,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
             }
             const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
             let access
             if (externalActor) {
                 const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
@@ -2271,6 +2279,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!externalActor || externalActor.userId) { ec.message.addError(`Chat actor ${senderActorId} is not an external actor`); return }
             }
             const me = externalActor ? null : ec.user.userId
+            // the bridge an event came from is an external actor's only: a local user's change goes to every bridge
+            if (!externalActor) sourceChatBridgeId = null
             let access
             if (externalActor) {
                 const roomRow = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()

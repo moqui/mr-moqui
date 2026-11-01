@@ -312,4 +312,11 @@ fn old_chat_rows_move_to_actors_and_keep_their_counts() {
     assert_eq!(get(&again, "failedCount"), "0", "{again:?}");
     assert_eq!(get(&again, "filledCount"), "0");
     assert_eq!(again.get("rebuiltList"), Some(&Value::List(Vec::new())));
+
+    // a rebuild cut off after its table was made and before its rows came back (MySQL's table changes are not
+    // transactional): the empty table beside its backup is said, not repaired
+    sql(&factory, &["DELETE FROM chat_event_mention"]);
+    let cut = as_user(&factory, "mig.ann", || call(&format!("{CHAT}.migrate#ChatActors"), &[]));
+    assert_eq!(get(&cut, "failedCount"), "1", "{cut:?}");
+    assert!(get(&cut, "problemList").contains("ChatEventMention: empty"), "{cut:?}");
 }

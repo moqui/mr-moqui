@@ -74,21 +74,38 @@ fn text(value: &Value) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-/// `UPDATE <table> SET <actor> = <user> WHERE <user> IS NOT NULL AND <actor> IS NULL`, on a reserve connection.
+/// The quoted table of an entity and a function from its field names to their quoted columns.
+fn quoted<'a>(
+    definition: &'a moqui_db::model::EntityDefinition,
+    dialect: &'a moqui_db::dialect::Dialect,
+) -> (String, impl Fn(&str) -> Result<String, LibError> + 'a) {
+    let table = quote_ident(dialect, &physical_name(dialect, &definition.table_name));
+    let column = move |name: &str| -> Result<String, LibError> {
+        let field = definition
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .ok_or_else(|| LibError::new(format!("{} has no field {name}", definition.full_name)))?;
+        Ok(quote_ident(dialect, &physical_column_name(dialect, &field.column_name)))
+    };
+    (table, column)
+}
+
+/// `UPDATE <table> SET <actor> = <user> WHERE <user> IS NOT NULL AND <actor> IS NULL` and the user's actor exists (a
+/// user whose actor could not be made keeps no actor, so its table is not rebuilt), on a reserve connection.
 fn fill(facade: &EntityFacade, entity: &str, user_field: &str, actor_field: &str) -> Result<i64, LibError> {
+    let (actor_table, actor_id, actor_user) = facade.with_group(ACTOR, |definition, dialect, _, _| {
+        let (table, column) = quoted(definition, dialect);
+        Ok((table, column("chatActorId")?, column("userId")?))
+    })?;
     let (sql, tx) = facade.with_group(entity, |definition, dialect, _, tx| {
-        let column = |name: &str| -> Result<String, LibError> {
-            let field = definition
-                .fields
-                .iter()
-                .find(|field| field.name == name)
-                .ok_or_else(|| LibError::new(format!("{entity} has no field {name}")))?;
-            Ok(quote_ident(dialect, &physical_column_name(dialect, &field.column_name)))
-        };
+        let (table, column) = quoted(definition, dialect);
         let (user, actor) = (column(user_field)?, column(actor_field)?);
-        let table = quote_ident(dialect, &physical_name(dialect, &definition.table_name));
         Ok((
-            format!("UPDATE {table} SET {actor} = {user} WHERE {user} IS NOT NULL AND {actor} IS NULL"),
+            format!(
+                "UPDATE {table} SET {actor} = {user} WHERE {user} IS NOT NULL AND {actor} IS NULL AND EXISTS \
+                 (SELECT 1 FROM {actor_table} A WHERE A.{actor_id} = {table}.{user} AND A.{actor_user} = {table}.{user})"
+            ),
             tx.clone(),
         ))
     })?;
@@ -177,7 +194,23 @@ fn migrate_chat_actors(
                 continue;
             }
         };
-        if key.is_empty() || key.iter().any(|column| column.replace('_', "") == "chatactorid") {
+        if key.is_empty() {
+            continue;
+        }
+        if key.iter().any(|column| column.replace('_', "") == "chatactorid") {
+            // on the new key; a rebuild cut off after its table was made and before its rows came back (on MySQL, whose
+            // table changes are not transactional) leaves it empty beside a backup with rows: said, not repaired, as a
+            // table emptied since would look the same
+            let rows = facade.find(entity).and_then(|find| find.disable_authz().count());
+            if let (Ok(0), Ok(Some(kept))) = (rows, facade.backup_table_rows(entity, backup)) {
+                if kept > 0 {
+                    tracing::error!(
+                        "chat actors: {entity} is empty and {backup} has {kept} rows: if its rebuild was cut off, copy them back"
+                    );
+                    problems.push(format!("{entity}: empty, {backup} has {kept} rows"));
+                    failed += 1;
+                }
+            }
             continue;
         }
         let missing = facade.find(entity).and_then(|find| {

@@ -98,7 +98,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!row) { ec.message.addError(`Could not store chat bridge transaction ${transactionId}`); return }
             duplicate = storeFailed || !stored || stored.created !== true
             accepted = true
-            if (row.statusEnumId === 'CbiDone') {
+            // a transaction sent before answers its outcomes so far (an item not yet worked is waiting): one still being
+            // worked by the first call, or left by a stop, is the first call's or the worker's (process#PendingInbound)
+            if (duplicate || row.statusEnumId === 'CbiDone') {
                 outcomeList = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.get#InboundOutcomes').parameters({chatBridgeId: chatBridgeId,
                     transactionId: transactionId}).call()?.outcomeList || []
                 return
@@ -230,7 +232,10 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="update" noun="InboundOutcomes" allow-remote="false">
-        <description>Internal: keep a batch's outcomes; done when nothing waits.</description>
+        <description>Internal: keep a batch's outcomes; done when nothing waits. Under the batch's row lock the outcomes are
+            merged with those kept, so a second worker of the same batch (another node's round) never turns a final outcome
+            back into waiting, nor an accepted, duplicate or echo item into one rejected by the race it lost. A batch done
+            keeps only its items' names (the transaction's dedupe tombstone and its answer), not their content.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="transactionId" required="true"/>
@@ -238,15 +243,35 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="waitingCount" type="Integer"/>
         </in-parameters>
         <actions><script><![CDATA[
-            ec.entity.find('moqui.chat.ChatBridgeInbound').condition('chatBridgeId', chatBridgeId).condition('transactionId', transactionId)
-                    .disableAuthz().updateAll({outcomesJson: outcomesJson, waitingCount: waitingCount || 0,
-                        statusEnumId: waitingCount > 0 ? 'CbiWaiting' : 'CbiDone', processedDate: ec.user.nowTimestamp})
+            const row = ec.entity.find('moqui.chat.ChatBridgeInbound').condition('chatBridgeId', chatBridgeId).condition('transactionId', transactionId)
+                    .forUpdate(true).disableAuthz().one()
+            if (!row) return
+            const parse = (text, empty) => { try { const value = text ? JSON.parse(text) : empty; return value && typeof value === 'object' ? value : empty } catch (err) { return empty } }
+            const kept = parse(row.outcomesJson, {})
+            const given = parse(outcomesJson, {})
+            const FIRM = ['accepted', 'duplicate', 'echo', 'stale']
+            const merged = Object.assign({}, kept)
+            for (const [name, outcome] of Object.entries(given)) {
+                const before = kept[name]
+                if (before && before.outcome !== 'waiting' && (outcome?.outcome === 'waiting' || (FIRM.includes(before.outcome) && !FIRM.includes(outcome?.outcome)))) continue
+                merged[name] = outcome
+            }
+            const items = parse(row.batchJson, [])
+            const nameOf = (item, index) => item && item.itemId != null && String(item.itemId) !== '' ? String(item.itemId) : `#${index + 1}`
+            const waiting = Array.isArray(items) ? items.filter((item, index) => (merged[nameOf(item, index)]?.outcome || 'waiting') === 'waiting').length
+                    : Object.values(merged).filter((outcome) => outcome?.outcome === 'waiting').length
+            const fields = {outcomesJson: JSON.stringify(merged), waitingCount: waiting, statusEnumId: waiting > 0 ? 'CbiWaiting' : 'CbiDone',
+                processedDate: ec.user.nowTimestamp}
+            if (!waiting && Array.isArray(items)) fields.batchJson = JSON.stringify(items.map((item, index) => ({itemId: nameOf(item, index)})))
+            row.setFields(fields, true, null, null)
+            row.update()
         ]]></script></actions>
     </service>
 
     <service verb="process" noun="PendingInbound" allow-remote="false" transaction="ignore">
         <description>Internal: work the batches that wait (CbiWaiting) and those stored but never worked a minute after they
-            came (CbiReceived: the server stopped while working them), oldest first, each on its own (one that fails is logged).
+            came (CbiReceived: the server stopped while working them), oldest first, each on its own (one that fails is logged);
+            a disabled bridge's wait until it is enabled.
             The delivery worker calls it each round and at start; process#Inbound after it mapped something. chatBridgeId
             keeps one bridge's; waitingOnly leaves out the batches never worked.</description>
         <in-parameters>
@@ -268,8 +293,12 @@ along with this software (see the LICENSE.md file). If not, see
                     cf.makeCondition('receivedDate', 'less', new Date(now - 60000))], 'and')], 'or'))
             if (chatBridgeId) find = find.condition('chatBridgeId', chatBridgeId)
             const rows = Array.from(find.selectField('chatBridgeId').selectField('transactionId').orderBy('receivedDate').limit(200).list())
+            // a disabled bridge takes no input: its batches wait until it is enabled again
+            const disabled = new Set(Array.from(ec.entity.find('moqui.chat.ChatBridge').condition('statusId', 'CbsDisabled').selectField('chatBridgeId')
+                    .list()).map((bridge) => bridge.chatBridgeId))
             for (const row of rows) {
                 if (excludeTransactionId && row.chatBridgeId === chatBridgeId && row.transactionId === excludeTransactionId) continue
+                if (disabled.has(row.chatBridgeId)) continue
                 ec.message.pushErrors()
                 try {
                     ec.service.sync().name('org.moqui.impl.ChatBridgeServices.process#Inbound').parameters({chatBridgeId: row.chatBridgeId,

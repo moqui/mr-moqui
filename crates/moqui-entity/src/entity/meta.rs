@@ -302,8 +302,46 @@ impl EntityFacade {
             Ok((before, after))
         });
         let (before, after) = result?;
-        self.check_tables_ddl(&[entity_name])?;
+        // the rebuild is done and kept; an index or foreign key that fails here is logged, and the table check at the
+        // next start adds it
+        if let Err(err) = self.check_tables_ddl(&[entity_name]) {
+            tracing::error!(error = %err, "{entity_name} was rebuilt, but its indexes or foreign keys were not all added");
+        }
         Ok((before, after))
+    }
+
+    /// The rows of a table that is no entity's (the backup [`Self::rekey_table`] keeps), in the database of
+    /// `entity_name`'s group; `None` when there is no such table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `table` is not a plain name, the entity is not defined, or the catalog cannot be read.
+    pub fn backup_table_rows(&self, entity_name: &str, table: &str) -> Result<Option<u64>, Error> {
+        if table.is_empty() || !table.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return Err(Error::new(format!("{table:?} is not a table name")));
+        }
+        if self.inner.tables.model_only.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let (dialect, tx) = self.with_group(entity_name, |_, dialect, _, tx| Ok((dialect.clone(), tx.clone())))?;
+        let name = physical_name(&dialect, table);
+        let probe = table_probe(&dialect, &name);
+        let rows = query_tx(&tx, &probe.sql, &probe.params)?;
+        if !rows.iter().any(|row| row_matches(&row.columns, &probe.table)) {
+            return Ok(None);
+        }
+        let rows = query_tx(
+            &tx,
+            &format!("SELECT COUNT(*) FROM {}", quote_ident(&dialect, &name)),
+            &[],
+        )?;
+        Ok(Some(
+            rows.first()
+                .and_then(|row| row.columns.first())
+                .map(|(_, value)| moqui_lib::object::to_plain_string(value))
+                .and_then(|text| text.parse::<u64>().ok())
+                .unwrap_or(0),
+        ))
     }
 
     /// The table of an entity as its database names it (`example` on Postgres for `EXAMPLE`); `None` for an entity

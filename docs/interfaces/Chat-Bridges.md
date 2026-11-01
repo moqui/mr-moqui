@@ -70,8 +70,10 @@ contract:
    an item that names a local user (`userId`, `senderUserId`, `localUserId`, `chatActorId`, `senderActorId`) refuses the
    batch with its reason code before anything is stored.
 2. **Stored before it is acknowledged.** The batch is a `ChatBridgeInbound` row, unique on the bridge and transaction
-   id, written in a transaction of its own. A transaction id sent before answers with the outcomes it had and does
-   nothing again; one that a crash left unfinished is finished.
+   id, written in a transaction of its own. A transaction id sent before answers with the outcomes it has so far (an
+   item not yet worked is `waiting`) and does nothing again: the first call, or the worker for one that a crash left
+   unfinished, finishes it. Outcomes are merged under the batch's row lock, so a second worker of a batch (another
+   node's round) never turns a final outcome back into waiting or an accepted item into one rejected by the race it lost.
 3. **Each item on its own**, in order, in a transaction of its own (`process#InboundItem`): a malformed item is rejected
    by its `itemId` (`malformed`, `attachmentsUnsupported`, `noMapping`, `notInbound`, `notMember`, `archived`, `notOwn`)
    and the others go on.
@@ -88,13 +90,16 @@ contract:
    (notification level none); one a moderator took out is refused (`notMember`).
 
 The delivery worker also works the batches that wait, and those stored but never worked a minute after they came (a
-crash), each round (`process#PendingInbound`). Batches done are removed after 30 days, longer than a provider retries.
+crash), each round (`process#PendingInbound`; a disabled bridge's wait until it is enabled). A batch done keeps only its
+items' names and outcomes, not their content, and is removed after 30 days, longer than a provider retries; the
+external mappings (`ChatEventExternal`) dedupe its events after that.
 
 ## Delivery
 
 - **Written with the event.** `append#Event` writes a `ChatBridgeDelivery` for each active mapping a message, edit,
   reaction or delete goes out on (direction both or out), in the event's transaction, unique on the event and mapping.
-  Nothing goes back to the bridge an event came from (`sourceChatBridgeId`): with echo suppression by the external
+  Nothing goes back to the bridge an event came from (`sourceChatBridgeId`, an external actor's only; a local user's
+  event goes to every bridge): with echo suppression by the external
   mapping, a relay between two networks does not loop. An edit, reaction or delete goes only where its target went or
   came from; its row depends on the target's delivery (`dependsOnDeliveryId`) for the network's id.
 - **Woken after the commit.** `wake#BridgeDelivery` wakes this node's worker once the transaction commits. The commit hook
@@ -102,8 +107,10 @@ crash), each round (`process#PendingInbound`). Batches done are removed after 30
   round at start, and once a minute while any bridge exists.
 - **A round** (`chat_bridge::round`): start each active bridge's adapter on this node; work the waiting input; then each
   mapping's oldest pending row, claimed with a conditional update that takes a 60-second lease
-  (`leaseOwner`, `leaseExpiresDate`) so one node sends it. A mapping's rows go in order; one failing destination holds up
-  only its own mapping.
+  (`leaseOwner`, `leaseExpiresDate`) so one node sends it. An outcome is kept only while the row is still on the attempt
+  that worker claimed, so a worker whose lease ran out mid-send does not overwrite the next one's; an acceptance is kept
+  over any outcome but another acceptance. A mapping's rows go in order; one failing destination holds up only its own
+  mapping.
 - **Every attempt carries the row's stable idempotency key** (`moqui-chat:<room>:<seq>:<mapping>`). An attempt whose lease
   ran out with no outcome (a crash, or an adapter that panicked) is sent again to a network that dedupes, and ends
   `CdsUncertain` (`lostInFlight`) on one that cannot. Nothing claims exactly-once delivery.

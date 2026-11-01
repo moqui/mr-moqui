@@ -859,6 +859,7 @@ fn deliver_head(
     now: i64,
 ) -> Result<Step, LibError> {
     let delivery_id = text_of(row, "chatBridgeDeliveryId").unwrap_or_default();
+    let attempts = int_of(row, "attemptCount").unwrap_or(0);
     if millis_of(row, "nextAttemptDate").is_some_and(|at| at > now)
         || (text_of(row, "leaseOwner").is_some() && millis_of(row, "leaseExpiresDate").is_some_and(|at| at > now))
     {
@@ -874,6 +875,7 @@ fn deliver_head(
         finish(
             facade,
             &delivery_id,
+            attempts,
             FAILED,
             Some("bridgeGone"),
             Some("The bridge is gone"),
@@ -915,6 +917,7 @@ fn deliver_head(
         finish(
             facade,
             &delivery_id,
+            attempts,
             FAILED,
             Some("mappingGone"),
             Some("The room is no longer mapped"),
@@ -934,6 +937,7 @@ fn deliver_head(
         finish(
             facade,
             &delivery_id,
+            attempts,
             FAILED,
             Some("eventGone"),
             Some("The message is gone"),
@@ -945,7 +949,16 @@ fn deliver_head(
     let request = match request_of(facade, row, &mapping, &event, &bridge_id)? {
         Ok(request) => request,
         Err((reason, text)) => {
-            finish(facade, &delivery_id, FAILED, Some(&reason), Some(&text), None, now)?;
+            finish(
+                facade,
+                &delivery_id,
+                attempts,
+                FAILED,
+                Some(&reason),
+                Some(&text),
+                None,
+                now,
+            )?;
             return Ok(Step::Done);
         }
     };
@@ -961,6 +974,7 @@ fn deliver_head(
         finish(
             facade,
             &delivery_id,
+            attempts,
             FAILED,
             Some("bridgeUnsupported"),
             Some("This network does not carry it"),
@@ -976,6 +990,7 @@ fn deliver_head(
         finish(
             facade,
             &delivery_id,
+            attempts,
             UNCERTAIN,
             Some("lostInFlight"),
             Some("An attempt was cut off and this network cannot tell whether it arrived"),
@@ -985,7 +1000,6 @@ fn deliver_head(
         push_state(&room_id, seq);
         return Ok(Step::Done);
     }
-    let attempts = int_of(row, "attemptCount").unwrap_or(0);
     let claimed = force_new(facade, DELIVERY, || {
         facade
             .find(DELIVERY)?
@@ -1029,7 +1043,16 @@ fn deliver_head(
     let attempt = attempts + 1;
     let step = match outcome {
         DeliveryOutcome::Accepted { remote_event_id } => {
-            finish(facade, &delivery_id, ACCEPTED, None, None, Some(&remote_event_id), now)?;
+            finish(
+                facade,
+                &delivery_id,
+                attempt,
+                ACCEPTED,
+                None,
+                None,
+                Some(&remote_event_id),
+                now,
+            )?;
             record_external(facade, &room_id, seq, &bridge_id, &mapping, &remote_event_id, now);
             set_status(facade, &bridge_id, "CbsConnected", None, now);
             Step::Sent
@@ -1039,14 +1062,26 @@ fn deliver_head(
                 set_status(facade, &bridge_id, "CbsNotConnected", Some(&error), now);
             }
             if attempt >= MAX_ATTEMPTS {
-                finish(facade, &delivery_id, FAILED, Some("attempts"), Some(&error), None, now)?;
+                finish(
+                    facade,
+                    &delivery_id,
+                    attempt,
+                    FAILED,
+                    Some("attempts"),
+                    Some(&error),
+                    None,
+                    now,
+                )?;
                 Step::Done
             } else {
                 let wait = BACKOFF[usize::try_from(attempt - 1).unwrap_or(0).min(BACKOFF.len() - 1)];
                 force_new(facade, DELIVERY, || {
+                    // only while the row is still this attempt's (see finish)
                     facade
                         .find(DELIVERY)?
                         .eq("chatBridgeDeliveryId", Value::string(&delivery_id))
+                        .eq("statusEnumId", Value::string(PENDING))
+                        .eq("attemptCount", Value::I64(attempt))
                         .disable_authz()
                         .update_all([
                             ("lastErrorText".to_string(), Value::string(&error)),
@@ -1062,6 +1097,7 @@ fn deliver_head(
             finish(
                 facade,
                 &delivery_id,
+                attempt,
                 FAILED,
                 Some(&reason_code),
                 Some(&error),
@@ -1074,6 +1110,7 @@ fn deliver_head(
             finish(
                 facade,
                 &delivery_id,
+                attempt,
                 UNCERTAIN,
                 Some("uncertain"),
                 Some(&error),
@@ -1240,10 +1277,15 @@ fn sender_name(facade: &EntityFacade, event: &EntityValue) -> Result<Option<Stri
         .and_then(|row| text_of(&row, "displayName").or_else(|| text_of(&row, "externalUserId"))))
 }
 
-/// End a row's attempt: its status, reason and error, the remote id, and no lease.
+/// End a row's attempt: its status, reason and error, the remote id, and no lease. Only while the row is still pending
+/// on `attempt` (the attempt this worker claimed, or the count it read before a claim), so a worker whose lease ran out
+/// while it sent does not overwrite the outcome of the worker that took the row over; an acceptance is kept over any
+/// state but accepted, as the network has the message whoever else tried.
+#[allow(clippy::too_many_arguments)]
 fn finish(
     facade: &EntityFacade,
     delivery_id: &str,
+    attempt: i64,
     status: &str,
     reason: Option<&str>,
     error: Option<&str>,
@@ -1267,11 +1309,16 @@ fn finish(
         fields.push(("lastErrorText".to_string(), Value::Null));
     }
     force_new(facade, DELIVERY, || {
-        facade
+        let find = facade
             .find(DELIVERY)?
-            .eq("chatBridgeDeliveryId", Value::string(delivery_id))
-            .disable_authz()
-            .update_all(fields)
+            .eq("chatBridgeDeliveryId", Value::string(delivery_id));
+        let find = if status == ACCEPTED {
+            find.condition(Condition::not_equals("statusEnumId", Value::string(ACCEPTED)))
+        } else {
+            find.eq("statusEnumId", Value::string(PENDING))
+                .eq("attemptCount", Value::I64(attempt))
+        };
+        find.disable_authz().update_all(fields)
     })?;
     Ok(())
 }
