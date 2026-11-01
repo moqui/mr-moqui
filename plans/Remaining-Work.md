@@ -55,7 +55,10 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 ## Chat and presence
 
 Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
-and acceptance gates in [§7](Comms-Framework.md#7-order). None of it is implemented yet.
+and acceptance gates in [§7](Comms-Framework.md#7-order). P0, A0–A4, W1–W6, M0 and V1–V5 are built (the PWA and
+Web Push, BasicComms and its extension model, calls with links and guests, TURN, recording, captions, and phone calls
+with voicemail, the IVR, queues, transfer and merge; [§7.4](Comms-Framework.md#74-built)); the C stream (delivery rows,
+SMS and the bridges) is next, then W7 and W8.
 
 | Item | Source |
 |---|---|
@@ -147,6 +150,24 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Tools | The tools screens still call the `StringUtilities`/`WebUtilities` globals (`runtime/base-component/tools/screen`, e.g. `EntityDataFind.xml`) | — |
 | Marble ERP (mr-marble) | Acceptance work after the migration: wiki fixtures, exhaustive role and organization isolation, CSRF, every mounted QVT interaction, physical checks and scanners | [MarbleERPMigration, Limits](archive/MarbleERPMigration.md#limits) |
 | Mantle | `moqui test mr-mantle` calls 751 of 762 services. Not called: three Google ones (`GooglePartyServices`) and `create#ContactRequestReCaptcha` (need a network); four `TenantSubscriptionServices` (deprecated multi-tenant mode); `TaxServices.calculate#InvoiceSalesTax` (empty upstream); `ReturnServices.returnAndResell#Shipment` (never places its order upstream); `PartyServices.send#DataDocumentNotifications` (needs a search backend's data feed). Unfinished upstream and kept as they are: `generate#Efw2File` (no RT, RU, RV or RF records, no `fileText`), `calculate#SalesTaxLocal`, `post#WorkEffortCost`. Migrating other components' scripts is outside this repository's gates | [ConvertProcess](archive/ConvertProcess.md), [MantleFlowTests](archive/MantleFlowTests.md) |
+
+### IronStone framework asks
+
+The BOSS designs roll their needs up in mr-boss `plan/design-crosscut.md` §7 (its Kind column marks the framework
+items) and say how apps plug into the framework in §1.5. The framework items they wait on, from the Nov 1, 2026 review
+(mr-boss `plan/review-suite-apps.md`):
+
+| Item | Needed by | Source |
+|---|---|---|
+| A device credential limited to one artifact group, revocable in Admin, with register, find and revoke (proposed `org.moqui.admin.DeviceServices`); each action still identifies its person by badge and PIN | People ClockingKiosk, Maintenance TechnicianKiosk, Manufacturing ShopFloor, Marketing CheckIn | design-admin ADM-DEVICES; crosscut CX-DEVICE |
+| A per-field or per-screen switch that turns off inline text actions, dictation and Update with AI, or routes them to a local model | People confidential records; every app's Assist contribution | design-people PE-21; crosscut CX-ASSIST |
+| A decimal evaluator tool: exact decimal arithmetic in a sandbox, for payroll formulas | People payroll | design-people PE-09 |
+| Agent administration screens: an AgentDefinition editor, an A2A tasks screen, a gateway client key shown once (the Agents rows above) | Admin Agents | design-admin ADM-AGENTS |
+| The `org.moqui.admin.*` service families: administration-path check, sessions and access revocation, connection endpoint changes that clear stored secrets, protocol and job operations, the import and export transfer contract, audit and retention; Monitor checks beyond HTTP; a per-group inactivity timeout; a runtime password-policy setter; passkeys (later) | Admin | design-admin §17 (ADM-ACCESS to ADM-RETENTION) |
+| Report engine: dataset admission with `index#BusinessDataset`; the Definition editor, Explore, Home and Playlist mountable under an app root with dataset-scoped grants; `check#ReportAudience` (owner-equivalent group delivery as separate messages), render reuse per scope fingerprint, `pause#OwnedSchedules`, `transfer#DefinitionOwner`; full per-recipient execution later | Insights | design-insights INS-03, INS-04, INS-06, INS-07 |
+| Comms C1 delivery rows and C4-SMS ([Comms-Framework §7](Comms-Framework.md#7-order)) | The one Mantle delivery ledger; Marketing's SMS stage | crosscut CX-DELIVERY; design-marketing MKT-TRANSPORT |
+| The wasm browser host's login flow and per-database tab lock (below) | Maintenance offline execution; offline kiosks and check-in, later | design-maintenance MT-14; crosscut CX-DEVICE |
+| The Mantle active-organization user-facts provider (the Agents "Apps" row above) | Every app's Assist contribution under organization scope | crosscut CX-ASSIST |
 
 ## Wasm browser host
 
