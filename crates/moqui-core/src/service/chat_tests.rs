@@ -2389,15 +2389,15 @@ fn retention_deletes_each_rooms_old_events() {
     let (ctx, facade, dir) = setup("retention", crate::service::ServicePools::idle());
     let _entered = ctx.enter();
     install(&dir);
-    users(&facade, &["rta", "rtb"]);
+    users(&facade, &["rna", "rnb"]);
     let start = now();
     set_time(&ctx, start - 3 * 24 * 60 * MINUTE);
-    login("rta");
+    login("rna");
     let create = |name: &str, days: Option<i64>| {
         let mut parameters = vec![
             ("roomTypeEnumId", text("private")),
             ("roomName", text(name)),
-            ("memberUserIdList", list(&["rtb"])),
+            ("memberUserIdList", list(&["rnb"])),
         ];
         if let Some(days) = days {
             parameters.push(("retentionDays", int(days)));
@@ -2407,7 +2407,7 @@ fn retention_deletes_each_rooms_old_events() {
     let short = create("Short", Some(1));
     let long = create("Long", Some(7));
     let always = create("Always", None);
-    let old = send(&short, r#"<p>old <span data-mention-id="rtb">@Rtb</span></p>"#);
+    let old = send(&short, r#"<p>old <span data-mention-id="rnb">@Rnb</span></p>"#);
     let poll = out_number(
         &ok(
             "create#Poll",
@@ -2432,7 +2432,7 @@ fn retention_deletes_each_rooms_old_events() {
             ("key", text("👍")),
         ],
     );
-    assert_eq!(out_number(&counts("rtb"), "mentions"), 1);
+    assert_eq!(out_number(&counts("rnb"), "mentions"), 1);
 
     let out = {
         let _authz = ctx.disable_authz();
@@ -2458,7 +2458,7 @@ fn retention_deletes_each_rooms_old_events() {
     assert_eq!(rows("moqui.chat.ChatEventMention"), 0);
     assert_eq!(rows("moqui.chat.ChatPoll"), 0, "poll {poll}");
     assert_eq!(rows("moqui.chat.ChatPollOption"), 0);
-    let b = counts("rtb");
+    let b = counts("rnb");
     assert_eq!(out_number(&b, "mentions"), 0);
     assert_eq!(
         out_number(&b, "unread"),
@@ -2833,9 +2833,19 @@ fn an_external_user_reaches_no_record_room_public_room_presence_or_agent() {
     // a member row made before (or by a path that did not ask) counts for nothing
     row(
         &facade,
+        "moqui.chat.ChatActor",
+        &[
+            ("chatActorId", text("xtout")),
+            ("kindEnumId", text("CakLocal")),
+            ("userId", text("xtout")),
+        ],
+    );
+    row(
+        &facade,
         "moqui.chat.ChatRoomMember",
         &[
             ("chatRoomId", text(&record)),
+            ("chatActorId", text("xtout")),
             ("userId", text("xtout")),
             ("roleEnumId", text("CmrMember")),
             ("joinedDate", int(now())),

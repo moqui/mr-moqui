@@ -49,6 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="enabled" type="Boolean"/>
             <parameter name="ackRequired" type="Boolean"/>
             <parameter name="canRecord" type="Boolean"/>
+            <parameter name="encrypted" type="Boolean"><description>The call is end-to-end encrypted (W8): it cannot be recorded</description></parameter>
             <parameter name="recording" type="Map"/>
             <parameter name="myConsent" type="Map"/>
             <parameter name="reasonCode"/>

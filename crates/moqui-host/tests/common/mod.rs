@@ -738,6 +738,36 @@ pub fn start_second(label: &str, data: Option<&str>, extra_conf: &str) -> Gate {
     )
 }
 
+/// Another member of a gate's cluster, in this process (a child process the gate's test started): a server on its own
+/// runtime directory against the gate's running database at `cluster_dir`, whose postmaster it adopts and leaves
+/// running. Its process properties are set first. Drop the server before the runtime directory.
+#[allow(dead_code)]
+pub fn start_member(label: &str, cluster_dir: &Path, properties: &[(&str, &str)]) -> (moqui_host::Server, DirGuard) {
+    assert_own_process();
+    for (name, value) in properties {
+        moqui_lib::env::set_property(name, (*value).to_string());
+    }
+    // the port it advertises to the gate, which an ephemeral `0` would not be
+    moqui_lib::env::set_property("cluster_https_port", free_port().to_string());
+    let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
+    let guard = DirGuard(runtime.clone());
+    std::fs::create_dir_all(&runtime).unwrap();
+    prepare_runtime(&runtime, template(), "");
+    let framework = repo_root().join("runtime/base-component/framework");
+    let bind = SocketAddr::from(([127, 0, 0, 1], 0));
+    let server = start_server(&runtime, &framework, cluster_dir, bind).unwrap();
+    (server, guard)
+}
+
+/// A loopback TCP port free now, for a listener a cluster member advertises (an ephemeral `0` is not advertised).
+#[allow(dead_code)]
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .unwrap()
+}
+
 fn start_seeded(
     label: &str,
     static_fixture: bool,
@@ -815,8 +845,11 @@ fn start_seeded_under(
         load_data(&runtime, &framework, &cluster_dir, &extra_flags).unwrap();
     }
 
-    // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free.
-    moqui_lib::env::set_property("cluster_https_port", "0");
+    // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free; a gate whose
+    // cluster has another member names a port of its own (`free_port`), which it advertises to that member
+    if !properties.iter().any(|(name, _)| *name == "cluster_https_port") {
+        moqui_lib::env::set_property("cluster_https_port", "0");
+    }
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
     Gate {

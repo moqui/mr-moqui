@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Chat devices and keys (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the server side of the
+    browser's end-to-end encryption, Matrix-style. A device is one browser's crypto store (OlmMachine of
+    matrix-sdk-crypto, js/WebrootCrypto.js) and belongs to a user, not a chat actor. The server keeps only public keys,
+    ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are
+    org.moqui.impl.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
+
+    Beside them: each device's store key (the passphrase its browser store is encrypted with, a secret answered only to
+    its user), the users' cross-signing keys and the signatures they upload, and key backups (Megolm sessions encrypted
+    in the browser to the user's backup key, opaque here).
+
+    These are moqui.* entities, which entity filters never apply to: screens reach them only through ChatKeyServices. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="ChatDevice" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's crypto device (one browser's store), deviceId unique within the user as in Matrix. Its public
+            identity keys (curve25519Key, ed25519Key) and the signed device_keys object as the device uploaded it
+            (deviceKeysJson), which is answered as it is so others can check its signature; the keys cannot change once
+            set. listRevision goes up and listChangedDate is set at each change others should see (keys set, renamed,
+            revoked): a sync answers the users whose devices changed. lastToDevicePos is the stream position of the newest
+            to-device message queued to it (each one queued takes the next). A revoked device (revokedDate) gets no new
+            messages or keys and is left out of queries; it cannot be used again. verifiedDate is what the user's other
+            device said of it (a later C7 pass): trust is held by clients, and this flag establishes none.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="curve25519Key" type="text-medium"/>
+        <field name="ed25519Key" type="text-medium"/>
+        <field name="deviceKeysJson" type="text-very-long"/>
+        <field name="userAgent" type="text-medium"><description>Of the request that made the device, to tell devices apart in My devices</description></field>
+        <field name="listRevision" type="number-integer" default="1"/>
+        <field name="listChangedDate" type="date-time"/>
+        <field name="lastToDevicePos" type="number-integer" default="0"/>
+        <field name="ackedToDevicePos" type="number-integer" default="0"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"/>
+        <field name="verifiedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+        <field name="storeKey" type="text-medium" encrypt="true"><description>The passphrase the browser encrypts this
+            device's crypto store with (OlmMachine.initialize store_passphrase): made on the first ask
+            (get#ChatDeviceStoreKey) and answered only to the device's own user, so a copied browser profile without a
+            signed-in session cannot open the store; cleared when the device is revoked. Never logged, never in another
+            answer.</description></field>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="many" related="moqui.chat.ChatDeviceKey" short-alias="keys">
+            <key-map field-name="userId"/><key-map field-name="deviceId"/></relationship>
+        <index name="CHAT_DEVICE_CHANGED"><index-field name="listChangedDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatDeviceKey" package="moqui.chat" use="transactional" cache="never">
+        <description>A device's signed one-time key (isFallback N) or fallback key (Y), keyId as Matrix names it
+            (signed_curve25519:AAAAHg), keyJson the signed key object as uploaded. A one-time key is handed out once: the
+            claim locks the device's row, takes the oldest unclaimed key and sets claimedDate, so two claims at once never
+            get the same key; a claimed one-time key is deleted by the cleanup job. A fallback key is handed out when no
+            one-time key is left and stays (claimedDate marks it used); an upload of a new one replaces it.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="keyId" type="text-short" is-pk="true"/>
+        <field name="algorithm" type="text-short"/>
+        <field name="keyJson" type="text-long"/>
+        <field name="isFallback" type="text-indicator"/>
+        <field name="uploadedDate" type="date-time"/>
+        <field name="claimedDate" type="date-time"/>
+        <field name="claimedByUserId" type="id"/>
+        <relationship type="one" related="moqui.chat.ChatDevice" short-alias="device"/>
+        <index name="CHAT_DEVKEY_AVAILABLE"><index-field name="userId"/><index-field name="deviceId"/>
+            <index-field name="algorithm"/><index-field name="claimedDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatToDevice" package="moqui.chat" use="transactional" cache="never">
+        <description>A to-device message queued to one device (userId, deviceId) at its stream position (streamPos, the
+            device's lastToDevicePos when it was queued, so a device reads its messages in the order they were queued). Kept
+            until the device acknowledges it: a sync from a position deletes everything up to it. contentJson is the event
+            content as the sending browser gave it (Olm ciphertext for an encrypted event); the server does not read it.
+            txnId is the sender's transaction, so a send retried while its first copy is still queued is not queued
+            again.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="streamPos" type="number-integer" is-pk="true"/>
+        <field name="eventType" type="text-medium"/>
+        <field name="senderUserId" type="id"/>
+        <field name="senderDeviceId" type="id"/>
+        <field name="txnId" type="text-medium"/>
+        <field name="contentJson" type="text-very-long"/>
+        <field name="queuedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatDevice" short-alias="device"/>
+        <index name="CHAT_TODEV_TXN"><index-field name="senderUserId"/><index-field name="senderDeviceId"/><index-field name="txnId"/></index>
+        <index name="CHAT_TODEV_QUEUED"><index-field name="queuedDate"/></index>
+    </entity>
+
+    <!-- ========== Cross-signing (Matrix keys/device_signing/upload, keys/signatures/upload) ========== -->
+
+    <entity entity-name="ChatCrossSigningKey" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's cross-signing key of one usage (keyUsage: master, self_signing, user_signing), as uploaded
+            (keyJson, the Matrix CrossSigningKey object) with its single ed25519 public key (publicKey, unpadded base64). The
+            master key is the user's identity: a different one replaces it only on the user's explicit reset
+            (upload#CrossSigningKeys reset), which deletes the old keys and every signature by or over them. The private
+            keys stay in the browser (and its secret storage).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="keyUsage" type="text-short" is-pk="true"/>
+        <field name="publicKey" type="text-medium"/>
+        <field name="keyJson" type="text-very-long"/>
+        <field name="uploadedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="ChatKeySignature" package="moqui.chat" use="transactional" cache="never">
+        <description>A signature a user uploaded (upload#KeySignatures) over a device (targetKeyId a deviceId) or a
+            cross-signing key (targetKeyId its public key) of targetUserId, by the signer's key signerKeyId
+            ("ed25519:&lt;public key or deviceId&gt;"). Merged into the signed objects key queries answer: a user's
+            signatures over their own keys to everyone in reach, another's only to the signer. The server does not check
+            the signature (the clients do).</description>
+        <field name="targetUserId" type="id" is-pk="true"/>
+        <field name="targetKeyId" type="text-medium" is-pk="true"/>
+        <field name="signerUserId" type="id" is-pk="true"/>
+        <field name="signerKeyId" type="text-medium" is-pk="true"/>
+        <field name="signature" type="text-medium"/>
+        <field name="uploadedDate" type="date-time"/>
+        <index name="CHAT_KEYSIG_SIGNER"><index-field name="signerUserId"/><index-field name="signerKeyId"/></index>
+    </entity>
+
+    <!-- ========== Key backup (Matrix room_keys) ========== -->
+
+    <entity entity-name="ChatKeyBackup" package="moqui.chat" use="transactional" cache="never">
+        <description>A version of a user's server-side key backup (Matrix room_keys, m.megolm_backup.v1.curve25519-aes-sha2):
+            versions are "1", "2", ... per user and never reused; the current one is the latest not deleted. algorithm and
+            authDataJson (auth_data: the backup's public key and its signatures) are as the browser gave them. etag goes up
+            at each change of its keys. A deleted version (deletedDate) has no sessions left.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="version" type="id" is-pk="true"/>
+        <field name="algorithm" type="text-medium"/>
+        <field name="authDataJson" type="text-very-long"/>
+        <field name="etag" type="number-integer" default="0"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="deletedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="many" related="moqui.chat.ChatKeyBackupSession" short-alias="sessions">
+            <key-map field-name="userId"/><key-map field-name="version"/></relationship>
+    </entity>
+
+    <entity entity-name="ChatKeyBackupSession" package="moqui.chat" use="transactional" cache="never">
+        <description>One backed-up Megolm session of a backup version: roomId (the Matrix room ID the browser names) and
+            sessionId as given, the KeyBackupData fields (firstMessageIndex, forwardedCount, isVerified) by which a better
+            copy replaces it, and sessionDataJson, the session_data encrypted to the backup's key (opaque to the
+            server).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="version" type="id" is-pk="true"/>
+        <field name="roomId" type="text-medium" is-pk="true"/>
+        <field name="sessionId" type="text-medium" is-pk="true"/>
+        <field name="firstMessageIndex" type="number-integer"/>
+        <field name="forwardedCount" type="number-integer"/>
+        <field name="isVerified" type="text-indicator"/>
+        <field name="sessionDataJson" type="text-very-long"/>
+        <field name="uploadedDate" type="date-time"/>
+        <relationship type="one" related="moqui.chat.ChatKeyBackup" short-alias="backup"/>
+    </entity>
+</entities>

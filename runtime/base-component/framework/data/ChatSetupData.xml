@@ -34,6 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="12" fieldPath="room:visibilityEnumId" fieldNameAlias="roomVisibilityEnumId"/>
         <fields fieldSeqId="13" fieldPath="room:recordEntityName" fieldNameAlias="recordEntityName"/>
         <fields fieldSeqId="14" fieldPath="room:recordId" fieldNameAlias="recordId"/>
+        <fields fieldSeqId="15" fieldPath="senderActorId"/>
+        <fields fieldSeqId="16" fieldPath="senderActor:externalUser:displayName" fieldNameAlias="senderExternalName"/>
         <conditions conditionSeqId="01" fieldNameAlias="eventTypeEnumId" fieldValue="CetMessage"/>
     </moqui.entity.document.DataDocument>
 

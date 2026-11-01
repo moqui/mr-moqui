@@ -150,7 +150,8 @@ current documentation; the live check will settle them.
 - Emergency: Telnyx's emergency calling is set up per number, with an address it validates. Enable it on the
   callback number in the portal, and put Telnyx's address id in the `EmergencyLocation`'s provider reference. Then
   mark the trunk emergency-capable.
-- SMS is through Telnyx's messaging API (C4), and does not need the SIP trunk.
+- SMS is through Telnyx's messaging API, and does not need the SIP trunk ([SMS](SMS.md)). A number with a messaging
+  bridge puts its calls and voicemail in the same room as its texts with each outside number (below).
 
 ### Other providers
 
@@ -343,8 +344,9 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   user or queue it routes to.
 - **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and
   legs move (a browser joins the new room with the same leg, a phone leg is moved by its engine: the control `move`),
-  its own legs on hold come back, and the other call ends (`CerMerged`). Both calls must be on one media node (cascading
-  SFUs are W7): calls on two are refused. **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
+  its own legs on hold come back, and the other call ends (`CerMerged`). Calls on two media nodes merge only with
+  cascading media nodes on (`rtc_cascade_enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
+  stay on their node, which relays to this call's node; without it they are refused (`differentNodes`). **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
   anyone is in it.
 - **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is taken: 202, then a NOTIFY that
   it went; its user transfers the call to the `Refer-To` user (a username, or a number) as in the browser. A phone's
@@ -447,7 +449,9 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
 
 **Calls to a phone.** When a call rings a user (a call from a colleague or a browser, or a call to their number
 through a trunk), each of their phones registered with the call's node gets a leg (`CltSipDevice`, offered), and the
-engine forks an INVITE to every live binding of it, beside the ring in their tabs.
+engine forks an INVITE to every live binding of it, beside the ring in their tabs. With cascading media nodes on
+(`rtc_cascade_enabled`), a phone registered with another node rings there too: its leg's media is on that node
+(`CallLeg.mediaNodeId`), whose room relays to the call's node.
 
 - The offer is Opus, G.722 (wideband desk phones; 16 kHz audio on its 8000 RTP clock) and G.711, with
   telephone-event; SRTP to a binding over TLS, plain RTP otherwise.
@@ -484,7 +488,7 @@ gate.
 - **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
   dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
   `sip_max_connections_per_source` from one source, are closed
-  ([Settings](#settings); `moqui-sip` `guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
+  ([Settings](#settings); moqui-lib `source_guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
     replayed (`moqui-sip` `digest.rs`).
@@ -578,7 +582,7 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - Not checked with a live provider or a real desk phone's REFER.
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
-  - A phone rings only for calls whose media is on the node it registered with (one node a call, until W7).
+  - Without `rtc_cascade_enabled` a phone rings only for calls whose media is on the node it registered with.
   - A UDP phone's STUN keepalive (RFC 5626 over UDP) is not answered; its CRLF keepalive is, and without Outbound
     the short expiry keeps its NAT open.
   - An extension is a colleague's username; there are no numeric extensions yet.

@@ -43,6 +43,12 @@ Open these ports on the firewall:
   `<expiry>:<callLegId>`, password base64 of HMAC-SHA1 of the username with `turn_auth_secret`.
 - A relay reaches only the media nodes. A permission or channel to any other address is refused, and nothing is
   relayed to or from one. A plain TURN credential would let a client relay anywhere; this rule ties it to calls.
+- The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215):
+  `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>` (`make#IceServers`), and such a relay may reach
+  public unicast addresses too, never loopback, private, unique-local, link-local, shared (100.64/10), multicast or
+  documentation ranges, nor an IPv6 address carrying an inside IPv4 one (6to4, IPv4-compatible, NAT64, Teredo)
+  (`moqui-rtc` `turn::is_public`). It is not revoked with a call, as there is none; it expires.
+  coturn sees it as any other credential, so its own peer rule decides there.
 - When a leg leaves or the call ends, the media node revokes the leg. Its credential is refused from then on, its
   relays close, and nothing more is relayed for it. An expired credential is refused too, refreshes included.
 - Quotas: two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way for each

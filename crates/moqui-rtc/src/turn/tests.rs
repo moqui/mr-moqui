@@ -244,6 +244,57 @@ fn a_peer_that_is_no_media_node_is_refused() {
 }
 
 #[test]
+fn an_xmpp_users_credential_relays_to_public_addresses_only() {
+    let mut net = Net::new(2);
+    let (user, pass) = credential(SECRET, "xmpp.U1", unix_now() + 600);
+    let mut c = net.client(5000, &user, &pass);
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    let relayed = c.allocated().expect("an allocation");
+    // a peer XMPP client on the internet
+    let public = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)), 50000);
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, public.ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(1));
+    assert!(c.permitted(public.ip()));
+    net.turn.handle_peer(net.now, public, relayed, b"from the peer");
+    net.run(&mut [&mut c], Duration::from_millis(100));
+    assert_eq!(c.received, vec![b"from the peer".to_vec()]);
+    // never into the server's own networks
+    let inside = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 22);
+    let tnow = net.tnow();
+    c.client
+        .create_permission(TransportType::Udp, inside.ip(), tnow)
+        .expect("a permission request");
+    net.run(&mut [&mut c], Duration::from_secs(45));
+    assert!(!c.permitted(inside.ip()));
+    for ip in [
+        "127.0.0.1",
+        "10.1.2.3",
+        "100.64.0.1",
+        "169.254.1.1",
+        "::1",
+        "fd00::1",
+        "fe80::1",
+        "::ffff:10.0.0.1",
+        "192.0.2.1",
+        "2002:0a00:0001::1",
+        "2002:7f00:0001::",
+        "::10.0.0.1",
+        "64:ff9b::a00:1",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+    ] {
+        assert!(!super::is_public(ip.parse().unwrap()), "{ip}");
+    }
+    assert!(super::is_public("2a00:1450::1".parse().unwrap()));
+    assert!(
+        super::is_public("2002:0808:0404::1".parse().unwrap()),
+        "6to4 of a public address"
+    );
+}
+
+#[test]
 fn revoking_a_leg_closes_its_relay_and_refuses_it_after() {
     let mut net = Net::new(2);
     let (user, pass) = credential(SECRET, "LEG1", unix_now() + 600);

@@ -166,7 +166,7 @@ pub struct PageAction {
 /// The provider hooks an app root's `shell-providers` may declare (plans/Comms-Framework.md §3.3): services the framework
 /// calls through [`crate::service`]'s `call#Providers` and combines, so several apps answer one hook. Each is declared
 /// with a provider-qualified `name`, a `service` and a `sequence`, and merged by `name` in a screen-extend.
-pub const PROVIDER_HOOKS: [&str; 11] = [
+pub const PROVIDER_HOOKS: [&str; 12] = [
     "inbox-source",
     "recipient-source",
     "record-lookup",
@@ -178,6 +178,8 @@ pub const PROVIDER_HOOKS: [&str; 11] = [
     "call-context",
     "home-source",
     "external-conversation",
+    // C4-SMS: whether a promotional text may go to a number (SmsServices check#SmsSend)
+    "sms-consent",
 ];
 
 /// A provider of one of the [`PROVIDER_HOOKS`].

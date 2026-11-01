@@ -32,6 +32,8 @@ md-5 = { workspace = true }
 sha2 = { workspace = true }
 memchr = { workspace = true }
 hmac = { workspace = true }
+# SCRAM-SHA-256 verifiers of app passwords for XMPP (service/user_keys.rs, plans/Comms-Framework.md §4.3).
+pbkdf2 = { workspace = true }
 base64 = { workspace = true }
 argon2 = { workspace = true }
 sha1 = { workspace = true }

@@ -568,6 +568,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="call-context"/>
             <xs:element ref="home-source"/>
             <xs:element ref="external-conversation"/>
+            <xs:element ref="sms-consent"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -608,6 +609,9 @@ along with this software (see the LICENSE.md file). If not, see
         rows.</xs:documentation></xs:annotation></xs:element>
     <xs:element name="external-conversation" type="provider-type"><xs:annotation><xs:documentation>Files a bridged conversation
         on a record, with an idempotency key.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="sms-consent" type="provider-type"><xs:annotation><xs:documentation>Whether a promotional text may go
+        from one of our numbers to a number (consent: true or false); with no provider saying yes it is
+        refused.</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">

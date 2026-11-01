@@ -130,6 +130,13 @@
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
 
+    <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
+        user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
+        new (the Matrix client API, C6a, needs it to be the domain). chat_to_device_retention_days: how long a to-device
+        message waits for a device that does not acknowledge it. -->
+    <default-property name="chat_server_name" value="localhost"/>
+    <default-property name="chat_to_device_retention_days" value="30"/>
+
     <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
         rtc_media_host: the address it binds (loopback by default); rtc_public_address: the address it tells browsers, an
@@ -218,6 +225,18 @@
     <default-property name="sip_max_transactions" value="2000"/>
     <default-property name="sip_max_connections" value="500"/>
     <default-property name="sip_max_connections_per_source" value="100"/>
+    <!-- Texts (C4-SMS; plans/Comms-Framework.md §5.6, docs/interfaces/SMS.md): a number's SMS and MMS go through its messaging
+        bridge, a ChatBridge of type SMS (System, Chat Bridges; its provider settings in its configuration), with or without the
+        SIP engine. channels_webhooks_enabled turns on the routes a provider calls: POST /channels/{chatBridgeId}/webhook (its
+        signature checked over the raw body, at most channels_webhook_max_bytes) and GET /channels/{chatBridgeId}/media/{token}
+        (a picture of an MMS that goes out, which the provider fetches). channels_public_url is the https base the provider
+        reaches this server at, for those files; without it an MMS goes out refused (mediaUnreachable). channels_media_key signs
+        the files' addresses (generated when unset), each good for channels_media_minutes. -->
+    <default-property name="channels_webhooks_enabled" value="false"/>
+    <default-property name="channels_webhook_max_bytes" value="262144"/>
+    <default-property name="channels_public_url" value=""/>
+    <default-property name="channels_media_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="channels_media_minutes" value="60"/>
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip_registrar_enabled is
         true, even with the SIP listeners on. sip_domain is the realm of the digest challenges and the domain phones register
         to (sip_public_address, else moqui, when empty; changing it needs each phone's password made again). A binding's
@@ -229,6 +248,28 @@
     <default-property name="sip_registrar_max_expires" value="3600"/>
     <default-property name="sip_registrar_default_expires" value="600"/>
     <default-property name="sip_registrar_nat_expires" value="60"/>
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
+        xmpp_domain is empty. xmpp_domain is the domain of the users' JIDs (user@domain), with the rooms on
+        rooms.<domain> and uploads on upload.<domain> (xmpp_rooms_domain, xmpp_upload_domain to name others); xmpp_port
+        (STARTTLS, 5222 by convention) on xmpp_host and xmpp_tls_port (direct TLS with ALPN xmpp-client, 5223) on
+        xmpp_tls_host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
+        upload.<domain>, else default). xmpp_websocket_enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
+        xmpp_upload_url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp_upload_max_bytes their
+        largest size; xmpp_upload_secret derives the URLs of chat files sent to XMPP clients. xmpp_resume_seconds is how
+        long a dropped session waits for stream resumption, xmpp_fast_token_days how long a FAST token lasts. -->
+    <default-property name="xmpp_domain" value=""/>
+    <default-property name="xmpp_rooms_domain" value=""/>
+    <default-property name="xmpp_upload_domain" value=""/>
+    <default-property name="xmpp_port" value=""/>
+    <default-property name="xmpp_host" value="0.0.0.0"/>
+    <default-property name="xmpp_tls_port" value=""/>
+    <default-property name="xmpp_tls_host" value=""/>
+    <default-property name="xmpp_websocket_enabled" value="false"/>
+    <default-property name="xmpp_upload_url" value=""/>
+    <default-property name="xmpp_upload_max_bytes" value="20971520"/>
+    <default-property name="xmpp_upload_secret" value="CHANGEME" is-secret="true"/>
+    <default-property name="xmpp_resume_seconds" value="300"/>
+    <default-property name="xmpp_fast_token_days" value="14"/>
 
     <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
@@ -1136,6 +1177,7 @@
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
+        <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1151,8 +1193,12 @@
         <load-data location="component://framework/data/ReportEmailData.xml"/>
         <load-data location="component://framework/data/MailSearchData.xml"/>
         <load-data location="component://framework/data/ChatSetupData.xml"/>
+        <load-data location="component://framework/data/ChatBridgeSetupData.xml"/>
         <load-data location="component://framework/data/CallSetupData.xml"/>
         <load-data location="component://framework/data/VoiceSetupData.xml"/>
+        <load-data location="component://framework/data/ChatKeySetupData.xml"/>
+        <load-data location="component://framework/data/XmppSetupData.xml"/>
+        <load-data location="component://framework/data/XmppSecurityData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

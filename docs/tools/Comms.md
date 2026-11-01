@@ -13,7 +13,8 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
 `org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
 `org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
-([SIP](../interfaces/SIP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
+([SIP](../interfaces/SIP.md)); XMPP clients reach chat through `moqui-xmpp`, the host's `xmpp` feature and
+`org.moqui.impl.XmppServices` (`XmppEntities.xml`, [XMPP](../interfaces/XMPP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
 menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices`.
 
 ## For users
@@ -32,6 +33,35 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   sees neither button.
 - **Chat.** Rooms (private, public, direct), threads, mentions, reactions, polls, pinned messages and files; presence
   and status in the account menu. The tray's Chat tab is the same view, smaller.
+- <a id="encrypted-rooms"></a>**Encrypted rooms** (C7). New room has Encrypted for a private room (and an encrypted direct
+  room beside the plain one). Its messages, reactions and files are encrypted in your browser and read only on the
+  devices of its members; the room shows a lock, and the room list says "Encrypted message". It cannot be turned off,
+  and it gives up what needs the server to read it: search, link previews, agents, polls, bridges, forwards, filing on
+  records and Create from; the terminal lists it but cannot read or write it. Set up the key backup in Settings, My
+  devices, and keep the recovery key it shows once: a new browser reads older messages only after Restore with it (or
+  when another of your devices shares the keys). My devices also verifies your devices (compare emoji, or scan a QR
+  code). Open the room in any tab: the tab that holds this browser's keys does the work for the others. See [Chat
+  keys](../interfaces/Chat-Keys.md#encrypted-rooms).
+- <a id="bridged-rooms"></a>**Bridged rooms** (C1). A room an administrator connected to another network (SMS, WhatsApp,
+  XMPP, Matrix and others, as their adapters come) has the network's mark in the room list and its name in the room's
+  header ("Messages here also go to ..."). People from that network are members with the network's badge, and their
+  messages carry it. Each of your messages says whether it was delivered there, is being sent, was not delivered (with
+  why) or may not have arrived; the sender or a moderator can Send again. When the bridge is not connected the room says
+  so and keeps its messages, which go out once it is back. An edit, a delete or a reaction the network cannot carry is
+  not offered. The terminal shows the same, with Send again. See [Chat bridges](../interfaces/Chat-Bridges.md).
+- <a id="texts"></a>**Texts** (C4-SMS). A number of ours with messaging has one room for each outside number it texts
+  with (the SMS icon, named their number): its texts, pictures, calls and voicemail are there, and everyone our number
+  reaches is in it. Calls, Text a number opens it for a number you are granted; a reply goes from that number. A person
+  who texts STOP gets nothing more from it until they text START; international and premium numbers stay off until an
+  administrator allows them. See [SMS](../interfaces/SMS.md).
+- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp_domain`), the people of the server can use an XMPP
+  app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Make an app password
+  in the account settings and sign in as `username@domain` with it (an email-style username has its `@` written as
+  `\40`). The app sees the rooms as group chats on `rooms.<domain>` (joined from its bookmarks, which list the rooms),
+  the people of direct messages as contacts, the history of both, reactions, replies, edits and deletes, files, typing
+  and read markers, and the same presence as the web. A room that is end-to-end encrypted in Moqui does not open in an
+  XMPP app. Messages two XMPP apps encrypt with OMEMO stay between them: the web shows "Encrypted message (OMEMO)". See
+  [XMPP](../interfaces/XMPP.md).
 - <a id="calls"></a>**Calls.** Video and audio calls with one person or several, and a chat room's call that its
   members join. New call in Calls, or Call from a room. A call rings in every tab of the callee, with Answer, Answer with
   audio only and Decline in the ring bar, and by Web Push on a device whose page is closed. In a call: mute, the camera,
@@ -47,6 +77,19 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   with Join. Settings, Calls has the microphone, camera and speaker, the ringtone, and whether calls start muted
   or with the camera off, for this browser. Calls need a media server (`rtc_media_port`); the Calls screen says when
   there is none. In the terminal a call is not live: its screen shows who is in it, with Answer, Decline and Leave.
+- <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
+  room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
+  encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a
+  key of its own, which goes only to the others' browsers, and a new key is made whenever someone joins, leaves or comes
+  back, so someone who left does not hear what is said after. The call shows End-to-end encrypted beside its state (other
+  calls show Encrypted to the server, which can record or caption them), and Participants shows each person's key state
+  (keys received, waiting for keys) and that their device is not verified yet. This is apart from the encryption of the
+  room's messages. Such a call cannot be recorded or captioned, takes no phone number, desk phone, forwarded number or
+  guest, and is not merged with another call; once encrypted it stays so. It needs a current Chrome, Edge, Firefox or
+  Safari: a browser that cannot encrypt call media says so and does not join, and the terminal does not answer one. The
+  keys use this browser's encryption device (Settings, My devices), which one tab holds at a time: answer the call in the
+  tab that is not using it for something else, or close the other one. See [WebRTC, Encrypted
+  calls](../interfaces/WebRTC.md#encrypted-calls).
 - **Recording.** When the server allows it (`call_recording_enabled`), the host of a call has a Record button: start,
   pause, resume and stop. Everyone in the call sees that it is recorded, before they join too, and can withdraw their
   consent, which pauses the recording. Where the policy asks for it, each person acknowledges the notice, and the
@@ -73,7 +116,8 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
 - <a id="in-call"></a>**In a call** (V5). Hold puts the phone on hold (it hears hold music, and nobody hears it). More
   has Transfer (to a person, a number or a queue; Now hands the caller over and you leave, Talk to them first holds the
   caller while you talk to the person, then Complete transfer or Cancel transfer), Add a participant (a person, or a
-  number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server)
+  number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server unless
+  cascading media servers are on, `rtc_cascade_enabled`)
   and Make it a meeting. A number you transfer to or add is a call you place, with your permissions and limits. A
   transfer needs the call answered, and if the call changed since you looked, try again. When a phone call rings you,
   the ring bar and the call show who is calling when an app knows the number (in IronStone, the contact and their open
@@ -112,6 +156,11 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   ends the phone. Phones register only when the administrator has turned the registrar on (`sip_registrar_enabled`);
   until then the page says so. A phone that has no SHA-256 sign-in takes the legacy profile (MD5). See
   [SIP, Registrar](../interfaces/SIP.md#registrar).
+- <a id="my-devices"></a>**My devices.** Settings, My devices lists the browsers that hold your encryption keys, for
+  encrypted calls. A browser gets its device the first time it needs one; this browser is marked. Each shows when it was
+  added and last seen, its browser and its key's fingerprint. Rename names one; Remove revokes it: it gets no new keys,
+  and others stop encrypting to it (removing this browser's own also deletes its keys here, and it gets a new device next
+  time). Removing a device does not sign that browser out. See [Chat keys](../interfaces/Chat-Keys.md).
 - <a id="voice-admin"></a>**Voice administration** (System, Voice; the VoiceAdmin permission, which ADMIN has). Status:
   whether phone calls are supported (the `sip` feature), configured and active, the SIP and media servers. Trunks: the
   provider's host and credentials (the password is never shown), TLS with SRTP unless the profile of a PBX on a private
@@ -132,6 +181,10 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   prompt (uploaded; without them, tones: Moqui ships no music or recorded speech). Numbers route to a menu or a queue too.
   The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
+- **Chat bridges** (System, Chat Bridges; the ChatBridgeAdmin permission, which ADMIN has). Each bridge with its
+  network, its status (connected, not connected, disabled) and last error, its rooms and its deliveries waiting, failed
+  and uncertain; the deliveries that did not go, with Send again; Disable and Enable. A network's bridge is set up with
+  its adapter ([Chat bridges](../interfaces/Chat-Bridges.md#administration)).
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), and rooms with unread.
 - **Notifications on this device.** The account menu turns on desktop notifications and Web Push for the browser or
@@ -172,6 +225,7 @@ records drive's folders by their records.
 
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
+| `sms-consent` | Whether a promotional text may go to a number (`fromNumber`, `toNumber`; answers `consent`); without a yes it is refused ([SMS](../interfaces/SMS.md#texts-that-go-out); Mantle answers from its consent records) |
 | `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 
 The other hooks (`invitation`, `contact-card`, `home-source`,
@@ -189,14 +243,22 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), the mail settings and Inbox of a
+`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
+Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
-provider hooks and the app's parts through both mounts. `./moq test framework --spec Voice`: caller ID, international
+provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
+texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the
 phone's events. `./moq test framework --spec Voicemail`: busy and unanswered calls to voicemail, private audio, the PIN
 and its limits, notices, transcription and its retry, and the trash. `./moq test framework --spec SipDevice`: desk and
 soft phones (credentials once, rotation, revocation, ringing beside the tabs with the first answer winning, voicemail
 after the tabs and phones ring or a phone declines, a phone's own call). `./moq test framework --spec CallHandling,RingGroup`:
 the rules, schedules across a time zone, forward loops and permissions, do not disturb and call waiting, simultaneous ring,
-the strategies, the shared box, and the first answer winning. IronStone's own parts are in its specs (`Inbox`, `Compose`,
+the strategies, the shared box, and the first answer winning. `./moq test framework --spec ChatKeys`: crypto devices,
+their keys and to-device messages; `./moq test-client basic-comms --serve --spec CryptoFlow`: two browsers exchanging an
+Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq test framework --spec CallEncryption`: the
+policy and every refusal of end-to-end encrypted calls; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
+an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). `cargo test -p moqui-xmpp` and
+`cargo test -p moqui-host --test it -- xmpp::`: XMPP clients against recorded stanzas and on a real server ([XMPP,
+Tests](../interfaces/XMPP.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

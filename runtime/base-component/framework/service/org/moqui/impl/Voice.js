@@ -25,6 +25,7 @@ const SIP_NODE = 'moqui.call.SipNode'
 const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling.js'
 const IVR = 'component://framework/service/org/moqui/impl/Ivr.js'
 const PARTICIPANT = 'moqui.call.CallParticipant'
+const SMS = 'component://framework/service/org/moqui/impl/Sms.js'
 
 /** The key a phone presses to acknowledge the recording notice (docs/interfaces/Call-Recording.md). */
 const PHONE_ACK_KEY = '1'
@@ -49,6 +50,8 @@ const DEFAULT_POLICY = {
   maxCallsPerUserPerDay: 100, maxCallsPerDay: 1000, authFailureLimit: 5, authFailureWindowSeconds: 600,
   authBlockSeconds: 3600, homeCountryCode: '1', emergencyNumbers: '911,112,999', premiumPrefixes: '+1900,+1976',
   alertUserGroupId: 'ADMIN',
+  // C4-SMS: texts a user and the deployment send a day, and the number the system's own texts go from
+  smsMaxPerUserPerDay: 200, smsMaxPerDay: 2000, smsSystemNumber: null,
 }
 const TRANSPORT_CODES = { VtrTls: 'tls', VtrTcp: 'tcp', VtrUdp: 'udp' }
 const MEDIA_CODES = { VmeSrtp: 'srtp', VmePlain: 'plain' }
@@ -107,7 +110,7 @@ function policy() {
   const out = Object.assign({}, DEFAULT_POLICY)
   if (row) for (const key of Object.keys(DEFAULT_POLICY)) if (!blank(row[key])) out[key] = row[key]
   for (const key of ['maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay', 'maxCallsPerDay',
-    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds']) out[key] = Number(out[key])
+    'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'smsMaxPerUserPerDay', 'smsMaxPerDay']) out[key] = Number(out[key])
   out.homeCountryCode = String(out.homeCountryCode).replace(/\D/g, '') || '1'
   return out
 }
@@ -376,13 +379,27 @@ function place(p, viaNode) {
   if (!trunk || trunk.disabled === 'Y') return refuse('noTrunk', 'Your number has no trunk to call out through')
   const nodes = voiceNodes().filter((n) => !viaNode || n.instanceId === viaNode)
   if (!nodes.length) return refuse('voiceUnavailable', 'Phone calls are not available: no SIP server is running')
+  // C4-SMS: the call is in the pair's room, with its texts, when our number has messaging
+  const pair = pairRoom(fromNumber, dest.number)
   const started = calls('startPhone', { userId: me, direction: 'outbound', phoneNumber: dest.number, displayName: dest.number,
-    mediaNodeId: nodes[0].instanceId, idempotencyKey: key })
+    mediaNodeId: nodes[0].instanceId, idempotencyKey: key, chatRoomId: pair })
   started.mediaNodeId = nodes[0].instanceId
   const privacy = hideCallerId(p, me)
   dial(started, trunk, dest, fromNumber, privacy ? null : userName(me), me, false, null, privacy)
   return { callSessionId: started.callSessionId, callLegId: started.callLegId, phoneLegId: started.phoneLegId, call: started.call,
     voiceTrunkId: trunk.voiceTrunkId, fromNumber, destinationClass: dest.destinationClass }
+}
+
+/** The pair room of our number and theirs (Sms.js), null when our number has no messaging or the room cannot be made. */
+function pairRoom(ours, theirs) {
+  if (!ours || !theirs) return null
+  return ec.resource.script(SMS).execute('pairRoomFor', { ourNumber: ours, theirNumber: theirs })?.chatRoomId || null
+}
+
+/** C4-SMS: the users phoneNumber no longer reaches are taken out of its pair rooms (Sms.js syncNumberRooms). */
+function syncPairRooms(phoneNumber, deleted) {
+  if (!phoneNumber) return
+  ec.resource.script(SMS).execute('syncNumberRooms', { phoneNumber, deleted: deleted === true })
 }
 
 function receive(p) {
@@ -419,7 +436,8 @@ function receive(p) {
   // V3: the user's call handling rules, or the ring group's strategy (CallHandling.js); V2's busy and no-answer
   // voicemail are its last steps
   return ec.resource.script(CALL_HANDLING).execute('inbound', { userId: group ? null : number.routeId, ringGroupId: group ? number.routeId : null,
-    toNumber: to, fromNumber: e164, rawFrom: p.fromNumber || null, displayName: name, instanceId: p.instanceId, atMs: p.atMs }) || {}
+    toNumber: to, fromNumber: e164, rawFrom: p.fromNumber || null, displayName: name, instanceId: p.instanceId, atMs: p.atMs,
+    chatRoomId: e164 ? pairRoom(to, e164) : null }) || {}
 }
 
 // ---------- forwards (V3: call handling rules, simultaneous ring, a ring group's fallback) ----------
@@ -547,7 +565,8 @@ function notifyPhoneLeg(p) {
   if (!leg || !PHONE_LEGS.includes(leg.legTypeEnumId) || leg.statusId !== 'ClsAnswered') return { notified: false }
   const session = one(SESSION, { callSessionId: leg.callSessionId })
   if (!session || !session.mediaNodeId || session.statusId === 'CssEnded') return { notified: false }
-  sipControl(session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
+  // the leg's own node when it is on an edge of the call (W7: a merged or cross-node phone)
+  sipControl(leg.mediaNodeId || session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
   return { notified: true }
 }
 
@@ -568,7 +587,9 @@ function sendDtmf(p) {
   if (!/^[0-9*#A-D]{1,32}$/.test(digits)) return refuse('badDigits', 'Keys are 0 to 9, * and #')
   const mine = myPhoneLegs(p.callSessionId)
   if (mine.refusal) return mine.refusal
-  for (const leg of mine.legs) sipControl(mine.session.mediaNodeId, { action: 'dtmf', callSessionId: p.callSessionId, callLegId: leg.callLegId, digits })
+  for (const leg of mine.legs) {
+    sipControl(leg.mediaNodeId || mine.session.mediaNodeId, { action: 'dtmf', callSessionId: p.callSessionId, callLegId: leg.callLegId, digits })
+  }
   return { sent: true }
 }
 
@@ -581,7 +602,7 @@ function holdOrResume(p, action) {
   if (mine.refusal) return mine.refusal
   for (const leg of mine.legs) {
     calls('setHeld', { callLegId: leg.callLegId, held: action === 'hold' })
-    sipControl(mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
+    sipControl(leg.mediaNodeId || mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
   }
   return {}
 }
@@ -858,6 +879,7 @@ function findNumbers() {
   const numbers = Array.from(find(NUMBER).orderBy('phoneNumber').list())
   const trunks = new Map(rows(TRUNK).map((t) => [t.voiceTrunkId, t.name || t.voiceTrunkId]))
   const locations = new Map(rows(LOCATION).map((l) => [l.emergencyLocationId, l.name || l.emergencyLocationId]))
+  const bridges = new Map(rows('moqui.chat.ChatBridge').map((b) => [b.chatBridgeId, b.name || b.chatBridgeId]))
   return {
     numberList: numbers.map((n) => ({
       phoneNumber: n.phoneNumber, voiceTrunkId: n.voiceTrunkId, trunkName: trunks.get(n.voiceTrunkId) || null,
@@ -868,6 +890,7 @@ function findNumbers() {
             : n.routeTypeEnumId === 'PnrQueue' && n.routeId ? (one('moqui.call.CallQueue', { callQueueId: n.routeId })?.name || n.routeId)
           : n.routeTypeEnumId === 'PnrVoicemail' ? ec.l10n.localize('Voicemail access') : n.routeId,
       emergencyLocationId: n.emergencyLocationId, locationName: locations.get(n.emergencyLocationId) || null, description: n.description,
+      messagingBridgeId: n.messagingBridgeId || null, messagingName: bridges.get(n.messagingBridgeId) || null,
     })),
   }
 }
@@ -896,8 +919,13 @@ function storeNumber(p) {
     return refuse('notFound', 'Ring group not found')
   }
   if (!blank(p.emergencyLocationId) && !one(LOCATION, { emergencyLocationId: p.emergencyLocationId })) return refuse('notFound', 'Emergency location not found')
+  // C4-SMS: its texts' bridge, an SMS one
+  const bridge = blank(p.messagingBridgeId) ? null : one('moqui.chat.ChatBridge', { chatBridgeId: p.messagingBridgeId })
+  if (!blank(p.messagingBridgeId) && (!bridge || bridge.typeEnumId !== 'CbtSms')) return refuse('notFound', 'SMS bridge not found')
   const fields = { voiceTrunkId: p.voiceTrunkId || null, routeTypeEnumId, routeId: p.routeId || null,
     emergencyLocationId: p.emergencyLocationId || null, description: p.description || null }
+  // left as it is when not given (a caller from before C4-SMS)
+  if (p.messagingBridgeId !== undefined) fields.messagingBridgeId = blank(p.messagingBridgeId) ? null : p.messagingBridgeId
   const row = one(NUMBER, { phoneNumber })
   if (row) {
     row.setFields(fields, true, null, null)
@@ -907,6 +935,8 @@ function storeNumber(p) {
     created.setFields(Object.assign({ phoneNumber }, fields), true, null, null)
     created.create()
   }
+  // its route or its bridge may have changed: who its texts reach
+  if (row) syncPairRooms(phoneNumber)
   return { phoneNumber }
 }
 
@@ -916,6 +946,7 @@ function deleteNumber(p) {
   const row = one(NUMBER, { phoneNumber: p.phoneNumber })
   if (!row) return refuse('notFound', 'Number not found')
   find(GRANT).condition('phoneNumber', row.phoneNumber).deleteAll()
+  syncPairRooms(row.phoneNumber, true)
   row.delete()
   return {}
 }
@@ -956,6 +987,7 @@ function revokeCallerId(p) {
     g.update()
     revoked++
   }
+  if (revoked) syncPairRooms(p.phoneNumber)
   return { revokedCount: revoked }
 }
 
@@ -1028,7 +1060,7 @@ function deleteLocation(p) {
 
 const POLICY_FIELDS = ['internationalEnabled', 'premiumEnabled', 'maxConcurrentCalls', 'maxConcurrentPerUser', 'maxCallsPerUserPerDay',
   'maxCallsPerDay', 'authFailureLimit', 'authFailureWindowSeconds', 'authBlockSeconds', 'homeCountryCode', 'emergencyNumbers',
-  'premiumPrefixes', 'alertUserGroupId']
+  'premiumPrefixes', 'alertUserGroupId', 'smsMaxPerUserPerDay', 'smsMaxPerDay', 'smsSystemNumber']
 
 function getPolicy() {
   const denied = notAdmin()
@@ -1043,7 +1075,13 @@ function updatePolicy(p) {
   for (const key of POLICY_FIELDS) {
     if (p[key] === undefined || p[key] === null || p[key] === '') continue
     if (key === 'internationalEnabled' || key === 'premiumEnabled') fields[key] = flag(p[key])
-    else if (/^(max|auth)/.test(key)) {
+    else if (key === 'smsSystemNumber') {
+      // C4-SMS: one of our numbers, with messaging
+      const number = toE164(p[key], policy().homeCountryCode)
+      const row = number ? one(NUMBER, { phoneNumber: number }) : null
+      if (!row || blank(row.messagingBridgeId)) return refuse('badPolicy', 'The system texts from one of our numbers that has messaging')
+      fields[key] = number
+    } else if (/^(max|auth|smsMax)/.test(key)) {
       const number = Number(p[key])
       if (!(Number.isInteger(number) && number >= 1)) return refuse('badPolicy', 'Limits are whole numbers of 1 or more')
       fields[key] = number
@@ -1146,9 +1184,11 @@ const operations = {
   place: (p) => place(p), receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
   // a registered phone's call (SipDevices.js receiveDeviceCall), on its own SIP engine's node; not a service
   placeFromDevice: (p) => place(p, p.instanceId || null),
-  myCallerIds, registerNode,
+  myCallerIds, registerNode, syncPairRooms: (p) => { syncPairRooms(p.phoneNumber, p.deleted === true); return {} },
   // V3 (CallHandling.js): forwards, and the dialer's country code
-  forwardCheck, dialForward, grants: (p) => ({ numberList: grantsOf(p.userId) }), homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
+  forwardCheck, dialForward, grants: (p) => ({ numberList: grantsOf(p.userId) }), homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig,
+  // C4-SMS (Sms.js): the policy, and a number's class and E.164 form by the same rules as a call's
+  policy: () => policy(), classify: (p) => classify(p.phoneNumber, policy()) || {}, toE164: (p) => ({ number: toE164(p.phoneNumber, policy().homeCountryCode) }), trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
   deleteTrunk, findNumbers, storeNumber, deleteNumber, findGrants, grantCallerId, revokeCallerId, findLocations,
   storeLocation, deleteLocation, getPolicy, updatePolicy, findUserSettings, storeUserSetting, findAuthBlocks,
   clearAuthBlock,

@@ -100,6 +100,19 @@ test("a pushed event merged into a timeline: messages in order, edits, reactions
     assert.equal(chat.applyEvent(null, event({ eventSeq: 1 })), null);
 });
 
+test("an external actor of a bridged room reacts and takes it back; a delivery update keeps the message's own fields", () => {
+    const list = [event({ eventSeq: 2, bodyText: "one", reactions: [] })];
+    chat.applyEvent(list, event({ eventSeq: 3, type: "reaction", relatesToEventSeq: 2, senderUserId: null, senderActorId: "XA100000", content: { key: "👍" } }), "ann");
+    chat.applyEvent(list, event({ eventSeq: 4, type: "reaction", relatesToEventSeq: 2, senderUserId: null, senderActorId: "XA100001", content: { key: "👍" } }), "ann");
+    assert.deepEqual(list[0].reactions, [{ key: "👍", count: 2, userIds: ["XA100000", "XA100001"], mine: false }]);
+    chat.applyEvent(list, event({ eventSeq: 5, type: "redaction", relatesToEventSeq: 3, senderUserId: null, senderActorId: "XA100000",
+        content: { target: "reaction", messageSeq: 2, key: "👍" } }), "ann");
+    assert.deepEqual(list[0].reactions, [{ key: "👍", count: 1, userIds: ["XA100001"], mine: false }]);
+    chat.applyUpdate(list, { eventSeq: 2, fields: { delivery: { state: "failed", retryable: true, destinations: [{ state: "failed", networkName: "SMS" }] } } }, "ann");
+    assert.equal(list[0].delivery.state, "failed");
+    assert.equal(list[0].bodyText, "one");
+});
+
 test("the user's own dot and do not disturb: no toasts, the notifications still come", () => {
     const saved = { state: chat.state, vm: chat.vm, me: chat.me };
     chat.state = freshState();
@@ -462,4 +475,25 @@ test("a card's button posts to chatAssistCard; an agent's typing carries its sta
     assert.equal(state.typingText.R1._AGENT_ASSIST_, "Searching…");
     chat.reduce(state, push("chatRoom:R1", { kind: "typing", chatRoomId: "R1", userId: "_AGENT_ASSIST_", typing: false }), "ann", 1100);
     assert.equal(state.typingText.R1._AGENT_ASSIST_, undefined);
+});
+
+test("an encrypted room's decrypted HTML keeps what a plain room's message may have, and a decrypted file opens as an image or bytes", async () => {
+    await chat.loadPurify();
+    const kept = '<p>Hi <span data-mention-id="bob">@Bob</span> <a href="https://example.com/x" hreflang="en">link</a> <b>bold</b></p>'
+        + '<table><tbody><tr><td colspan="2">cell</td></tr></tbody></table><img src="/files/a.png" alt="a" width="10">';
+    assert.equal(chat.clean(kept), kept, "the markup a plain room keeps stays");
+    const cleaned = chat.clean('<p class="fixed-full z-max" id="moqui" style="color:red" onclick="alert(1)">x</p>'
+        + '<a href="javascript:alert(1)" target="_blank">y</a><svg><circle onload="alert(1)"></circle></svg><script>alert(1)</script>'
+        + '<img src="x" onerror="alert(1)"><iframe src="https://example.com"></iframe><form><input name="a"></form>'
+        + '<video src="https://example.com/v.mp4"></video><span data-other="1" aria-label="z">z</span>');
+    for (const bad of ["class", "id=", "style", "onclick", "javascript:", "target", "<svg", "<circle", "<script", "onerror", "<iframe", "<form",
+        "<input", "<video", "data-other", "aria-label"]) {
+        assert.ok(cleaned.indexOf(bad) < 0, "no " + bad + " in " + cleaned);
+    }
+    assert.ok(cleaned.indexOf("<p>x</p>") >= 0, cleaned);
+    assert.equal(chat.blobType("image/PNG"), "image/png");
+    assert.equal(chat.blobType("image/jpeg"), "image/jpeg");
+    for (const type of ["text/html", "image/svg+xml", "application/xhtml+xml", "application/pdf", "", null]) {
+        assert.equal(chat.blobType(type), "application/octet-stream", String(type));
+    }
 });

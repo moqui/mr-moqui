@@ -20,6 +20,8 @@ members = [
     "crates/moqui-collab",
     "crates/moqui-rtc",
     "crates/moqui-sip",
+    "crates/moqui-channels",
+    "crates/moqui-xmpp",
     "crates/moqui-dav",
     "crates/moqui-devkit",
     "crates/moqui-drivers",
@@ -78,9 +80,15 @@ moqui-collab = { path = "crates/moqui-collab" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
 # links it under its rtc feature and owns the sockets.
 moqui-rtc = { path = "crates/moqui-rtc" }
+# Business messaging channels: the SMS adapter on Telnyx (plans/Comms-Framework.md §4.3, §5.6, C4-SMS); the host links it
+# under its channels feature.
+moqui-channels = { path = "crates/moqui-channels" }
 # Phone calls: the SIP user agent and B2BUA over moqui-rtc's audio core (plans/Comms-Framework.md §5.2, D-V1); the host
 # links it under its sip feature and owns the RTP sockets.
 moqui-sip = { path = "crates/moqui-sip" }
+# XMPP for local users: the client stream, SASL2, SCRAM and FAST, and the chat mapping (plans/Comms-Framework.md §4.3,
+# C3a); the host links it under its xmpp feature, owns the listeners and runs the chat services it names.
+moqui-xmpp = { path = "crates/moqui-xmpp" }
 # The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
 # host links it in every build.
 moqui-dav = { path = "crates/moqui-dav" }
@@ -114,6 +122,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.
 hmac = "0.13"
+# Ed25519 webhook signatures (moqui-channels): the aws-lc-rs that rustls, rcgen and str0m already link, with the default
+# features they turn on.
+aws-lc-rs = "1.19"
 sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"
@@ -322,6 +333,10 @@ str0m = { version = "0.24.1", default-features = false, features = ["aws-lc-rs"]
 # host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
 turn-server-proto = { version = "0.7.3", default-features = false, features = ["std"] }
 turn-client-proto = { version = "0.7.3", default-features = false, features = ["std"] }
+# SFrame (RFC 9605) for the tests of encrypted calls only (W8): moqui-rtc's tests check the RFC's vectors, which the browser's
+# own SFrame (webroot js/WebrootSFrame.js) runs too, against this independent implementation. rust-crypto: the CTR suites
+# as well, on the aes-gcm, hkdf, sha2, ctr and cipher already in the graph; not ring.
+sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto"] }
 # Opus for the call audio core (moqui-rtc audio/, plans/Comms-Framework.md §6.2 "The M0 gate"): a pure-Rust port of
 # libopus 1.6 with no dependencies, chosen over rusty-opus and opus-pure, and over libopus through `opus` and cmake.
 opus-rs = "0.1.40"
@@ -331,6 +346,16 @@ opus-rs = "0.1.40"
 # default, so moqui-sip installs aws-lc-rs as that default before a TLS transport starts.
 rsipstack = { version = "0.7.12", default-features = false, features = ["platform-tokio", "rustls"] }
 tokio-util = { version = "0.7", default-features = false }
+# XMPP for local users (moqui-xmpp, plans/Comms-Framework.md §4.3 "XMPP server (C3)", D-C3): rxml parses the client's
+# stream (MIT; no DTDs, entities or processing instructions), minidom holds each stanza as an element tree and jid parses
+# and prepares addresses (both MPL-2.0, used unmodified, deny.toml exceptions). The server reads and writes stanzas with
+# minidom itself; tokio-xmpp (with xmpp-parsers and sasl) is the test client's only, a dev-dependency of moqui-host.
+rxml = { version = "0.14", default-features = false, features = ["std"] }
+minidom = "0.19"
+jid = "0.12"
+tokio-xmpp = { version = "6", default-features = false }
+# The channel binding tokio-xmpp's connector hands its SASL client (the same release it resolves).
+sasl = { version = "0.5", default-features = false }
 
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the

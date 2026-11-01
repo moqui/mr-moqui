@@ -158,17 +158,26 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="send">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)
+            // an encrypted room's message (C7) is ciphertext: encryptedJson, with its mentions in the clear (mentionUserIds)
+            let sealed = null
+            try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
+            const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '', body: body || null,
                 replyToEventSeq: number(replyToEventSeq), threadRootEventSeq: number(threadRootEventSeq), chatAttachmentIds: chatAttachmentIds || null,
-                clientRef: clientRef || null, forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: number(forwardOfEventSeq)}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {eventSeq: out.eventSeq, event: out.event, clientRef: out.clientRef, duplicate: out.duplicate})
+                clientRef: clientRef || null, forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: number(forwardOfEventSeq),
+                encrypted: sealed, mentionUserIdList: mentionList}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {reasonCode: out?.reasonCode || null} : {eventSeq: out.eventSeq, event: out.event, clientRef: out.clientRef, duplicate: out.duplicate})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="edit">
         <actions><script><![CDATA[
+            // an encrypted room's message (C7) is ciphertext: encryptedJson, with its mentions in the clear (mentionUserIds)
+            let sealed = null
+            try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
+            const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.edit#Message').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), body: body || null, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
+                eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {editEventSeq: out.editEventSeq, event: out.event})
         ]]></script></actions>
         <default-response type="none"/>
@@ -183,9 +192,25 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="react">
         <actions><script><![CDATA[
+            // an encrypted room's reaction (C7): its key is ciphertext (encryptedJson), taken back by its reactionEventSeq
+            let sealed = null
+            try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.react#Message').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), key: key || ''}).call()
+                eventSeq: Number(eventSeq || 0), key: key || null, encrypted: sealed,
+                reactionEventSeq: reactionEventSeq ? Number(reactionEventSeq) : null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {added: out.added, reactionEventSeq: out.reactionEventSeq})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a message's delivery to a bridge sent again (C1): its sender, a moderator, or ChatBridgeAdmin; a refusal answers
+        reasonCode in its own transaction, so the answer still goes out -->
+    <transition name="retryDelivery">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId',
+                chatBridgeDeliveryId || '').requireNewTransaction(true).call()
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(errors ? {reasonCode: out?.reasonCode || 'refused', error: errors} : {retried: true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -264,6 +289,11 @@ along with this software (see the LICENSE.md file). If not, see
         app offers it with an ext-action on chat-message-actions -->
     <transition name="createFrom">
         <actions><script><![CDATA[
+            // the server has no text of an encrypted room's message (C7): nothing is made from it
+            // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+                    && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
+                ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: nothing is made from it')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
             const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), kind: kind || ''}}).call()
             const made = (out?.results || [])[0] || {}
@@ -277,6 +307,11 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a message filed on a record by an app's record-link provider (the record's own history shows it) -->
     <transition name="fileOnRecord">
         <actions><script><![CDATA[
+            // the server has no text of an encrypted room's message (C7): it is not filed on a record
+            // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+                    && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
+                ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: it is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
             const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), recordEntityName: recordEntityName || '',
                     recordId: recordId || ''}}).call()
@@ -301,7 +336,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createRoom">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.create#ChatRoom').parameters({roomTypeEnumId: roomTypeEnumId || 'private',
-                roomName: roomName || null, topic: topic || null, memberUserIds: memberUserIds || null}).call()
+                roomName: roomName || null, topic: topic || null, memberUserIds: memberUserIds || null,
+                encrypted: encrypted === true || encrypted === 'true' || encrypted === 'Y'}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {chatRoomId: out.chatRoomId, created: out.created})
         ]]></script></actions>
         <default-response type="none"/>
@@ -348,8 +384,9 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="removeMember">
         <actions><script><![CDATA[
-            if (!userId) ec.message.addError(ec.l10n.localize('Who to take out?'))
-            else ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId}).call()
+            if (!userId && !chatActorId) ec.message.addError(ec.l10n.localize('Who to take out?'))
+            else ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId || null,
+                chatActorId: userId ? null : chatActorId}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
@@ -379,6 +416,18 @@ along with this software (see the LICENSE.md file). If not, see
                 roomName: roomName != null ? roomName : null, topic: topic != null ? topic : null, visibilityEnumId: visibilityEnumId || null,
                 archived: archived === 'true' ? true : (archived === 'false' ? false : null)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Saved')}]})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- the room's calls end-to-end encrypted, or not (W8: owners and moderators; org.moqui.impl.CallServices) -->
+    <transition name="setCallEncryption">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.set#RoomCallEncryption').parameters({chatRoomId: chatRoomId || '',
+                required: String(required) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, required: !!out.required})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

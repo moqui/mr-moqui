@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of Call (style-guide §4.8): a call is not live in the terminal. With callSessionId, the call as the user
     sees it (org.moqui.impl.CallServices get#Call: not found for a call they may not see): its state, kind and start, and its
     people with whether each is in it or ringing; Answer and Decline while it rings for the user, Leave while they are in
-    it. -->
+    it. Its media encryption (W8): an end-to-end encrypted call shows so, and each person's encryption device (the roster
+    the browsers send their keys to); the terminal does not answer one, as it cannot encrypt media. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Call" default-menu-include="false">
 
@@ -47,9 +48,16 @@ along with this software (see the LICENSE.md file). If not, see
         stateText = call ? (STATES[call.status] || call.status) + (call.endReason ? ' (' + call.endReason + ')' : '') : ''
         startedText = call && call.startedDate ? ec.l10n.format(new Date(Number(call.startedDate)), 'MMM d, h:mm a') : ''
         kindText = call ? (call.video ? L('Video call') : L('Audio call')) : ''
+        // W8: the call's media encryption, and each person's encryption device in an end-to-end encrypted call
+        encrypted = !!call && !!call.e2ee
+        encryptionText = encrypted ? L('End-to-end encrypted: only the people in the call hear and see it (no recording, captions, phones or guests)')
+            : L('Encrypted to the server, which forwards it')
+        const deviceOf = (p) => { const leg = Array.from(p.legs || []).find((l) => l.status === 'answered' && l.type === 'web'); return leg ? leg.deviceId : null }
         peopleList = call ? Array.from(call.participants || []).map((p) => ({name: p.displayName,
-            stateText: p.inCall ? L('In the call') : p.ringing ? L('Ringing') : L('Not in the call')})) : []
-        canAnswer = !!call && call.status !== 'ended' && call.myLegStatus === 'offered'
+            stateText: (p.inCall ? L('In the call') : p.ringing ? L('Ringing') : L('Not in the call')) +
+                (encrypted && p.inCall ? ' · ' + (deviceOf(p) ? L('device') + ' ' + deviceOf(p) : L('no encryption device')) : '')})) : []
+        canAnswer = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && !encrypted
+        mustUseBrowser = !!call && call.status !== 'ended' && call.myLegStatus === 'offered' && encrypted
         canLeave = !!call && call.status !== 'ended' && call.myLegStatus === 'answered'
     ]]></script></actions>
 
@@ -58,13 +66,17 @@ along with this software (see the LICENSE.md file). If not, see
             <fail-widgets><label type="h5" text="${kindText}"/></fail-widgets></section>
         <section name="Details" condition="call"><widgets>
             <label type="p" text="${stateText} · ${startedText}"/>
+            <label type="p" text="${encryptionText}"/>
             <label type="p" text="A call is not live in the terminal; open it in the browser to talk." style="m-muted"/>
+            <section name="UseBrowser" condition="mustUseBrowser"><widgets>
+                <label type="p" text="This call is end-to-end encrypted: answer it in a browser that can encrypt call media." style="text-warning"/>
+            </widgets></section>
             <form-list name="People" list="peopleList" skip-form="true">
                 <field name="name"><default-field title="Person"><display/></default-field></field>
                 <field name="stateText"><default-field title="State"><display/></default-field></field>
             </form-list>
-            <section name="Ringing" condition="canAnswer"><widgets>
-                <link url="answer" text="Answer" icon="sym_o_call"><parameter name="callSessionId"/></link>
+            <section name="Ringing" condition="canAnswer || mustUseBrowser"><widgets>
+                <link url="answer" text="Answer" icon="sym_o_call" condition="canAnswer"><parameter name="callSessionId"/></link>
                 <link url="decline" text="Decline" icon="sym_o_call_end"><parameter name="callSessionId"/></link>
             </widgets></section>
             <section name="InCall" condition="canLeave"><widgets>

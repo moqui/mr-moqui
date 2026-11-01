@@ -273,7 +273,8 @@ fn member_role(facade: &EntityFacade, room_id: &str, user_id: &str) -> Result<Op
         .and_then(|row| text_of(&row, "roleEnumId")))
 }
 
-/// Whether a current member of the room is external ([`moqui_core::user::is_external_user`]).
+/// Whether a current member of the room is external: an outside user ([`moqui_core::user::is_external_user`]) or an
+/// external actor of a chat bridge (a member with no userId), whom the agent's replies would reach on their network.
 fn external_members(facade: &EntityFacade, room_id: &str) -> Result<bool, Error> {
     let members = facade
         .find(MEMBER)?
@@ -283,8 +284,10 @@ fn external_members(facade: &EntityFacade, room_id: &str) -> Result<bool, Error>
     let external = members
         .iter()
         .filter(|row| text_of(row, "leftDate").is_none())
-        .filter_map(|row| text_of(row, "userId"))
-        .any(|user_id| moqui_core::user::is_external_user(&user_id));
+        .any(|row| match text_of(row, "userId") {
+            Some(user_id) => moqui_core::user::is_external_user(&user_id),
+            None => true,
+        });
     Ok(external)
 }
 
@@ -382,7 +385,15 @@ fn thread_context(
         if text.is_empty() {
             continue;
         }
-        lines.push(format!("{}: {}", display_name(facade, &sender), text));
+        // an external actor of a chat bridge has no user: its name on its network
+        let name = if sender.is_empty() {
+            text_of(row, "senderActorId")
+                .and_then(|actor| external_actor_name(facade, &actor))
+                .unwrap_or_else(|| "someone outside".to_string())
+        } else {
+            display_name(facade, &sender)
+        };
+        lines.push(format!("{name}: {text}"));
     }
     let mut joined = lines.join("\n");
     if joined.chars().count() > THREAD_CHARS {
@@ -390,6 +401,26 @@ fn thread_context(
         joined = format!("…{}", joined.chars().skip(skip).collect::<String>());
     }
     Ok(joined)
+}
+
+/// The display name of an external chat actor (`ChatActor` to `ChatExternalUser`), or its id on its network.
+fn external_actor_name(facade: &EntityFacade, actor_id: &str) -> Option<String> {
+    let actor = facade
+        .find("moqui.chat.ChatActor")
+        .ok()?
+        .eq("chatActorId", Value::string(actor_id))
+        .disable_authz()
+        .one()
+        .ok()??;
+    let external = text_of(&actor, "chatExternalUserId")?;
+    let row = facade
+        .find("moqui.chat.ChatExternalUser")
+        .ok()?
+        .eq("chatExternalUserId", Value::string(external))
+        .disable_authz()
+        .one()
+        .ok()??;
+    text_of(&row, "displayName").or_else(|| text_of(&row, "externalUserId"))
 }
 
 /// The conversation of `(room, thread root, sender)` with the agent, if there is one.

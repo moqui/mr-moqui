@@ -22,7 +22,10 @@
 //!   refreshes and new allocations included.
 //! - **Relay peers** are only the media nodes ([`TurnConfig::allowed_peers`]): a permission or channel to any other
 //!   address is refused before the server sees it, and nothing is relayed to or from one. Standard TURN credentials do
-//!   not bind a relay to one call; this rule does.
+//!   not bind a relay to one call; this rule does. The one exception is an XMPP user's own credential (leg
+//!   `xmpp.<userId>`, `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may relay to public
+//!   unicast addresses too, never to loopback, private, link-local, shared or documentation ranges ([`is_public`]), so
+//!   it cannot reach into the server's own networks.
 //! - **Quotas:** allocations per username and in all, and a bandwidth per allocation, past which data is dropped.
 //! - **Revocation** ([`Turn::revoke_leg`]): the leg's username is refused from then on, its allocations' relay sockets
 //!   close, and nothing more is relayed for them.
@@ -55,6 +58,54 @@ use crate::sfu::Proto;
 const REVOKED_FOR: Duration = Duration::from_secs(24 * 3600);
 /// The longest wait [`Turn::next_timeout`] gives, so revocations and expiries are looked at.
 const MAX_WAIT: Duration = Duration::from_secs(1);
+
+/// The leg prefix of an XMPP user's own credential, which may relay to public addresses.
+pub const XMPP_LEG: &str = "xmpp.";
+
+/// A public unicast address: not unspecified, loopback, private, shared (100.64/10), link-local, multicast, broadcast,
+/// documentation, benchmarking or unique-local; an IPv4-mapped IPv6 address and a 6to4 one (2002::/16) as the IPv4
+/// address they carry; no IPv4-compatible (::/96), NAT64 (64:ff9b::/96 and /48) or Teredo (2001::/32) address, which
+/// carry an IPv4 address that may be inside.
+pub fn is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            !(v4.is_unspecified()
+                || v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || a == 0
+                || a >= 240
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19))
+                || (a == 192 && b == 0 && c == 0))
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let segments = v6.segments();
+            let first = segments[0];
+            if first == 0x2002 {
+                let [a, b] = segments[1].to_be_bytes();
+                let [c, d] = segments[2].to_be_bytes();
+                return is_public(IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
+            !(v6.is_unspecified()
+                || v6.is_loopback()
+                || v6.is_multicast()
+                || segments[..6].iter().all(|segment| *segment == 0)
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || first == 0x2001 && segments[1] == 0x0db8
+                || first == 0x2001 && segments[1] == 0
+                || first == 0x0064)
+        }
+    }
+}
 
 /// The password of a TURN REST username: base64 of HMAC-SHA1 of the username with the shared secret.
 pub fn password(secret: &[u8], username: &str) -> String {
@@ -241,8 +292,8 @@ impl Turn {
             .find(|s| s.listen_address() == listen && s.transport() == transport)
     }
 
-    fn peer_allowed(&self, ip: IpAddr) -> bool {
-        self.config.allowed_peers.contains(&ip)
+    fn peer_allowed(&self, ip: IpAddr, leg: Option<&str>) -> bool {
+        self.config.allowed_peers.contains(&ip) || (leg.is_some_and(|leg| leg.starts_with(XMPP_LEG)) && is_public(ip))
     }
 
     fn is_revoked(&self, leg: &str) -> bool {
@@ -319,10 +370,11 @@ impl Turn {
             }
         } else if method == CREATE_PERMISSION || method == CHANNEL_BIND {
             let transaction = message.transaction_id();
+            let leg = self.allocations.get(&(listen, from)).map(|a| Arc::clone(&a.leg));
             let mut n = 0;
             while let Ok(peer) = message.nth_attribute::<XorPeerAddress>(n) {
                 let ip = peer.addr(transaction).ip();
-                if !self.peer_allowed(ip) {
+                if !self.peer_allowed(ip, leg.as_deref()) {
                     tracing::debug!("TURN permission refused for {ip}: not a media node");
                     return false;
                 }
@@ -340,12 +392,13 @@ impl Turn {
 
     /// Data from a peer arrived at the relay socket `relayed`.
     pub fn handle_peer(&mut self, now: Instant, from: SocketAddr, relayed: SocketAddr, data: &[u8]) {
-        if !self.peer_allowed(from.ip()) {
-            return;
-        }
         let Some(&(listen, client)) = self.relays.get(&relayed) else {
             return;
         };
+        let leg = self.allocations.get(&(listen, client)).map(|a| Arc::clone(&a.leg));
+        if !self.peer_allowed(from.ip(), leg.as_deref()) {
+            return;
+        }
         let Some(transport) = self
             .servers
             .iter()
@@ -475,7 +528,8 @@ impl Turn {
     /// within the allocation's bandwidth).
     fn send_out(&mut self, now: Instant, proto: Proto, from: SocketAddr, to: SocketAddr, data: Vec<u8>) {
         if let Some(&key) = self.relays.get(&from) {
-            if !self.peer_allowed(to.ip()) || !self.take_tokens(&key, data.len(), now) {
+            let leg = self.allocations.get(&key).map(|a| Arc::clone(&a.leg));
+            if !self.peer_allowed(to.ip(), leg.as_deref()) || !self.take_tokens(&key, data.len(), now) {
                 return;
             }
         } else if self.servers.iter().all(|s| s.listen_address() != from) {

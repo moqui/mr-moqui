@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Admin: Chat bridges (plans/Comms-Framework.md §4.3, C1): the connectors and federated networks chat rooms are mapped to,
+    each with its status as its adapter last reported it (connected, not connected, disabled), its last error, its mapped
+    rooms and the deliveries waiting, failed and uncertain; and the latest deliveries that did not go, each with Send again
+    (the same idempotency key; an uncertain one may then arrive twice). Disable stops a bridge's deliveries and input; Enable
+    lets the worker start it again. org.moqui.impl.ChatBridgeServices find#Bridges, store#Bridge and retry#Delivery, which need
+    the ChatBridgeAdmin permission. A bridge is made and its rooms mapped by store#Bridge and store#RoomBridge; the networks'
+    own setup comes with their adapters (C4 on). basic-comms' MoquiConf.xml mounts this in the tools System app. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Chat Bridges" default-menu-index="21" menu-image="sym_o_hub" menu-image-type="icon">
+
+    <transition name="setDisabled">
+        <service-call name="org.moqui.impl.ChatBridgeServices.store#Bridge" in-map="{chatBridgeId:chatBridgeId, disabled:disabled}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Bridge changed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="retryDelivery">
+        <service-call name="org.moqui.impl.ChatBridgeServices.retry#Delivery" in-map="{chatBridgeDeliveryId:chatBridgeDeliveryId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Sending again</message></if></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.find#Bridges').requireNewTransaction(true).call() || {}
+        allowed = !ec.message.hasError()
+        ec.message.clearErrors()
+        const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
+        bridgeList = Array.from(out.bridgeList || []).map((b) => Object.assign({}, b, {
+            networkText: (b.networkName || b.typeEnumId || '') + (b.adapter ? '' : ' · ' + L('no adapter in this build')),
+            statusLine: (b.statusText || L('Not started yet')) + (b.lastStatusDate ? ' · ' + when(b.lastStatusDate) : ''),
+            statusColor: b.statusId === 'CbsConnected' ? 'positive' : b.statusId === 'CbsDisabled' ? 'grey' : 'warning',
+            errorText: b.lastErrorText ? b.lastErrorText + (b.lastErrorDate ? ' (' + when(b.lastErrorDate) + ')' : '') : '',
+            countText: [b.pendingCount ? b.pendingCount + ' ' + L('waiting') : '', b.failedCount ? b.failedCount + ' ' + L('failed') : '',
+                b.uncertainCount ? b.uncertainCount + ' ' + L('uncertain') : ''].filter((part) => part).join(', ') || L('None'),
+            disabledFlag: b.statusId === 'CbsDisabled' ? 'N' : 'Y',
+            toggleText: b.statusId === 'CbsDisabled' ? L('Enable') : L('Disable'),
+        }))
+        problemList = Array.from(out.problemList || []).map((p) => Object.assign({}, p, {
+            stateText: p.state === 'failed' ? L('Failed') : L('Uncertain'),
+            stateColor: p.state === 'failed' ? 'negative' : 'warning',
+            messageText: p.roomName + ' #' + p.eventSeq,
+            errorLine: [p.reasonCode, p.error].filter((part) => part).join(': '),
+            whenText: when(p.lastAttemptDate) + (p.attemptCount ? ' · ' + p.attemptCount + ' ' + L(p.attemptCount === 1 ? 'attempt' : 'attempts') : ''),
+        }))
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Chat bridges" style="q-my-none"/>
+        </container>
+        <section name="NotAllowed" condition="!allowed"><widgets>
+            <label type="p" style="m-muted" text="Chat bridges are for administrators."/>
+        </widgets></section>
+        <section name="Bridges" condition="allowed"><widgets>
+            <label type="p" style="m-muted" text="A bridge carries a room's messages to another network: SMS, WhatsApp, XMPP, Matrix and others. When one is not connected its rooms keep their messages, which go out once it is back."/>
+            <section name="NoBridges" condition="!bridgeList.length"><widgets>
+                <label type="p" style="m-muted" text="No bridges yet. A network's bridge is set up with its adapter."/>
+            </widgets></section>
+            <section name="BridgeBox" condition="bridgeList.length"><widgets><container-box><box-body-nopad>
+                <form-list name="BridgeList" list="bridgeList" skip-form="true" paginate="false">
+                    <field name="name"><default-field title="Bridge"><display style="text-weight-medium"/></default-field></field>
+                    <field name="networkText"><default-field title="Network"><display/></default-field></field>
+                    <field name="statusLine"><default-field title="Status"><display style="text-${statusColor}"/></default-field></field>
+                    <field name="errorText"><default-field title="Last error"><display style="text-caption text-negative"/></default-field></field>
+                    <field name="roomCount" align="right"><default-field title="Rooms"><display/></default-field></field>
+                    <field name="countText"><default-field title="Deliveries"><display/></default-field></field>
+                    <field name="tools" align="right"><default-field title="">
+                        <link url="setDisabled" link-type="hidden-form-link" text="${toggleText}" parameter-map="{chatBridgeId:chatBridgeId, disabled:disabledFlag}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="name"/><field-ref name="networkText"/><field-ref name="errorText"/></column>
+                        <column><field-ref name="statusLine"/><field-ref name="countText"/><field-ref name="tools"/></column>
+                    </columns>
+                </form-list>
+            </box-body-nopad></container-box></widgets></section>
+            <section name="Problems" condition="problemList.length"><widgets>
+                <label type="h6" text="Deliveries that did not go" style="q-mt-md"/>
+                <container-box><box-body-nopad>
+                    <form-list name="ProblemList" list="problemList" skip-form="true" paginate="false">
+                        <field name="messageText"><default-field title="Message"><display style="text-weight-medium"/></default-field></field>
+                        <field name="bridgeName"><default-field title="Bridge"><display/></default-field></field>
+                        <field name="stateText"><default-field title="State"><display style="text-${stateColor}"/></default-field></field>
+                        <field name="errorLine"><default-field title="Reason"><display style="text-caption"/></default-field></field>
+                        <field name="whenText"><default-field title="Last attempt"><display style="text-caption"/></default-field></field>
+                        <field name="tools" align="right"><default-field title="">
+                            <link url="retryDelivery" link-type="hidden-form-link" text="Send again" parameter-map="{chatBridgeDeliveryId:chatBridgeDeliveryId}"/>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="messageText"/><field-ref name="bridgeName"/><field-ref name="errorLine"/></column>
+                            <column><field-ref name="stateText"/><field-ref name="tools"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+            </widgets></section>
+        </widgets></section>
+    </widgets>
+</screen>
