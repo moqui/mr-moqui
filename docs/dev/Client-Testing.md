@@ -134,8 +134,9 @@ later ones take seconds.
 `moqui test --serve [address]` is the server side, also for use by hand. When its specs pass it shuts the test factory
 down and serves the same scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone, on
 loopback), printing `Serving <url> (Ctrl-C to stop)`, until Ctrl-C, SIGTERM, or the end of standard input when it is a
-pipe. The SSH, HTTPS and cluster ports move to free ones unless set, so it starts beside a running server. Not with
-`--db existing`, `--db none`, `--agents` or `--skills`.
+pipe. The SSH, HTTPS and cluster ports move to free ones unless set, so it starts beside a running server. With
+`--db existing` it serves the runtime's own database instead of a scratch one. Not with `--db none`, `--agents` or
+`--skills`.
 
 ```sh
 moqui test mr-mantle mr-marble --spec SimpleScreensRender,ClientAccess --serve 18081

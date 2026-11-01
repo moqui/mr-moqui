@@ -350,11 +350,13 @@ Options:
                                   existing uses the runtime's embedded database and changes its data.
   --junit dir                     Write TEST-<component>.<Spec>.xml into this directory.
   --keep                          Leave the scratch runtime in place.
-  --serve [address]               When the specs pass, serve the scratch database on the address
+  --serve [address]               When the specs pass, serve the run's database on the address
                                   (127.0.0.1:0, a free port, by default; or a port alone) until
                                   Ctrl-C, SIGTERM, or the end of standard input when it is a pipe;
-                                  then remove the scratch runtime unless --keep. Not with --db
-                                  existing or --db none. A component named with no specs is there to load.
+                                  then remove the scratch runtime unless --keep. With --db existing
+                                  it serves the runtime's own database, for one whose cluster was
+                                  put in place beforehand (a copy of a loaded one). Not with --db
+                                  none. A component named with no specs is there to load.
   --ready-file path               With --serve: write the server's URL here once it listens.
   --coverage                      After the run, list the services of each component's service/*.xml
                                   files that no spec called, with the total.

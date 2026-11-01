@@ -13,9 +13,10 @@
  */
 
 //! `moqui test --serve [address]` (plans/archive/ClientTestHarness.md 6): once the specs pass, the test factory shuts down and
-//! a server starts on the same scratch runtime and cluster, for client specs or a person to use. It serves until
-//! SIGINT or SIGTERM, or until its standard input closes when that is a pipe (the one `moqui test-client --serve`
-//! holds, so the server also stops when the client dies), then the scratch runtime goes unless `--keep`.
+//! a server starts on the same runtime and cluster (the scratch one, or with `--db existing` the runtime itself), for
+//! client specs or a person to use. It serves until SIGINT or SIGTERM, or until its standard input closes when that is
+//! a pipe (the one `moqui test-client --serve` holds, so the server also stops when the client dies), then a scratch
+//! runtime goes unless `--keep`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -114,6 +115,7 @@ pub(super) fn serve(
 ) -> Result<(), Error> {
     let stdin_closed = &setup.stdin_closed;
     let runtime = fixture.runtime_dir.clone();
+    let on_scratch = fixture.on_scratch;
     let scratch = Scratch(fixture.close_keeping_runtime());
     if stdin_closed.load(Ordering::Relaxed) {
         println!("Not serving: standard input closed");
@@ -149,7 +151,7 @@ pub(super) fn serve(
     if let Some(path) = ready_file {
         let _ = std::fs::remove_file(path);
     }
-    if scratch.0.is_none() {
+    if on_scratch && scratch.0.is_none() {
         println!("Test runtime kept: {}", runtime.display());
     }
     drop(scratch);
