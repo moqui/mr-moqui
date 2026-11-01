@@ -25,8 +25,11 @@ along with this software (see the LICENSE.md file). If not, see
     Sending, Waiting or Not sent (Retry, Delete), and after a reconnect the room reads what it missed. The side panes:
     a thread, the room's threads, its files, members, pinned messages, search and the record. A message may be a poll
     (/poll or the composer's poll button), a forward (Forward… in its menu: the server quotes it) and has text cards of
-    its links (no pictures; its sender removes them). Brand color names and Quasar classes only (style-guide §4.8, §5);
-    the m-* inputs for what is typed. -->
+    its links (no pictures; its sender removes them). An encrypted room (C7, New room's Encrypted; docs/interfaces/Chat-Keys.md
+    "Encrypted rooms") is encrypted and decrypted in this browser (moqui.chat.sealMessage, openEvents, openEvent over
+    moqui.crypto): its outbox items and drafts keep no text, its files go up encrypted and show from decrypted blobs, and
+    it has no forward, filing, app actions or polls; its header and settings say what it gives up. Brand color names and
+    Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
 <template><div class="m-chat-root"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
     <!-- the rail -->
     <div v-show="!stacked || !roomId" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
@@ -112,6 +115,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label class="row no-wrap items-center">
                                 <span class="ellipsis" :class="countsOf(room).unread || countsOf(room).mentions ? 'text-weight-bold' : ''">{{room.displayName}}</span>
                                 <q-icon v-if="room.isPinned" name="sym_o_keep" size="12px" class="m-muted q-ml-xs"></q-icon>
+                                <q-icon v-if="room.bridged" :name="room.notConnected ? 'sym_o_link_off' : 'sym_o_hub'" size="12px" class="q-ml-xs"
+                                        :class="room.notConnected ? 'text-warning' : 'm-muted'" :data-bridged="room.chatRoomId"><q-tooltip>{{bridgeText(room)}}</q-tooltip></q-icon>
                                 <q-space></q-space>
                                 <span class="text-caption m-muted text-no-wrap q-ml-xs">{{shortWhen(room.lastMessage ? room.lastMessage.sentDate : room.lastEventDate)}}</span>
                             </q-item-label>
@@ -173,6 +178,10 @@ along with this software (see the LICENSE.md file). If not, see
         <q-btn-toggle v-model="newRoom.type" spread dense no-caps unelevated toggle-color="primary" class="q-mb-xs"
                 :options="[{label: t('Private'), value: 'private', icon: 'sym_o_lock'}, {label: t('Public'), value: 'public', icon: 'sym_o_tag'}]"></q-btn-toggle>
         <div class="text-caption m-muted q-mb-sm">{{newRoom.type === 'public' ? t('Anyone can find this room, read it and join.') : t('Only the people in it see it; members add others.')}}</div>
+        <template v-if="newRoom.type !== 'public'">
+            <q-toggle v-model="newRoom.encrypted" name="roomEncrypted" :label="t('Encrypted')" class="m-chat-new-encrypted"></q-toggle>
+            <div v-if="newRoom.encrypted" class="text-caption m-muted q-mb-sm">{{t('End-to-end encrypted, for good: only the devices of its members read it. No server search, link previews, agents, polls, bridges, forwards, filing on records or terminal; a new device reads older messages from your key backup.')}}</div>
+        </template>
         <m-text-line v-model="newRoom.name" name="roomName" :label="t('Name')" required></m-text-line>
         <m-text-area v-model="newRoom.topic" name="roomTopic" rows="2" :label="t('Topic')" class="q-mt-xs"></m-text-area>
         <m-drop-down v-model="newRoom.userIds" name="roomUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('Members')" class="q-mt-xs"></m-drop-down>
@@ -213,10 +222,12 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
 const EMOJI = ['😀', '😃', '😄', '😁', '😅', '😂', '🙂', '😉', '😊', '😍', '🤔', '😐', '😴', '😎', '🥳', '😢', '😮', '😬', '🙃', '🤝',
     '👍', '👎', '👏', '🙌', '🙏', '💪', '👀', '🎉', '🔥', '✅', '❌', '⚠️', '❤️', '💡', '📌', '📎', '🚀', '☕', '🍕', '💬'];
 const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': 'Clears in an hour', '240': 'Clears in 4 hours', today: 'Clears today', week: 'Clears this week' };
-const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description' };
+const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description', CrtExternal: 'sym_o_sms' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
 const DRAFT_PREFIX = 'boss.chat.draft.';
+// the drafts of encrypted rooms: in this page only (C7)
+const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
 const timeText = (millis) => (millis ? new Date(Number(millis)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
 const fullTime = (millis) => (millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }) : '');
@@ -265,7 +276,7 @@ const isEmptyHtml = (html) => (moqui.richText && moqui.richText.isEmpty ? moqui.
 const systemText = (event, nameOf) => {
     const content = event.content || {};
     const by = nameOf(content.byUserId || event.senderUserId);
-    const who = nameOf(content.userId);
+    const who = nameOf(content.userId || content.chatActorId);
     const roles = { CmrOwner: t('an owner'), CmrModerator: t('a moderator'), CmrMember: t('a member'), CmrAgent: t('an agent') };
     if (event.type === 'membership') {
         if (content.action === 'join') return [fill(t('{user} joined'), { user: who }), 'sym_o_login'];
@@ -330,6 +341,8 @@ const messageTemplate = `
     <div class="col" style="min-width:0">
         <div v-if="!item.grouped" class="row items-baseline no-wrap">
             <span class="text-weight-medium ellipsis">{{item.senderName}}</span>
+            <q-chip v-if="item.event.senderExternal" dense square size="sm" icon="sym_o_hub" class="m-tonal text-info q-my-none q-ml-xs m-chat-external">
+                {{item.event.senderExternal.networkName || room.t('Outside')}}</q-chip>
             <span class="text-caption m-muted text-no-wrap q-ml-sm">{{item.timeText}}<q-tooltip>{{item.fullTime}}</q-tooltip></span>
             <q-icon v-if="item.pinned" name="sym_o_keep" size="14px" color="primary" class="q-ml-xs"><q-tooltip>{{room.t('Pinned')}}</q-tooltip></q-icon>
         </div>
@@ -340,6 +353,7 @@ const messageTemplate = `
             </div>
         </div>
         <div v-if="item.redacted" class="text-body2 m-muted text-italic">{{item.removedLabel || room.t('Message removed')}}</div>
+        <div v-else-if="item.undecryptable" class="text-body2 m-muted text-italic m-chat-undecryptable"><q-icon name="sym_o_lock" size="16px" class="q-mr-xs"></q-icon>{{room.t('Encrypted message: this device has no key for it yet. Restore your key backup in Settings, My devices, or keep this page open while another of your devices shares it.')}}</div>
         <template v-else>
             <chat-edit v-if="room.isEditing(item)" :room="room" :item="item"></chat-edit>
             <div v-else-if="item.bodyHtml && !item.poll" class="m-rich-text-content text-body2" style="padding:0;cursor:auto;max-height:none;overflow:visible;overflow-wrap:anywhere"
@@ -397,12 +411,20 @@ const messageTemplate = `
             </div>
             <div v-if="item.reactions.length" class="row items-center q-mt-xs">
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
-                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs" :disable="!room.canPost" @click.stop="room.react(item, reaction.key)">
+                        :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs" :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.react(item, reaction.key)">
                     {{reaction.key}} {{reaction.count}}<q-tooltip>{{room.reactorsText(reaction)}}</q-tooltip></q-chip>
             </div>
             <div v-if="!inThread && item.threadReplyCount" class="q-mt-xs">
                 <a href="#" class="text-primary text-caption text-weight-medium" @click.prevent.stop="room.openThread(item.eventSeq)">{{room.repliesText(item.threadReplyCount)}}</a>
                 <span class="text-caption m-muted"> · {{room.t('last reply')}} {{room.shortWhen(item.threadLastDate)}}</span>
+            </div>
+            <!-- its delivery to the room's bridges: sending, delivered, not delivered (with Send again) or uncertain -->
+            <div v-if="item.event.delivery" class="row items-center no-wrap q-mt-xs text-caption m-chat-delivery" :class="room.deliveryClass(item)"
+                    :data-delivery="item.event.delivery.state">
+                <q-icon :name="room.deliveryIcon(item)" size="14px" class="q-mr-xs"></q-icon>
+                <span class="ellipsis">{{room.deliveryText(item)}}</span>
+                <q-btn v-if="room.canRetry(item)" flat dense no-caps size="sm" color="primary" class="q-ml-xs" :label="room.t('Send again')"
+                        @click.stop="room.retryDelivery(item)"></q-btn>
             </div>
         </template>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
@@ -413,13 +435,15 @@ const messageTemplate = `
     <div v-if="room.showActions(item, inThread)" class="absolute-top-right q-mr-sm" style="top:-14px;z-index:2" @click.stop>
         <q-card flat bordered class="row no-wrap items-center shadow-2">
             <template v-if="room.canPost">
-                <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
-                        :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
-                <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
-                    <q-menu anchor="bottom right" self="top right"><div class="q-pa-xs row" style="width:236px">
-                        <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
-                    </div></q-menu>
-                </q-btn>
+                <template v-if="room.bridgeCaps.reaction">
+                    <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
+                            :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
+                    <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
+                        <q-menu anchor="bottom right" self="top right"><div class="q-pa-xs row" style="width:236px">
+                            <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
+                        </div></q-menu>
+                    </q-btn>
+                </template>
                 <q-btn v-if="!inThread" flat round dense size="sm" icon="sym_o_reply" :aria-label="room.t('Reply')" @click="room.startReply(item)"><q-tooltip>{{room.t('Reply')}}</q-tooltip></q-btn>
                 <q-btn v-if="!inThread" flat round dense size="sm" icon="sym_o_forum" :aria-label="room.t('Reply in thread')" @click="room.openThread(item.eventSeq)">
                     <q-tooltip>{{room.t('Reply in thread')}}</q-tooltip></q-btn>
@@ -435,14 +459,14 @@ const messageTemplate = `
                         <q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{room.t('Copy link')}}</q-item-section></q-item>
                     <q-item clickable v-close-popup @click="room.copyText(item)">
                         <q-item-section avatar><q-icon name="sym_o_content_copy"></q-icon></q-item-section><q-item-section>{{room.t('Copy text')}}</q-item-section></q-item>
-                    <q-item v-if="room.isMember" clickable v-close-popup @click="room.openForward(item)">
+                    <q-item v-if="room.isMember && !room.sealed" clickable v-close-popup @click="room.openForward(item)">
                         <q-item-section avatar><q-icon name="sym_o_forward"></q-icon></q-item-section><q-item-section>{{room.t('Forward…')}}</q-item-section></q-item>
                     <q-item v-if="room.isMember && !inThread" clickable v-close-popup @click="room.markUnreadFrom(item)">
                         <q-item-section avatar><q-icon name="sym_o_mark_chat_unread"></q-icon></q-item-section><q-item-section>{{room.t('Mark unread from here')}}</q-item-section></q-item>
                     <q-separator></q-separator>
                     <!-- what an app adds to a message (ext-action slot chat-message-actions; IronStone: create a task, request or event) -->
-                    <m-ext-actions slot="chat-message-actions" :item="{ chatRoomId: room.roomId, eventSeq: item.eventSeq }"></m-ext-actions>
-                    <q-item v-if="room.prefs.recordLink" clickable v-close-popup @click="room.openFileOn(item)">
+                    <m-ext-actions v-if="!room.sealed" slot="chat-message-actions" :item="{ chatRoomId: room.roomId, eventSeq: item.eventSeq }"></m-ext-actions>
+                    <q-item v-if="room.prefs.recordLink && !room.sealed" clickable v-close-popup @click="room.openFileOn(item)">
                         <q-item-section avatar><q-icon name="sym_o_link"></q-icon></q-item-section><q-item-section>{{room.t('File on a record…')}}</q-item-section></q-item>
                     <template v-if="room.canRedact(item)">
                         <q-separator></q-separator>
@@ -512,7 +536,7 @@ const composerTemplate = `
             </div></q-menu>
         </q-btn>
         <q-btn flat round dense size="sm" icon="sym_o_alternate_email" :aria-label="room.t('Mention someone')" @click="insert('@')"><q-tooltip>{{room.t('Mention someone')}}</q-tooltip></q-btn>
-        <q-btn flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
+        <q-btn v-if="!room.sealed" flat round dense size="sm" icon="sym_o_ballot" :aria-label="room.t('Make a poll')" :disable="room.offline" @click="room.openPoll(threadRoot || null, '')">
             <q-tooltip>{{room.t('Make a poll')}}</q-tooltip></q-btn>
         <span class="text-caption m-muted q-ml-sm ellipsis gt-xs" v-if="!room.compact && !threadRoot">{{hint}}</span>
         <q-space></q-space>
@@ -549,6 +573,8 @@ const chatComposer = {
         t,
         saveDraft() {
             const has = !isEmptyHtml(this.body);
+            // an encrypted room's draft stays in this page, never in the browser's storage (C7)
+            if (this.room.sealed) { sealedDrafts[this.draftKey] = has ? this.body : null; storage.set(this.draftKey, null); return; }
             storage.set(this.draftKey, has ? this.body : null);
             window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: this.room.roomId } }));
         },
@@ -588,7 +614,8 @@ const chatComposer = {
             const files = this.files;
             this.sending = true;
             this.clear();
-            this.room.sendMessage({ body: isEmptyHtml(body) ? '' : body, attachmentIds: ids, threadRoot: this.threadRoot || null }).then(() => {
+            this.room.sendMessage({ body: isEmptyHtml(body) ? '' : body, attachmentIds: ids, files: files.filter((file) => file.chatAttachmentId),
+                threadRoot: this.threadRoot || null }).then(() => {
                 this.sending = false;
                 this.$nextTick(() => this.focus());
             }, () => {
@@ -602,6 +629,7 @@ const chatComposer = {
             this.body = '';
             this.files = [];
             storage.set(this.draftKey, null);
+            sealedDrafts[this.draftKey] = null;
             window.dispatchEvent(new CustomEvent('boss-chat-draft', { detail: { chatRoomId: this.room.roomId } }));
             this.room.typingStop();
         },
@@ -627,17 +655,23 @@ const chatComposer = {
             list.forEach((file) => {
                 const entry = { key: 'f' + Date.now() + Math.random(), fileName: file.name, contentType: file.type, fileSize: file.size, uploading: true, chatAttachmentId: null };
                 this.files.push(entry);
-                const form = new FormData();
-                form.append('chatRoomId', this.room.roomId);
-                form.append('file', file, file.name);
-                if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
-                moqui.request(this.room.url('upload'), { method: 'POST', params: form }).then((result) => {
+                // an encrypted room's file goes up encrypted, named encrypted; its name, type and key go in the message (C7)
+                const sealing = this.room.sealed ? moqui.chat.sealFile(file) : Promise.resolve(null);
+                sealing.then((sealed) => {
+                    if (sealed) entry.info = sealed.info;
+                    const form = new FormData();
+                    form.append('chatRoomId', this.room.roomId);
+                    form.append('file', sealed ? sealed.blob : file, sealed ? 'encrypted' : file.name);
+                    if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+                    return moqui.request(this.room.url('upload'), { method: 'POST', params: form });
+                }).then((result) => {
                     const json = result.json || {};
                     const stored = (json.uploadList || [])[0];
                     if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos);
                     const index = this.files.indexOf(entry);
                     if (index < 0) return;
-                    if (stored) this.files.splice(index, 1, Object.assign({}, entry, stored, { uploading: false }));
+                    if (stored) this.files.splice(index, 1, Object.assign({}, entry, stored, this.room.sealed ? { fileName: entry.fileName, contentType: entry.contentType,
+                        fileSize: entry.fileSize } : {}, { uploading: false }));
                     else this.files.splice(index, 1);
                 }, (err) => {
                     const index = this.files.indexOf(entry);
@@ -649,7 +683,7 @@ const chatComposer = {
         removeFile(file) { this.files = this.files.filter((item) => item !== file); }
     },
     mounted() {
-        const saved = storage.get(this.draftKey);
+        const saved = this.room.sealed ? sealedDrafts[this.draftKey] : storage.get(this.draftKey);
         if (saved) this.body = saved;
         this.room.registerComposer(this, this.threadRoot);
     },
@@ -699,6 +733,12 @@ const roomTemplate = `
                     <q-icon v-if="member && (member.isMuted || member.notificationLevelEnumId === 'CnlNone')" name="sym_o_notifications_off" size="14px" class="q-ml-xs m-muted">
                         <q-tooltip>{{t('Muted')}}</q-tooltip></q-icon>
                     <q-chip v-if="room.archivedDate" dense square class="m-tonal text-warning q-ml-xs">{{t('Archived')}}</q-chip>
+                    <q-chip v-if="sealed" dense square icon="sym_o_lock" class="m-tonal text-positive q-ml-xs m-chat-encrypted">{{t('Encrypted')}}
+                        <q-tooltip>{{t('End-to-end encrypted: only the devices of its members read it. Search, link previews, agents, polls, bridges, forwards and filing on records are off here.')}}</q-tooltip></q-chip>
+                    <q-chip v-if="room.bridged" dense square icon="sym_o_hub" class="m-tonal text-info q-ml-xs m-chat-bridged">{{bridgeNames}}
+                        <q-tooltip>{{bridgeTooltip}}</q-tooltip></q-chip>
+                    <q-chip v-if="room.notConnected" dense square icon="sym_o_link_off" class="m-tonal text-warning q-ml-xs m-chat-not-connected">{{t('Not connected')}}
+                        <q-tooltip>{{t('Messages stay here and go out once it is back')}}</q-tooltip></q-chip>
                 </div>
                 <div class="text-caption m-muted ellipsis">
                     <template v-if="isDirect && room.otherUserId"><span class="m-status-dot q-mr-xs" style="width:8px;height:8px" :class="'m-presence-' + (presenceOf(room.otherUserId) || 'offline')"></span>{{presenceText(room.otherUserId)}}</template>
@@ -707,7 +747,7 @@ const roomTemplate = `
                 </div>
             </div>
             <div v-if="!isDirect && !narrow" class="row no-wrap items-center cursor-pointer q-mx-xs" @click="openSide('members')">
-                <m-avatar v-for="person in members.slice(0, 4)" :key="person.userId" :name="person.name" :user-id="person.userId" size="24px" class="q-ml-xs"></m-avatar>
+                <m-avatar v-for="person in members.slice(0, 4)" :key="person.userId || person.chatActorId" :name="person.name" :user-id="person.userId || undefined" size="24px" class="q-ml-xs"></m-avatar>
                 <span class="text-caption m-muted q-ml-xs">{{members.length}}</span><q-tooltip>{{t('Members')}}</q-tooltip>
             </div>
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
@@ -908,19 +948,22 @@ const roomTemplate = `
                     <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!addPeople.userIds.length" @click="addMembers"></q-btn>
                 </div>
                 <q-list dense>
-                    <q-item v-for="person in members" :key="person.userId">
-                        <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId" size="32px"></m-avatar></q-item-section>
-                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
-                            <q-item-label caption>{{presenceText(person.userId)}}</q-item-label></q-item-section>
+                    <q-item v-for="person in members" :key="person.userId || person.chatActorId">
+                        <q-item-section avatar><m-avatar :name="person.name" :user-id="person.userId || undefined" size="32px"></m-avatar></q-item-section>
+                        <q-item-section><q-item-label>{{person.name}}<span v-if="person.userId && person.userId === me.userId" class="m-muted"> ({{t('you')}})</span></q-item-label>
+                            <q-item-label caption>{{person.external ? externalText(person) : presenceText(person.userId)}}</q-item-label></q-item-section>
                         <q-item-section side class="row no-wrap items-center">
+                            <q-chip v-if="person.external" dense square icon="sym_o_hub" class="m-tonal text-info m-chat-external">{{person.networkName || t('Outside')}}</q-chip>
                             <q-chip v-if="person.roleEnumId === 'CmrOwner' && !isDirect" dense square class="m-tonal">{{t('Owner')}}</q-chip>
                             <q-chip v-else-if="person.roleEnumId === 'CmrModerator'" dense square class="m-tonal text-info">{{t('Moderator')}}</q-chip>
                             <q-btn v-if="canModerate && person.userId !== me.userId && (isOwner || person.roleEnumId !== 'CmrOwner')" flat round dense size="sm" icon="sym_o_more_vert" :aria-label="t('Member')">
                                 <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:200px">
-                                    <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
-                                    <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
-                                    <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
-                                    <q-separator></q-separator>
+                                    <template v-if="!person.external">
+                                        <q-item v-if="person.roleEnumId !== 'CmrModerator'" clickable v-close-popup @click="setRole(person, 'CmrModerator')"><q-item-section>{{t('Make a moderator')}}</q-item-section></q-item>
+                                        <q-item v-if="person.roleEnumId !== 'CmrMember'" clickable v-close-popup @click="setRole(person, 'CmrMember')"><q-item-section>{{t('Make a member')}}</q-item-section></q-item>
+                                        <q-item v-if="isOwner && person.roleEnumId !== 'CmrOwner'" clickable v-close-popup @click="setRole(person, 'CmrOwner')"><q-item-section>{{t('Make an owner')}}</q-item-section></q-item>
+                                        <q-separator></q-separator>
+                                    </template>
                                     <q-item clickable v-close-popup @click="removeMember(person)"><q-item-section class="text-negative">{{t('Take out of the room')}}</q-item-section></q-item>
                                 </q-list></q-menu>
                             </q-btn>
@@ -976,6 +1019,13 @@ const roomTemplate = `
         <template v-if="isOwner">
             <m-drop-down v-model="settings.visibility" :name="'settingsVisibility' + uid" :options="visibilityOptions" :label="t('Who may join')" class="q-mt-xs"></m-drop-down>
         </template>
+        <div v-if="sealed" class="q-mt-sm q-pa-sm rounded-borders m-tonal text-body2 m-chat-encrypted-note"><q-icon name="sym_o_lock" class="q-mr-xs"></q-icon>{{t('Messages here are end-to-end encrypted, and that cannot be turned off. Only the devices of its members read them; the server keeps ciphertext. So this room has no server search, link previews, agents, polls, bridges, forwards or filing on records, and the terminal cannot read it. A new device reads older messages only from your key backup (Settings, My devices) or from another of your devices.')}}</div>
+        <template v-if="sealed">
+            <q-toggle v-model="settings.verifiedOnly" :label="t('Messages only to verified devices')" class="q-mt-sm m-chat-room-verified-only"></q-toggle>
+            <div class="text-caption m-muted">{{t("Each member's browser encrypts for the devices that were verified (by emoji or QR code, or by their owner's cross-signing) only; a device that is not verified cannot read what follows.")}}</div>
+        </template>
+        <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
+        <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
             <q-btn unelevated no-caps color="primary" :label="t('Save')" :loading="settings.busy" @click="saveSettings"></q-btn>
             <q-btn flat no-caps :label="t('Cancel')" v-close-popup></q-btn>
@@ -1067,12 +1117,21 @@ const chatRoom = {
     computed: {
         self() { return this; },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
+        // an end-to-end encrypted room (C7): its messages are encrypted and decrypted in this browser
+        sealed() { return !!this.room && !!this.room.encrypted; },
         // a call from the room, where the server holds calls (config.calls) and the user may post in it
         canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
         canModerate() { return !!this.access.canModerate; },
         isOwner() { return !!this.access.isOwner; },
+        // a bridged room (C1): what its bridges carry (an edit, a delete or a reaction one of them cannot carry is not offered)
+        bridgeCaps() { return (this.room && this.room.bridgeCapabilities) || { edit: true, delete: true, reaction: true }; },
+        bridgeNames() {
+            const names = ((this.room && this.room.bridges) || []).map((bridge) => bridge.networkName || bridge.name).filter((name) => name);
+            return Array.from(new Set(names)).join(', ');
+        },
+        bridgeTooltip() { return fill(t('Messages here also go to {names}'), { names: this.bridgeNames }); },
         displayName() { return this.room ? (this.room.displayName || this.room.roomName || this.room.chatRoomId) : ''; },
         roomIcon() { return this.room ? ((this.room.record && this.room.record.icon) || ROOM_ICONS[this.room.roomTypeEnumId] || 'sym_o_chat') : 'sym_o_chat'; },
         recordLabel() { const record = this.room && this.room.record; return record ? [record.typeLabel, record.title].filter((part) => part).join(' · ') : ''; },
@@ -1123,7 +1182,7 @@ const chatRoom = {
             const me = this.me.userId;
             const seqs = this.events.filter((event) => event.type === 'message').map((event) => Number(event.eventSeq));
             for (const person of this.members) {
-                if (person.userId === me || person.isAgent) continue;
+                if (!person.userId || person.userId === me || person.isAgent) continue;
                 const read = Number(person.lastReadEventSeq || 0);
                 if (!read) continue;
                 let at = null;
@@ -1162,7 +1221,14 @@ const chatRoom = {
         fileIcon,
         url(name) { return this.base + '/' + name; },
         get(name, params) {
-            return moqui.request(this.url(name), { params: params || {} }).then((result) => result.json || {}, (err) => { moqui.handleAjaxError(err); throw err; });
+            return moqui.request(this.url(name), { params: params || {} }).then((result) => this.openPage(result.json || {}), (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        // the encrypted events of an answer (a timeline page, a room view) decrypted in place before they are shown (C7)
+        openPage(json) {
+            const lists = [json.eventList, json.timeline && json.timeline.eventList].filter((list) => Array.isArray(list) && list.length);
+            if (!lists.length || !moqui.chat || !moqui.chat.openEvents) return json;
+            const roomId = (json.room && json.room.chatRoomId) || this.roomId;
+            return Promise.all(lists.map((list) => moqui.chat.openEvents(roomId, list, (file) => this.sealedUrl(file)))).then(() => json);
         },
         post(name, params) {
             return moqui.request(this.url(name), { method: 'POST', params: params || {} }).then((result) => {
@@ -1170,6 +1236,14 @@ const chatRoom = {
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
             }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        // the members' userIds, who get an encrypted room's keys
+        memberIds() { return this.members.filter((person) => person.userId).map((person) => person.userId); },
+        // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
+        onRoomKeys() {
+            if (!this.sealed || this.state !== 'ready') return;
+            const lists = [this.events, this.threadView.events].filter((list) => list.some((item) => item.undecryptable || (item.encryptedReactions || []).length));
+            lists.forEach((list) => moqui.chat.openEvents(this.roomId, list.filter((item) => item.undecryptable), (file) => this.sealedUrl(file)));
         },
         // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
         startCall() {
@@ -1217,10 +1291,12 @@ const chatRoom = {
                     prev = null;
                     continue;
                 }
-                const grouped = !!prev && prev.senderUserId === event.senderUserId && sent - prev.sentDate < GROUP_MILLIS && event.replyToEventSeq == null;
+                const grouped = !!prev && (prev.event.senderActorId || prev.senderUserId) === (event.senderActorId || event.senderUserId)
+                    && sent - prev.sentDate < GROUP_MILLIS && event.replyToEventSeq == null;
                 const item = { kind: 'message', key: 'e' + event.eventSeq, eventSeq: Number(event.eventSeq), event, senderUserId: event.senderUserId,
                     senderName: this.nameOf(event.senderUserId, event.senderName), sentDate: sent, timeText: timeText(sent), timeShort: timeText(sent), fullTime: fullTime(sent),
                     bodyHtml: event.redacted ? null : (event.body ? decorateBody(event.body, me) : null), redacted: !!event.redacted, removedLabel: event.removedLabel,
+                    undecryptable: !event.redacted && !!event.undecryptable,
                     edited: !!event.edited, editedText: event.editedDate ? fill(t('Edited {when}'), { when: fullTime(event.editedDate) }) : t('Edited'),
                     attachments: event.attachments || [], records: event.records || [], reactions: event.reactions || [],
                     forwardOf: event.forwardOf || null, poll: event.poll || null, linkPreviews: event.linkPreviews || [],
@@ -1411,6 +1487,24 @@ const chatRoom = {
         onEvent(payload) {
             const event = payload && payload.event;
             if (!event || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
+            // an encrypted room's event is decrypted first, the events kept in their order (C7); a member who left takes no later key
+            if (this.sealed && moqui.chat && moqui.chat.openEvent) {
+                if (event.type === 'membership' && event.content && ['leave', 'remove'].includes(event.content.action)) {
+                    // out of the members at once, not when the room's meta reloads: a message sent meanwhile shares no key with them
+                    const gone = event.content.userId || event.senderUserId;
+                    if (gone) this.members = this.members.filter((person) => person.userId !== gone);
+                    moqui.crypto.rotateRoom(this.roomId).catch(() => null);
+                }
+                const copy = Object.assign({}, event);
+                this.liveQueue = (this.liveQueue || Promise.resolve()).then(() => moqui.chat.openEvent(this.roomId, copy, (file) => this.sealedUrl(file)))
+                    .then(() => this.applyLive(Object.assign({}, payload, { event: copy })), (err) => console.error('An encrypted event was not shown', err));
+                return;
+            }
+            this.applyLive(payload);
+        },
+        applyLive(payload) {
+            const event = payload && payload.event;
+            if (!event || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
             const me = this.me.userId;
             const seq = Number(event.eventSeq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
@@ -1486,6 +1580,24 @@ const chatRoom = {
                 if (!this.hasMoreAfter) this.$nextTick(() => this.scrollToBottom());
             }
             const restore = (err) => { if (replyTo) this.replyTo = replyTo; throw err; };
+            // an encrypted room: the message is encrypted before the outbox keeps it, which then holds only ciphertext (C7)
+            if (this.sealed) {
+                const clientRef = moqui.chat.newClientRef();
+                const html = message.body || '';
+                return moqui.chat.sealMessage(this.roomId, this.memberIds(), html, message.files || []).then((sealed) => {
+                    moqui.chat.sealedTexts[clientRef] = plainOf(html) || t('Files');
+                    const sealedParams = { encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds, replyToEventSeq: params.replyToEventSeq,
+                        threadRootEventSeq: params.threadRootEventSeq, chatAttachmentIds: params.chatAttachmentIds };
+                    return moqui.chat.send({ clientRef, chatRoomId: this.roomId, url: this.url('send'), params: sealedParams, text: '', sealed: true,
+                        threadRootEventSeq: threadRoot, hasFiles: !!(message.attachmentIds || []).length });
+                }).then((outcome) => {
+                    if (outcome && outcome.failed && outcome.error) moqui.notifyMessages([{ type: 'warning', message: outcome.error }]);
+                    return outcome;
+                }, (err) => {
+                    moqui.notifyMessages([{ type: 'warning', message: (err && (err.errors || err.message)) || t('This message could not be encrypted') }]);
+                    return restore(err);
+                });
+            }
             if (!moqui.chat || !moqui.chat.send) {
                 return this.post('send', Object.assign({ chatRoomId: this.roomId }, params)).then((json) => {
                     this.onSent({ chatRoomId: this.roomId, threadRootEventSeq: threadRoot, json });
@@ -1503,8 +1615,15 @@ const chatRoom = {
         },
         // a message of this room answered (now, or later from the outbox): in its place, and read
         onSent(payload) {
-            const event = payload && payload.json && payload.json.event;
-            if (!event || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
+            const sent = payload && payload.json && payload.json.event;
+            if (!sent || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
+            if (this.sealed && sent.encrypted && !payload.opened && moqui.chat.openEvent) {
+                const copy = Object.assign({}, sent);
+                this.liveQueue = (this.liveQueue || Promise.resolve()).then(() => moqui.chat.openEvent(this.roomId, copy, (file) => this.sealedUrl(file)))
+                    .then(() => this.onSent(Object.assign({}, payload, { opened: true, json: Object.assign({}, payload.json, { event: copy }) })));
+                return;
+            }
+            const event = sent;
             const me = this.me.userId;
             const threadRoot = payload.threadRootEventSeq != null ? Number(payload.threadRootEventSeq) : null;
             const seq = Number(event.eventSeq);
@@ -1611,8 +1730,43 @@ const chatRoom = {
             const key = (inThread ? 't' : 'm') + item.eventSeq;
             return this.hoverKey === key || this.tapKey === key;
         },
-        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW; },
-        canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)); },
+        canEdit(item) { return item.mine && !item.redacted && !item.poll && this.canPost && Date.now() - item.sentDate < EDIT_WINDOW && this.bridgeCaps.edit; },
+        canRedact(item) { return !item.redacted && this.isMember && (item.mine || (this.canModerate && !this.isDirect)) && this.bridgeCaps.delete; },
+        externalText(person) { return fill(t('On {network}'), { network: person.networkName || t('another network') }); },
+        // ---- a message's delivery to the room's bridges ----
+        deliveryNames(item, state) {
+            const list = ((item.event.delivery && item.event.delivery.destinations) || []).filter((destination) => !state || destination.state === state);
+            return Array.from(new Set(list.map((destination) => destination.networkName || destination.bridgeName).filter((name) => name))).join(', ');
+        },
+        deliveryText(item) {
+            const delivery = item.event.delivery;
+            if (!delivery) return '';
+            if (delivery.state === 'failed') {
+                const failed = delivery.destinations.find((destination) => destination.state === 'failed') || {};
+                return fill(t('Not delivered to {names}'), { names: this.deliveryNames(item, 'failed') }) + (failed.error ? ': ' + failed.error : '');
+            }
+            if (delivery.state === 'uncertain') return fill(t('May not have reached {names}'), { names: this.deliveryNames(item, 'uncertain') });
+            if (delivery.state === 'pending') return fill(t('Sending to {names}'), { names: this.deliveryNames(item, 'pending') });
+            return fill(t('Delivered to {names}'), { names: this.deliveryNames(item) });
+        },
+        deliveryIcon(item) {
+            const state = item.event.delivery && item.event.delivery.state;
+            return { failed: 'sym_o_error', uncertain: 'sym_o_help', pending: 'sym_o_schedule' }[state] || 'sym_o_done_all';
+        },
+        deliveryClass(item) {
+            const state = item.event.delivery && item.event.delivery.state;
+            return state === 'failed' ? 'text-negative' : state === 'uncertain' ? 'text-warning' : 'm-muted';
+        },
+        canRetry(item) { return !!(item.event.delivery && item.event.delivery.retryable) && (item.mine || this.canModerate); },
+        retryDelivery(item) {
+            const destinations = (item.event.delivery.destinations || []).filter((destination) => destination.retryable);
+            Promise.all(destinations.map((destination) => this.post('retryDelivery', { chatBridgeDeliveryId: destination.chatBridgeDeliveryId }))).then((answers) => {
+                const refused = answers.find((json) => json && json.error);
+                if (refused) { moqui.notifyMessages(null, [refused.error]); return; }
+                destinations.forEach((destination) => { destination.state = 'pending'; destination.retryable = false; });
+                Object.assign(item.event.delivery, { state: 'pending', retryable: false });
+            }, () => {});
+        },
         isEditing(item) { return !!this.editing && this.editing.seq === item.eventSeq; },
         startEdit(item) { this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
         cancelEdit() { this.editing = null; this.$nextTick(() => this.focusComposer()); },
@@ -1629,7 +1783,10 @@ const chatRoom = {
             return false;
         },
         saveEdit(item, body) {
-            return this.post('edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body }).then((json) => {
+            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.post('edit', { chatRoomId: this.roomId,
+                eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }))
+                : this.post('edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
+            return sent.then((json) => (json.event && this.sealed ? moqui.chat.openEvent(this.roomId, json.event).then(() => json) : json)).then((json) => {
                 if (json.event) {
                     applyEvent(this.events, json.event, this.me.userId);
                     if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, json.event, this.me.userId, this.threadView.rootSeq);
@@ -1656,6 +1813,14 @@ const chatRoom = {
                 if (!entry) { entry = { key, count: 0, userIds: [], mine: false }; reactions.push(entry); }
                 if (!entry.userIds.includes(me)) { entry.userIds.push(me); entry.count++; }
                 entry.mine = true;
+            }
+            if (this.sealed) {
+                // an encrypted reaction (C7): the key is encrypted; mine is taken back by its own eventSeq
+                const taken = mine ? moqui.chat.myReaction(this.roomId, item.eventSeq, key, me) : null;
+                if (mine && taken != null) this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }).catch(() => {});
+                else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.post('react', { chatRoomId: this.roomId,
+                    eventSeq: item.eventSeq, encryptedJson })).catch(() => {});
+                return;
             }
             this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
         },
@@ -1706,8 +1871,20 @@ const chatRoom = {
             if (local.indexOf('/qapps') === 0) this.$root.setUrl(local);
             else if (/^(https?:|mailto:|tel:)/i.test(href)) window.open(href, '_blank', 'noopener');
         },
-        fileUrl(file, inline) { return this.url('attachment') + '?chatAttachmentId=' + encodeURIComponent(file.chatAttachmentId) + (inline ? '&inline=true' : ''); },
-        download(file) { this.downloadUrl(this.fileUrl(file, false), file.fileName); },
+        fileUrl(file, inline) {
+            if (file && file.sealed) return file.blobUrl || '';
+            return this.url('attachment') + '?chatAttachmentId=' + encodeURIComponent(file.chatAttachmentId) + (inline ? '&inline=true' : '');
+        },
+        // an encrypted room's file is fetched as ciphertext and decrypted here
+        sealedUrl(file) { return this.url('attachment') + '?chatAttachmentId=' + encodeURIComponent(file.chatAttachmentId); },
+        download(file) {
+            if (file && file.sealed) {
+                moqui.chat.openFile(this.sealedUrl(file), file, this.roomId).then((url) => this.downloadUrl(url, file.fileName || t('file')),
+                    () => moqui.notifyMessages([{ type: 'warning', message: t('This file could not be decrypted') }]));
+                return;
+            }
+            this.downloadUrl(this.fileUrl(file, false), file.fileName);
+        },
         downloadUrl(href, name) {
             const a = document.createElement('a');
             a.href = href;
@@ -1716,7 +1893,13 @@ const chatRoom = {
             a.click();
             setTimeout(() => document.body.removeChild(a), 0);
         },
-        preview(file) { this.previewBox = { open: true, src: this.fileUrl(file, true), name: file.fileName, download: this.fileUrl(file, false), file }; },
+        preview(file) {
+            if (file && file.sealed) {
+                moqui.chat.openFile(this.sealedUrl(file), file, this.roomId).then((url) => { this.previewBox = { open: true, src: url, name: file.fileName, download: url, file }; }, () => {});
+                return;
+            }
+            this.previewBox = { open: true, src: this.fileUrl(file, true), name: file.fileName, download: this.fileUrl(file, false), file };
+        },
         // a file of the Files pane in its message: in its thread when it is a reply there
         showFileInChat(file) {
             if (file.threadRootEventSeq != null) this.openThread(Number(file.threadRootEventSeq));
@@ -1898,7 +2081,8 @@ const chatRoom = {
         setRole(person, roleEnumId) { this.post('setRole', { chatRoomId: this.roomId, userId: person.userId, roleEnumId }).then(() => this.reloadMeta(), () => {}); },
         removeMember(person) {
             this.confirm(t('Take out of the room?'), fill(t('{name} no longer sees the room or hears of it.'), { name: person.name }), t('Take out'), true).then(() => {
-                this.post('removeMember', { chatRoomId: this.roomId, userId: person.userId }).then(() => this.reloadMeta(), () => {});
+                const who = person.userId ? { userId: person.userId } : { chatActorId: person.chatActorId };
+                this.post('removeMember', Object.assign({ chatRoomId: this.roomId }, who)).then(() => this.reloadMeta(), () => {});
             });
         },
 
@@ -1933,13 +2117,25 @@ const chatRoom = {
             });
         },
         openSettings() {
-            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '', busy: false };
+            this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
+                callE2ee: !!this.room.callE2eeRequired, verifiedOnly: !!this.room.verifiedDevicesOnly, busy: false };
         },
         saveSettings() {
             const params = { chatRoomId: this.roomId, roomName: this.settings.roomName, topic: this.settings.topic || '' };
             if (this.isOwner && this.settings.visibility && this.settings.visibility !== this.room.visibilityEnumId) params.visibilityEnumId = this.settings.visibility;
             this.settings.busy = true;
-            this.post('updateRoom', params).then(() => {
+            // the calls' encryption (W8) is its own setting, saved first
+            const e2ee = !!this.settings.callE2ee !== !!this.room.callE2eeRequired
+                ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
+                }) : Promise.resolve();
+            // C7 hardening: the room's keys to verified devices only (ChatKeyServices; the browsers read it before the next message)
+            const verified = this.sealed && !!this.settings.verifiedOnly !== !!this.room.verifiedDevicesOnly
+                ? () => this.post('setVerifiedDevicesOnly', { chatRoomId: this.roomId, verifiedDevicesOnly: this.settings.verifiedOnly ? 'true' : 'false' }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
+                    if (moqui.crypto && moqui.crypto.settingsChanged) moqui.crypto.settingsChanged();
+                }) : () => null;
+            e2ee.then(verified).then(() => this.post('updateRoom', params)).then(() => {
                 this.settings = Object.assign({}, this.settings, { open: false, busy: false });
                 this.reloadMeta();
                 this.$emit('changed');
@@ -1977,6 +2173,7 @@ const chatRoom = {
         this.unsubscribe = [];
         if (moqui.chat) {
             this.unsubscribe.push(moqui.chat.on('event', (payload) => this.onEvent(payload)));
+            if (moqui.crypto && moqui.crypto.onRoomKeys) this.unsubscribe.push(moqui.crypto.onRoomKeys(() => this.onRoomKeys()));
             this.unsubscribe.push(moqui.chat.on('read', (payload) => this.onReadSignal(payload)));
             this.unsubscribe.push(moqui.chat.on('room', (payload) => this.onRoomSignal(payload)));
             this.unsubscribe.push(moqui.chat.on('update', (payload) => this.onUpdate(payload)));
@@ -2094,6 +2291,10 @@ module.exports = {
             }, (err) => { moqui.handleAjaxError(err); throw err; });
         },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
+        bridgeText(room) {
+            const names = (room.bridgeNetworkNames || []).join(', ');
+            return room.notConnected ? fill(t('Not connected to {names}: messages wait here'), { names }) : fill(t('Also on {names}'), { names });
+        },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };
             if (moqui.chat && moqui.chat.state.unread[room.chatRoomId]) return moqui.chat.unreadOf(moqui.chat.state, room.chatRoomId);
@@ -2104,7 +2305,7 @@ module.exports = {
             if (!room.isMember) return t('Public room: not joined');
             if (!last) return room.topic || t('No messages yet');
             const who = last.senderUserId === this.me.userId ? t('You') : String(last.senderName || '').split(' ')[0];
-            const text = last.redacted || !last.snippet ? t('Message removed') : last.snippet;
+            const text = last.encrypted ? t('Encrypted message') : last.redacted || !last.snippet ? t('Message removed') : last.snippet;
             return room.roomTypeEnumId === 'CrtDirect' && last.senderUserId !== this.me.userId && room.otherUserId ? text : (who ? who + ': ' : '') + text;
         },
         clearLabel(value) { return t(CLEAR_LABELS[String(value)] || CLEAR_LABELS['0']); },
@@ -2171,7 +2372,8 @@ module.exports = {
             if (event.type === 'message' && event.threadRootEventSeq == null) {
                 const text = String(event.bodyText || '').replace(/\s+/g, ' ').trim();
                 room.lastMessage = { eventSeq: event.eventSeq, senderUserId: event.senderUserId, senderName: event.senderName, sentDate: event.sentDate,
-                    snippet: (text.length > 140 ? text.slice(0, 139) + '…' : text) || (event.attachments || []).map((file) => '📎 ' + file.fileName).join(', '), redacted: false };
+                    snippet: event.encrypted ? null : (text.length > 140 ? text.slice(0, 139) + '…' : text) || (event.attachments || []).map((file) => '📎 ' + file.fileName).join(', '),
+                    redacted: false, encrypted: !!event.encrypted };
                 room.lastEventDate = event.sentDate;
             } else if (event.type === 'edit' && room.lastMessage && Number(event.editsEventSeq) === Number(room.lastMessage.eventSeq)) {
                 room.lastMessage.snippet = String(event.bodyText || '').replace(/\s+/g, ' ').trim();
@@ -2233,7 +2435,7 @@ module.exports = {
 
         // ---- new conversations ----
         openNewDirect() { this.newDirect = { open: true, userIds: [], busy: false }; },
-        openNewRoom() { this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false }; },
+        openNewRoom() { this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
         startDirect(userIds, fromLink) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
@@ -2247,8 +2449,8 @@ module.exports = {
         createRoom() {
             this.newRoom.busy = true;
             this.post('createRoom', { roomTypeEnumId: this.newRoom.type, roomName: this.newRoom.name, topic: this.newRoom.topic || '',
-                memberUserIds: (this.newRoom.userIds || []).join(',') }).then((json) => {
-                this.newRoom = { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false };
+                memberUserIds: (this.newRoom.userIds || []).join(','), encrypted: this.newRoom.type !== 'public' && this.newRoom.encrypted ? 'true' : 'false' }).then((json) => {
+                this.newRoom = { open: false, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false };
                 this.scheduleRooms();
                 this.openRoom(json.chatRoomId);
             }, () => { this.newRoom.busy = false; });

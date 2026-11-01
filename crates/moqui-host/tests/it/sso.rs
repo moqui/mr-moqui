@@ -45,6 +45,11 @@ struct Idp {
     codes: HashMap<String, (String, String)>,
     /// The `sub` and `roles` the next login gets.
     roles: Vec<String>,
+    /// How long ago the next ID token says the user signed in (`auth_time`): 0 for a sign-in now, more for one answered
+    /// from the provider's own session.
+    auth_age: u64,
+    /// The last authorization request's query.
+    authorize_query: HashMap<String, String>,
 }
 
 type Shared = Arc<Mutex<Idp>>;
@@ -96,6 +101,7 @@ async fn jwks() -> Json<serde_json::Value> {
 async fn authorize(State(idp): State<Shared>, Query(query): Query<HashMap<String, String>>) -> Redirect {
     assert_eq!(query.get("client_id").map(String::as_str), Some(CLIENT));
     assert_eq!(query.get("code_challenge_method").map(String::as_str), Some("S256"));
+    idp.lock().unwrap().authorize_query = query.clone();
     let code = format!("code-{}", idp.lock().unwrap().codes.len());
     idp.lock().unwrap().codes.insert(
         code.clone(),
@@ -154,7 +160,7 @@ async fn token(
         .unwrap()
         .as_secs();
     let id_token = jwt(&serde_json::json!({
-        "iss": idp.issuer, "sub": "idp-user-1", "aud": CLIENT, "exp": now + 300, "iat": now, "auth_time": now,
+        "iss": idp.issuer, "sub": "idp-user-1", "aud": CLIENT, "exp": now + 300, "iat": now, "auth_time": now - idp.auth_age,
         "nonce": nonce, "preferred_username": "sso.joe", "email": "sso.joe@example.com",
         "given_name": "Joe", "family_name": "Single", "roles": idp.roles,
     }));
@@ -229,7 +235,17 @@ fn location(headers: &[(String, String)]) -> String {
 
 /// One browser login through the server and the provider; returns the cookie after the callback and its response.
 fn sso_login(server: SocketAddr, return_to: &str, tamper: bool) -> (String, u16, Vec<(String, String)>, String) {
-    let body = format!("authFlowId=MOCK&returnTo={}", urlencode(return_to));
+    sso_login_with(server, return_to, tamper, "")
+}
+
+/// [`sso_login`] with more form parameters (`extra`, as `&name=value`).
+fn sso_login_with(
+    server: SocketAddr,
+    return_to: &str,
+    tamper: bool,
+    extra: &str,
+) -> (String, u16, Vec<(String, String)>, String) {
+    let body = format!("authFlowId=MOCK&returnTo={}{extra}", urlencode(return_to));
     let (status, headers, _) = exchange(
         server,
         &http_request(
@@ -338,6 +354,42 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
         &http_request("GET", "/qapps/AppList", &[("Cookie", &cookie)], ""),
     );
     assert_eq!(status, 200, "{apps}");
+
+    // A provider's fresh sign-in (auth_time now) is a recent sign-in, one answered from the provider's own session (an old
+    // auth_time) is not; a re-authentication asks the provider for a new sign-in (prompt=login, max_age=0) and counts only
+    // when its auth_time comes after the request, whatever the provider answers.
+    let recent = |cookie: &str| {
+        let (status, _, json) = exchange(server, &http_request("GET", "/ReAuth/check", &[("Cookie", cookie)], ""));
+        assert_eq!(status, 200, "{json}");
+        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(json["method"], "sso", "{json}");
+        json["recent"].as_bool().unwrap()
+    };
+    assert!(recent(&cookie), "a fresh SSO sign-in is recent");
+    assert!(!provider.lock().unwrap().authorize_query.contains_key("prompt"));
+    provider.lock().unwrap().auth_age = 3600;
+    let (silent, status, _, text) = sso_login(server, "/qapps", false);
+    assert_eq!(status, 302, "{text}");
+    assert!(
+        !recent(&silent),
+        "a sign-in the provider answered from its session an hour old is not recent"
+    );
+    let (ignored, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    assert_eq!(status, 302, "{text}");
+    let query = provider.lock().unwrap().authorize_query.clone();
+    assert_eq!(query.get("prompt").map(String::as_str), Some("login"), "{query:?}");
+    assert_eq!(query.get("max_age").map(String::as_str), Some("0"), "{query:?}");
+    assert!(
+        !recent(&ignored),
+        "a re-authentication the provider did not do is not recent"
+    );
+    provider.lock().unwrap().auth_age = 0;
+    let (reauthenticated, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    assert_eq!(status, 302, "{text}");
+    assert!(
+        recent(&reauthenticated),
+        "a re-authentication the provider did is recent"
+    );
 
     // The next login without the staff role ends that membership and adds the default group.
     provider.lock().unwrap().roles = Vec::new();

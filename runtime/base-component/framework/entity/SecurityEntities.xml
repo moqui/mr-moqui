@@ -424,6 +424,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="lastUsedDate" type="date-time"><description>Written at most once a minute</description></field>
         <field name="revokedDate" type="date-time"/>
+        <!-- XMPP sign-in (plans/Comms-Framework.md §4.3, docs/interfaces/XMPP.md): SCRAM-SHA-256 verifiers, made with the
+            password in create#UserAppPassword (the only place it is in the clear). A user's app passwords share one salt
+            and count, so the server's one challenge fits each; one verifier for the password as shown and one for it
+            without its dashes. Base64; the keys are space separated. Rows made before have none (PLAIN still takes them). -->
+        <field name="scramSalt" type="text-short"/>
+        <field name="scramIterations" type="number-integer"/>
+        <field name="scramStoredKeys" type="text-medium"/>
+        <field name="scramServerKeys" type="text-medium"/>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
         <index name="USER_APP_PW_HASH" unique="true"><index-field name="passwordHash"/></index>
         <index name="USER_APP_PW_USER"><index-field name="userId"/></index>

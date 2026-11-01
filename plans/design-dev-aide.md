@@ -790,6 +790,32 @@ expanded to the right the same way.
   keyboards and screen readers, and `dev/Artifacts/Refs` gives them as an XML screen with a terminal form. The List
   view and `dev/Artifacts/Refs` ship with the index (P3); the canvas follows in P9.
 
+### 7.4 Reading an allowed project's index on any instance
+
+Remote tools need to read the artifact index of an allowed project on a server that is not a dev instance. Only the
+reads do: rebuilding the index and every tool that writes or runs code stay on dev instances, as §15 has them.
+
+- **Permission.** `AIDE_READ`, framework seed (`fw/data/DevToolsSecurityData.xml`, so it is on every instance), held
+  by `ADMIN` and the `AIDE_READERS` group. The reads (`find#Artifacts` and every `get#Artifact*` of
+  `org.moqui.impl.DevToolsServices`) and their REST resource are the artifact group `AIDE_READ_API` (view for
+  `AIDE_READERS`, and for the dev-aide's groups by the dev-aide's seed); the dev-aide's `DEV_AIDE_APP` names only the
+  others (the rebuild, the XML operations, the outline, the schema digest, restart).
+- **Allowlist.** `moqui.devtools.DevArtifactProject` (`projectId`, `directory`, `projectLayout`, `allowed`,
+  `description`), rows an admin keeps. A read names one by `projectId`; an id that is not there and a row whose
+  `allowed` is not `Y` get the same error. The project is booted and read into memory as a `project` directory is
+  (§13.6), on any instance.
+- **Who reads what.** Off a dev instance, or for a user with `AIDE_READ` and no dev-aide tier, a read takes only
+  `projectId`: no path of a request is read, and the server's own index (kept only on dev instances) is not answered.
+  On a dev instance a dev-aide reader keeps `project` (a directory) and the server's own index as before, and may also
+  name a `projectId`. Both `projectId` and `project` at once is an error.
+- **No fallback.** A read that names a project answers only from that project's own index, also when its directory
+  is the server's own runtime: a miss is a miss.
+- **REST.** `/rest/s1/moqui/aide/projects/{projectId}/` `artifacts` (find), `artifact` (`artifactId`), `refs`, `at`
+  and `extensions`, GET with the services' parameters, for an API key or any login.
+- **Stamp.** Every read answers `indexStamp`: `hash` (of each file's location and content hash, sorted, so the same
+  files give the same hash on any server), `builtAt` (when the index last changed, epoch ms) and `files`, so a caller
+  can say what it read against.
+
 ---
 
 ## 8. The entity modeler
@@ -1228,7 +1254,8 @@ the git-depth phase (P8), since a developer's tasks live in the team's tools alr
   is code execution as the server's OS user, with the user's git credentials. The controls follow from it.
 - **Where**: dev purpose only, twice marked (D1). A WARN at startup when a dev instance's HTTP listener is bound to a
   non-loopback address, naming the risk; INFO when the conf says `shared="true"` (D19), which also turns the network
-  git commands off until an admin enables them with a token (§4.2).
+  git commands off until an admin enables them with a token (§4.2). The one read on other instances is the index of a
+  project an admin allowed, by its id, for `AIDE_READ` (§7.4).
 - **Who**: the tiers of §3.4: `DEV_AIDE_VIEW` reads, `DEV_AIDE_EXTEND` writes inside site components with additive
   DDL, `DEV_AIDE` everything; `DEV_AIDE_APP` for the screens; granted in seed only to `ADMIN`, `DEV_AIDE_USERS` and
   `DEV_AIDE_EXTENDERS`; a header login (an API key, Basic) reads but never writes files or runs git (`tier::require`

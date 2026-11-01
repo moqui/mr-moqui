@@ -38,7 +38,7 @@ use moqui_lib::sync::{lock, read, write};
 use serde::Serialize;
 
 use super::{ModelDirs, Project};
-use crate::index::{self, ArtifactRow, Direction, Extension, Located, MemoryIndex, RefEntry};
+use crate::index::{self, ArtifactRow, Direction, Extension, IndexStamp, Located, MemoryIndex, RefEntry};
 use crate::{ArtifactKind, Problem};
 
 /// How long a look at a project's files holds before the next request looks again.
@@ -330,6 +330,12 @@ impl ProjectIndex {
         self.entered(|_| moqui_core::service::define::find(name).map(|def| parameters_of(&def)))
     }
 
+    /// The stamp of the index: its files' hashes and when they were last read.
+    #[must_use]
+    pub fn stamp(&self) -> IndexStamp {
+        self.with_index(MemoryIndex::stamp)
+    }
+
     #[must_use]
     pub fn summary(&self) -> Summary {
         let model_problems = self
@@ -554,6 +560,30 @@ pub fn requested(
     }
     let dirs = found.model_dirs(|| Some(own.framework_dir().to_path_buf()))?;
     open(found, dirs, model).map(Some)
+}
+
+/// The project of an allowed directory (a `DevArtifactProject` row an admin allowed, plans/design-dev-aide.md 7.4),
+/// read against the server `own`. Unlike [`requested`] it is read on any instance, production too: the row is the
+/// admin's decision to expose its index. It is always the project's own index, read into memory, also when the
+/// directory is the server's own runtime, so a read that names a project never answers from the server's rows.
+///
+/// # Errors
+///
+/// Returns why the directory is not taken (relative, `..`, not a Moqui project) or the project does not boot.
+pub fn allowed(
+    directory: &str,
+    java: bool,
+    own: &ExecutionContextFactory,
+    model: bool,
+) -> Result<Arc<ProjectIndex>, Error> {
+    let dir = super::requested_dir(directory)?;
+    let found = if java {
+        super::detect_java(&dir)?
+    } else {
+        super::detect(&dir)?
+    };
+    let dirs = found.model_dirs(|| Some(own.framework_dir().to_path_buf()))?;
+    open(found, dirs, model)
 }
 
 /// Drop the kept index of the project a request names, as [`requested`] takes it (nothing in production), so its next

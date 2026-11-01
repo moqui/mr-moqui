@@ -25,7 +25,7 @@ Both need the `rtc` feature and a media node (`rtc_media_port`). Every listener 
 | `turn_credential_hours` | `4` | How long a credential lasts |
 | `turn_external_urls` | empty | TURN servers elsewhere (coturn), comma separated `turn:` and `turns:` URLs, given to browsers beside the embedded ones |
 | `turn_max_allocations`, `turn_max_kbps` | `1000`, `4000` | Allocations in all, and each allocation's bandwidth each way |
-| `turn_allowed_peers` | empty | Addresses a relay may reach besides the media node |
+| `turn_allowed_peers` | empty | Other media nodes a relay may reach besides this one: `address:port` (their media port), or an address alone for this node's `rtc_media_port` |
 
 Open these ports on the firewall:
 
@@ -41,8 +41,21 @@ Open these ports on the firewall:
   `get#GuestIceServers` for a guest). They are the TURN URLs the call's media node registered, and
   `turn_external_urls`. Each comes with a credential for that leg in the TURN REST form: username
   `<expiry>:<callLegId>`, password base64 of HMAC-SHA1 of the username with `turn_auth_secret`.
-- A relay reaches only the media nodes. A permission or channel to any other address is refused, and nothing is
-  relayed to or from one. A plain TURN credential would let a client relay anywhere; this rule ties it to calls.
+- A relay reaches only the media nodes, on their media ports (`rtc_media_port` as the node is reached, and the
+  `address:port` entries of `turn_allowed_peers`). A permission (by address alone, RFC 8656) to any other address is
+  refused; a channel to any other address or port is refused; nothing is relayed to or from another port of a media
+  node's address (its SSH, database or HTTP port) or from any other address. A plain TURN credential would let a
+  client relay anywhere; this rule ties it to calls. TURN relays only UDP here, so the ICE-TCP port is no relay peer.
+- The exception is an XMPP user's own credential, for calls between XMPP clients ([XMPP](XMPP.md), XEP-0215), issued
+  only while `xmpp_turn_enabled` is true (off by default), never to an external user (`EXTERNAL_USER`), and at most
+  `xmpp_turn_per_hour` (30) a user an hour: `XmppServices.get#IceServers` makes it with the leg `xmpp.<userId>`
+  (`make#IceServers`), and such a relay may reach
+  public unicast addresses too, never loopback, private, unique-local, link-local, shared (100.64/10), multicast or
+  documentation ranges, nor an IPv6 address carrying an inside IPv4 one (6to4, IPv4-compatible, NAT64, Teredo)
+  (`moqui-rtc` `turn::is_public`), nor another port of a media node's address or of the TURN server's own address
+  (a relay there comes from the server itself, past a firewall that keeps the outside off those ports). It is not
+  revoked with a call, as there is none; it expires.
+  coturn sees it as any other credential, so its own peer rule decides there.
 - When a leg leaves or the call ends, the media node revokes the leg. Its credential is refused from then on, its
   relays close, and nothing more is relayed for it. An expired credential is refused too, refreshes included.
 - Quotas: two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way for each
@@ -64,6 +77,7 @@ max-port=65535
 # relay only to the media nodes
 denied-peer-ip=0.0.0.0-255.255.255.255
 allowed-peer-ip=<media node public address>
+# coturn's rule is by address: keep the media node's other ports closed to the relay range on its firewall
 no-multicast-peers
 no-cli
 fingerprint

@@ -22,7 +22,8 @@ along with this software (see the LICENSE.md file). If not, see
     a group call's host ends it for everyone; anyone else leaves. Repeated requests are safe: start#Call with the same
     idempotencyKey answers the same call, and answering, joining or leaving again answers the state as it is. Refusals
     carry reasonCode (notFound, callEnded, notRinging, notAllowed, notAdmitted, legClosed, callFull, noCallee,
-    mediaUnavailable, notSignedIn).
+    mediaUnavailable, notSignedIn; for end-to-end encrypted calls unsupportedClient, noCryptoDevice, callNotEncrypted,
+    encryptedNoGuests, notEncrypted).
 
     The pushes, on chatUser:<userId> to each participant's tabs (after the commit):
       {kind: 'call', action: 'ring', callSessionId, revision, from {userId, name}, video, callKind, chatRoomId, expiresAt, call}
@@ -34,7 +35,19 @@ along with this software (see the LICENSE.md file). If not, see
     (register#MediaNode). The host's /notws binds a leg's socket with bind#Connection, which claims the next generation
     and fences the older socket; the media node refuses frames of an older generation. When a leg leaves or the call
     ends, send#MediaControl tells the media node after the commit. expire#Calls (every minute) ends calls that rang out,
-    legs whose socket did not come back, and calls whose media node stopped. -->
+    legs whose socket did not come back, and calls whose media node stopped.
+
+    Cascading media nodes (W7). With rtc_cascade_enabled (off by default) a leg's media is on the node of its signaling
+    socket when that node holds media (CallLeg.mediaNodeId), and that node (an edge) relays to the call's node (its
+    origin). bind#Connection answers both. An edge that stops ends only its legs (CerMediaNodeLost); the origin stopping
+    ends the call, as before.
+
+    End-to-end encrypted calls (W8). encryptionMode e2ee-sframe, set at the start (requireE2ee, a room's or a call link's
+    policy) and never lowered: each browser leg names its crypto device (C7 core) and gets a key index; the call's view
+    publishes that roster (each leg's deviceId, keyIndex and keyGeneration, its connection generation), pushed as
+    {kind: 'call', action: 'rekey'} when a device is named or a leg binds again. The browsers send each other their SFrame
+    keys over Olm to-device messages, which the server only passes on. Such a call rings no desk phone or number, takes no
+    guest, phone leg, recording or captions, and is not merged. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Calls ========== -->
@@ -45,12 +58,20 @@ along with this software (see the LICENSE.md file). If not, see
             room of two is a direct call, any other a group call, ringing its current members). A room with a call going
             answers that call with reasonCode callActive instead. The caller is the host and is in the call at once
             (callLegId). The same idempotencyKey answers the same call (repeated). An external user (EXTERNAL_USER) starts
-            calls only from a room.</description>
+            calls only from a room. requireE2ee (or the room's policy, set#RoomCallEncryption) makes it end-to-end encrypted
+            (W8, encryptionMode e2ee-sframe), for good: a room's call going on that is not is refused (callNotEncrypted),
+            never answered in its place; the caller's browser names its device here or with register#CallDevice before
+            its media binds.</description>
         <in-parameters>
             <parameter name="calleeUserIdList" type="List"/>
             <parameter name="chatRoomId"/>
             <parameter name="video" type="Boolean" default="true"/>
             <parameter name="idempotencyKey"/>
+            <parameter name="requireE2ee" type="Boolean" default="false"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call (W8): the browser's crypto device
+                (ChatDevice), which the others send their call keys to</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform, to SFrame-encrypt its media</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callSessionId"/>
@@ -64,9 +85,15 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="answer" noun="Call">
         <description>Answer a call ringing for the current user. The first answer wins; a second (another tab)
-            answers the leg already in the call (repeated).</description>
+            answers the leg already in the call (repeated). An end-to-end encrypted call is answered only by a browser that
+            can take part (scriptTransform and a crypto device of the user's, else unsupportedClient or noCryptoDevice,
+            and the call rings on).</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call (W8): the browser's crypto device
+                (ChatDevice), which the others send their call keys to</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform, to SFrame-encrypt its media</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callLegId"/>
@@ -93,9 +120,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="join" noun="Call">
         <description>Join a call: one ringing for the user is answered; a group call of a room the user is a member of
-            is joined with a new leg. A removed participant cannot come back.</description>
+            is joined with a new leg. A removed participant cannot come back. An end-to-end encrypted call is joined only
+            by a browser that can take part, as for answer#Call.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call (W8): the browser's crypto device
+                (ChatDevice), which the others send their call keys to</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform, to SFrame-encrypt its media</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callLegId"/>
@@ -179,7 +211,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="Calls">
         <description>The current user's call history, newest first, a page at a time (pageIndex, pageSize up to 100): each call
-            with the others in it (otherNames, otherUserIdList), its kind and whether it had video, the user's outcome (placed,
+            with the others in it (otherNames, otherUserIdList), its kind, whether it had video and whether its media was
+            end-to-end encrypted (e2ee: History's Call back starts an encrypted call again), the user's outcome (placed,
             answered, missed, declined), when (startedDate) and how long the user was in it (durationSeconds), and for a
             missed call whether it is unseen. outcome filters by one of those. callListCount counts every row of the filter.</description>
         <in-parameters>
@@ -218,8 +251,49 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="configured" type="Boolean"/>
             <parameter name="active" type="Boolean"/>
             <parameter name="reasonCode"/>
+            <parameter name="e2ee" type="Boolean"><description>End-to-end encrypted calls can be started (W8); whether this
+                browser can take part it tells itself</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('capabilities', context))</script></actions>
+    </service>
+
+    <!-- ========== End-to-end encrypted calls (W8; docs/interfaces/WebRTC.md "Encrypted calls") ========== -->
+
+    <service verb="register" noun="CallDevice">
+        <description>The current user's browser leg in an end-to-end encrypted call (callLegId, else the user's answered
+            one) names its crypto device, the ChatDevice the others send their SFrame keys to; the leg's media binds only
+            once it has one. Refused for a browser without RTCRtpScriptTransform (unsupportedClient) or a device that is
+            not the user's, revoked or without keys (noCryptoDevice). Everyone in the call hears the new roster
+            ({kind: 'call', action: 'rekey'}).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call (W8): the browser's crypto device
+                (ChatDevice), which the others send their call keys to</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform, to SFrame-encrypt its media</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('registerDevice', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="RoomCallEncryption">
+        <description>A room's owner or moderator makes every new call of the room (and of call links made for it)
+            end-to-end encrypted (required true), or not; a call going on keeps its mode. Not for a direct room.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="required" type="Boolean" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="required" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('setRoomEncryption', context))</script></actions>
     </service>
 
     <!-- ========== Call links and guests (W3) ========== -->
@@ -228,13 +302,15 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A link to a meeting for people with no account, /call/&lt;token&gt;: its name, an optional room the
             meeting is the call of (the user must be able to post in it), policy lobby (the default: a guest waits until
             someone in the call admits them) or link (straight in), with video or not, lasting expiryHours (a week by
-            default, 90 days at most). The token is in this answer only; the link keeps its hash.</description>
+            default, 90 days at most). The token is in this answer only; the link keeps its hash. requireE2ee (or the room's
+            policy) makes its meetings end-to-end encrypted (W8): guests cannot join those (encryptedNoGuests).</description>
         <in-parameters>
             <parameter name="name" required="true"/>
             <parameter name="chatRoomId"/>
             <parameter name="policy" default-value="lobby"/>
             <parameter name="video" type="Boolean" default="true"/>
             <parameter name="expiryHours" type="Integer"/>
+            <parameter name="requireE2ee" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="callLinkId"/>
@@ -269,9 +345,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="open" noun="CallLink">
-        <description>The owner opens a call link's meeting: it starts when none is going, and the owner joins it as its host.</description>
+        <description>The owner opens a call link's meeting: it starts when none is going, and the owner joins it as its host.
+            An end-to-end encrypted meeting: the browser names its device here or with register#CallDevice.</description>
         <in-parameters>
             <parameter name="callLinkId" required="true"/>
+            <parameter name="cryptoDeviceId"><description>An end-to-end encrypted call (W8): the browser's crypto device
+                (ChatDevice), which the others send their call keys to</description></parameter>
+            <parameter name="scriptTransform" type="Boolean"><description>An end-to-end encrypted call: the browser has
+                RTCRtpScriptTransform, to SFrame-encrypt its media</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callSessionId"/>
@@ -358,7 +439,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
-            <parameter name="mediaNodeId"/>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestBind', context))</script></actions>
@@ -422,7 +504,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
-            <parameter name="mediaNodeId"/>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="call" type="Map"/>
             <parameter name="reasonCode"/>
         </out-parameters>
@@ -456,7 +539,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="note" noun="MediaEvent" authenticate="false" allow-remote="false">
         <description>Internal (the media node): what the media of a leg of that generation did: connected (its
-            joinedDate), or quality (qualityJson).</description>
+            joinedDate), quality (qualityJson), or relayRefused (W7: the call's node refused the relay link of the leg's
+            node, or the link never connected, so the leg's media stays on the call's node from its next bind).</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="generation" type="Integer" required="true"/>
@@ -510,8 +594,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="send" noun="MediaControl" type="rust" location="moqui_core::service::call_media::send_media_control"
             authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: tell the media node of a call to close a leg ({action: 'closeLeg', callSessionId, callLegId}) or
-            the call ({action: 'closeRoom', callSessionId}), on the rtc-signal cluster topic to that node only, after the
-            caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
+            the call ({action: 'closeRoom', callSessionId}), or an edge node (W7) to link the call's room there to the
+            call's node ({action: 'link', callSessionId, originNodeId}), on the rtc-signal cluster topic to that node only,
+            after the caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
         <in-parameters>
             <parameter name="mediaNodeId" required="true"/>
             <parameter name="message" type="Map"/>

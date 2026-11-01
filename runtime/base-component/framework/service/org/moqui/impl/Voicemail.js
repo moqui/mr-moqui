@@ -248,8 +248,30 @@ function store(p) {
     ec.message.popErrors()
   }
   voicemail.create()
+  roomNote(voicemail)
   received(box, voicemail)
   return { voicemailId: voicemail.voicemailId }
+}
+
+/**
+ * C4-SMS: a message left on a call in a number pair's room is shown there too, as an event of the call (CetCall, action
+ * voicemail) that names it; its audio stays the box's, for the box's readers only. A failure is logged.
+ */
+function roomNote(voicemail) {
+  const session = voicemail.callSessionId ? one(SESSION, { callSessionId: voicemail.callSessionId }) : null
+  if (!session || !session.chatRoomId) return
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({ chatRoomId: session.chatRoomId, eventTypeEnumId: 'CetCall',
+      content: { callSessionId: session.callSessionId, action: 'voicemail', kind: 'phone', voicemailId: voicemail.voicemailId,
+        durationSeconds: Math.round(Number(voicemail.durationMs || 0) / 1000), phoneNumber: voicemail.fromNumber || null } }).disableAuthz().call()
+    if (ec.message.hasError()) throw new Error(ec.message.errorsString)
+  } catch (err) {
+    ec.logger.warn(`Voicemail ${voicemail.voicemailId}: not shown in room ${session.chatRoomId}: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
 }
 
 function discardSpool(tempPath) {

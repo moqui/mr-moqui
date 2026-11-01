@@ -1,5 +1,5 @@
-// The users BasicComms's client specs (test/client, moqui test-client basic-comms) call each other as: john.doe and
-// calls.client.b, with a password of its own. moqui test-client basic-comms --serve runs this spec on its server's
+// The users BasicComms's client specs (test/client, moqui test-client basic-comms) call each other as: john.doe,
+// calls.client.b and calls.client.c, with a password of their own. moqui test-client basic-comms --serve runs this spec on its server's
 // scratch database; for another server run it on that server's database:
 //     moqui test basic-comms --spec CallClientFixtures --db existing
 // The row is made only when it is missing. Not demo data, so no production load reaches it.
@@ -15,14 +15,19 @@ function sys(run) {
     }
 }
 
-feature("the client specs' callee exists with its password", {
+function ensureUser(username, fullName) {
+    const existing = sys(() => ec.entity.find("moqui.security.UserAccount").condition("username", username).one())
+    return existing != null ? existing.userId : sys(() => call("org.moqui.impl.UserServices.create#UserAccount",
+        {username, newPassword: PASSWORD, newPasswordVerify: PASSWORD, userFullName: fullName})).userId
+}
+
+feature("the client specs' callees exist with their password", {
     when() {
-        const existing = sys(() => ec.entity.find("moqui.security.UserAccount").condition("username", USERNAME).one())
-        const userId = existing != null ? existing.userId : sys(() => call("org.moqui.impl.UserServices.create#UserAccount",
-            {username: USERNAME, newPassword: PASSWORD, newPasswordVerify: PASSWORD, userFullName: "Calls Client B"})).userId
-        return {userId}
+        // calls.client.c is the third person of EncryptedCallFlow's call (W8)
+        return {userId: ensureUser(USERNAME, "Calls Client B"), thirdId: ensureUser("calls.client.c", "Calls Client C")}
     },
-    then({userId}) {
+    then({userId, thirdId}) {
         userId != null
+        thirdId != null
     }
 })

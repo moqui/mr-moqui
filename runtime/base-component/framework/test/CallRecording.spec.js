@@ -76,7 +76,7 @@ function endAll() {
             for (const seg of ec.entity.find(SEGMENT).condition("callRecordingId", r.callRecordingId).list()) {
                 if (seg.contentLocation) ec.resource.getLocationReference(seg.contentLocation).delete()
             }
-            for (const entity of [SEGMENT, "moqui.call.CallRecordingTrack", CONSENT, TRANSCRIPT]) {
+            for (const entity of [SEGMENT, "moqui.call.CallRecordingTrack", "moqui.call.CallRecordingConsentHistory", CONSENT, TRANSCRIPT]) {
                 ec.entity.find(entity).condition("callRecordingId", r.callRecordingId).deleteAll()
             }
             r.delete()
@@ -212,19 +212,40 @@ feature("under the acknowledgement policy the recording waits for every current 
     }
 })
 
-feature("a withdrawal pauses the recording; acknowledging again resumes it in a new period", {
+feature("a withdrawal pauses the recording; acknowledging again resumes it in a new period; every earlier ack and withdrawal stays as a row", {
     when() {
+        const bLeg = legOf(callId, B).callLegId
+        const current = () => consents(recId).find(r => r.callLegId == bLeg)
+        const history = () => sys(() => Array.from(ec.entity.find("moqui.call.CallRecordingConsentHistory")
+            .condition({callRecordingId: recId, callLegId: bLeg}).orderBy("withdrawnDate").orderBy("callRecordingConsentHistoryId").list()))
+        const firstAck = current().ackDate
         const withdrawn = as(B, "withdraw#RecordingConsent", {callSessionId: callId})
-        const row = consents(recId).find(r => r.callLegId == legOf(callId, B).callLegId)
+        const row = current()
         const again = as(B, "ack#RecordingNotice", {callSessionId: callId})
-        return {withdrawn, row, again}
+        const withdrawnAgain = as(B, "withdraw#RecordingConsent", {callSessionId: callId})
+        const ackedAgain = as(B, "ack#RecordingNotice", {callSessionId: callId})
+        return {firstAck, withdrawn, row, again, withdrawnAgain, ackedAgain, now: current(), earlier: history(),
+            seenByB: as(B, "get#RecordingState", {callSessionId: callId})}
     },
-    then({withdrawn, row, again}) {
+    then({firstAck, withdrawn, row, again, withdrawnAgain, ackedAgain, now, earlier, seenByB}) {
         withdrawn.recording.state == "paused"
         withdrawn.recording.pauseReason == "withdrawn"
         row.withdrawnDate != null
+        row.ackDate != null
         again.recording.state == "recording"
         again.recording.period == 3
+        withdrawnAgain.recording.state == "paused"
+        ackedAgain.recording.state == "recording"
+        ackedAgain.recording.period == 4
+        // the first ack and its withdrawal, the second ack and its withdrawal; the third ack is the current answer
+        earlier.length == 2
+        String(earlier[0].ackDate) == String(firstAck)
+        earlier.every(r => r.ackDate != null && r.withdrawnDate != null && r.ackMethodEnumId == "CamClick")
+        earlier[0].callRecordingConsentId == now.callRecordingConsentId
+        now.ackDate != null
+        now.withdrawnDate == null
+        seenByB.myConsent.acknowledged == true
+        seenByB.myConsent.withdrawn == false
     }
 })
 
@@ -316,6 +337,52 @@ feature("the call's end stops its recording, and retention deletes the files and
     },
     cleanup() {
         sys(() => ec.entity.find(TRANSCRIPT).condition("callTranscriptId", "in", ["REC_SPEC_TR1", "REC_SPEC_TR2"]).deleteAll())
+    }
+})
+
+// the host's personal drive quota with the bytes it holds now plus room for one spec segment (31 bytes), or none
+function quotaOfA(extraBytes) {
+    ec.user.internalLoginUser(A.toLowerCase().replace(/_/g, "."))
+    return sys(() => {
+        const driveId = call("org.moqui.impl.FileServices.ensure#PersonalDrive", {userId: A}).driveId
+        const drive = ec.entity.find("moqui.resource.ResourceDrive").condition("driveId", driveId).one()
+        drive.set("quotaBytes", null)
+        drive.update()
+        const used = call("org.moqui.impl.FileServices.get#DriveUsage", {driveId}).usageList[0].usedBytes
+        drive.set("quotaBytes", extraBytes == null ? null : used + extraBytes)
+        drive.update()
+        return {driveId, used}
+    })
+}
+
+feature("recordings count toward the host's drive quota: a segment that fills it stops the recording, a start on a full drive is refused, and the same start with room records", {
+    when() {
+        const started = as(A, calls("start#Call"), {calleeUserIdList: [B]})
+        as(B, calls("answer#Call"), {callSessionId: started.callSessionId})
+        const quota = quotaOfA(40)
+        const rec = as(A, "start#Recording", {callSessionId: started.callSessionId})
+        const first = storeSegment(rec.callRecordingId, {callLegId: legOf(started.callSessionId, A).callLegId})
+        const afterFirst = recording(rec.callRecordingId)
+        const second = storeSegment(rec.callRecordingId, {callLegId: legOf(started.callSessionId, A).callLegId, segmentSeq: 2})
+        const afterSecond = recording(rec.callRecordingId)
+        const usage = as(A, "org.moqui.impl.FileServices.get#DriveUsage", {driveId: quota.driveId})
+        const full = as(A, "start#Recording", {callSessionId: started.callSessionId})
+        quotaOfA(null)
+        const withRoom = as(A, "start#Recording", {callSessionId: started.callSessionId})
+        as(A, calls("end#Call"), {callSessionId: started.callSessionId})
+        return {rec, first, afterFirst, second, afterSecond, used: quota.used, usage, full, withRoom}
+    },
+    then({rec, first, afterFirst, second, afterSecond, used, usage, full, withRoom}) {
+        rec.errors == ""
+        first.stored == true
+        afterFirst.statusId == "CrsRecording"
+        second.stored == true
+        afterSecond.statusId == "CrsStopped"
+        afterSecond.lastErrorText.includes("quota")
+        usage.usageList[0].usedBytes == used + 62
+        full.reasonCode == "quotaFull"
+        withRoom.errors == ""
+        withRoom.recording.state == "recording"
     }
 })
 

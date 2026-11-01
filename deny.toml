@@ -40,9 +40,13 @@ allow = [
 # ammonia (HTML cleaning for allow-html="safe") needs cssparser and dtoa-short, which are
 # MPL-2.0. Unmodified static use only asks for those files' source, which crates.io serves.
 # No other crate may be MPL-2.0. plans/archive/License-Review.md records the exception.
+# The XMPP server (moqui-xmpp, D-C3) links minidom and jid, MPL-2.0, unmodified: each its own named exception with a
+# License-Review row. Its test client (tokio-xmpp, xmpp-parsers, xso, sasl) is a dev-dependency, outside this graph.
 exceptions = [
     { allow = ["MPL-2.0"], crate = "cssparser" },
     { allow = ["MPL-2.0"], crate = "dtoa-short" },
+    { allow = ["MPL-2.0"], crate = "minidom" },
+    { allow = ["MPL-2.0"], crate = "jid" },
 ]
 
 # webpki 0.22 publishes license-file and no SPDX expression.

@@ -71,6 +71,8 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- who a phone caller is (V5): an example that answers, and one that fails for one number (service/example/ExampleServices.xml) -->
         <call-context name="gallery.callContext" service="example.ExampleServices.get#GalleryCallContext" sequence="90"/>
         <call-context name="gallery.callContextFailing" service="example.ExampleServices.get#GalleryCallContextFailing" sequence="91"/>
+        <!-- who may be called, transferred to or added (the hardening pass): an example refusing the users named *.offlimits -->
+        <call-target name="gallery.callTarget" service="example.ExampleServices.get#GalleryCallTarget" sequence="90"/>
     </shell-providers>
 
     <widgets><subscreens-panel id="gallery-panel" type="popup"/></widgets>

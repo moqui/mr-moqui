@@ -73,6 +73,12 @@ The MAC is HMAC-SHA256 of the session id under `session_cookie_key`, base64 URL-
 
 New password hashes are argon2id. Legacy hashes still verify, including the conf type `SHA-256`. The password element also sets `min-length="8"`, `min-digits="1"`, `min-others="1"`, `history-limit="5"`, `change-weeks="104"`, and `email-expire-hours="48"`. A login key is hashed with `login-key` `encrypt-hash-type`, which is SHA-256, and it is not hashed with argon2id. `login-key` `expire-hours` is 144.
 
+A sensitive action can ask for a recent sign-in (`check#RecentAuth`, five minutes): a password login, a second factor's code,
+an SSO login with a recent `auth_time` or a re-authentication counts; a key, an app password or an internal login does
+not, and another user's login in the session drops it. `reauthenticate#User`
+checks the signed-in user's password and code under the same lockout rules as the login form ([Recent sign-in](Recent-Auth.md)).
+`/ReAuth/check`, `/ReAuth/password` and `/ReAuth/sendCode` are 401 without a user; the posts need the CSRF token.
+
 `update#Password` is `authenticate="anonymous-all"` and `allow-remote="false"`. `reset#Password` is `authenticate="anonymous-all"` and `allow-remote="true"` (`UserServices.xml`). `create#InitialAdminAccount` is `authenticate="anonymous-all"`. It returns an error when more than one `UserAccount` row exists (the seed row `_NA_` is the one that may already be there), then creates the account and adds it to `ADMIN` with authorization disabled.
 
 ### Tarpit
@@ -170,8 +176,12 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 | Browser RUM | `POST /rum/traces`, `/rum/logs`, `/rum/replay` (webroot `rum.xml`) | off; `telemetry/browser` `enabled="true"` (replay also `replay-enabled="true"`) | the session cookie of a signed-in user, else 401 | the session's CSRF token as for any post; no permission to send, since a user reports only on their own pages | The server replaces the page's identity with the session's user and visit and its own service name, keeps only CLIENT and INTERNAL spans (at most 512 a post), and drops attributes that name a user, visit, source or service. 256 KiB a post, 120 posts a minute per user and visit; a replay is held to its minutes and bytes and to the session that began it. Replays are masked in the browser and read back only with `MONITOR_REPLAY`, never as a report dataset or through Assist; each view is logged. No request or artifact span is written for these paths. |
 | OTLP/gRPC ingest | the trace, logs and metrics collector services on `telemetry/receiver` `grpc-port` (4317) | off; built with `grpc` (Enterprise, Maximal), opened by `grpc-enabled="true"` | the same ingest key, as `authorization: Bearer` or `api_key` metadata | as OTLP ingest | Its own listener at `grpc-bind` (the HTTP bind by default), TLS with the HTTPS certificates else h2c. The edge guard admits each connection. The same body limit (as tonic's decoding limit), rate, concurrency, redaction and queue as OTLP/HTTP. |
 | Call guests | `GET /callws` | on with the rtc feature and `/notws` | none at the upgrade (origin checked as for `/notws`); the first frame must be `{rtc: 'guestAuth', credential}` within 10 s, checked with `get#GuestState` | that guest's own call and leg only | WebSocket of a call link's guest page. It takes `rtc` frames of that call and leg only, and no topic, notification, co-editing or other call's frame. The credential is checked again every 30 s; one that no longer works ends the call for the page and closes the socket. 128 KiB a frame. |
+| Chat bridge webhooks | `POST /channels/{chatBridgeId}/webhook` | off; `channels_webhooks_enabled=true` registers it | none from a session or cookie: the bridge's adapter checks the network's signature over the raw body before it parses anything (SMS: Telnyx's Ed25519 signature of the timestamp and body under the bridge's public key, aws-lc-rs); a missing or wrong signature, or a timestamp more than 300 s off, is 401 and counts as a refused login for web protection | a signed request acts only as that bridge's network: `ingest#Event` with `transportVerified`, which still refuses an item naming a local user, an unmapped room and a malformed item, and only for a number whose messaging bridge it is | The body is read first, at most `channels_webhook_max_bytes` (256 KiB; a larger declared body is 413 before the read). A signature already worked within the window is answered 200 `duplicate` and not worked again, one still being worked 409; neither counts for web protection. The signatures are held in the distributed replay cache the system-message HMAC check uses (`moqui.security.hmac.replay`), so a copy that reaches another node is caught there as far as that cache reaches (the node's own until a distributed cache is configured, as for the HMAC check); the event and message ids dedupe on any node. `transportVerified` holds only inside the bridge's own webhook (the context is marked), never from a parameter. An unknown bridge (or an id that is not one), one this build has no adapter for, and a disabled one to anyone but its network get the one answer of an unsigned request (401), so bridge ids cannot be probed; a disabled bridge answers its network, by its signature, 503. Files a text names are fetched by the adapter from public addresses only, each fetch reading no further than `maxInboundMediaBytes`, and kept with a safe content type (a page or SVG is kept as bytes). Worked on a request worker; the provider's retries are no-ops ([SMS](../interfaces/SMS.md)). |
+| Chat bridge media | `GET /channels/{chatBridgeId}/media/{token}` | off, with the webhook | the token: the attachment id and an expiry, HMAC-SHA-256 under `channels_media_key` (generated) | only a file of a message with a delivery to that bridge, until the expiry (`channels_media_minutes`, 60) | For the provider to fetch an MMS picture that goes out. Sent as an attachment with `nosniff` and `no-store`; any other token, bridge or file is 404. |
 | Notifications | `GET /notws` | on unless the endpoint `enabled` is `false`. Conf endpoint is enabled, timeout 3600000 | origin, then session-cookie MAC, else `login_key` | the signed-in user's notification topics | WebSocket. An origin outside the CORS list is 403. Call signaling frames (`rtc`, the rtc feature) bind the socket to a leg only through `CallServices.bind#Connection` as the socket's user (the leg must be theirs and in the call); a frame of a leg the socket did not bind is refused (`notJoined`), each carries the claimed connection generation, which the media node fences, and an SDP or candidate grants nothing. At most 4 bound legs a socket, 128 KiB a frame. |
 | Terminal | `GET /termws` | on when `tui` is compiled and the endpoint is not `enabled="false"`. Conf endpoint is enabled | origin, then session cookie | runs as that user; screens stay authorized; no extra permission | WebSocket bytes and one JSON resize. Counts against the terminal session limits. |
+| XMPP WebSocket | `GET /xmpp-websocket` (RFC 7395, subprotocol `xmpp`) | off; with the `xmpp` feature, `xmpp_domain` and `xmpp_websocket_enabled` `true` | SASL inside the stream (no cookie, so no origin check): see [XMPP](#xmpp) | as the XMPP listeners | Exempt from the request deadline. Stanzas up to 256 KiB, 32 deep. A client (as a trusted proxy names it) blocked for failed sign-ins, or with 20 XMPP connections open, gets 429. |
+| XMPP uploads | `PUT`, `GET`, `OPTIONS /xmpp-upload/{token}/{name}` | while the XMPP server runs | the token in the URL is the capability (XEP-0363), compared by its hash | none beyond it | A slot takes one PUT of the size it was given, within `xmpp_upload_max_bytes` and an hour. The token, the declared length and type are checked before any of the body is read; a second PUT while one is coming is 409 at once; the body is spooled as it arrives (no request worker or database connection held for a slow client) and never read past the slot's size (413), within `xmpp_upload_seconds` (300; 408), then stored with the slot's row locked so PUTs to two nodes cannot both write (the other gets 409); a PUT cut off leaves no file; served as an attachment (images, audio and video inline, not SVG) with `nosniff` and `Content-Security-Policy: sandbox`; CORS open. A chat file sent to an XMPP client gets such a URL too, derived from the file and `xmpp_upload_secret`, so anyone the URL is passed to can read that file. Exempt from the request deadline. |
 | Git | `ANY /git/{*rest}` | on when `git` is compiled | see [Git](#git) | `AT_GIT_REPOSITORY` | Smart HTTP. Exempt from the request deadline. |
 | LLM routes | `/a2a`, `/mcp`, `/llm/v1`, Assist streams, public cards | compiled with `llm`; several answer 404 while their flag is false | see [LLM, A2A, MCP, Assist, git, and DAV](#llm-a2a-mcp-assist-git-and-dav) | see that section | Registration is not gated again by the conf flag. A protocol that is off answers 404. |
 | DAV | `ANY /dav`, `/dav/`, `/dav/{*rest}` | route always registered; server default enabled | see [DAV](#dav) | the signed-in user's own path | Exempt from the request deadline. |
@@ -204,6 +214,7 @@ Because the root screen does not require a user, static files served as that scr
 | `/shellSearch` | same split | 401 `Authentication required` when there is no username. Parameters `text`, `groups`, `limit`. |
 | `/extItems` | same split | The declared actions and panels of the screen at the path (`screen/ext.rs`): 401 with no username, 404 for an unknown screen, 403 when view is not permitted. A target the user may not view, and an item whose provider hook the user has none for, is left out; the target checks access again when called. |
 | `/WebPush/status`, `/WebPush/store`, `/WebPush/delete` | none in the screen; `store` and `delete` need a user | The browser's Web Push subscription of the session's user only (`service/web_push.rs`): `store` is 401 without a user and checks the endpoint is https and the keys a P-256 point and 16 bytes; an endpoint stored for another user moves to this one. `delete` touches only this user's row, with no error for another's. Posts need the session's CSRF token. The endpoint is a capability and is not logged. |
+| `/ChatKeys/device`, `devices`, `rename`, `revoke`, `whoami`, `upload`, `query`, `claim`, `send`, `sync`, `storeKey`, `signingUpload`, `signaturesUpload`, `backupVersion*`, `backupKeys*` | 401 when there is no `userId` | The browser's crypto devices ([Chat keys](../interfaces/Chat-Keys.md); `ChatKeyServices` with authorization disabled, each in its own transaction). A request names a `deviceId`, which must be the session user's and not revoked (another user's is `notFound` with the same parameters). `query`, `claim` and `send` reach only the user's own devices and those of users who share a room or a live call; others are left out. Bounds: 50 devices a user, 200 one-time keys an upload and 500 held, 1,000 users a query, 1,000 devices a claim or send, 64 KB a message, 5,000 waiting a device (more are dropped and logged). The server stores public keys and ciphertext; it does not read message content. Posts need the session's CSRF token. C7: `storeKey` answers a device's store passphrase only to its own signed-in user (derived under the generated secret `chat_store_key_secret`, not stored, never in another answer; a device from before still has its random key as `legacyStoreKey` until its browser moves it to a new device); a cross-signing reset, a new or deleted backup, deleting backed-up keys, a new backup public key and a revoke of a device with keys need a sign-in in the last five minutes (`reauthRequired`, [Recent sign-in](Recent-Auth.md)); a claimer gets at most 10 of a device's one-time keys a minute (then its fallback key), and retries of one send at once queue one copy; the cross-signing and signature uploads write only the caller's keys and signatures (another user's master key only by the caller's user-signing key, in reach), never a silent reset of a master key (`reset` is the user's explicit choice); the key backup endpoints read and write only the caller's own backups (opaque `session_data`, 16 KB each, 1,000 a put, 100,000 a user). The server verifies no signature: trust is the clients'. |
 | `/sw.js`, `/manifest.webmanifest` | none | Static files of the PWA: the service worker (served `no-cache`, `Service-Worker-Allowed: /`), which caches only versioned shell assets and never an authenticated answer, and the manifest. |
 | `/listViewColumns` | no `userId` check in the transition | `get#ListViewColumns` with authorization disabled. `values` is sliced to 500. The comment calls it status configuration read without authorization. |
 | `/statusBar` | no `userId` check in the transition | `get#StatusBar` with authorization disabled. |
@@ -261,6 +272,8 @@ lasts 4 hours (hash kept). basic-comms rate-limits it per client (`call-guest`: 
   call. They never see the room, its members or its history.
 - A guest leg can negotiate media only once admitted (`bind#GuestConnection`).
 - Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
+- A link made end-to-end encrypted (W8) takes no guest (`encryptedNoGuests`): a guest has no crypto device. The page says
+  so from the token's route context (`encrypted`).
 
 Call captions (W6, [WebRTC](../interfaces/WebRTC.md#captions)) send call audio out to a speech provider, so they are off
 unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (the Calls screen's `startCaptions`,
@@ -421,10 +434,36 @@ Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It nee
 
 ### Call media
 
-Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream (encrypted calls are W8). The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+
+Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links between the media nodes of a call on the
+same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
+messages on the cluster's client-certificate HTTPS transport (kind `relay`), so only a cluster member opens one. The
+origin takes at most 8 links a room and 64 in all, and refuses more (`tooManyRelays`); a message of an older link is
+dropped, a room that ended takes no new link, and a link not connected within 10 seconds is dropped. An edge forwards to
+the origin only its own legs' tracks; the origin decides nothing an edge asks beyond the layers it sends it. Any cluster
+member may open a link for any room id: the cluster's members are trusted alike.
 
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
+
+End-to-end encrypted calls (W8, [WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)) open nothing new.
+Each browser SFrame-encrypts its frames (RFC 9605, AES-128-GCM on WebCrypto, in an `RTCRtpScriptTransform` worker) with
+a key of its own per call and epoch. It sends that key to the other browsers' crypto devices as Olm to-device messages
+over the `/ChatKeys` endpoints (C7 core), so the server holds and relays only Olm ciphertext; no chat Megolm session is
+used. What the server and the media nodes still see: the RTP headers and header extensions (the audio level for the
+active speaker), each frame's size and timing, the first 10 bytes of a VP8 keyframe and the first 3 of other VP8 frames
+(kept in the clear so the SFU finds keyframes and sizes; authenticated as SFrame metadata), the SFrame header (the
+sender's key index and epoch, the counter), and who is in the call with which device. The roster the browsers send keys
+to is the server's (`get#Call`): a server that adds a device of a user in the call gets that leg's keys. A browser takes a
+key only from the device the roster names for its leg (the Olm sender, which the server cannot forge), with that leg's key
+index in its KID (refused while another leg has that index), and decrypts a track only with the keys of the leg it comes
+from, each counter once (a replay window); a frame that does not decrypt is dropped, never played. A sender sends only
+with keys it made, so a server-made roster cannot make two senders share a key and its nonces. A call page shows each
+device as unverified (emoji and QR verification are in My devices, C7, but the call does not read their trust yet). The mode is set at the start (`requireE2ee`, a room's or a link's policy) and never lowered, and a
+leg of such a call binds only with a crypto device of its user (`noCryptoDevice`); recording, captions, phone legs, desk
+phones, forwarded numbers, guests and merges are refused. The browser's crypto store is encrypted at rest with a store
+key the server gives only to its signed-in user (see Chat keys).
 
 ### Call recording
 
@@ -437,7 +476,10 @@ BasicComms Calls `Recordings` screen's `recordingFile` transition: the one who r
 file, anyone else "not found" (an empty JSON answer) for the same id. No route serves those `dbresource://` locations
 to users, and an app's record links (BOSS) go through the same services. The guest page's `ackRecording` and
 `withdrawRecording` take the guest's credential and act on its own leg only. Every leg gets the notice, and each is
-logged (`CallRecordingConsent`). Retention deletes the files and rows (`expire_Recordings_hourly`).
+logged (`CallRecordingConsent`, with every earlier acknowledgement and withdrawal in `CallRecordingConsentHistory`).
+The files count toward the owner's personal drive quota: a full drive refuses a start, and a recording that fills it
+stops, so recording cannot fill the database past the quota by more than a segment. Retention deletes the files and
+rows (`expire_Recordings_hourly`).
 
 ### TURN
 
@@ -448,8 +490,14 @@ unless set: `turn_port` (UDP and TCP), `turn_tls_port` (TLS), and 443 on `turn_t
 - **Credentials** are short-lived TURN REST ones: `<expiry>:<legId>`, HMAC-SHA1 with `turn_auth_secret` (generated
   when unset; is-secret). They go only to an admitted leg (`get#IceServers`, `get#GuestIceServers`). An expired one
   is refused, and so is one of a leg that left (revoked by the media node).
-- **Relay peers** are only the media nodes (and `turn_allowed_peers`). A permission or channel to any other address
-  is dropped before the server sees it, and nothing is relayed to or from one.
+- **Relay peers** are only the media nodes' media ports (and `turn_allowed_peers`, by address and port). A permission
+  to any other address, or a channel to any other address or port, is dropped before the server sees it, and nothing
+  is relayed to or from one, another port of a media node's address included. The exception is an XMPP user's own
+  credential (`xmpp.<userId>`, from `XmppServices.get#IceServers`, XEP-0215), for calls between XMPP clients: it may
+  relay to public unicast addresses too, never to loopback, private (RFC 1918, unique-local), link-local, shared
+  (100.64/10), multicast or documentation ranges, nor an IPv6 address that carries an inside IPv4 one (6to4 of one,
+  IPv4-compatible, NAT64, Teredo), nor another port of a media node's address or of the TURN listeners' own address
+  (a relay there would come from the server itself, past a firewall that keeps the outside off those ports).
 - **Limits:** two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way per
   allocation; excess data is dropped. A stream buffers at most 64 KiB without a whole message. No TCP relays to
   peers are offered.
@@ -524,8 +572,12 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   deployment's and the user's permission, emergency numbers refused (they are dialed directly), the user's limits at
   once and per day (which count every number they added or transferred to, `CallLeg.dialedByUserId`, so adding numbers
   one by one does not get past them), the deployment's calls in a day, and the engine's own check of the class and its calls at once
-  before the INVITE. A REFER is taken only from a registered phone's answered leg in a call, as its user; its target is
-  a username or a number under those checks; an attended REFER (Replaces) is refused. Only someone in the call (an
+  before the INVITE. The limits are counted under one lock (`CallLimitLock`), so calls placed at once cannot pass them
+  together. A REFER is taken only from a registered phone's answered leg in a call, as its user; its target is
+  a username or a number under those checks, checked before the phone is answered (403 when refused, so it keeps the
+  call); an attended REFER (Replaces) is refused. A person called, transferred to or added must pass the apps'
+  `call-target` providers (IronStone: someone of the user's organizations), answered as a user that does not exist when
+  refused. Only someone in the call (an
   answered leg of theirs) may transfer, add or merge; a call that still rings is not transferred; a stale revision or
   a second open transfer is refused. An external user (`EXTERNAL_USER`) neither transfers nor adds. An end-to-end encrypted call adds no phone legs. An IVR option, a menu's or a
   queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
@@ -545,6 +597,47 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   going on are not cut. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. The engine registers its node (`SipNode`) every 20 seconds.
+
+### XMPP
+
+The XMPP server (`crates/moqui-xmpp`, host `src/xmpp/`, [XMPP](../interfaces/XMPP.md)) runs only in a binary with the
+`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp_domain` is set. Each listener is off unless set:
+`xmpp_port` (STARTTLS, required before anything else) on `xmpp_host`, `xmpp_tls_port` (direct TLS) on
+`xmpp_tls_host`, and `/xmpp-websocket` with `xmpp_websocket_enabled`. Local users only: no server-to-server.
+
+- **Sign-in** takes app passwords only, never the account password (which would count toward the account's lockout
+  and cannot carry a second factor): SCRAM-SHA-256 and SCRAM-SHA-256-PLUS against the verifiers stored when the
+  app password was made (salted, 10,000 iterations), with tls-exporter channel binding where the connection has its
+  own TLS session and a downgrade (`y` where the server binds) refused; PLAIN over TLS only; FAST tokens (XEP-0484)
+  bound to the client's user-agent id, kept encrypted, expiring (`xmpp_fast_token_days`), and without channel binding
+  refused unless their count grows; a token goes with the app password it was issued under. An unknown user gets a salt
+  derived from the name and `xmpp_scram_decoy_key` (is-secret, generated when unset), so the exchange does not tell it
+  apart, and its salt stays the same across restarts and nodes. A disabled account cannot sign in, and each service
+  call logs the user in again by name. A session checks every minute that its app password is not revoked and the
+  account may sign in, and ends when not.
+- **Failures** are counted per source address (moqui-lib `source_guard.rs`, as the SIP engine counts failed digests):
+  5 in 10 minutes block the address for an hour, a /64 for IPv6; the account is never locked. Over WebSocket the
+  address is the client a trusted proxy names. At most 20 connections from one address at once and 10,000 in all
+  (TCP and WebSocket); a connection not signed in within a minute is closed; a stanza or stream header over 256 KiB,
+  or nested over 32 deep, ends the stream; a session whose pushes back up (512) is closed. Stream management keeps at
+  most 1,000 unacknowledged stanzas and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
+  uploads 60 slots a user an hour.
+- **Authorization** is the user's: each stanza becomes a service call as the signed-in user, through
+  `XmppClientServices` (granted to `ALL_USERS`), and every service checks the room (`get#RoomAccess`) or works on the
+  user's own rows. An external user (`EXTERNAL_USER`) learns only the usernames of the people of their own rooms.
+- **XML** is parsed by rxml, which refuses DTDs, entity declarations and processing instructions.
+- **End-to-end encrypted Moqui rooms** (C7) are not served; OMEMO messages are kept as they came, unreadable to Moqui,
+  never in a bridged room, with no text in snippets, search, notifications or agents. PEP items (OMEMO bundles hold
+  public keys) are read by access model: `open` any local user, `presence` the people the owner shares a room with,
+  `whitelist` the owner.
+- **TURN for XMPP calls** (XEP-0215): off unless `xmpp_turn_enabled` is true; while off, external services are not
+  advertised and a request gets an empty list. On, a credential keyed to the user (`xmpp.<userId>`) may relay to public
+  unicast addresses only, never loopback, private, link-local, shared or documentation ranges ([TURN](#turn)); it is a
+  relay to the internet within the TURN quotas, as a public TURN service's is. An external user (`EXTERNAL_USER`) never
+  gets one, and a user at most `xmpp_turn_per_hour` (30) an hour (counted on the distributed cache
+  `moqui.xmpp.turn.issued`); a refusal is the same empty list.
+- **Push** (XEP-0357) registrations are stored, with their app server's secret encrypted; a notification has the message
+  count only, and goes nowhere until federation (C3b).
 
 ### Voicemail
 
@@ -574,6 +667,31 @@ user's number that nobody answers, and on the access number (`PnrVoicemail`) whe
   `voicemail_transcribe` is on.
 - **Limits.** A message is at most `voicemail_max_seconds` (120; at most 600), spooled to disk as it is recorded; one
   under a second is dropped.
+
+### Chat bridges
+
+The bridge layer ([Chat bridges](../interfaces/Chat-Bridges.md), C1) opens no port and routes no endpoint: a network
+adapter (C4 on) brings its own transport, and C1 ships none.
+
+- **Input.** `ChatBridgeServices.ingest#Event` is `allow-remote="false"`: only code in the server (an adapter, after its
+  own checks of a webhook's signature or a gateway's session) calls it. It authenticates the bridge by its inbound token
+  (`check#BridgeToken`: the SHA-256 against `ChatBridge.inboundTokenHash`, in constant time; a bridge with no hash takes
+  none) and refuses the whole batch, storing nothing, for an unknown or disabled bridge, a wrong token, a malformed
+  transaction id, more than 200 items or 1 MB, or an item that names a local user. An item posts only as an external
+  actor (no login, no `UserAccount`) into a room an administrator mapped to that bridge (`noMapping` otherwise), as a
+  member a moderator has not taken out, edits and deletes only its own messages, and carries plain text only (escaped to
+  HTML; files are refused). A puppet link to a local user is provenance, never authority. Its messages fetch no link
+  previews, reach a room's agents only under the room's `agentsReadExternal`, and never start the framework's agents.
+- **Output.** A room's messages go only to the networks an administrator mapped it to; a link to an external room grants
+  no rights. Delivery rows keep no message text.
+- **Administration.** `find#Bridges`, `store#Bridge`, `store#RoomBridge` and `end#RoomBridge` need `ChatBridgeAdmin`.
+  `ChatBridge.configJson` is an encrypted field and never returned; the inbound token is kept only as its hash.
+  `retry#Delivery`: the message's sender, a moderator of the room, or `ChatBridgeAdmin`; anyone else is told "not found"
+  or "not allowed" with the same parameters.
+- **Internal services.** `send#Message`, `edit#Message`, `react#Message` and `redact#Message` take `senderActorId` only
+  with authorization disabled. `get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
+  `get#BridgeCapabilities`, `wake#BridgeDelivery`, `run#BridgeDeliveries`, `migrate#ChatActors` and the
+  `ChatBridgeServices` internals are `allow-remote="false"`.
 
 ### Database
 

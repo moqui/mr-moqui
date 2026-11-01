@@ -82,6 +82,13 @@ const REGISTER_EXPIRES: u32 = 300;
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 /// How long a REGISTER waits for its answer.
 const REGISTER_WAIT: Duration = Duration::from_secs(32);
+/// How often a trunk that does not register is pinged with OPTIONS, unless [`UaConfig::trunk_ping`] says otherwise.
+const TRUNK_PING: Duration = Duration::from_secs(60);
+/// How long an OPTIONS ping waits for its answer, at most.
+const PING_WAIT: Duration = Duration::from_secs(8);
+/// The OPTIONS pings in a row with no answer before a trunk is told failed: a failed trunk is left out of the emergency
+/// readiness and the calls' capabilities, so one lost ping must not do that.
+const PING_FAILURES: u32 = 3;
 /// The early answers kept at most, and how long one waits for its leg.
 const MAX_EARLY: usize = 1_000;
 const EARLY_TTL: Duration = Duration::from_secs(30);
@@ -204,6 +211,9 @@ pub struct UaConfig {
     pub user_agent: String,
     /// The registrar for desk and soft phones (V4); `None` keeps it off, and a REGISTER is refused.
     pub registrar: Option<RegistrarConfig>,
+    /// How often a trunk that does not register is pinged with OPTIONS, so its status shows it up or down (60 seconds
+    /// when `None`).
+    pub trunk_ping: Option<Duration>,
 }
 
 /// The addresses the listeners bound.
@@ -214,10 +224,12 @@ pub struct Bound {
     pub tls: Option<SocketAddr>,
 }
 
-/// A trunk's registration state.
+/// A trunk's registration state, or for a trunk that does not register its answer to OPTIONS pings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrunkState {
     Registered,
+    /// A trunk that does not register answered an OPTIONS ping (any final answer: the server is there).
+    Reachable,
     Failed(String),
     Unregistered,
 }
@@ -311,10 +323,12 @@ pub enum UaEvent {
         binding: Binding,
     },
     /// A leg's far end sent REFER (a desk phone's blind transfer): the user part of its `Refer-To`, a username or a
-    /// number.
+    /// number. The host answers `reply` with whether the transfer was taken, before the REFER is answered: 202 and a
+    /// NOTIFY of `200 OK` when it was, 403 when it was refused or no answer came in time.
     Refer {
         leg: String,
         target: String,
+        reply: oneshot::Sender<bool>,
     },
     /// A device leg ([`Ua::ring_device`]) was answered by one of its bindings, which signals from `source`.
     DeviceAnswered {
@@ -377,6 +391,8 @@ struct Inner {
     stop: CancellationToken,
     /// The registrar, when it is on.
     phones: Option<Phones>,
+    /// How often a trunk that does not register is pinged.
+    trunk_ping: Duration,
 }
 
 /// The running user agent. Dropping it does not stop it: call [`Ua::shutdown`].
@@ -555,6 +571,35 @@ fn status_code(code: u16) -> StatusCode {
     StatusCode::from(code)
 }
 
+/// The SIP UDP socket, answering a phone's STUN Binding keepalive (RFC 5626 §4.4.2, [`crate::stun`]) itself and handing
+/// every other datagram to the SIP stack.
+struct StunAnswering(tokio::net::UdpSocket);
+
+#[async_trait::async_trait]
+impl rsipstack::platform::net::UdpSocket for StunAnswering {
+    async fn recv_from(&self, buf: &mut [u8]) -> rsipstack::Result<(usize, SocketAddr)> {
+        loop {
+            let (len, from) = self.0.recv_from(buf).await?;
+            match crate::stun::binding_response(&buf[..len], from) {
+                Some(answer) => {
+                    if let Err(err) = self.0.send_to(&answer, from).await {
+                        tracing::debug!("SIP UDP: the STUN keepalive answer to {from} was not sent: {err}");
+                    }
+                }
+                None => return Ok((len, from)),
+            }
+        }
+    }
+
+    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> rsipstack::Result<usize> {
+        Ok(self.0.send_to(buf, addr).await?)
+    }
+
+    fn local_addr(&self) -> rsipstack::Result<SocketAddr> {
+        Ok(self.0.local_addr()?)
+    }
+}
+
 impl Ua {
     /// Binds the listeners that are set and starts serving them. A listener that does not bind is an error: the host
     /// logs it and starts without SIP.
@@ -564,7 +609,12 @@ impl Ua {
         let transport_layer = TransportLayer::new(stop.child_token());
         let mut bound = Bound::default();
         if let Some(addr) = config.udp {
-            let udp = UdpConnection::create_connection(addr, None, Some(stop.child_token()))
+            // a UDP phone's STUN keepalive (RFC 5626) is answered on this socket before the SIP stack sees it
+            let socket = tokio::net::UdpSocket::bind(addr)
+                .await
+                .map_err(|e| format!("SIP UDP {addr}: {e}"))?;
+            let socket: Arc<dyn rsipstack::platform::net::UdpSocket> = Arc::new(StunAnswering(socket));
+            let udp = UdpConnection::from_socket(socket, None, Some(stop.child_token()))
                 .await
                 .map_err(|e| format!("SIP UDP {addr}: {e}"))?;
             bound.udp = udp.get_addr().get_socketaddr().ok();
@@ -646,6 +696,7 @@ impl Ua {
             public_host: config.public_host.filter(|h| !h.trim().is_empty()),
             stop: stop.clone(),
             phones,
+            trunk_ping: config.trunk_ping.filter(|d| !d.is_zero()).unwrap_or(TRUNK_PING),
         });
         phones::sweep(&inner);
         {
@@ -683,6 +734,12 @@ impl Ua {
                 let config = trunk.clone();
                 let token = stop.clone();
                 tokio::spawn(async move { inner.register_loop(config, token).await });
+            } else {
+                // one that does not register is pinged, so it still shows up or down before a call fails
+                let inner = Arc::clone(&self.inner);
+                let config = trunk.clone();
+                let token = stop.clone();
+                tokio::spawn(async move { inner.ping_loop(config, token).await });
             }
             entries.insert(
                 trunk.id.clone(),
@@ -935,6 +992,93 @@ impl Inner {
                 state: TrunkState::Unregistered,
             });
         }
+    }
+
+    /// Pings a trunk that does not register with OPTIONS: its status (reachable, or failed with why once
+    /// [`PING_FAILURES`] pings in a row had no answer) is told when it changes, and again every ten pings.
+    async fn ping_loop(self: Arc<Self>, trunk: TrunkConfig, stop: CancellationToken) {
+        let call_id = format!("{}@moqui", random_text(16));
+        let mut seq = 0u32;
+        let mut last: Option<TrunkState> = None;
+        let mut unchanged = 0u32;
+        let mut failures = 0u32;
+        let wait = PING_WAIT.min(self.trunk_ping / 2);
+        loop {
+            let state = match tokio::time::timeout(wait, self.ping_once(&trunk, &call_id, &mut seq)).await {
+                Ok(Ok(())) => TrunkState::Reachable,
+                Ok(Err(err)) => TrunkState::Failed(format!("no answer to OPTIONS: {err}")),
+                Err(_) => TrunkState::Failed("no answer to OPTIONS in time".to_string()),
+            };
+            failures = if matches!(state, TrunkState::Failed(_)) {
+                failures + 1
+            } else {
+                0
+            };
+            unchanged += 1;
+            if (failures == 0 || failures >= PING_FAILURES) && (last.as_ref() != Some(&state) || unchanged >= 10) {
+                if let TrunkState::Failed(err) = &state {
+                    if last.as_ref() != Some(&state) {
+                        tracing::warn!("SIP trunk {}: {err}", trunk.id);
+                    }
+                }
+                self.emit(UaEvent::TrunkStatus {
+                    trunk: trunk.id.clone(),
+                    state: state.clone(),
+                });
+                last = Some(state);
+                unchanged = 0;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(self.trunk_ping) => {}
+                _ = stop.cancelled() => break,
+            }
+        }
+    }
+
+    /// One OPTIONS to a trunk: any final answer (a 405 or a challenge too) is the server answering.
+    async fn ping_once(&self, trunk: &TrunkConfig, call_id: &str, seq: &mut u32) -> Result<(), String> {
+        let addresses = resolve(&trunk.host, trunk.port()).await;
+        let target = self.target(trunk, &addresses)?;
+        let (connection, _) = self
+            .endpoint
+            .transport_layer
+            .lookup(&target, None)
+            .await
+            .map_err(sip_err)?;
+        let domain = trunk.domain();
+        let user = if trunk.credentials.username.is_empty() {
+            "moqui"
+        } else {
+            trunk.credentials.username.as_str()
+        };
+        let request_uri = format!("sip:{domain}");
+        let ours: Uri = Uri::try_from(format!("sip:{user}@{domain}").as_str()).map_err(sip_err)?;
+        *seq += 1;
+        let via = self
+            .endpoint
+            .get_via(Some(connection.get_addr().clone()), None)
+            .map_err(sip_err)?;
+        let from = rsipstack::sip::typed::From {
+            display_name: None,
+            uri: ours.clone(),
+            params: vec![],
+        }
+        .with_tag(make_tag());
+        let to = rsipstack::sip::typed::To {
+            display_name: None,
+            uri: Uri::try_from(request_uri.as_str()).map_err(sip_err)?,
+            params: vec![],
+        };
+        let request = self.endpoint.make_request(
+            Method::Options,
+            Uri::try_from(request_uri.as_str()).map_err(sip_err)?,
+            via,
+            from,
+            to,
+            *seq,
+            Some(call_id.to_string().into()),
+        );
+        self.send_request(request, &target).await.map(|_| ())
     }
 
     /// One REGISTER (answering one challenge); the expiry the registrar granted.
@@ -1244,8 +1388,9 @@ impl Inner {
                 DialogState::Info(_, _, handle) | DialogState::Options(_, _, handle) => {
                     let _ = handle.reply(StatusCode::OK).await;
                 }
-                // a desk phone's blind transfer (RFC 3515): accepted, told to the host, and the phone told it went (its
-                // NOTIFY, so it hangs up); an attended one (Replaces, RFC 3891) is not taken
+                // a desk phone's blind transfer (RFC 3515): checked by the host first; one it took is accepted and the
+                // phone told it went (its NOTIFY, so it hangs up), one it refused is answered 403 so the phone keeps the
+                // call; an attended one (Replaces, RFC 3891) is not taken
                 DialogState::Refer(id, req, handle) => {
                     let target = header_values(&req.headers, "Refer-To")
                         .into_iter()
@@ -1254,11 +1399,18 @@ impl Inner {
                         .and_then(|value| refer_target(&value));
                     match target {
                         Some(target) => {
-                            let _ = handle.reply(StatusCode::Accepted).await;
+                            let (reply, decision) = oneshot::channel();
                             self.emit(UaEvent::Refer {
                                 leg: leg.clone(),
                                 target,
+                                reply,
                             });
+                            let taken = matches!(tokio::time::timeout(DECIDE_WAIT, decision).await, Ok(Ok(true)));
+                            if !taken {
+                                let _ = handle.reply(StatusCode::Forbidden).await;
+                                continue;
+                            }
+                            let _ = handle.reply(StatusCode::Accepted).await;
                             if let Some(Dialog::Invite(dialog)) = self.dialogs.get_dialog(&id) {
                                 tokio::spawn(async move {
                                     let _ = dialog

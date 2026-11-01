@@ -1,0 +1,45 @@
+{
+  "description": "Frames of an encrypted call (W8): the codec's leading bytes in the clear as SFrame metadata, then the SFrame header and ciphertext (cipher suite AES_128_GCM_SHA256_128). Checked by crates/moqui-rtc/tests/sframe.rs against the sframe crate and by the webroot client spec WebrootSFrame.",
+  "frames": [
+    {
+      "kind": "video",
+      "cipher_suite": 4,
+      "kid": 65537,
+      "ctr": 0,
+      "base_key": "0112233445566778899aabbccddeef00",
+      "clear_bytes": 10,
+      "frame": "1026456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8",
+      "encrypted": "1026456483a2c1e0ff1ea001000166811571252b0461ed6355ce6dce1ef6bb16e630af4185d3f512b3c24e47fd7196b3b0bc2268de160ca374f811980f17c98f52a75c6b"
+    },
+    {
+      "kind": "video",
+      "cipher_suite": 4,
+      "kid": 65537,
+      "ctr": 1,
+      "base_key": "0112233445566778899aabbccddeef00",
+      "clear_bytes": 3,
+      "frame": "3126456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e7",
+      "encrypted": "312645a1010001e9f3f326939b616ee5f9d36d9f7ee8b8adbe1683dbd5e8f7f03800dc1cc04c91c11e45f2905da68dfca83764718c"
+    },
+    {
+      "kind": "audio",
+      "cipher_suite": 4,
+      "kid": 131074,
+      "ctr": 7,
+      "base_key": "02132435465768798a9bacbdcedff001",
+      "clear_bytes": 0,
+      "frame": "7826456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0",
+      "encrypted": "a70200020b87339bd8b7eedccf631bd2ba97e8321ee0c9c986c7c7930686abf13d316d0ea2e2f3f85bf7e9af349f0330c4da8b832e3cd458540007be"
+    },
+    {
+      "kind": "video",
+      "cipher_suite": 4,
+      "kid": 196611,
+      "ctr": 300,
+      "base_key": "031425364758697a8b9cadbecfe0f102",
+      "clear_bytes": 6,
+      "frame": "1026456483a2",
+      "encrypted": "1026456483a2a9030003012c538ab2ac56f3df47760b762e17adc561"
+    }
+  ]
+}

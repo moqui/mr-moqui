@@ -23,7 +23,7 @@ use moqui_rtc::audio::opus::OpusEncoder;
 use moqui_rtc::audio::FRAME;
 use moqui_rtc::record::{ClosedSegment, RecordConfig, TrackKind};
 
-use super::{notice_kept, Control, Ended, Limits, Session, Store};
+use super::{notice_kept, recorders, tell, Control, Ended, Limits, Session, Store};
 use crate::rtc::media::{Kind, OwnedFrame, Source, TapEvent};
 
 /// A store that keeps each segment's bytes, read from its spooled file as it is handed over.
@@ -279,4 +279,28 @@ fn the_notice_is_kept_for_joiners_until_the_recording_is_over() {
             "{state}"
         );
     }
+}
+
+#[test]
+fn pause_and_resume_are_never_dropped_however_many_wait() {
+    // a recorder busy for a while (its turn not yet come): every control waits for it, none is dropped
+    let (tx, rx) = std::sync::mpsc::channel();
+    let id = "spec-controls-never-dropped";
+    moqui_lib::sync::lock(recorders()).insert(id.to_string(), tx);
+    for n in 0..200u32 {
+        tell(
+            id,
+            if n % 2 == 0 {
+                Control::Pause
+            } else {
+                Control::Resume { period: n }
+            },
+        );
+    }
+    tell(id, Control::Stop);
+    moqui_lib::sync::lock(recorders()).remove(id);
+    let got: Vec<Control> = rx.try_iter().collect();
+    assert_eq!(got.len(), 201);
+    assert_eq!(got[1], Control::Resume { period: 1 });
+    assert_eq!(got[200], Control::Stop);
 }

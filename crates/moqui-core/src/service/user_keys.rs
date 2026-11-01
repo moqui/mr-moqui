@@ -56,6 +56,8 @@ pub(in crate::service) fn register(
     rust_service!(map, create_app_password)?;
     rust_service!(map, revoke_app_password)?;
     rust_service!(map, get_app_passwords)?;
+    rust_service!(map, get_scram_credentials)?;
+    rust_service!(map, check_plain_password)?;
     Ok(())
 }
 
@@ -277,6 +279,8 @@ fn create_app_password(
     let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let mut row = EntityValue::make(facade, USER_APP_PASSWORD)?;
+    // its XMPP sign-in (SCRAM, plans/Comms-Framework.md §4.3): the only place the password is in the clear
+    scram_fields(facade, &user_id, &password, &mut row)?;
     row.set_sequenced_id_primary(facade)?;
     let id = row.get("appPasswordId").map(to_plain_string).unwrap_or_default();
     row.set("userId", Value::string(&user_id));
@@ -287,6 +291,152 @@ fn create_app_password(
     Ok(out([
         ("appPasswordId", Value::string(id)),
         ("password", Value::string(password)),
+    ]))
+}
+
+/// The iteration count of new SCRAM verifiers.
+const SCRAM_ITERATIONS: u32 = 10_000;
+
+/// An app password's SCRAM-SHA-256 verifiers, for the XMPP server: one for the password as shown (with its dashes, in
+/// lower case) and one for its key (without them), since SCRAM hashes what the client typed. A user's app passwords
+/// share one salt and iteration count, so the server's one challenge fits each of them (moqui-xmpp `scram.rs`).
+fn scram_fields(facade: &EntityFacade, user_id: &str, password: &str, row: &mut EntityValue) -> Result<(), LibError> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let shared = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("userId", Value::string(user_id))
+        .condition(moqui_db::sql::Condition::is_null("revokedDate"))
+        .list()?
+        .iter()
+        .find_map(|existing| {
+            let salt = existing
+                .get("scramSalt")
+                .map(to_plain_string)
+                .filter(|salt| !salt.is_empty())?;
+            let iterations = existing
+                .get("scramIterations")
+                .map(to_plain_string)
+                .and_then(|count| count.parse::<u32>().ok())?;
+            Some((engine.decode(salt).ok()?, iterations))
+        });
+    let (salt, iterations) = match shared {
+        Some(found) => found,
+        None => {
+            let mut salt = vec![0_u8; 16];
+            getrandom::fill(&mut salt).map_err(|err| LibError::new(format!("random source failed: {err}")))?;
+            (salt, SCRAM_ITERATIONS)
+        }
+    };
+    let mut stored = Vec::new();
+    let mut server = Vec::new();
+    for form in [password.to_lowercase(), crate::user::app_password_key(password)] {
+        let (stored_key, server_key) = crate::user::scram_sha256_verifier(&form, &salt, iterations);
+        stored.push(engine.encode(stored_key));
+        server.push(engine.encode(server_key));
+    }
+    row.set("scramSalt", Value::string(engine.encode(&salt)));
+    row.set("scramIterations", Value::I64(i64::from(iterations)));
+    row.set("scramStoredKeys", Value::string(stored.join(" ")));
+    row.set("scramServerKeys", Value::string(server.join(" ")));
+    Ok(())
+}
+
+/// `org.moqui.impl.XmppServices.get#ScramCredentials` (internal): the salt, iteration count and verifiers of a user's
+/// active app passwords that have them, for SCRAM sign-in; nothing for an unknown user, a disabled one, or one with
+/// no such password.
+fn get_scram_credentials(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(username) = text(parameters, "username") else {
+        return Ok(BTreeMap::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(account) = facade
+        .find("moqui.security.UserAccount")?
+        .eq("username", Value::string(&username))
+        .one()?
+    else {
+        return Ok(BTreeMap::new());
+    };
+    if account.get("disabled").map(to_plain_string).as_deref() == Some("Y") {
+        return Ok(BTreeMap::new());
+    }
+    let user_id = account.get("userId").map(to_plain_string).unwrap_or_default();
+    let rows = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("userId", Value::string(&user_id))
+        .condition(moqui_db::sql::Condition::is_null("revokedDate"))
+        .order_by("createdDate", false)
+        .list()?;
+    let mut salt = String::new();
+    let mut iterations = String::new();
+    let mut stored = Vec::new();
+    let mut server = Vec::new();
+    let mut ids = Vec::new();
+    for row in rows.iter() {
+        let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+        if field("scramSalt").is_empty() {
+            continue;
+        }
+        // the first salt is the user's; a row made with another (none should be) is left out
+        if salt.is_empty() {
+            salt = field("scramSalt");
+            iterations = field("scramIterations");
+        } else if field("scramSalt") != salt {
+            continue;
+        }
+        let (keys, servers) = (field("scramStoredKeys"), field("scramServerKeys"));
+        for (stored_key, server_key) in keys.split_whitespace().zip(servers.split_whitespace()) {
+            stored.push(Value::string(stored_key));
+            server.push(Value::string(server_key));
+            ids.push(Value::string(field("appPasswordId")));
+        }
+    }
+    if stored.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    Ok(out([
+        ("userId", Value::string(user_id)),
+        ("salt", Value::string(salt)),
+        ("iterations", Value::string(iterations)),
+        ("storedKeyList", Value::List(stored)),
+        ("serverKeyList", Value::List(server)),
+        ("appPasswordIdList", Value::List(ids)),
+    ]))
+}
+
+/// `org.moqui.impl.XmppServices.check#PlainPassword` (internal): PLAIN sign-in, which takes an app password only
+/// (`login_app_password`: a refusal never counts toward the account's lockout); the account's userId and username.
+fn check_plain_password(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let (Some(username), Some(password)) = (text(parameters, "username"), text(parameters, "password")) else {
+        add_error("not an app password");
+        return Ok(BTreeMap::new());
+    };
+    if !crate::user::looks_like_app_password(&password)
+        || crate::user::login_app_password(&username, &password).is_err()
+    {
+        add_error("not an app password");
+        return Ok(BTreeMap::new());
+    }
+    let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
+    let username = crate::user::current_username().ok().flatten().unwrap_or(username);
+    // which app password it was, so the session and its FAST tokens go with it when it is revoked
+    let hashed = crate::user::hash_login_key(&crate::user::app_password_key(&password))?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let app_password_id = facade
+        .find(USER_APP_PASSWORD)?
+        .eq("passwordHash", Value::string(hashed))
+        .one()?
+        .and_then(|row| row.get("appPasswordId").map(to_plain_string))
+        .unwrap_or_default();
+    Ok(out([
+        ("userId", Value::string(user_id)),
+        ("username", Value::string(username)),
+        ("appPasswordId", Value::string(app_password_id)),
     ]))
 }
 
@@ -342,6 +492,9 @@ fn get_app_passwords(
             for field in ["appPasswordId", "name", "createdDate", "lastUsedDate", "revokedDate"] {
                 map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
             }
+            // XMPP's SCRAM takes only an app password made with its verifiers (since C3a); an older one works with PLAIN
+            let verifiers = row.get("scramStoredKeys").is_some_and(|keys| !is_empty(keys));
+            map.insert("xmppReady".to_string(), Value::Bool(verifiers));
             Value::Map(map)
         })
         .collect();

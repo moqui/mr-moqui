@@ -318,6 +318,19 @@ test("the root's shell: the current app and its title, the + menu, the account m
     vm.shellData.shell.mailScreen = null;
     assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["tray", "messages"], "Messages alone stays");
     vm.shellData.shell.mailScreen = "/qapps/Mail/Inbox";
+    // the missed calls (the calls count) link to the theme's calls screen; below 600 px only while there are some
+    vm.shellData.shell.callsScreen = "/qapps/Comms/Calls/History?outcome=missed";
+    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["tray", "mail"], "no missed calls: no button on a phone");
+    vm.shellCounts = Object.assign({}, vm.shellCounts, { calls: 2 });
+    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["tray", "mail", "calls"]);
+    assert.equal(vm.headerCounters[2].url, "/qapps/Comms/Calls/History?outcome=missed");
+    assert.equal(vm.counterText(vm.headerCounters[2]), "2");
+    vm.$q = { screen: { lt: { sm: false } } };
+    vm.shellCounts = Object.assign({}, vm.shellCounts, { calls: 0 });
+    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["today", "email", "messages", "calls", "notifications"], "always on a wide screen");
+    vm.$q = { screen: { lt: { sm: true } } };
+    vm.shellData.shell.callsScreen = null;
+    vm.shellCounts = { email: 3, messages: 2, today: 1, notifications: 4 };
     // the tray button opens the tray on its last tab, else the first, and closes it
     vm.toggleTray(null);
     assert.equal(vm.trayOpen, true);

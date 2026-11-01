@@ -257,7 +257,7 @@ fn logout_ends_the_local_login_when_the_provider_url_cannot_be_had() {
             ],
         );
     }
-    crate::user::login_external_user("sso.out").unwrap();
+    crate::user::login_external_user("sso.out", None).unwrap();
     assert_eq!(
         crate::user::session::current_user_id().unwrap().as_deref(),
         Some("SSO_OUT")
@@ -286,4 +286,49 @@ fn a_call_takes_only_the_errors_it_added() {
     context.message().add_error("from before");
     call("org.moqui.impl.UserServices.update#UserAccount", parameters).unwrap();
     assert_eq!(context.message().errors(), ["from before"]);
+}
+
+/// The sign-in an identity provider proves: an OpenID Connect `auth_time` (after the request for a re-authentication,
+/// none when the provider answered from an older session or sent none), an OAuth re-authentication taken at its word.
+#[test]
+fn an_sso_sign_in_counts_from_its_auth_time() {
+    use super::sign_in_time;
+    use crate::sso::{FlowConfig, FlowKind, OauthConfig, OidcConfig};
+    let oidc = FlowConfig {
+        auth_flow_id: "OIDC".into(),
+        kind: FlowKind::Oidc(OidcConfig::default()),
+    };
+    let oauth = FlowConfig {
+        auth_flow_id: "OAUTH".into(),
+        kind: FlowKind::Oauth(OauthConfig::default()),
+    };
+    let now = 1_800_000_000_000_i64;
+    let with_auth_time = |seconds: Option<i64>| {
+        let mut profile = SsoProfile::default();
+        if let Some(seconds) = seconds {
+            profile.attributes.insert("auth_time".into(), Value::I64(seconds));
+        }
+        profile
+    };
+    let fresh = with_auth_time(Some(now / 1000 - 2));
+    let old = with_auth_time(Some(now / 1000 - 3600));
+    let none = with_auth_time(None);
+    let started = Some(now - 10_000);
+    // a plain login counts from when the provider says the user signed in; recent_auth then judges its age
+    assert_eq!(sign_in_time(&oidc, &fresh, false, started, now), Some(now - 2000));
+    assert_eq!(sign_in_time(&oidc, &old, false, started, now), Some(now - 3_600_000));
+    assert_eq!(sign_in_time(&oidc, &none, false, started, now), None);
+    // a re-authentication needs an auth_time after the request
+    assert_eq!(sign_in_time(&oidc, &fresh, true, started, now), Some(now - 2000));
+    assert_eq!(sign_in_time(&oidc, &old, true, started, now), None);
+    assert_eq!(sign_in_time(&oidc, &none, true, started, now), None);
+    assert_eq!(sign_in_time(&oidc, &fresh, true, None, now), None);
+    // an auth_time ahead of this server's clock is now
+    assert_eq!(
+        sign_in_time(&oidc, &with_auth_time(Some(now / 1000 + 30)), false, started, now),
+        Some(now)
+    );
+    // OAuth cannot prove it: only a re-authentication the user asked for counts
+    assert_eq!(sign_in_time(&oauth, &none, true, started, now), Some(now));
+    assert_eq!(sign_in_time(&oauth, &none, false, started, now), None);
 }

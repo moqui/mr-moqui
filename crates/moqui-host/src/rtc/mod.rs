@@ -23,6 +23,11 @@
 //! signaling node, and each frame carries the connection generation the SFU fences with. Replies go back to the socket
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
+//!
+//! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (an edge,
+//! the node of its signaling socket). The edge's SFU links the room to the call's node (its origin) with a relay link on
+//! the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and relayed
+//! frames go between them as `roomFrame` (`driver.rs`). An edge that stops ends only its legs (`expire#Calls`).
 
 pub(crate) mod captions;
 mod driver;
@@ -53,13 +58,35 @@ const REGISTER_SERVICE: &str = "org.moqui.impl.CallServices.register#MediaNode";
 
 /// Something for the driver.
 pub(crate) enum Command {
-    /// A signaling frame of a leg, from the socket at `route`.
+    /// A signaling frame of a leg, from the socket at `route`. `origin` is the call's media node: another node's when the
+    /// leg's media is on this one as an edge (W7).
     Frame {
         route: Route,
         room: String,
         leg: String,
         generation: u64,
+        origin: String,
         frame: Json,
+    },
+    /// A message of the SFU of the node `from` about the room's relay link (W7).
+    Relay {
+        room: String,
+        from: String,
+        message: Box<moqui_rtc::RelayMessage>,
+    },
+    /// The room here relays to `origin`, the call's node (W7): a phone leg's media is on this node.
+    Link {
+        room: String,
+        origin: String,
+    },
+    /// A frame for the room's legs from another node of the room (W7): a relayed `mute`, a `participant`, a notice
+    /// (kept here as `notice` says) or the captions' lines. Not sent back to `from`.
+    RoomFrame {
+        room: String,
+        from: String,
+        except: Option<String>,
+        frame: Json,
+        notice: Option<(NoticeKind, bool)>,
     },
     /// The call services closed a leg or the call.
     CloseLeg {
@@ -107,6 +134,23 @@ pub(crate) enum NoticeKind {
     Captions,
 }
 
+impl NoticeKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            NoticeKind::Recording => "recording",
+            NoticeKind::Captions => "captions",
+        }
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "recording" => Some(NoticeKind::Recording),
+            "captions" => Some(NoticeKind::Captions),
+            _ => None,
+        }
+    }
+}
+
 fn media() -> &'static Mutex<Option<SyncSender<Command>>> {
     static MEDIA: OnceLock<Mutex<Option<SyncSender<Command>>>> = OnceLock::new();
     MEDIA.get_or_init(|| Mutex::new(None))
@@ -120,6 +164,26 @@ pub(crate) fn command(command: Command) -> Result<(), &'static str> {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => Err("overloaded"),
         Err(TrySendError::Disconnected(_)) => Err("noMedia"),
+    }
+}
+
+/// A command that must not be dropped (a recording's notice to its legs): when the queue is full it waits for room, up to
+/// `wait`, instead of answering `overloaded` at once.
+pub(crate) fn command_waiting(mut command: Command, wait: Duration) -> Result<(), &'static str> {
+    let sender = lock(media()).clone().ok_or("noMedia")?;
+    let until = std::time::Instant::now() + wait;
+    loop {
+        match sender.try_send(command) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => return Err("noMedia"),
+            Err(TrySendError::Full(back)) => {
+                if std::time::Instant::now() >= until {
+                    return Err("overloaded");
+                }
+                command = back;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
     }
 }
 
@@ -284,7 +348,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         }
     }
     // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
-    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, config.bind.ip(), public, &[]) {
+    let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, bound, public, &[]) {
         Ok(Some(settings)) => match turn::start(factory.runtime_dir(), &settings) {
             Ok(node) => {
                 tracing::info!("TURN started: {}", turn::urls(&settings, &node.bound).join(", "));

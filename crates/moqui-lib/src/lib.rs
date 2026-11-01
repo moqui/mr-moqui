@@ -35,6 +35,7 @@ pub mod object;
 pub mod resource;
 pub mod signer;
 pub mod string;
+pub mod source_guard;
 pub mod sync;
 pub mod xml_edit;
 

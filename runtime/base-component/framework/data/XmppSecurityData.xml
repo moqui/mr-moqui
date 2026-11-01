@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- XMPP for local users (C3a, docs/interfaces/XMPP.md): the services an XMPP client's session calls as its user, as
+    DriveDeviceServices are for WebDAV and SFTP. Each checks the room (get#RoomAccess) or works on the user's own rows,
+    as for the Chat screens; the sign-in lookups are internal (authenticate false) and not here. -->
+<entity-facade-xml type="seed">
+    <moqui.security.ArtifactGroup artifactGroupId="XmppClientServices" description="Chat services of XMPP clients"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="XmppClientServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.ChatServices\.(send#Message|edit#Message|redact#Message|react#Message|mark#Read|signal#Typing|add#Member|find#Rooms|set#UserStatus|heartbeat#UserStatus)"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="XmppClientServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.XmppServices\.(get#Users|get#Roster|get#DirectRoom|get#RoomInfo|get#Archive|find#EventByRef|store#EncryptedMessage|get#PepItems|publish#PepItem|retract#PepItem|configure#PepNode|delete#PepNode|get#BlockedJids|block#Jids|unblock#Jids|enable#Push|disable#Push|create#UploadSlot|attach#Upload|get#AttachmentUrls|get#IceServers)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="XmppClientServicesALL" userGroupId="ALL_USERS" artifactGroupId="XmppClientServices"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>

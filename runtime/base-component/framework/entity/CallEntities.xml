@@ -28,7 +28,10 @@ along with this software (see the LICENSE.md file). If not, see
             goes CssRinging to CssActive to CssEnded, or CssRinging to CssEnded; revision counts its changes, so a client
             and a repeated request see which state they act on. mediaNodeId is the instance holding its media;
             mediaGeneration counts the times its media moved (a new node after a loss starts a new call, so it stays 1 for
-            now). encryptionMode is what protects its media: dtls-srtp (hop by hop through the SFU) until W8.</description>
+            now). encryptionMode is what protects its media, fixed at the start and never lowered (the enumeration
+            CallEncryptionMode, by enumCode): dtls-srtp, hop by hop through the SFU, which can hear it; e2ee-sframe, end to end
+            (W8): each sender's frames are SFrame-encrypted in the browser with keys the server never sees, so it takes no
+            recording, captions, phone legs, desk phones or guests.</description>
         <field name="callSessionId" type="id" is-pk="true"/>
         <field name="chatRoomId" type="id"/>
         <field name="callLinkId" type="id"><description>The call link a meeting was opened by (its guests come in through it)</description></field>
@@ -97,6 +100,11 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Everyone left" enumId="CerEmpty" enumCode="empty" enumTypeId="CallEndReason" sequenceNum="7"/>
             <moqui.basic.Enumeration description="Failed" enumId="CerFailed" enumCode="failed" enumTypeId="CallEndReason" sequenceNum="8"/>
             <moqui.basic.Enumeration description="Removed" enumId="CerRemoved" enumCode="removed" enumTypeId="CallEndReason" sequenceNum="9"/>
+
+            <!-- W8: the values of CallSession.encryptionMode are these enumCodes -->
+            <moqui.basic.EnumerationType description="Call Encryption Mode" enumTypeId="CallEncryptionMode"/>
+            <moqui.basic.Enumeration description="DTLS-SRTP to the server (hop by hop)" enumId="CemDtlsSrtp" enumCode="dtls-srtp" enumTypeId="CallEncryptionMode" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="End to end (SFrame)" enumId="CemE2eeSframe" enumCode="e2ee-sframe" enumTypeId="CallEncryptionMode" sequenceNum="2"/>
         </seed-data>
     </entity>
 
@@ -110,7 +118,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="identityKindEnumId" type="id"/>
         <field name="userId" type="id"/>
         <field name="callGuestId" type="id"/>
-        <field name="chatActorId" type="id"><description>The chat actor, once chat has actors (C1)</description></field>
+        <field name="chatActorId" type="id"><description>The chat actor of a local user (ChatServices.get#LocalActors)</description></field>
         <field name="displayName" type="text-medium"/>
         <field name="roleEnumId" type="id"/>
         <field name="admissionStatusId" type="id"/>
@@ -165,6 +173,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="statusId" type="id"/>
         <field name="endReasonEnumId" type="id"/>
         <field name="qualityJson" type="text-long"/>
+        <field name="mediaNodeId" type="text-medium"><description>The node holding the leg's media (W7): the call's
+            mediaNodeId, or with rtc_cascade_enabled the node of its signaling socket (an edge, which relays to the call's
+            node), or a phone's SIP engine's node. Set as the leg binds; empty for a phone leg on the call's node.</description></field>
+        <field name="mediaNodePinned" type="text-indicator"><description>Y when the leg's media stays on the call's node:
+            the call's node refused its edge's relay link (W7).</description></field>
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one" related="moqui.call.CallParticipant" short-alias="participant"/>
         <relationship type="one" title="CallLegType" related="moqui.basic.Enumeration" short-alias="legType">
@@ -273,6 +286,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="expiryDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
         <field name="lastUsedDate" type="date-time"/>
+        <field name="e2eeRequired" type="text-indicator"><description>Y: the link's meetings are end-to-end encrypted (W8),
+            so guests, who have no crypto device, cannot join them</description></field>
         <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
@@ -450,7 +465,8 @@ along with this software (see the LICENSE.md file). If not, see
             noticeMethodEnumId: CnmWeb (the browser's indicator and prompt, the rtc recording frame) or CnmVoice (a voice
             prompt on a phone leg, notify#LegRecording). ackRequired: the policy asked this leg to acknowledge
             (call_recording_ack_required); ackDate and ackMethodEnumId (CamClick, CamDtmf) once it did. Staying on the call
-            after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording.</description>
+            after the notice is consent; withdrawnDate is set when the leg withdrew it, which pauses the recording. An
+            acknowledgement after a withdrawal keeps the answer it replaces as a CallRecordingConsentHistory row.</description>
         <field name="callRecordingConsentId" type="id" is-pk="true"/>
         <field name="callRecordingId" type="id"/>
         <field name="callSessionId" type="id"/>
@@ -483,6 +499,24 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Keypad (DTMF)" enumId="CamDtmf" enumCode="dtmf" enumTypeId="CallRecordingAckMethod" sequenceNum="2"/>
         </seed-data>
     </entity>
+    <entity entity-name="CallRecordingConsentHistory" package="moqui.call" use="transactional" cache="never">
+        <description>A leg's earlier answer to a recording notice, kept when it acknowledges again after a withdrawal: the
+            acknowledgement (ackDate, ackMethodEnumId; none when the leg had not acknowledged) and the withdrawal that
+            ended it. CallRecordingConsent holds the current answer; with these rows every acknowledgement and withdrawal
+            stays. Deleted with the recording.</description>
+        <field name="callRecordingConsentHistoryId" type="id" is-pk="true"/>
+        <field name="callRecordingConsentId" type="id"/>
+        <field name="callRecordingId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="ackDate" type="date-time"/>
+        <field name="ackMethodEnumId" type="id"/>
+        <field name="withdrawnDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallRecordingConsent" short-alias="consent"/>
+        <relationship type="one-nofk" related="moqui.call.CallRecording" short-alias="recording"/>
+        <relationship type="one" title="CallRecordingAckMethod" related="moqui.basic.Enumeration" short-alias="ackMethod">
+            <key-map field-name="ackMethodEnumId"/></relationship>
+        <index name="CALL_REC_CONSENT_HIST"><index-field name="callRecordingId"/><index-field name="callLegId"/></index>
+    </entity>
 
     <!-- ========== W6: captions and transcripts (plans/Comms-Framework.md §5.4, §6.4) ==========
         After W5's recording block. voicemailId is a plain id until V2 adds Voicemail and its relationship here (type
@@ -502,6 +536,27 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
         <relationship type="one-nofk" title="StartedBy" related="moqui.security.UserAccount" short-alias="startedBy">
             <key-map field-name="startedByUserId" related="userId"/></relationship>
+    </entity>
+
+    <entity entity-name="CallCaptionsNotice" package="moqui.call" use="transactional" cache="never">
+        <description>The captions notice one leg got, as CallRecordingConsent logs the recording's: each time captions
+            are turned on, for every leg then in the call, and for a leg that joins while they are on. noticeMethodEnumId:
+            CnmWeb (the browser's notice, the rtc captions frame) or CnmVoice (a prompt on a phone leg); providerLabel and
+            providerLocal: the provider the notice named; captionsStartedDate: the CallCaptions startedDate it belongs to.</description>
+        <field name="callCaptionsNoticeId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="callParticipantId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="captionsStartedDate" type="date-time"/>
+        <field name="noticeDate" type="date-time"/>
+        <field name="noticeMethodEnumId" type="id"/>
+        <field name="providerLabel" type="text-medium"/>
+        <field name="providerLocal" type="text-indicator"/>
+        <relationship type="one-nofk" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one-nofk" related="moqui.call.CallLeg" short-alias="leg"/>
+        <relationship type="one" title="CallRecordingNoticeMethod" related="moqui.basic.Enumeration" short-alias="noticeMethod">
+            <key-map field-name="noticeMethodEnumId"/></relationship>
+        <index name="CALL_CAPT_NOTICE_SES"><index-field name="callSessionId"/><index-field name="callLegId"/></index>
     </entity>
 
     <entity entity-name="CallTranscript" package="moqui.call" use="transactional" cache="never">
@@ -544,4 +599,20 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
     <!-- ========== end W6 ========== -->
+
+    <!-- ========== Encrypted calls (W8; plans/Comms-Framework.md §6.4, D-W3; docs/interfaces/WebRTC.md "Encrypted calls") ==========
+        A call whose encryptionMode is e2ee-sframe: each leg in a browser names the crypto device (C7 core, ChatDevice) its
+        page holds, and the server publishes the roster of those legs and devices; each sender sends its own SFrame key to
+        every device on it over Olm to-device messages, which the server only passes on. -->
+    <extend-entity entity-name="CallLeg" package="moqui.call">
+        <field name="cryptoDeviceId" type="id"><description>The ChatDevice of the browser of this leg in an end-to-end
+            encrypted call: the other legs send their keys to it. A leg with none does not bind.</description></field>
+        <field name="keyIndex" type="number-integer"><description>The leg's number in the call's key ids: a sender's SFrame
+            KID is keyIndex * 65536 + its epoch, so a receiver knows whose key a frame names</description></field>
+    </extend-entity>
+    <extend-entity entity-name="ChatRoom" package="moqui.chat">
+        <field name="callE2eeRequired" type="text-indicator"><description>Y: every call of the room is end-to-end encrypted
+            (W8); set by an owner or moderator (CallServices set#RoomCallEncryption)</description></field>
+    </extend-entity>
+    <!-- ========== end W8 ========== -->
 </entities>

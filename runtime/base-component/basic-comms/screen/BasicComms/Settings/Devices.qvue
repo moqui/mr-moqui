@@ -1,0 +1,261 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- My devices (plans/Comms-Framework.md §4.5, C7 core), the component Devices.xml serves in the qvue render mode: the
+    browsers that hold the user's encryption keys, this browser marked (moqui.crypto.thisDeviceId, which loads nothing),
+    each with when it was added and last seen, its browser and its key's fingerprint; Rename and Remove. Removing this
+    browser's own device also deletes its local store (moqui.crypto.forget); it gets a new device the next time it needs one.
+    With the rest of C7: each device's verification as this browser's store holds it (moqui.crypto.devicesOf; trust is the
+    browsers', the server's flag gives none), Verify (emoji, or a QR code shown here or read with the camera where the browser
+    has BarcodeDetector), the verifications going on, and the key backup: set up (cross-signing and a new recovery key,
+    shown once) or restore from the recovery key on a new device. Hardening: removing a device with keys and a new backup
+    ask the user to confirm who they are when they have not signed in in the last five minutes (moqui.reauth); Restore reads
+    the backup version the recovery key opens, an older one too; "Send my room keys only to verified devices"; and a store
+    this browser cannot open is reported here, kept, with "Start over" (a new device, then the backup). -->
+<template><div class="m-chat-devices q-pa-sm column q-gutter-md" style="max-width:900px">
+    <div class="row items-center">
+        <div class="text-h6">{{t('My devices')}}</div><q-space></q-space>
+        <q-btn flat dense no-caps icon="sym_o_refresh" :label="t('Refresh')" @click="load"></q-btn>
+    </div>
+    <div class="m-muted">{{t('The browsers that hold your encryption keys, for encrypted rooms and calls. A browser gets one the first time it needs it.')}}
+        {{t('Remove one you no longer use: it gets no new keys, and others stop encrypting to it.')}}</div>
+    <q-banner v-if="problem" rounded class="m-tonal text-negative m-chat-store-problem">
+        <template v-slot:avatar><q-icon name="sym_o_key_off"></q-icon></template>
+        {{t("This browser's encryption keys cannot be opened. They are kept as they are. To go on, start over with a new device here, then restore older messages from your key backup with your recovery key.")}}
+        <template v-slot:action><q-btn flat no-caps color="negative" :label="t('Start over')" class="m-chat-start-over" @click="startOver"></q-btn></template>
+    </q-banner>
+    <q-card flat bordered class="q-pa-md">
+        <q-toggle v-model="verifiedOnly" :label="t('Send my room keys only to verified devices')" class="m-chat-verified-only" @update:model-value="saveVerifiedOnly"></q-toggle>
+        <div class="text-caption m-muted">{{t("In every encrypted room, your messages are encrypted only for devices that were verified (by emoji or QR code, or by their owner's cross-signing). A device that is not verified cannot read them.")}}</div>
+    </q-card>
+    <q-card flat bordered class="q-pa-md m-chat-backup">
+        <div class="row items-center no-wrap">
+            <q-icon name="sym_o_key" size="22px" class="q-mr-sm text-primary"></q-icon>
+            <div class="col">
+                <div class="text-subtitle1">{{t('Key backup')}}</div>
+                <div class="text-caption m-muted">{{backupText}}</div>
+            </div>
+            <q-btn v-if="thisId" flat dense no-caps icon="sym_o_add_moderator" :label="backup.version ? t('New recovery key') : t('Set up key backup')"
+                    :loading="backup.busy" class="m-chat-backup-setup" @click="setupBackup"></q-btn>
+            <q-btn v-if="thisId && backup.version" flat dense no-caps icon="sym_o_restore" :label="t('Restore')" class="m-chat-backup-restore" @click="restore.open = true"></q-btn>
+        </div>
+        <div v-if="recoveryKey" class="q-mt-sm q-pa-sm rounded-borders m-tonal">
+            <div class="text-body2">{{t('Your recovery key. Keep it somewhere safe, apart from this browser: it is shown once, and without it a new device cannot read older encrypted messages.')}}</div>
+            <div class="text-mono text-weight-medium q-mt-xs m-chat-recovery-key">{{recoveryKey}}</div>
+            <q-btn flat dense no-caps icon="sym_o_content_copy" :label="t('Copy')" @click="copy(recoveryKey)"></q-btn>
+            <q-btn flat dense no-caps :label="t('I have kept it')" @click="recoveryKey = ''"></q-btn>
+        </div>
+        <div v-if="restore.open" class="row items-center q-gutter-sm q-mt-sm">
+            <div class="col"><m-text-line v-model="restore.text" name="recoveryKey" :label="t('Recovery key')"></m-text-line></div>
+            <q-btn unelevated no-caps color="primary" :label="t('Restore')" :loading="restore.busy" class="m-chat-restore-go" @click="restoreBackup"></q-btn>
+        </div>
+    </q-card>
+    <q-card v-for="v in verifications" :key="v.flowId" flat bordered class="q-pa-md m-chat-verification">
+        <div class="text-subtitle1">{{v.weStarted ? t('Verifying') : t('Asked to verify')}} {{v.otherDeviceId || v.otherUserId}}</div>
+        <div v-if="v.done" class="text-positive">{{t('Verified')}}</div>
+        <div v-else-if="v.cancelled" class="m-muted">{{t('Cancelled')}}</div>
+        <template v-else>
+            <div v-if="v.emojis" class="row q-gutter-md q-my-sm">
+                <div v-for="e in v.emojis" :key="e.description" class="column items-center"><span style="font-size:32px">{{e.symbol}}</span><span class="text-caption">{{t(e.description)}}</span></div>
+            </div>
+            <div v-if="v.emojis" class="text-caption m-muted">{{t('Do the same emoji show on the other device, in the same order?')}}</div>
+            <img v-if="v.qrImage && !v.emojis" :src="v.qrImage" alt="QR" style="width:220px;height:220px" class="q-my-sm">
+            <div class="row q-gutter-xs q-mt-xs">
+                <q-btn v-if="!v.weStarted && v.phase === 'requested'" unelevated no-caps color="primary" :label="t('Accept')" @click="step(v, 'accept')"></q-btn>
+                <q-btn v-if="v.ready && !v.emojis" flat no-caps icon="sym_o_mood" :label="t('Compare emoji')" @click="step(v, 'sas')"></q-btn>
+                <q-btn v-if="v.ready && !v.emojis && !v.qrImage" flat no-caps icon="sym_o_qr_code_2" :label="t('Show a QR code')" @click="step(v, 'showQr')"></q-btn>
+                <q-btn v-if="v.ready && !v.emojis && canScan" flat no-caps icon="sym_o_qr_code_scanner" :label="t('Scan their code')" @click="scan(v)"></q-btn>
+                <q-btn v-if="v.scanned" unelevated no-caps color="primary" :label="t('They scanned it')" @click="step(v, 'qrConfirm')"></q-btn>
+                <q-btn v-if="v.emojis && !v.confirmed" unelevated no-caps color="primary" :label="t('They match')" @click="step(v, 'confirm')"></q-btn>
+                <q-btn v-if="v.emojis && !v.confirmed" flat no-caps color="negative" :label="t('They differ')" @click="step(v, 'mismatch')"></q-btn>
+                <q-btn flat no-caps :label="t('Cancel')" @click="step(v, 'cancel')"></q-btn>
+            </div>
+        </template>
+    </q-card>
+    <div v-if="loaded && !devices.length" class="m-muted">{{t('No devices yet.')}}</div>
+    <q-list bordered separator class="rounded-borders" v-if="devices.length">
+        <q-item v-for="d in devices" :key="d.deviceId">
+            <q-item-section avatar><q-icon name="sym_o_devices" :color="d.deviceId === thisId ? 'primary' : 'grey'"></q-icon></q-item-section>
+            <q-item-section>
+                <q-item-label>{{d.displayName || d.deviceId}}
+                    <q-badge v-if="d.deviceId === thisId" color="primary" class="q-ml-xs">{{t('This browser')}}</q-badge>
+                    <q-badge v-else-if="trust[d.deviceId] === true" color="positive" class="q-ml-xs m-chat-device-verified">{{t('Verified')}}</q-badge>
+                    <q-badge v-else-if="trust[d.deviceId] === false" color="grey-6" class="q-ml-xs m-chat-device-unverified">{{t('Not verified')}}</q-badge></q-item-label>
+                <q-item-label caption>{{d.deviceId}} · {{t('added')}} {{whenText(d.createdDate)}}<span v-if="d.lastSeenDate"> · {{t('last seen')}} {{whenText(d.lastSeenDate)}}</span></q-item-label>
+                <q-item-label caption v-if="d.ed25519Key" class="text-mono">{{t('Key')}} {{fingerprint(d.ed25519Key)}}</q-item-label>
+                <q-item-label caption v-if="d.userAgent" class="ellipsis">{{d.userAgent}}</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+                <div class="row q-gutter-xs">
+                    <q-btn v-if="thisId && d.deviceId !== thisId && trust[d.deviceId] === false" flat dense no-caps icon="sym_o_verified_user" :label="t('Verify')" @click="verify(d)"></q-btn>
+                    <q-btn flat dense no-caps icon="sym_o_edit" :label="t('Rename')" @click="rename(d)"></q-btn>
+                    <q-btn flat dense no-caps icon="sym_o_delete" color="negative" :label="t('Remove')" @click="remove(d)"></q-btn>
+                </div>
+            </q-item-section>
+        </q-item>
+    </q-list>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'ChatDevices',
+    data() {
+        return { devices: [], loaded: false, thisId: null, trust: {}, backup: { version: null, enabled: false, total: 0, backedUp: 0, busy: false },
+            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false };
+    },
+    computed: {
+        verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
+        problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
+        canScan() { return typeof window.BarcodeDetector === 'function' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
+        backupText() {
+            const b = this.backup;
+            if (!this.thisId) return t('This browser has no encryption keys yet.');
+            if (!b.version) return t('Not set up: a new device cannot read older encrypted messages.');
+            if (!b.enabled) return t('Set up on another device: restore it here with your recovery key.');
+            return t('On: room keys of this browser are backed up, encrypted to your recovery key') + ' (' + b.backedUp + '/' + b.total + ')';
+        }
+    },
+    mounted() { this.load(); },
+    methods: {
+        t,
+        url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Devices']).join('/') + '/' + name; },
+        // a refusal for want of a recent sign-in is not shown: it rejects, so moqui.reauth.retry asks the user and tries again
+        request(name, params, method) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.reasonCode === 'reauthRequired') throw json;
+                if (json.errors) moqui.notifyMessages([], json.errors);
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); throw err; });
+        },
+        // an action that needs a sign-in in the last five minutes: asked for first, and again if the server still refuses
+        confirmed(fn) {
+            if (!moqui.reauth) return Promise.resolve().then(fn);
+            return moqui.reauth.ensure().then(() => moqui.reauth.retry(fn));
+        },
+        refused(err, fallback) {
+            if (err && err.reasonCode === 'cancelled') return;
+            moqui.notifyMessages([], (err && err.errors) || fallback);
+        },
+        load() {
+            this.thisId = moqui.crypto ? moqui.crypto.thisDeviceId() : null;
+            this.request('keySettings').then((json) => { this.verifiedOnly = !!json.verifiedDevicesOnly; }, () => null);
+            return this.request('devices').then((json) => {
+                this.devices = json.deviceList || [];
+                this.loaded = true;
+                this.loadCrypto();
+            }, () => { this.loaded = true; });
+        },
+        saveVerifiedOnly(on) {
+            this.request('storeKeySettings', { verifiedDevicesOnly: on ? 'true' : 'false' }, 'POST').then(() => {
+                if (moqui.crypto && moqui.crypto.settingsChanged) moqui.crypto.settingsChanged();
+            }, () => { this.verifiedOnly = !on; });
+        },
+        // a store that cannot be opened: after the user confirms who they are, a new device, then the backup
+        startOver() {
+            this.$q.dialog({ title: t('Start over with a new device?'), message: t('This browser\'s encryption keys that cannot be opened are deleted, and it gets a new device. Messages it read before come back from your key backup: restore it with your recovery key next.'),
+                ok: { label: t('Start over'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.confirmed(() => moqui.crypto.startOver()).then(() => { this.restore.open = true; this.load(); },
+                    (err) => this.refused(err, t('This browser did not start over'))));
+        },
+        // what this browser's store knows: each device's verification and the key backup (only when it has a device)
+        loadCrypto() {
+            if (!this.thisId || !moqui.crypto) return;
+            const me = this.$root.userId;
+            moqui.crypto.devicesOf(me).then((list) => {
+                const trust = {};
+                (list || []).forEach((d) => { trust[d.deviceId] = !!d.verified; });
+                this.trust = trust;
+            }, () => null);
+            moqui.crypto.backupStatus().then((status) => { this.backup = Object.assign({}, this.backup, status); }, () => null);
+        },
+        // A new recovery key starts a new backup version: the old one is no longer used, and its keys that this browser does not
+        // hold are read again only with the old recovery key. So it is asked first (never a silent reset).
+        setupBackup() {
+            if (this.backup.version) {
+                this.$q.dialog({ title: t('Make a new recovery key?'), message: t('This starts a new key backup with a new recovery key. Keys only in the current backup (older messages this browser never read) are not copied to it. Restore with your current recovery key first if you still have it.'),
+                    ok: { label: t('New recovery key'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                    .onOk(() => this.makeBackup());
+                return;
+            }
+            this.makeBackup();
+        },
+        // a new backup (and its recovery key) needs a sign-in in the last five minutes: the user confirms who they are first
+        makeBackup() {
+            this.backup.busy = true;
+            this.confirmed(() => moqui.crypto.enableBackup()).then((out) => {
+                this.recoveryKey = out.recoveryKey;
+                this.backup.busy = false;
+                this.loadCrypto();
+            }, (err) => { this.backup.busy = false; this.refused(err, t('The key backup was not set up')); });
+        },
+        // the recovery key opens the backup version it was made for: the current one, or an older one "New recovery key" left
+        restoreBackup() {
+            this.restore.busy = true;
+            moqui.crypto.restoreBackup(this.restore.text).then((out) => {
+                this.restore = { open: false, text: '', busy: false };
+                moqui.notifyMessages([{ type: 'success', message: (out.current ? t('Keys restored:') : t('Keys restored from an older key backup:')) + ' ' + out.imported }]);
+                this.loadCrypto();
+            }, (err) => { this.restore.busy = false; moqui.notifyMessages([], (err && err.errors) || t('The keys were not restored')); });
+        },
+        verify(d) {
+            moqui.crypto.verifyDevice(this.$root.userId, d.deviceId).catch((err) => moqui.notifyMessages([], (err && err.errors) || t('The verification did not start')));
+        },
+        step(v, action, arg) {
+            moqui.crypto.verification(v.flowId, action, arg).then(() => { if (action === 'confirm' || action === 'qrConfirm') setTimeout(() => this.loadCrypto(), 1500); },
+                (err) => moqui.notifyMessages([], (err && err.errors) || t('The verification step failed')));
+        },
+        // the other device's QR code read with the camera (BarcodeDetector), its bytes handed to the verification
+        scan(v) {
+            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then((stream) => {
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+                const stop = () => stream.getTracks().forEach((track) => track.stop());
+                const started = Date.now();
+                const look = () => detector.detect(video).then((codes) => {
+                    if (codes.length) { stop(); this.step(v, 'scanned', Array.from(codes[0].rawValue, (ch) => ch.charCodeAt(0) & 0xff)); }
+                    else if (Date.now() - started < 30000) setTimeout(look, 300);
+                    else stop();
+                }, () => setTimeout(look, 300));
+                look();
+            }, () => moqui.notifyMessages([], t('The camera is not available')));
+        },
+        copy(text) { if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') }]), () => null); },
+        rename(d) {
+            this.$q.dialog({ title: t('Rename the device'), prompt: { model: d.displayName || '', type: 'text', maxlength: 100 },
+                ok: { label: t('Rename'), color: 'primary', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk((name) => this.request('rename', { deviceId: d.deviceId, displayName: name }, 'POST').then(() => this.load(), () => null));
+        },
+        remove(d) {
+            const mine = d.deviceId === this.thisId;
+            this.$q.dialog({ title: t('Remove the device?'),
+                message: mine ? t('This browser deletes its keys; it gets a new device the next time it needs one.') : t('It gets no new keys, and others stop encrypting to it.'),
+                ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => {
+                    // a device with keys is removed only after a sign-in in the last five minutes (the server cannot tell
+                    // which browser asks)
+                    const run = () => (mine && moqui.crypto ? moqui.crypto.forget() : this.request('revoke', { deviceId: d.deviceId }, 'POST'));
+                    (d.hasKeys ? this.confirmed(run) : Promise.resolve().then(run)).then(() => this.load(),
+                        (err) => { this.refused(err, t('The device was not removed')); this.load(); });
+                });
+        },
+        fingerprint(key) { return String(key || '').replace(/(.{4})/g, '$1 ').trim(); },
+        whenText(millis) {
+            return millis ? new Date(Number(millis)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        }
+    }
+};
+</script>

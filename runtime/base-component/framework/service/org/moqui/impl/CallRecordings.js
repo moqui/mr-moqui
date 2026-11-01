@@ -19,6 +19,7 @@ const RECORDING = 'moqui.call.CallRecording'
 const TRACK = 'moqui.call.CallRecordingTrack'
 const SEGMENT = 'moqui.call.CallRecordingSegment'
 const CONSENT = 'moqui.call.CallRecordingConsent'
+const CONSENT_HISTORY = 'moqui.call.CallRecordingConsentHistory'
 /** A recording's transcripts (W6's CallTranscript) go with it (plans/Comms-Framework.md §5.4). */
 const TRANSCRIPT = 'moqui.call.CallTranscript'
 
@@ -52,6 +53,11 @@ function refuse(reasonCode, text) {
 }
 
 /** The deployment's policy: the default-properties in MoquiDefaultConf.xml. */
+/** An end-to-end encrypted call (W8): any media encryption but dtls-srtp, which the server cannot hear. */
+function encrypted(session) {
+  return !!session.encryptionMode && session.encryptionMode !== 'dtls-srtp'
+}
+
 function policy() {
   const flag = (name) => String(System.getProperty(name) || '').trim().toLowerCase() === 'true'
   const days = Number(System.getProperty('call_recording_retention_days') || 0)
@@ -131,6 +137,39 @@ function recordingView(recording) {
   }
 }
 
+// ---------- the drive quota ----------
+
+/** The bytes the stored files of the recordings userId owns take. */
+function recordingBytes(userId) {
+  if (!userId) return 0
+  const ids = Array.from(find(RECORDING).condition('ownerUserId', userId).selectField('callRecordingId').list()).map((r) => r.callRecordingId)
+  let total = 0
+  for (let i = 0; i < ids.length; i += 500) {
+    for (const segment of find(SEGMENT).condition('callRecordingId', 'in', ids.slice(i, i + 500)).selectField('byteSize').list()) {
+      total += Number(segment.byteSize || 0)
+    }
+  }
+  return total
+}
+
+/**
+ * What is left of the quota of userId's personal drive (My files), which their recordings count toward with its files;
+ * null when it has no quota (or no drive yet). A drive that cannot be sized is logged and taken as having no room.
+ */
+function quotaLeft(userId) {
+  const drive = userId ? Array.from(find('moqui.resource.ResourceDrive').condition('ownerUserId', userId)
+    .condition('driveKindEnumId', 'RdkPersonal').orderBy('driveId').limit(1).list())[0] : null
+  if (!drive || drive.quotaBytes == null) return null
+  let files = 0
+  try {
+    files = Number(ec.resource.getTreeSize(drive.rootLocation) || 0)
+  } catch (err) {
+    ec.logger.warn(`Recording quota: drive ${drive.driveId} at ${drive.rootLocation} could not be sized: ${err && err.message ? err.message : err}`)
+    return 0
+  }
+  return Number(drive.quotaBytes) - files - recordingBytes(userId)
+}
+
 /** The rtc frame every leg of the room gets (and a late joiner, from the media node). */
 function noticeFrame(recording) {
   const view = recordingView(recording)
@@ -154,9 +193,34 @@ function control(recording, op, extra) {
   }).disableAuthz().call()
 }
 
+/** The leg's consent row for a recording: its notice and its current answer. */
+function currentConsent(callRecordingId, callLegId) {
+  return one(CONSENT, { callRecordingId, callLegId })
+}
+
+/**
+ * The leg acknowledges (method CamClick or CamDtmf). After a withdrawal, the acknowledgement and the withdrawal it replaces
+ * are kept first as a CallRecordingConsentHistory row, so no earlier answer is lost.
+ */
+function acknowledge(consent, method) {
+  const now = ec.user.nowTimestamp
+  if (consent.withdrawnDate) {
+    const earlier = ec.entity.makeValue(CONSENT_HISTORY)
+    earlier.setSequencedIdPrimary()
+    earlier.setFields({
+      callRecordingConsentId: consent.callRecordingConsentId, callRecordingId: consent.callRecordingId, callLegId: consent.callLegId,
+      ackDate: consent.ackDate || null, ackMethodEnumId: consent.ackMethodEnumId || null, withdrawnDate: consent.withdrawnDate,
+    }, true, null, null)
+    earlier.create()
+  }
+  consent.setFields({ ackDate: now, ackMethodEnumId: method, withdrawnDate: null }, true, null, null)
+  consent.update()
+  return consent
+}
+
 /** Gives a leg the notice once: its consent row, and for a leg that is not a browser the hook. */
 function notice(recording, leg, acknowledged) {
-  const existing = one(CONSENT, { callRecordingId: recording.callRecordingId, callLegId: leg.callLegId })
+  const existing = currentConsent(recording.callRecordingId, leg.callLegId)
   if (existing) return existing
   const now = ec.user.nowTimestamp
   const web = WEB_LEGS.includes(leg.legTypeEnumId || 'CltWeb')
@@ -242,10 +306,11 @@ function state(p) {
   const who = caller(p, false)
   if (who.refusal) return who.refusal
   const recording = activeRecording(who.session.callSessionId)
-  const consent = recording && who.leg ? one(CONSENT, { callRecordingId: recording.callRecordingId, callLegId: who.leg.callLegId }) : null
+  const consent = recording && who.leg ? currentConsent(recording.callRecordingId, who.leg.callLegId) : null
   return {
     enabled: pol.enabled, ackRequired: pol.ackRequired,
-    canRecord: pol.enabled && !!who.userId && who.session.statusId === 'CssActive' && isHost(who.session, who.userId),
+    canRecord: pol.enabled && !!who.userId && who.session.statusId === 'CssActive' && isHost(who.session, who.userId) && !encrypted(who.session),
+    encrypted: encrypted(who.session),
     recording: recordingView(recording),
     myConsent: consent ? { noticed: true, ackRequired: consent.ackRequired === 'Y', acknowledged: !!consent.ackDate,
       withdrawn: !!consent.withdrawnDate } : null,
@@ -253,21 +318,25 @@ function state(p) {
 }
 
 function start(p) {
-  const pol = policy()
-  if (!pol.enabled) return refuse('recordingOff', 'Recording calls is off on this server')
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in to use calls')
   const session = lockSession(p.callSessionId)
   if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  // an end-to-end encrypted call (W8): the server cannot hear it, and recording never lowers its encryption; said first,
+  // whatever the policy, so its people know why
+  if (encrypted(session)) return refuse('encrypted', 'An end-to-end encrypted call cannot be recorded')
+  const pol = policy()
+  if (!pol.enabled) return refuse('recordingOff', 'Recording calls is off on this server')
   if (!isHost(session, me)) return refuse('notAllowed', 'Only the host records the call')
   if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
   if (session.statusId !== 'CssActive') return refuse('notInCall', 'The call has not started')
   if (!session.mediaNodeId) return refuse('mediaUnavailable', 'The call has no media server')
-  if (session.encryptionMode && session.encryptionMode !== 'dtls-srtp') {
-    return refuse('encrypted', 'An end-to-end encrypted call cannot be recorded')
-  }
   const existing = activeRecording(session.callSessionId)
   if (existing) return { callRecordingId: existing.callRecordingId, recording: recordingView(existing), repeated: true }
+  // the recording's files count toward the host's drive quota: a full drive records nothing, and the recorder stops where
+  // the room left runs out (maxBytes)
+  const left = quotaLeft(me)
+  if (left != null && left <= 0) return refuse('quotaFull', 'Your drive is full; free space in My files to record the call')
 
   const now = ec.user.nowTimestamp
   const recording = ec.entity.makeValue(RECORDING)
@@ -287,7 +356,7 @@ function start(p) {
     recording.setFields({ statusId: 'CrsPaused', pauseReason: want.pauseReason, segmentPeriod: 0 }, true, null, null)
     recording.update()
   }
-  control(recording, 'start', { paused: recording.statusId === 'CrsPaused' })
+  control(recording, 'start', { paused: recording.statusId === 'CrsPaused', maxBytes: left != null ? Math.floor(left) : null })
   return { callRecordingId: recording.callRecordingId, recording: recordingView(recording) }
 }
 
@@ -362,8 +431,8 @@ function myNotice(p) {
 function ack(p) {
   const got = myNotice(p)
   if (got.refusal) return got.refusal
-  got.consent.setFields({ ackDate: ec.user.nowTimestamp, ackMethodEnumId: 'CamClick', withdrawnDate: null }, true, null, null)
-  got.consent.update()
+  if (got.consent.ackDate && !got.consent.withdrawnDate) return { recording: recordingView(got.recording) }
+  acknowledge(got.consent, 'CamClick')
   settle(got.recording)
   return { recording: recordingView(got.recording) }
 }
@@ -371,8 +440,11 @@ function ack(p) {
 function withdraw(p) {
   const got = myNotice(p)
   if (got.refusal) return got.refusal
-  got.consent.set('withdrawnDate', ec.user.nowTimestamp)
-  got.consent.update()
+  // the row keeps its notice and acknowledgement; a withdrawal already made stays as it was
+  if (!got.consent.withdrawnDate) {
+    got.consent.set('withdrawnDate', ec.user.nowTimestamp)
+    got.consent.update()
+  }
   settle(got.recording)
   return { recording: recordingView(got.recording) }
 }
@@ -404,8 +476,7 @@ function legAck(p) {
   if (!recording || recording.ackRequired !== 'Y') return { acknowledged: false }
   const consent = notice(recording, leg, false)
   if (consent.ackDate && !consent.withdrawnDate) return { acknowledged: false, recording: recordingView(recording) }
-  consent.setFields({ ackDate: ec.user.nowTimestamp, ackMethodEnumId: 'CamDtmf', withdrawnDate: null }, true, null, null)
-  consent.update()
+  acknowledge(consent, 'CamDtmf')
   settle(recording)
   return { acknowledged: true, recording: recordingView(recording) }
 }
@@ -490,6 +561,18 @@ function storeSegment(p) {
     track.set('endedDate', p.thruDate || ec.user.nowTimestamp)
     track.update()
   }
+  // the owner's drive quota, with this file: a recording that filled it stops (its recorder's maxBytes is the first stop;
+  // this one holds when the drive's other files grew meanwhile)
+  if (ACTIVE.includes(recording.statusId)) {
+    const left = quotaLeft(recording.ownerUserId)
+    if (left != null && left <= 0) {
+      const locked = find(RECORDING).condition('callRecordingId', recording.callRecordingId).forUpdate(true).one()
+      if (locked && ACTIVE.includes(locked.statusId)) {
+        stopRecording(locked, ec.l10n.localize('The recording stopped: the drive quota of its owner is full'), false)
+        ec.logger.warn(`Call recording ${recording.callRecordingId} stopped: the drive quota of ${recording.ownerUserId} is full`)
+      }
+    }
+  }
   return { callRecordingSegmentId: segment.callRecordingSegmentId, contentLocation, stored: true }
 }
 
@@ -503,7 +586,9 @@ function recorderEnd(p) {
     }
     return {}
   }
-  const text = p.outcome === 'limit' ? ec.l10n.localize('The recording reached its size limit')
+  const full = p.outcome === 'limit' && (quotaLeft(recording.ownerUserId) ?? 1) <= 0
+  const text = full ? ec.l10n.localize('The recording stopped: the drive quota of its owner is full')
+    : p.outcome === 'limit' ? ec.l10n.localize('The recording reached its size limit')
     : String(p.errorText || ec.l10n.localize('The recorder failed')).slice(0, 4000)
   stopRecording(recording, text, p.outcome !== 'limit')
   ec.logger.warn(`Call recording ${p.callRecordingId} ended by its recorder (${p.outcome}): ${text}`)
@@ -602,7 +687,7 @@ function deleteRecording(recording) {
   } catch (err) {
     ec.logger.debug(`Call recording folder ${recording.callRecordingId} not removed: ${err && err.message ? err.message : err}`)
   }
-  for (const entity of [SEGMENT, TRACK, CONSENT, TRANSCRIPT]) find(entity).condition('callRecordingId', recording.callRecordingId).deleteAll()
+  for (const entity of [SEGMENT, TRACK, CONSENT_HISTORY, CONSENT, TRANSCRIPT]) find(entity).condition('callRecordingId', recording.callRecordingId).deleteAll()
   recording.delete()
 }
 
@@ -705,7 +790,7 @@ function expireItem(p) {
 
 const operations = {
   state, start, stop, pause, resume, ack, withdraw, notifyLeg, legAck, callChange, storeSegment, recorderEnd, find: find_, file, remove,
-  expire, expireItem,
+  expire, expireItem, recordingBytes: (p) => ({ recordingBytes: recordingBytes(p.userId) }),
 }
 
 function execute(op, parameters) {

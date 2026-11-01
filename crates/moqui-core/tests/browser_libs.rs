@@ -119,6 +119,9 @@ fn the_manifest_licenses_are_the_reviewed_set() {
             "naturalearth" => "ISC",
             "qz-tray" => "LGPL-2.1-only",
             "vue-compiler-dom" => "MIT AND BSD-2-Clause",
+            "matrix-sdk-crypto" => {
+                "Apache-2.0 AND MIT AND BSD-3-Clause AND ISC AND Zlib AND Unicode-3.0 AND BSL-1.0 AND MPL-2.0"
+            }
             "license-texts" => "n/a",
             _ => "MIT",
         };

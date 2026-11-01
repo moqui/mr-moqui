@@ -23,6 +23,7 @@
             the tools System app, with the files here -->
         <screen location="component://tools/screen/System.xml">
             <subscreens-item name="Voice" menu-title="Voice" menu-index="20" location="component://basic-comms/screen/System/Voice.xml"/>
+            <subscreens-item name="ChatBridges" menu-title="Chat Bridges" menu-index="21" location="component://basic-comms/screen/System/ChatBridges.xml"/>
         </screen>
     </screen-facade>
 </moqui-conf>

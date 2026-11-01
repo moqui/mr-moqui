@@ -115,7 +115,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="refer" noun="Call" authenticate="false" allow-remote="false">
-        <description>Internal (the SIP engine): a desk phone in a call sent REFER to target (a username or a number): a blind transfer by its user.</description>
+        <description>Internal (the SIP engine): a desk phone in a call sent REFER to target (a username or a number): a blind transfer by its user.
+            The engine waits for this before it answers the phone: 202 and a NOTIFY of 200 when it went, 403 when it was refused
+            (an error here), so the phone keeps the call.</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="target"/>

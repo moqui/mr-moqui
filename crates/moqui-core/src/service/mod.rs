@@ -20,7 +20,10 @@ mod backup;
 pub mod call;
 mod call_media;
 mod chat;
+pub mod chat_bridge;
+mod chat_keys;
 mod chat_link;
+mod chat_migrate;
 #[cfg(test)]
 mod chat_tests;
 mod contacts;
@@ -43,6 +46,7 @@ mod inline_tests;
 mod jobs;
 pub mod mail_capture;
 pub mod pool;
+mod recent_auth;
 mod remote;
 mod request_pool;
 mod rest;

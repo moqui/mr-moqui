@@ -111,6 +111,12 @@ computed.
 retried after 10 seconds, doubling up to 5 minutes. Each trunk registers on its own: one that fails is logged, and
 its status and last error are on the trunk. The admins get a `VoiceAlert` notification. The other trunks go on.
 
+**OPTIONS pings.** A trunk that does not register (an IP-authenticated trunk, a PBX) is sent OPTIONS every minute, so
+System, Voice, Trunks shows it Reachable or Failed before a call fails. Any final answer counts as up (a 200, a 405, a
+challenge); no answer within 8 seconds is no answer, and three pings in a row with none are down (one lost ping is
+not: a failed trunk is left out of the emergency readiness and the calls' capabilities), with the reason as the trunk's
+last error, and the admins hear of it as of a failed registration. The status is sent when it changes, and every ten pings.
+
 **Incoming calls** are taken:
 
 - from a trunk's host addresses and the signaling addresses listed on it (a registering trunk's calls come from its
@@ -150,7 +156,8 @@ current documentation; the live check will settle them.
 - Emergency: Telnyx's emergency calling is set up per number, with an address it validates. Enable it on the
   callback number in the portal, and put Telnyx's address id in the `EmergencyLocation`'s provider reference. Then
   mark the trunk emergency-capable.
-- SMS is through Telnyx's messaging API (C4), and does not need the SIP trunk.
+- SMS is through Telnyx's messaging API, and does not need the SIP trunk ([SMS](SMS.md)). A number with a messaging
+  bridge puts its calls and voicemail in the same room as its texts with each outside number (below).
 
 ### Other providers
 
@@ -343,12 +350,16 @@ Hold and its More menu (Transfer, Add a participant, Merge another call, Make it
   user or queue it routes to.
 - **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and
   legs move (a browser joins the new room with the same leg, a phone leg is moved by its engine: the control `move`),
-  its own legs on hold come back, and the other call ends (`CerMerged`). Both calls must be on one media node (cascading
-  SFUs are W7): calls on two are refused. **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
+  its own legs on hold come back, and the other call ends (`CerMerged`). Calls on two media nodes merge only with
+  cascading media nodes on (`rtc_cascade_enabled`, [WebRTC](WebRTC.md#cascading-media-nodes)): the other call's phones
+  stay on their node, which relays to this call's node; without it they are refused (`differentNodes`). **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
   anyone is in it.
-- **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is taken: 202, then a NOTIFY that
-  it went; its user transfers the call to the `Refer-To` user (a username, or a number) as in the browser. A phone's
-  attended transfer (REFER with Replaces, RFC 3891) is refused (501): transfer from the browser instead.
+- **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is checked before it is
+  answered: its user transfers the call to the `Refer-To` user (a username, or a number) as in the browser
+  (`CallTransferServices.refer#Call`), and only when that went is it answered 202, then a NOTIFY of `200 OK`. One the
+  services refuse (a number the fraud policy keeps out, a user the `call-target` hook refuses), or that has no answer in
+  10 seconds, is answered 403 and the phone keeps the call. A phone's attended transfer (REFER with Replaces, RFC 3891)
+  is refused (501): transfer from the browser instead.
 - **New legs hear the notices.** A leg that joins by a transfer, an add or a merge gets the recording and captions
   notices as a late joiner does: a browser leg when it binds, a phone leg when it answers (`notify#PhoneLeg`, and a 1 to
   acknowledge under `call_recording_ack_required`).
@@ -438,7 +449,9 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
   its Contact is never dialed. A TCP or TLS connection that closes ends the bindings over it.
 - **Outbound (RFC 5626).** A phone that sends `Supported: outbound` with `+sip.instance` and `reg-id` binds its flow; the
   200 says `Require: outbound` and `Flow-Timer` (25 seconds over UDP, 120 over a stream), and the phone sends CRLF
-  keepalives, which the engine answers. Such a binding keeps its expiry.
+  keepalives, which the engine answers. Such a binding keeps its expiry. Over UDP a phone may send a STUN Binding
+  request on the SIP socket instead (RFC 5626 §4.4.2): it is answered there with the address it came from
+  (XOR-MAPPED-ADDRESS, no authentication, `moqui-sip` `stun.rs`), before the SIP stack sees it.
 - **Short expiry.** A phone behind a NAT (its Via does not name where it sends from) without Outbound gets at most
   `sip_registrar_nat_expires` (60 seconds), so its own REGISTER keeps the mapping open.
 - **RTP latching.** A phone's RTP is answered where it comes from. With SRTP, only an authenticated packet moves it.
@@ -447,7 +460,9 @@ Outbound instance and reg-id, when it expires and was last refreshed, and the ph
 
 **Calls to a phone.** When a call rings a user (a call from a colleague or a browser, or a call to their number
 through a trunk), each of their phones registered with the call's node gets a leg (`CltSipDevice`, offered), and the
-engine forks an INVITE to every live binding of it, beside the ring in their tabs.
+engine forks an INVITE to every live binding of it, beside the ring in their tabs. With cascading media nodes on
+(`rtc_cascade_enabled`), a phone registered with another node rings there too: its leg's media is on that node
+(`CallLeg.mediaNodeId`), whose room relays to the call's node.
 
 - The offer is Opus, G.722 (wideband desk phones; 16 kHz audio on its 8000 RTP clock) and G.711, with
   telephone-event; SRTP to a binding over TLS, plain RTP otherwise.
@@ -484,7 +499,7 @@ gate.
 - **Floods are held.** New requests from one source are held to `sip_request_rate` (`sip_request_burst` at once), and
   dropped while the engine runs `sip_max_transactions`; TCP and TLS connections past `sip_max_connections`, or past
   `sip_max_connections_per_source` from one source, are closed
-  ([Settings](#settings); `moqui-sip` `guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
+  ([Settings](#settings); moqui-lib `source_guard.rs` `RequestGate`). Requests in a dialog and responses always pass.
 - **Failed digests block the source address, not the account.**
   - A request from an address that is not a trunk's is challenged: expiring nonces, and nonce counts that cannot be
     replayed (`moqui-sip` `digest.rs`).
@@ -508,6 +523,11 @@ gate.
   - Concurrent phone calls: 20 in all, 2 per user.
   - Calls a day: 100 per user, 1,000 in all.
   - Each is a `VoicePolicy` value, and a user's own setting can lower its own, never raise it.
+  - A user's calls count the numbers they forward to, add to a call or transfer a call to.
+  - Calls placed at once cannot pass a limit together: placing a call, a forward, a transfer to a number and an added
+    number each lock one row (`CallLimitLock`) until their transaction ends, then count the call rows, which that
+    transaction makes. A call refused or never placed rolls back; a forward or added number the limits or policy refuse
+    is closed `CerRefused`, which no limit counts.
   - Provider spending limits are set at the provider.
 - **The engine checks again.** Before an INVITE goes to a trunk, the engine classes the number itself. It refuses
   international or premium numbers the deployment does not allow, an emergency number outside the emergency path, a
@@ -575,12 +595,11 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - Merging calls on two media nodes waits for cascading SFUs (W7).
   - Queue offers are made on the engine's tick (`call_queue_tick_seconds`), so a waiting call may ring a newly free agent
     a few seconds late; there are no skills, priorities or callbacks.
-  - Not checked with a live provider or a real desk phone's REFER.
+  - Not checked with a live provider or a real desk phone's REFER (403 and 202 with its NOTIFY are checked against the
+    tests' fake far end).
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
-  - A phone rings only for calls whose media is on the node it registered with (one node a call, until W7).
-  - A UDP phone's STUN keepalive (RFC 5626 over UDP) is not answered; its CRLF keepalive is, and without Outbound
-    the short expiry keeps its NAT open.
+  - Without `rtc_cascade_enabled` a phone rings only for calls whose media is on the node it registered with.
   - An extension is a colleague's username; there are no numeric extensions yet.
   - Not checked with a real desk phone or app yet: the in-memory phones of the tests play their part.
 - **Offers.**
@@ -629,12 +648,20 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   cancel and complete; blind with the far end hanging up first and with the target answering first, and a target that
   does not answer to voicemail; international, premium and emergency refused and a domestic number dialed; the
   recording notice on a transferred number and its acknowledgement by pressing 1; add a person, an encrypted call
-  refusing a number; a merge on one node and a refusal across two; a call made a meeting.
-- `cargo test -p moqui-sip refer`: a REFER's target, and Replaces not taken.
+  refusing a number; a merge on one node and a refusal across two; a call made a meeting; a desk phone's REFER refused
+  (the engine's 403) and the same REFER to a domestic number taken; a `call-target` provider (the example gallery's)
+  refusing a transfer, an add and a call to a user it keeps out, with the same requests reaching another.
+- `cargo test -p moqui-sip refer`: a REFER's target, and Replaces not taken; a REFER the host refuses answered 403
+  with no NOTIFY, and one it takes answered 202 with a NOTIFY of `SIP/2.0 200`.
+- `cargo test -p moqui-sip stun`, `…stun_keepalive`: the Binding answer (RFC 5769's mapped address, IPv6, what is not
+  a Binding request left alone), and a UDP phone's keepalive answered on the SIP socket beside its CRLF keepalive.
+- `cargo test -p moqui-sip pinged_with_options`: a trunk that does not register shows Reachable when it answers OPTIONS
+  and Failed when three pings in a row had no answer.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, prompts queued one after
   another, the registrar's settings and a phone's ring time; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk
-  only, inbound ranges no wider than a /8 or a /32), emergency routing, a phone leg's
+  only, inbound ranges no wider than a /8 or a /32), six calls placed at once on their own threads against the limits at
+  once and per day (exactly the limit placed), emergency routing, a phone leg's
   notices and its acknowledgement by pressing 1, and capabilities.
 - `./moq test framework --spec CallHandling`: anonymous, selective reject, accept and forward by caller list, business
   hours and holidays across a time zone (the plan read at a given time), forward loops and the hop bound, a forward to

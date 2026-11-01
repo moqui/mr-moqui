@@ -20,7 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
     org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
-    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
+    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; Text a number (C4-SMS): a
+    number from one of the user's numbers with messaging (org.moqui.impl.SmsServices open#PairRoom), opening the pair's room in
+    Chat; New call and a call link
+    may be end-to-end encrypted (W8); the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
     item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
     find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
     in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
@@ -72,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
-                video: String(video) !== 'N'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'N', requireE2ee: String(encrypted) === 'Y'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -90,13 +93,26 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <!-- C4-SMS: the room of the pair (one of my numbers, theirs), with its texts and calls -->
+    <transition name="textNumber">
+        <actions><script><![CDATA[
+            // the form's fields are textTo and textFrom: toNumber is a name the script runtime has already
+            const out = ec.service.sync().name('org.moqui.impl.SmsServices.open#PairRoom').parameters({toNumber: textTo || '',
+                fromNumber: textFrom || null}).requireNewTransaction(true).disableAuthz().call() || {}
+            textRoomId = out.chatRoomId || null
+        ]]></script></actions>
+        <conditional-response url="../../Chat" condition="textRoomId"><parameter name="chatRoomId" from="textRoomId"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <!-- the same people again, or the room's call for a room's call -->
     <transition name="callBack">
         <actions><script><![CDATA[
             const room = chatRoomId && String(isRoomCall) === 'true' ? chatRoomId : null
+            // an end-to-end encrypted call (W8) is called back encrypted, never as a plain call
             const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({chatRoomId: room,
                 calleeUserIdList: room ? null : String(otherUserIds || '').split(',').filter((id) => id),
-                video: String(video) !== 'false'}).requireNewTransaction(true).disableAuthz().call() || {}
+                video: String(video) !== 'false', requireE2ee: String(e2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
         <conditional-response url="../Call" condition="newCallSessionId"><parameter name="callSessionId" from="newCallSessionId"/></conditional-response>
@@ -107,7 +123,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createLink">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
-                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24})
+                policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24,
+                requireE2ee: String(encrypted) === 'Y'})
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (out.path) ec.message.addMessage(ec.resource.expand('Call link made: ${url} (copy it now: it is shown only this once)', '',
                 {url: ec.web.getWebappRootUrl('webroot', null, true, false) + out.path}), 'success')
@@ -168,10 +185,10 @@ along with this software (see the LICENSE.md file). If not, see
             const others = Array.from(call.participants || []).filter((p) => p.userId !== ec.user.userId).map((p) => p.displayName)
             return {callSessionId: call.callSessionId, who: others.join(', ') || L('Just you'),
                 stateText: call.myLegStatus === 'offered' ? L('Ringing') : L('In the call'),
-                kindText: call.video ? L('Video') : L('Audio'), startedText: when(call.startedDate),
+                kindText: (call.video ? L('Video') : L('Audio')) + (call.e2ee ? ' · ' + L('End-to-end encrypted') : ''), startedText: when(call.startedDate),
                 ringing: call.myLegStatus === 'offered'}
         })
-        newCall = {calleeUserIdList: [], video: 'Y'}
+        newCall = {calleeUserIdList: [], video: 'Y', encrypted: 'N'}
         // Call a number (V1): the user's caller IDs; the full dialer is V3
         const voice = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
         const myIds = ec.service.sync().name('org.moqui.impl.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
@@ -180,6 +197,11 @@ along with this software (see the LICENSE.md file). If not, see
         phoneActive = !!voice.active
         phoneReason = !voice.active ? L('Phone calls are not available here.') : !callerIdOptions.length ? L('You have no number to call from; an administrator can give you one.') : ''
         newPhoneCall = {phoneNumber: '', fromNumber: callerIdOptions.length ? callerIdOptions[0].key : ''}
+        // Text a number (C4-SMS): the user's numbers with messaging
+        const texting = ec.service.sync().name('org.moqui.impl.SmsServices.find#MyTextNumbers').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        textNumberOptions = Array.from(texting.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
+        newText = {textTo: '', textFrom: textNumberOptions.length ? textNumberOptions[0].key : ''}
 
         // the history, by outcome; the Missed tab marks them seen
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
@@ -217,17 +239,18 @@ along with this software (see the LICENSE.md file). If not, see
             outcomeIcon: row.outcome === 'missed' ? 'sym_o_phone_missed' : row.role === 'caller' ? 'sym_o_call_made' : 'sym_o_call_received',
             kindText: row.video ? L('Video') : L('Audio'), whenText: when(row.startedDate), lengthText: minutes(row.durationSeconds),
             otherUserIds: Array.from(row.otherUserIdList || []).join(','), chatRoomId: row.chatRoomId, isRoomCall: row.kind === 'group' ? 'true' : 'false',
-            video: row.video ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
+            video: row.video ? 'true' : 'false', e2ee: row.e2ee ? 'true' : 'false', canCallBack: callsActive && row.status === 'ended' && (row.otherUserIdList.length > 0 || row.kind === 'group'),
             unseen: !!row.unseen}))
         historyCount = Number(found.callListCount || 0)
 
         // the call links that still work, and the meetings of the next week from the apps' providers
         const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
         linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
-            policyText: link.policy === 'link' ? L('Straight in') : L('Lobby'), kindText: link.video ? L('Video') : L('Audio'),
+            policyText: link.e2ee ? L('None (end-to-end encrypted)') : link.policy === 'link' ? L('Straight in') : L('Lobby'),
+            kindText: (link.video ? L('Video') : L('Audio')) + (link.e2ee ? ' · ' + L('End-to-end encrypted') : ''),
             expiryText: when(link.expiryDate), stateText: link.callSessionId ? (link.waitingCount ? ec.resource.expand('In progress, ${n} waiting', '',
                 {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
-        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7'}
+        newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7', encrypted: 'N'}
         const nowMillis = Number(ec.user.nowTimestamp)
         const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
             parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
@@ -254,6 +277,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="calleeUserIdList"><default-field title="Call">
                             <drop-down allow-multiple="true"><dynamic-options transition="searchUsers" server-search="true" min-length="1"/></drop-down></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Only the people in the call can hear and see it: no recording, captions, phones or guests"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="submitButton"><default-field title="Call"><submit icon="sym_o_call"/></default-field></field>
                     </form-single>
                 </box-body></container-box>
@@ -270,6 +294,17 @@ along with this software (see the LICENSE.md file). If not, see
                         <field-layout><field-row-big><field-ref name="phoneNumber"/><field-ref name="fromNumber"/><field-ref name="submitButton"/></field-row-big></field-layout>
                     </form-single>
                 </box-body></container-box>
+                <section name="TextNumber" condition="textNumberOptions.length"><widgets>
+                    <container-box><box-header title="Text a number"/><box-body>
+                        <form-single name="TextNumber" transition="textNumber" map="newText">
+                            <field name="textTo"><default-field title="Number"><text-line size="20"/></default-field></field>
+                            <field name="textFrom"><default-field title="From">
+                                <drop-down><list-options list="textNumberOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Text"><submit icon="sym_o_sms"/></default-field></field>
+                            <field-layout><field-row-big><field-ref name="textTo"/><field-ref name="textFrom"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                        </form-single>
+                    </box-body></container-box>
+                </widgets></section>
                 <container-box><box-header title="Now"/><box-body>
                     <section name="NoCalls" condition="!callList.length"><widgets><label type="p" text="No call is ringing for you, and you are in no call." style="m-muted"/></widgets></section>
                     <form-list name="ActiveCalls" list="callList" skip-form="true">
@@ -340,7 +375,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="lengthText"><default-field title="Length"><display/></default-field></field>
                 <field name="actions"><default-field title="">
                     <link url="callBack" text="Call back" icon="sym_o_call" condition="canCallBack">
-                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/></link>
+                        <parameter name="otherUserIds"/><parameter name="chatRoomId"/><parameter name="isRoomCall"/><parameter name="video"/>
+                        <parameter name="e2ee"/></link>
                 </default-field></field>
             </form-list>
             <link url="." text="More" condition="hasMore" btn-type="default"><parameter name="outcome" from="shownOutcome"/><parameter name="pageIndex" from="nextPage"/></link>
@@ -353,6 +389,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
                         <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>
+                        <field name="encrypted"><default-field title="End-to-end encrypted" tooltip="Guests cannot join an encrypted meeting"><radio><option key="N" text="No"/><option key="Y" text="Yes"/></radio></default-field></field>
                         <field name="expiryDays"><default-field title="Works for"><drop-down><option key="1" text="A day"/><option key="7" text="A week"/>
                             <option key="30" text="A month"/><option key="90" text="90 days"/></drop-down></default-field></field>
                         <field name="submitButton"><default-field title="Make a link"><submit icon="sym_o_add_link"/></default-field></field>

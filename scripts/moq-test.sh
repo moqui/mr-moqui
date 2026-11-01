@@ -8,7 +8,9 @@
 set -o pipefail
 
 SRC=$(cd "$(dirname "$0")/.." && pwd)
-FIX=$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")
+# The physical path: moq resolves its root with cd -P, so its output names /private/var/... on macOS, where TMPDIR is
+# /var/folders/.../T/ (a symlink, and a trailing slash).
+FIX=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")" && pwd -P)
 trap 'rm -rf "$FIX"' EXIT
 pass=0
 fail=0
@@ -386,7 +388,11 @@ check "clean-all kept saves" 0 '' -- test -f "$R/runtime/save/t1/moqui.dump"
 check "load-save dry run" 0 'save-db .*runtime/save/demo/moqui.dump.part' -- dry "$M" load-save -n demo seed
 check "opensearch-start without install" 1 'no OpenSearch' -- "$M" opensearch-start
 check "opensearch-stop without pid" 0 'not running' -- "$M" opensearch-stop
-check "opensearch-download needs force" 1 'add --force' -- "$M" opensearch-download
+if [ "$(uname -s)" = Darwin ]; then
+    check "opensearch-download refused on macOS" 1 'no macOS tarball' -- "$M" opensearch-download
+else
+    check "opensearch-download needs force" 1 'add --force' -- "$M" opensearch-download
+fi
 check "help chromium-download" 0 'AppArmor profile' -- "$M" help chromium-download
 check "help test-all" 0 'every test suite' -- "$M" help test-all
 check "test-all dry run" 0 'moqui test-client --serve$' -- dry "$M" test-all
@@ -603,38 +609,43 @@ if have zip && have unzip && have tar && have gzip; then
     echo 'scratch' >"$R/runtime/tmp/x"
     echo 'secret=1' >"$R/runtime/.env"
     echo '<moqui-conf dev-override=""/>' >"$R/runtime/MoquiConf.xml"
-    today=mr-moqui-$(date +%Y%m%d)
-    check "archive default name" 0 "Created $O/$today.zip .*expands to $today/" -- sh -c "cd '$O' && '$M' archive"
+    check "archive default name" 0 "Created $O/mr-moqui-[0-9]{8}\.zip .*expands to mr-moqui-[0-9]{8}/" -- \
+        sh -c "cd '$O' && '$M' archive"
+    # the name moq gave it, so a run across midnight checks the day moq saw
+    today=$(cd "$O" && ls -d mr-moqui-*.zip 2>/dev/null | head -n 1)
+    today=${today%.zip}
     zip_list=$(unzip -l "$O/$today.zip")
     if tar --help 2>&1 | grep -q BusyBox; then
         check "archive --tgz refuses BusyBox tar" 1 'needs GNU or BSD tar' -- "$M" archive --tgz "$O/bb"
         kinds=zip
     else
-        check "archive --tgz" 0 "Created $O/$today.tgz" -- sh -c "cd '$O' && '$M' archive --tgz"
-        tgz_list=$(tar -tzf "$O/$today.tgz" | sed 's/^/ /')
+        check "archive --tgz" 0 "Created $O/mr-moqui-[0-9]{8}\.tgz" -- sh -c "cd '$O' && '$M' archive --tgz"
+        tgz_today=$(cd "$O" && ls -d mr-moqui-*.tgz 2>/dev/null | head -n 1)
+        tgz_today=${tgz_today%.tgz}
+        tgz_list=$(tar -tzf "$O/$tgz_today.tgz" | sed 's/^/ /')
         kinds='zip tgz'
     fi
     for kind in $kinds; do
-        if [ "$kind" = zip ]; then list=$zip_list; else list=$tgz_list; fi
-        for want in "$today/moqui" "$today/MoquiConf.xml" "$today/README.txt" "$today/conf/MoquiDevConf.xml" \
-            "$today/base-component/" "$today/db/instance_id" "$today/.env" "$today/opensearch/data/nodes/x"; do
+        if [ "$kind" = zip ]; then list=$zip_list top=$today; else list=$tgz_list top=$tgz_today; fi
+        for want in "$top/moqui" "$top/MoquiConf.xml" "$top/README.txt" "$top/conf/MoquiDevConf.xml" \
+            "$top/base-component/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
-        for unwanted in "$today/runtime" "$today/log" "$today/tmp" "$today/save" "$today/install" db/install \
+        for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
             opensearch/logs/. '\.git/' '\.moq-archive'; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
         rm -rf "$O/x"
         mkdir -p "$O/x"
         if [ "$kind" = zip ]; then
-            (cd "$O/x" && unzip -q "$O/$today.zip")
+            (cd "$O/x" && unzip -q "$O/$top.zip")
         else
-            tar -xzf "$O/$today.tgz" -C "$O/x"
+            tar -xzf "$O/$top.tgz" -C "$O/x"
         fi
-        check "$kind binary is executable" 0 '' -- test -x "$O/x/$today/moqui"
+        check "$kind binary is executable" 0 '' -- test -x "$O/x/$top/moqui"
         check "$kind conf is the production conf, not the runtime's" 0 '' -- \
-            cmp "$O/x/$today/MoquiConf.xml" "$R/runtime/conf/MoquiProductionConf.xml"
-        check "$kind readme" 0 'keep this archive private' -- cat "$O/x/$today/README.txt"
+            cmp "$O/x/$top/MoquiConf.xml" "$R/runtime/conf/MoquiProductionConf.xml"
+        check "$kind readme" 0 'keep this archive private' -- cat "$O/x/$top/README.txt"
     done
     rm -f "$R/runtime/MoquiConf.xml"
     check "archive exists" 1 'there already; -f replaces it' -- sh -c "cd '$O' && '$M' archive"
@@ -647,7 +658,7 @@ if have zip && have unzip && have tar && have gzip; then
             sh -c "'$M' archive '$O/three.tar.gz' && tar -tzf '$O/three.tar.gz' | sed 's/^/ /'"
     fi
     check "archive --tgz with a .zip name" 1 'not four.zip' -- "$M" archive --tgz "$O/four.zip"
-    check "archive into a directory" 0 "Created $O/x/$today.zip" -- "$M" archive "$O/x/"
+    check "archive into a directory" 0 "Created $O/x/mr-moqui-[0-9]{8}\.zip" -- "$M" archive "$O/x/"
     check "archive --with-save" 0 ' saved/save/t1/moqui.dump' -- sh -c "'$M' archive --with-save '$O/saved.zip' && unzip -l '$O/saved.zip'"
     check "archive --conf" 0 'Created' -- "$M" archive -c conf/MoquiDevConf.xml "$O/dev.zip"
     check "archive --no-data" 0 'Created' -- "$M" archive --no-data "$O/clean.zip"
@@ -656,6 +667,10 @@ if have zip && have unzip && have tar && have gzip; then
         lacks "archive --no-data leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
     done
     check "archive refuses inside runtime" 1 'is inside runtime' -- "$M" archive "$R/runtime/x.zip"
+    ln -s "$R" "$FIX/root-link"
+    check "archive refuses inside runtime through a symlink" 1 'is inside runtime' -- "$M" archive "$FIX/root-link/runtime/x.zip"
+    check "archive refuses inside runtime by a // path" 1 'is inside runtime' -- "$M" archive "$R//runtime/x.zip"
+    rm -f "$FIX/root-link"
     check "archive bad name" 1 'may use only' -- "$M" archive "$O/a b.zip"
     check "archive missing directory" 1 'no directory' -- "$M" archive "$O/nope/a.zip"
     check "archive dry run" 0 'zip -qry .* dry/conf' -- dry "$M" archive "$O/dry"

@@ -6,7 +6,7 @@
 // far end goes to the target's voicemail; a transfer to an international number is refused under the fraud policy (the
 // same transfer to a domestic number goes); a number transferred to hears the recording notice and acknowledges it by
 // pressing 1; a person is added, a number is not added to an end-to-end encrypted call; two calls on one media node
-// merge into a meeting, and calls on different nodes are refused. The numbers a user adds count toward their limit of calls
+// merge into a meeting, and calls on different nodes are refused unless cascading media nodes are on (W7). The numbers a user adds count toward their limit of calls
 // at once; an external user (EXTERNAL_USER) in a call neither adds to it nor transfers it. No SIP engine runs here: fake SipNode and CallMediaNode
 // rows stand in for one, and the phones' events come through note#PhoneLeg.
 // Run: ./moq test framework --spec Transfer
@@ -333,7 +333,7 @@ feature("a number transferred to hears the recording notice and acknowledges it 
     }
 })
 
-feature("a person is added; a number is not added to an encrypted call; calls on one media node merge into a meeting, on two they do not", {
+feature("a person is added; a number is not added to an encrypted call; calls on one media node merge into a meeting, on two only with cascading media nodes", {
     when() {
         endAll()
         const first = inbound()
@@ -343,7 +343,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         const abroad = as(A, "add#CallParticipant", {callSessionId: first.callSessionId, phoneNumber: ABROAD})
         sys(() => {
             const s = ec.entity.find(SESSION).condition("callSessionId", first.callSessionId).one()
-            s.set("encryptionMode", "e2ee")
+            s.set("encryptionMode", "e2ee-sframe")
             s.update()
         })
         const encrypted = as(A, "add#CallParticipant", {callSessionId: first.callSessionId, phoneNumber: "+15550199966"})
@@ -368,11 +368,17 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         })
         const otherNode = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId})
         const meeting = as(A, "convert#CallToMeeting", {callSessionId: third.callSessionId})
-        return {added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting,
+        // with cascading media nodes (W7) it merges: its phone stays on its node, now an edge of the first call
+        setProperty("rtc_cascade_enabled", "true")
+        const acrossNodes = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId,
+            revision: rev(first.callSessionId)})
+        setProperty("rtc_cascade_enabled", "false")
+        return {added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, acrossNodes,
             firstAfter: session(first.callSessionId), secondAfter: session(second.callSessionId), farFirst: leg(first.phoneLegId),
-            aSecond: lastLeg(second.callSessionId, A)}
+            aSecond: lastLeg(second.callSessionId, A), thirdAfter: session(third.callSessionId), farThird: leg(third.phoneLegId)}
     },
-    then({added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, firstAfter, secondAfter, farFirst, aSecond}) {
+    then({added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, acrossNodes, firstAfter,
+            secondAfter, farFirst, aSecond, thirdAfter, farThird}) {
         added.errors == ""
         cRinging.statusId == "ClsOffered"
         addedAgain.reasonCode == "alreadyIn"
@@ -391,6 +397,42 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         aSecond.statusId == "ClsLeft"
         otherNode.reasonCode == "differentNodes"
         meeting.call.kind == "meeting"
+        acrossNodes.errors == ""
+        acrossNodes.movedCount >= 1
+        thirdAfter.statusId == "CssEnded"
+        thirdAfter.endReasonEnumId == "CerMerged"
+        farThird.callSessionId == firstAfter.callSessionId
+        farThird.statusId == "ClsAnswered"
+        farThird.mediaNodeId == NODE2
+    }
+})
+
+feature("a desk phone's REFER is checked before the phone is answered: refused with an error (the engine answers 403), the same REFER to a domestic number taken (202)", {
+    when() {
+        endAll()
+        return withProperty("sip_registrar_enabled", "true", () => {
+            const made = as(A, "org.moqui.impl.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
+            const device = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", made.sipDeviceId).one())
+            engine("org.moqui.impl.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",
+                sipDeviceId: device.sipDeviceId, instanceId: NODE, contactUri: "sip:" + device.username + "@192.168.1.20:5060",
+                transport: "udp", sourceAddress: "198.51.100.7", sourcePort: 61000, sipCallId: "reg-xfer-refer-1", cseq: 2,
+                credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000, lastRefreshDate: Date.now(),
+                userAgent: "Spec Phone/1.0"})
+            const call = engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
+            const phoneLeg = sys(() => Array.from(ec.entity.find(LEG).condition({callSessionId: call.callSessionId, legTypeEnumId: "CltSipDevice"}).list()))[0]
+            const answered = note(call.callSessionId, phoneLeg.callLegId, "answered")
+            const refused = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: ABROAD})
+            const taken = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: "+15550199977"})
+            as(A, "org.moqui.impl.SipDeviceServices.revoke#SipDevice", {sipDeviceId: made.sipDeviceId})
+            return {answered, refused, taken}
+        })
+    },
+    then({answered, refused, taken}) {
+        answered.errors == ""
+        refused.reasonCode == "internationalNotEnabled"
+        refused.errors != ""
+        taken.errors == ""
+        taken.callTransferId != null
     }
 })
 
@@ -426,5 +468,56 @@ feature("the numbers a user adds count toward their limit of calls at once; an e
         dQueues.queueList.length == 0
         aAdds.errors == ""
         cRinging.statusId == "ClsOffered"
+    }
+})
+
+// the call-target hook (Calls.js refusedTargets): an app's provider may keep the people a user transfers a call to, adds or
+// calls to the user's own. The example gallery's refuses users named *.offlimits; A opens the gallery through a group of this
+// spec's. With the very same requests, C is reached and the off-limits user is refused as a user that does not exist.
+// Skipped when the example component is not loaded.
+const OFFLIMITS = "XFER_SPEC_OFFLIMITS"
+const GALLERY_GROUP = "XFER_SPEC_GALLERY"
+const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
+feature("a call-target provider refuses a transfer, an add and a call to a user it keeps out; the same to another user goes", {
+    when() {
+        if (!exampleInstalled) return {skip: true}
+        endAll()
+        sys(() => {
+            if (ec.entity.find("moqui.security.UserAccount").condition("userId", OFFLIMITS).count() === 0) {
+                const account = ec.entity.makeValue("moqui.security.UserAccount")
+                account.setFields({userId: OFFLIMITS, username: "xfer.spec.offlimits", userFullName: "Xfer off limits", disabled: "N"}, true, null, null)
+                account.create()
+            }
+            if (!ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GALLERY_GROUP).one()) {
+                const group = ec.entity.makeValue("moqui.security.UserGroup")
+                group.setFields({userGroupId: GALLERY_GROUP, description: "Xfer spec gallery"}, true, null, null)
+                group.create()
+                const authz = ec.entity.makeValue("moqui.security.ArtifactAuthz")
+                authz.setFields({artifactAuthzId: GALLERY_GROUP, userGroupId: GALLERY_GROUP, artifactGroupId: "EXAMPLE_GALLERY",
+                    authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL"}, true, null, null)
+                authz.create()
+            }
+        })
+        makeUser(A, GALLERY_GROUP)
+        const asked = as(A, "org.moqui.impl.ShellServices.call#Providers", {hook: "call-target", parameters: {userIdList: [OFFLIMITS, C]}})
+        const call = inbound()
+        const transferOff = transfer(call, "user", OFFLIMITS)
+        const addOff = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: OFFLIMITS})
+        const addNobody = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: "XFER_SPEC_NO_SUCH_USER"})
+        const addC = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: C})
+        const callOff = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [OFFLIMITS]})
+        const callC = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [C]})
+        endAll()
+        sys(() => ec.entity.find("moqui.security.UserGroupMember").condition({userId: A, userGroupId: GALLERY_GROUP}).deleteAll())
+        return {asked, transferOff, addOff, addNobody, addC, callOff, callC}
+    },
+    then({skip, asked, transferOff, addOff, addNobody, addC, callOff, callC}) {
+        skip || asked.results.find((r) => r.sourceId == "gallery.callTarget").refusedUserIdList.join() == OFFLIMITS
+        skip || transferOff.reasonCode == "notFound"
+        skip || addOff.reasonCode == "notFound"
+        skip || addOff.errors == addNobody.errors
+        skip || addC.errors == ""
+        skip || callOff.reasonCode == "noCallee"
+        skip || callC.errors == ""
     }
 })

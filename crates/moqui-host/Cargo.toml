@@ -19,7 +19,7 @@ dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip", "channels", "xmpp"]
 # Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -66,6 +66,14 @@ speech-local = []
 # trunks and the RTP of phone legs, joined to the call media. It starts only when sip_port or sip_tls_port is set. In
 # Maximal, Enterprise and Debug; not Lite or Dev.
 sip = ["rtc", "dep:moqui-sip"]
+# Business messaging channels (crates/moqui-channels, plans/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the sms chat
+# bridge adapter on Telnyx. The /channels/ routes (src/channels.rs) are in every build with axum and answer only when
+# channels_webhooks_enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite or Dev.
+channels = ["dep:moqui-channels"]
+# XMPP for local users (crates/moqui-xmpp, plans/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
+# (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,
+# Enterprise and Debug; not Lite or Dev.
+xmpp = ["axum", "dep:moqui-xmpp"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
 grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
@@ -98,6 +106,10 @@ moqui-collab = { workspace = true }
 moqui-rtc = { workspace = true, optional = true }
 # Phone calls: the SIP user agent and B2BUA (crates/moqui-sip), under the sip feature.
 moqui-sip = { workspace = true, optional = true }
+# Business messaging channels: the SMS adapter (crates/moqui-channels), under the channels feature.
+moqui-channels = { workspace = true, optional = true }
+# XMPP for local users (crates/moqui-xmpp), under the xmpp feature.
+moqui-xmpp = { workspace = true, optional = true }
 # The DAV server, the VCard and ICalendar tools and elFinder (crates/moqui-dav), in every build; /dav/ and SFTP serve it.
 moqui-dav = { workspace = true }
 # The development kit (crates/moqui-devkit), in every build: moqui test, lint, check and types; its file watcher is the
@@ -160,6 +172,10 @@ str0m = { workspace = true }
 turn-client-proto = { workspace = true }
 # The fake trunk's SIP messages (tests/it/sip.rs).
 rsipstack = { workspace = true }
+# The XMPP client of tests/it/xmpp.rs (MPL-2.0, D-C3; with xmpp-parsers and sasl): stanzas, SASL and stream management
+# against the server, as an independent implementation. default-features off: no DNS or connectors of its own.
+tokio-xmpp = { workspace = true }
+sasl = { workspace = true }
 # the dev-aide component's services, for the tests of tests/it/devaide.rs
 dev-aide = { workspace = true }
 indexmap = { workspace = true }

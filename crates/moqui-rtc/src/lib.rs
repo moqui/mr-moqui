@@ -28,6 +28,9 @@
 //! captions) and put frames in (a SIP leg's audio, as one more participant). [`audio`] decodes, mixes and encodes that
 //! audio off the media thread: the codecs, resampling, the per-leg jitter buffer and the mix-minus mixer.
 //! [`record`] writes a call's tracks and its mixed audio as files (Opus in Ogg, VP8 in WebM), sans-IO.
+//!
+//! A call may span media nodes (W7): [`Sfu::link`] opens a relay link from an edge node to the call's node, and the two
+//! SFUs' [`RelayMessage`]s, carried by the caller, negotiate it.
 
 pub mod audio;
 pub mod record;
@@ -35,4 +38,7 @@ pub mod sfu;
 pub mod tap;
 pub mod turn;
 
-pub use sfu::{Layer, LegKey, Proto, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, TapId, Transmit};
+pub use sfu::{
+    Layer, LegKey, Proto, RelayMessage, RelayRole, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, TapId,
+    Transmit,
+};

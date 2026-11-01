@@ -55,3 +55,32 @@ fn ranking_puts_exact_and_short_matches_first() {
     let found = rank(candidates, "entity:mantle.order.OrderItem", 1);
     assert_eq!(found[0].id, "entity:mantle.order.OrderItem");
 }
+
+/// The stamp is of the files' locations and hashes, in any order: the same files give the same hash, and a changed,
+/// added or removed file another.
+#[test]
+fn the_stamp_is_the_files_and_their_hashes_in_any_order() {
+    let files = |list: &[(&str, &str)]| {
+        list.iter()
+            .map(|(location, hash)| ((*location).to_string(), (*hash).to_string()))
+            .collect::<Vec<_>>()
+    };
+    let one = IndexStamp::of(
+        files(&[("component://a/x.xml", "h1"), ("component://b/y.xml", "h2")]),
+        5,
+    );
+    let reordered = IndexStamp::of(
+        files(&[("component://b/y.xml", "h2"), ("component://a/x.xml", "h1")]),
+        5,
+    );
+    assert_eq!(one, reordered);
+    assert_eq!((one.files, one.built_at, one.hash.len()), (2, 5, 24));
+    let changed = IndexStamp::of(
+        files(&[("component://a/x.xml", "h3"), ("component://b/y.xml", "h2")]),
+        5,
+    );
+    let fewer = IndexStamp::of(files(&[("component://a/x.xml", "h1")]), 5);
+    assert_ne!(one.hash, changed.hash);
+    assert_ne!(one.hash, fewer.hash);
+    assert_ne!(IndexStamp::of(Vec::new(), 0).hash, one.hash);
+}

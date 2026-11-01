@@ -28,11 +28,14 @@
 //! A failure ends the recording, never the call: a queue that overflowed (more than [`MAX_DROPPED`] frames dropped),
 //! a file that could not be written, a store that failed or fell behind. The segments already closed are stored, the
 //! partial files removed, and `note#RecorderEnd` marks the recording failed with the reason; the call's media goes on.
-//! Reaching `call_recording_max_mb` stops the recording the same way, as a stop.
+//! Reaching `call_recording_max_mb`, or what was left of the owner's drive quota at the start (`maxBytes`), stops the
+//! recording the same way, as a stop.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::sync::mpsc::{
+    channel, sync_channel, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
+};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
@@ -44,7 +47,7 @@ use moqui_rtc::record::{ClosedSegment, RecordConfig, RecordError, Recorder, Spoo
 use serde_json::Value as Json;
 
 use super::media::{self, Kinds, TapEvent};
-use super::{command, Command, NoticeKind};
+use super::{command, command_waiting, Command, NoticeKind};
 
 /// Where the recorder spools its files, under the runtime directory: the one place `store#RecordingFile` takes a file
 /// from (`RECORDING_SPOOL` in moqui-core `service/call_media.rs`).
@@ -61,6 +64,8 @@ const STORE_DRAIN: Duration = Duration::from_secs(60);
 const TICK_MS: u64 = 20;
 /// Events taken in one turn before the tick is looked at again.
 const BATCH: usize = 256;
+/// How long a recording's notice waits for room in the media queue before it is logged as not taken.
+const NOTICE_WAIT: Duration = Duration::from_millis(500);
 /// How often the recorder asks the room's browsers for keyframes while a video track waits for one.
 const KEYFRAME_ASK: Duration = Duration::from_secs(1);
 
@@ -102,8 +107,10 @@ pub(crate) enum Control {
     Stop,
 }
 
-fn recorders() -> &'static Mutex<HashMap<String, SyncSender<Control>>> {
-    static RECORDERS: OnceLock<Mutex<HashMap<String, SyncSender<Control>>>> = OnceLock::new();
+/// The recorders' control senders: unbounded, apart from the media queue, so a Pause, Resume or Stop is never dropped
+/// (a recorder takes them every turn, and there are few).
+fn recorders() -> &'static Mutex<HashMap<String, Sender<Control>>> {
+    static RECORDERS: OnceLock<Mutex<HashMap<String, Sender<Control>>>> = OnceLock::new();
     RECORDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -121,13 +128,17 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
         return;
     }
     if let Some(notice) = body.get("notice").filter(|n| n.is_object()) {
-        if let Err(code) = command(Command::RoomNotice {
-            room: room.clone(),
-            kind: NoticeKind::Recording,
-            frame: notice.clone(),
-            keep: notice_kept(notice),
-        }) {
-            tracing::debug!("call recording notice for {room} not taken: {code}");
+        // the legs must hear of a pause or a resume: waits briefly for room in the media queue, and is logged if not
+        if let Err(code) = command_waiting(
+            Command::RoomNotice {
+                room: room.clone(),
+                kind: NoticeKind::Recording,
+                frame: notice.clone(),
+                keep: notice_kept(notice),
+            },
+            NOTICE_WAIT,
+        ) {
+            tracing::warn!("call recording {id}: its notice to the call {room} was not taken: {code}");
         }
     }
     let period = body
@@ -139,7 +150,11 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
     match op.as_str() {
         "start" => {
             let paused = body.get("paused").and_then(Json::as_bool).unwrap_or(false);
-            let limits = Limits::from_properties(&moqui_lib::env::get_prop_or_env, text("kind") == "mixed");
+            let mut limits = Limits::from_properties(&moqui_lib::env::get_prop_or_env, text("kind") == "mixed");
+            // what is left of the owner's drive quota, when it has one: the recording stops there as at its size limit
+            if let Some(left) = body.get("maxBytes").and_then(Json::as_u64) {
+                limits.record.max_total_bytes = limits.record.max_total_bytes.min(left.max(1));
+            }
             start(factory, &room, &id, limits, period, paused);
         }
         "pause" => tell(&id, Control::Pause),
@@ -153,17 +168,17 @@ fn tell(id: &str, control: Control) {
     let sender = lock(recorders()).get(id).cloned();
     match sender {
         Some(tx) => {
-            if tx.try_send(control).is_err() {
-                tracing::warn!("call recording {id}: the recorder did not take {control:?}");
+            if tx.send(control).is_err() {
+                tracing::warn!("call recording {id}: the recorder ended before it took {control:?}");
             }
         }
-        None => tracing::debug!("call recording {id}: no recorder here for {control:?}"),
+        None => tracing::warn!("call recording {id}: no recorder here for {control:?}"),
     }
 }
 
 /// Starts the recorder thread of a recording (once).
 fn start(factory: &Arc<ExecutionContextFactory>, room: &str, id: &str, limits: Limits, period: u32, paused: bool) {
-    let (tx, rx) = sync_channel(16);
+    let (tx, rx) = channel();
     {
         let mut map = lock(recorders());
         if map.contains_key(id) {

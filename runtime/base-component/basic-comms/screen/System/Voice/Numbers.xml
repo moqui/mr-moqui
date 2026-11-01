@@ -13,7 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Voice, Numbers (plans/Comms-Framework.md §5.2, §5.4): the phone numbers the trunks bring, in E.164, each with its trunk, the
-    user, ring group (V3), IVR menu or queue (V5) a call to it goes to, and the emergency location its calls report.
+    user, ring group (V3), IVR menu or queue (V5) a call to it goes to, the emergency location its calls report, and its
+    messaging (C4-SMS: the SMS bridge its texts go through, which needs no trunk).
     org.moqui.impl.VoiceServices find#, store# and delete#PhoneNumber. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Numbers" default-menu-index="3">
@@ -23,7 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="org.moqui.impl.VoiceServices.store#PhoneNumber" in-map="{phoneNumber:phoneNumber, voiceTrunkId:voiceTrunkId || null,
                 routeTypeEnumId:routeTypeEnumId || 'PnrUser',
                 routeId:(routeTypeEnumId == 'PnrRingGroup' ? ringGroupId : routeTypeEnumId == 'PnrIvr' ? ivrMenuId : routeTypeEnumId == 'PnrQueue' ? callQueueId
-                    : routeTypeEnumId == 'PnrVoicemail' ? null : routeId) || null, emergencyLocationId:emergencyLocationId || null, description:description || null}"/>
+                    : routeTypeEnumId == 'PnrVoicemail' ? null : routeId) || null, emergencyLocationId:emergencyLocationId || null, description:description || null,
+                messagingBridgeId:messagingBridgeId || ''}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Number saved</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -46,6 +48,9 @@ along with this software (see the LICENSE.md file). If not, see
             .map((m) => ({key: m.ivrMenuId, text: m.name}))
         queueOptions = Array.from((ec.service.sync().name('org.moqui.impl.CallQueueServices.find#CallQueues').requireNewTransaction(true).disableAuthz().call() || {}).queueList || [])
             .map((q) => ({key: q.callQueueId, text: q.name}))
+        // C4-SMS: the SMS bridges a number's texts can go through
+        const bridges = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.find#Bridges').requireNewTransaction(true).disableAuthz().call() || {}
+        messagingOptions = Array.from(bridges.bridgeList || []).filter((b) => b.typeEnumId === 'CbtSms').map((b) => ({key: b.chatBridgeId, text: b.name || b.chatBridgeId}))
         routeOptions = [{key: 'PnrUser', text: ec.l10n.localize('A user')}, {key: 'PnrRingGroup', text: ec.l10n.localize('A ring group')},
             {key: 'PnrIvr', text: ec.l10n.localize('An IVR menu')}, {key: 'PnrQueue', text: ec.l10n.localize('A queue')},
             {key: 'PnrVoicemail', text: ec.l10n.localize('Voicemail access')}]
@@ -69,6 +74,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="ivrMenuId"><default-field title="IVR menu"><drop-down allow-empty="true"><list-options list="menuOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="callQueueId"><default-field title="Queue"><drop-down allow-empty="true"><list-options list="queueOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="messagingBridgeId"><default-field title="Texts through" tooltip="The SMS bridge its texts go through (System, Chat Bridges); empty for none">
+                        <drop-down allow-empty="true"><list-options list="messagingOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                     <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
                 </form-single>
@@ -80,6 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="trunkName"><default-field title="Trunk"><display/></default-field></field>
                 <field name="routeName"><default-field title="Rings"><display/></default-field></field>
                 <field name="locationName"><default-field title="Emergency location"><display/></default-field></field>
+                <field name="messagingName"><default-field title="Texts"><display/></default-field></field>
                 <field name="description"><default-field title="Description"><display style="text-caption"/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
                     <container-dialog id="EditNumberDialog_${phoneNumber}" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${phoneNumber}">
@@ -93,6 +101,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="ivrMenuId" from="ivrMenuId"><default-field title="IVR menu"><drop-down allow-empty="true"><list-options list="menuOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="callQueueId" from="callQueueId"><default-field title="Queue"><drop-down allow-empty="true"><list-options list="queueOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="emergencyLocationId" from="emergencyLocationId"><default-field title="Emergency location"><drop-down allow-empty="true"><list-options list="locationOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="messagingBridgeId" from="messagingBridgeId"><default-field title="Texts through">
+                                <drop-down allow-empty="true"><list-options list="messagingOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="description" from="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                             <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
                         </form-single>

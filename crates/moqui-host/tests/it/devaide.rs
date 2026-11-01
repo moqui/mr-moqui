@@ -2292,3 +2292,169 @@ fn a_qvue_screen_renders_from_its_buffer() {
     assert!(previewed.contains("Unsaved"), "{previewed}");
     assert!(render(false).contains("Saved") && !render(false).contains("Unsaved"));
 }
+
+/// An MR Moqui clone beside the server: this repository's framework (linked) and a component with one entity, for the
+/// index of an allowed project.
+fn aide_project(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("moqui-aide-project-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let framework = std::fs::canonicalize(crate::common::repo_runtime().join("base-component/framework")).unwrap();
+    std::fs::create_dir_all(root.join("runtime/base-component")).unwrap();
+    std::os::unix::fs::symlink(framework, root.join("runtime/base-component/framework")).unwrap();
+    let component = root.join("runtime/component/proj-a");
+    std::fs::create_dir_all(component.join("entity")).unwrap();
+    std::fs::write(component.join("component.xml"), r#"<component name="proj-a"/>"#).unwrap();
+    std::fs::write(component.join("MoquiConf.xml"), "<moqui-conf/>").unwrap();
+    std::fs::write(
+        component.join("entity/ProjEntities.xml"),
+        r#"<entities><entity entity-name="ProjThing" package="proj"><field name="thingId" type="id" is-pk="true"/></entity></entities>"#,
+    )
+    .unwrap();
+    std::fs::canonicalize(root).unwrap()
+}
+
+/// The index's reads on an instance that is not dev (plans/design-dev-aide.md 7.4): an `AIDE_READERS` user reads an
+/// allowed project by its id, as a service and over REST with an API key, each answer with the index's stamp; a project
+/// not allowed, a directory, the server's own index, a user without the permission and the rebuild are refused, and a
+/// name only the server has is a miss in the project, not the server's answer.
+#[test]
+fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let project = aide_project("read");
+    let data = format!(
+        r#"<entity-facade-xml type="seed">
+    <moqui.security.UserAccount userId="AIDE_RD" username="aide.reader" userFullName="Aide Reader"/>
+    <moqui.security.UserGroupMember userGroupId="AIDE_READERS" userId="AIDE_RD" fromDate="1265184000000"/>
+    <moqui.security.UserAccount userId="AIDE_NO" username="aide.nobody" userFullName="Aide Nobody"/>
+    <moqui.devtools.DevArtifactProject projectId="PROJ_A" directory="{dir}" allowed="Y"/>
+    <moqui.devtools.DevArtifactProject projectId="PROJ_SHUT" directory="{dir}" allowed="N"/>
+</entity-facade-xml>"#,
+        dir = project.display()
+    );
+    let gate = crate::common::start_with_properties("aide-read", Some(&data), &[]);
+    assert!(!moqui_core::devtools::is_dev_instance());
+    let factory = Arc::clone(gate.server.factory());
+    const DT: &str = "org.moqui.impl.DevToolsServices.";
+    let json = |out: &BTreeMap<String, Value>, key: &str| moqui_lib::json::to_json(&out[key]);
+    let read =
+        |user: &str, verb: &str, parameters: &[(&str, &str)]| call(&factory, user, &format!("{DT}{verb}"), parameters);
+
+    // by its id: found in the project, with the stamp of its index
+    let found = read(
+        "aide.reader",
+        "find#Artifacts",
+        &[("projectId", "PROJ_A"), ("text", "ProjThing")],
+    )
+    .unwrap();
+    assert_eq!(json(&found, "artifacts")[0]["id"], "entity:proj.ProjThing", "{found:?}");
+    let stamp = json(&found, "indexStamp");
+    assert_eq!(stamp["hash"].as_str().unwrap().len(), 24, "{stamp}");
+    assert!(
+        stamp["files"].as_u64().unwrap() > 0 && stamp["builtAt"].as_i64().unwrap() > 0,
+        "{stamp}"
+    );
+    let one = read(
+        "aide.reader",
+        "get#Artifact",
+        &[("projectId", "PROJ_A"), ("artifactId", "entity:proj.ProjThing")],
+    )
+    .unwrap();
+    assert_eq!(json(&one, "artifact")["name"], "proj.ProjThing", "{one:?}");
+    for (verb, parameters) in [
+        ("get#ArtifactRefs", vec![("artifactId", "entity:proj.ProjThing")]),
+        ("get#ArtifactExtensions", vec![]),
+        (
+            "get#ArtifactAt",
+            vec![("path", "component://proj-a/entity/ProjEntities.xml"), ("line", "1")],
+        ),
+    ] {
+        let mut parameters = parameters;
+        parameters.push(("projectId", "PROJ_A"));
+        let out = read("aide.reader", verb, &parameters).unwrap_or_else(|err| panic!("{verb}: {err}"));
+        assert_eq!(json(&out, "indexStamp")["hash"], stamp["hash"], "{verb}");
+    }
+
+    // no fallback: the server's own entity is not in the project, and nothing of the server answers
+    let miss = read(
+        "aide.reader",
+        "get#Artifact",
+        &[("projectId", "PROJ_A"), ("artifactId", "entity:moqui.example.Example")],
+    )
+    .unwrap();
+    assert!(!miss.contains_key("artifact"), "{miss:?}");
+    assert!(json(
+        &read(
+            "aide.reader",
+            "find#Artifacts",
+            &[("projectId", "PROJ_A"), ("text", "Example")]
+        )
+        .unwrap(),
+        "artifacts"
+    )
+    .as_array()
+    .unwrap()
+    .iter()
+    .all(|row| row["component"] != "example"));
+
+    // refused: a project not allowed or not there alike, a directory, the server's own index, no permission
+    for id in ["PROJ_SHUT", "NOPE"] {
+        let err = read(
+            "aide.reader",
+            "find#Artifacts",
+            &[("projectId", id), ("text", "ProjThing")],
+        )
+        .unwrap_err();
+        assert!(err.contains("not an allowed project"), "{id}: {err}");
+    }
+    let dir = project.display().to_string();
+    for parameters in [vec![("project", dir.as_str())], vec![]] {
+        let err = read("aide.reader", "find#Artifacts", &parameters).unwrap_err();
+        assert!(err.contains("name an allowed projectId"), "{err}");
+    }
+    assert!(read("aide.nobody", "find#Artifacts", &[("projectId", "PROJ_A")]).is_err());
+    // the rebuild stays on dev instances, for an admin too
+    for user in ["aide.reader", "john.doe"] {
+        assert!(
+            read(user, "rebuild#ArtifactIndex", &[("projectId", "PROJ_A")]).is_err(),
+            "{user}"
+        );
+    }
+
+    // over REST with an API key
+    let key = |user: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user(user).unwrap();
+        moqui_core::user::get_login_key(Some(1.0)).unwrap()
+    };
+    let (reader, nobody) = (key("aide.reader"), key("aide.nobody"));
+    let address = gate.server.address();
+    let get = |path: &str, key: &str| {
+        crate::common::exchange(
+            address,
+            &crate::common::http_request("GET", path, &[("api_key", key)], ""),
+        )
+    };
+    let (status, _, body) = get("/rest/s1/moqui/aide/projects/PROJ_A/artifacts?text=ProjThing", &reader);
+    assert_eq!(status, 200, "{body}");
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["artifacts"][0]["id"], "entity:proj.ProjThing", "{body}");
+    assert_eq!(body["indexStamp"]["hash"], stamp["hash"], "{body}");
+    let (status, _, body) = get(
+        "/rest/s1/moqui/aide/projects/PROJ_A/artifact?artifactId=entity:proj.ProjThing",
+        &reader,
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("indexStamp"), "{body}");
+    let (status, _, body) = get(
+        "/rest/s1/moqui/aide/projects/PROJ_SHUT/artifacts?text=ProjThing",
+        &reader,
+    );
+    assert_ne!(status, 200, "{body}");
+    assert!(body.contains("not an allowed project"), "{body}");
+    let (status, _, body) = get("/rest/s1/moqui/aide/projects/PROJ_A/artifacts?text=ProjThing", &nobody);
+    assert!(status == 401 || status == 403, "{status} {body}");
+    let _ = std::fs::remove_dir_all(&project);
+}

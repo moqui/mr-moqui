@@ -28,7 +28,7 @@ const ADMISSION_CODES = {
 const END_CODES = {
   CerHangup: 'hangup', CerDeclined: 'declined', CerNoAnswer: 'noAnswer', CerCanceled: 'canceled',
   CerConnectionLost: 'connectionLost', CerMediaNodeLost: 'mediaNodeLost', CerEmpty: 'empty', CerFailed: 'failed',
-  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred',
+  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred', CerRefused: 'refused',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
 // V5: transfers, queues (CallTransfers.js, CallQueues.js)
@@ -82,6 +82,19 @@ function isForwardLeg(leg) {
 /** The media node a call from a phone must use: its SIP engine's (startFromDevice), for start to take. */
 let preferredNode = null
 
+/**
+ * Media encryption (W8; the enumeration CallEncryptionMode, by enumCode): dtls-srtp, hop by hop through the SFU; e2ee-sframe,
+ * end to end, SFrame in the browsers with per-sender keys sent over Olm (docs/interfaces/WebRTC.md "Encrypted calls").
+ * A call's mode is set at its start and never lowered. Any mode but dtls-srtp counts as end to end: an unknown one is
+ * refused what an encrypted call is refused, never treated as plain.
+ */
+const PLAIN_MEDIA = 'dtls-srtp'
+const E2EE_MEDIA = 'e2ee-sframe'
+const isE2ee = (session) => !!session && !!session.encryptionMode && session.encryptionMode !== PLAIN_MEDIA
+const truthy = (value) => value === true || ['true', 'y', 'yes', '1'].includes(String(value == null ? '' : value).trim().toLowerCase())
+/** A sender's SFrame KID is its leg's keyIndex times this, plus its epoch (WebrootCallKeys.js). */
+const KID_SPAN = 65536
+
 /** A refusal: an error for the user and a reason code for the caller. */
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
@@ -123,6 +136,25 @@ function liveMediaNodes() {
   return Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', since).orderBy('-heartbeatDate').list())
 }
 
+/**
+ * Cascading media nodes (W7, plans/Comms-Framework.md §6.3 "Cluster"): with rtc_cascade_enabled a leg's media is on the
+ * node its signaling socket is on, when that node holds media, and the node relays to the call's node (its origin).
+ * Off by default: every leg's media is on the call's node.
+ */
+const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
+
+/** The node holding a leg's media: its own (an edge, W7), else the call's. */
+function legNode(session, callLegId) {
+  const leg = callLegId ? one(LEG, { callLegId }) : null
+  return (leg && leg.mediaNodeId) || session.mediaNodeId
+}
+
+/** The other nodes holding legs of the call (its edges, W7). */
+function edgeNodes(session) {
+  return Array.from(new Set(rows(LEG, { callSessionId: session.callSessionId }).map((leg) => leg.mediaNodeId)
+    .filter((node) => node && node !== session.mediaNodeId)))
+}
+
 function lockSession(callSessionId) {
   return find(SESSION).condition('callSessionId', callSessionId).forUpdate(true).one()
 }
@@ -154,7 +186,8 @@ function canSee(session, userId) {
   if (participant && participant.admissionStatusId !== 'CasRevoked') return true
   if (participant) return false
   if (linkOwner(session) === userId) return true
-  return session.kindEnumId !== 'CskDirect' && roomMember(session.chatRoomId, userId)
+  // a phone call in its number pair's room (C4-SMS) is shown there, but the room's members are not in it
+  return session.kindEnumId !== 'CskDirect' && session.kindEnumId !== 'CskPhone' && roomMember(session.chatRoomId, userId)
 }
 
 /** The owner of the call link a meeting was opened by. */
@@ -167,6 +200,19 @@ function linkOwner(session) {
 function view(session, forUserId) {
   const participants = participantsOf(session.callSessionId)
   const legs = legsOf(session.callSessionId)
+  const e2ee = isE2ee(session)
+  // W8: each leg's crypto device, key index and connection generation (a new one is a reconnect: senders rotate)
+  const generations = {}
+  if (e2ee) {
+    const open = legs.filter((leg) => leg.statusId === 'ClsAnswered' && leg.cryptoDeviceId).map((leg) => leg.callLegId)
+    if (open.length) {
+      for (const conn of find(CONNECTION).condition('callLegId', 'in', open).selectField('callLegId').selectField('generation').list()) {
+        generations[conn.callLegId] = Math.max(generations[conn.callLegId] || 0, Number(conn.generation || 0))
+      }
+    }
+  }
+  const keyInfo = (leg) => e2ee ? { deviceId: leg.cryptoDeviceId || null, keyIndex: leg.keyIndex != null ? Number(leg.keyIndex) : null,
+    keyGeneration: generations[leg.callLegId] || 0 } : {}
   const names = userNames(participants.map((p) => p.userId).concat([session.startedByUserId]))
   let myLeg = null
   const list = participants.map((p) => {
@@ -186,8 +232,8 @@ function view(session, forUserId) {
       admission: ADMISSION_CODES[p.admissionStatusId] || null,
       inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
-      legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
-        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered' })),
+      legs: own.map((leg) => Object.assign({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
+        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered' }, keyInfo(leg))),
       onHold: own.some((leg) => leg.heldDate && leg.statusId === 'ClsAnswered'),
     }
   })
@@ -209,6 +255,7 @@ function view(session, forUserId) {
     endedDate: ms(session.endedDate),
     endReason: END_CODES[session.endReasonEnumId] || null,
     encryptionMode: session.encryptionMode || null,
+    e2ee,
     participants: list,
     myLegId: myLeg ? myLeg.callLegId : null,
     myLegStatus: myLeg ? LEG_CODES[myLeg.statusId] || null : null,
@@ -254,19 +301,38 @@ function roomEvent(session, action, extra) {
   }).disableAuthz().call()
 }
 
-/** Tells the call's media node to close a leg or the whole room, after the commit. */
+/**
+ * Tells the media node of a leg (its own, W7, else the call's) to close it, or every node of the call to close the
+ * room, after the commit.
+ */
 function mediaControl(session, message) {
   if (!session.mediaNodeId) return
+  const nodes = message.callLegId ? [legNode(session, message.callLegId)] : [session.mediaNodeId].concat(edgeNodes(session))
+  for (const node of nodes) {
+    ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
+      mediaNodeId: node, message: Object.assign({ callSessionId: session.callSessionId }, message),
+    }).disableAuthz().call()
+  }
+}
+
+/** Tells an edge node (W7) the call's room there relays to the call's node: a phone leg's media is on that edge. */
+function linkEdge(session, node) {
+  if (!node || node === session.mediaNodeId || !session.mediaNodeId) return
   ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
-    mediaNodeId: session.mediaNodeId, message: Object.assign({ callSessionId: session.callSessionId }, message),
+    mediaNodeId: node, message: { action: 'link', callSessionId: session.callSessionId, originNodeId: session.mediaNodeId },
   }).disableAuthz().call()
 }
 
 /**
  * The call's recording (W5, CallRecordings.js) hears of a leg bound (a late joiner's notice), a leg gone, or the end;
- * only while one is going. It never fails the call's own change.
+ * only while one is going. A leg bound while captions are on gets their notice (W6). It never fails the call's own change.
  */
 function recordingChange(callSessionId, change, callLegId) {
+  // W6: a leg that joins while captions are on gets their notice, logged per leg (CallCaptions.js)
+  if (change === 'legBound' && callLegId && find('moqui.call.CallCaptions').condition({ callSessionId, captionsOn: 'Y' }).count() > 0) {
+    ec.service.sync().name('org.moqui.impl.CallCaptionServices.note#CaptionsLeg').parameters({ callSessionId, callLegId })
+      .disableAuthz().call()
+  }
   if (find('moqui.call.CallRecording').condition('callSessionId', callSessionId)
     .condition('statusId', 'in', ['CrsRecording', 'CrsPaused']).count() === 0) return
   ec.service.sync().name('org.moqui.impl.CallRecordingServices.note#CallChange')
@@ -316,10 +382,13 @@ function setLog(callSessionId, userId, fields) {
 }
 
 function makeParticipant(session, userId, role, admission) {
+  // the user's chat actor (C1): a local actor's id is its userId, made on first use
+  const chatActorId = userId ? (ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors')
+    .parameter('userIdList', [userId]).disableAuthz().call()?.actorMap || {})[userId] || null : null
   const p = ec.entity.makeValue(PARTICIPANT)
   p.setSequencedIdPrimary()
   p.setFields({
-    callSessionId: session.callSessionId, identityKindEnumId: 'CikLocal', userId, roleEnumId: role,
+    callSessionId: session.callSessionId, identityKindEnumId: 'CikLocal', userId, chatActorId, roleEnumId: role,
     admissionStatusId: admission, admittedDate: admission === 'CasAdmitted' ? ec.user.nowTimestamp : null,
   }, true, null, null)
   p.create()
@@ -471,7 +540,134 @@ function answeredLegCount(callSessionId) {
   return find(LEG).condition('callSessionId', callSessionId).condition('statusId', 'ClsAnswered').count()
 }
 
+// ---------- end-to-end encrypted calls (W8) ----------
+
+/**
+ * The refusal of a browser that cannot be in an end-to-end encrypted call, or null: it must say it has
+ * RTCRtpScriptTransform (scriptTransform), and name a crypto device of the user's (cryptoDeviceId, a ChatDevice with its
+ * keys uploaded, not revoked), to which the others send their keys.
+ */
+function e2eeClientRefusal(p, userId) {
+  if (!truthy(p.scriptTransform)) {
+    return refuse('unsupportedClient', 'This call is end-to-end encrypted, and this browser cannot encrypt call media (it has no RTCRtpScriptTransform)')
+  }
+  const deviceId = String(p.cryptoDeviceId || '').trim()
+  const device = deviceId && userId ? one('moqui.chat.ChatDevice', { userId, deviceId }) : null
+  if (!device || device.revokedDate || !device.ed25519Key) {
+    return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this browser has no encryption device for you')
+  }
+  return null
+}
+
+/** Puts the browser's crypto device on its leg, and the leg's key index when it has none (the session row is locked). */
+function setLegDevice(session, leg, deviceId) {
+  const changes = { cryptoDeviceId: String(deviceId).trim() }
+  if (leg.keyIndex == null) {
+    let top = 0
+    for (const other of rows(LEG, { callSessionId: session.callSessionId })) top = Math.max(top, Number(other.keyIndex || 0))
+    changes.keyIndex = top + 1
+  }
+  leg.setFields(changes, true, null, null)
+  leg.update()
+}
+
+/** Whether a room asks every call of it to be end-to-end encrypted (its owners' policy). */
+function roomRequiresE2ee(chatRoomId) {
+  if (!chatRoomId) return false
+  return one('moqui.chat.ChatRoom', { chatRoomId })?.callE2eeRequired === 'Y'
+}
+
+/**
+ * register#CallDevice: the user's browser leg in an end-to-end encrypted call names its crypto device (a page that joins
+ * a call it started from a form, or after a reload with another device). Everyone in the call hears the new roster.
+ */
+function registerDevice(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  if (!isE2ee(session)) return refuse('notEncrypted', 'This call is not end-to-end encrypted')
+  const mine = legOfMine(session, me, ['ClsAnswered'])
+  const leg = mine.leg && (!p.callLegId || mine.leg.callLegId === p.callLegId) ? mine.leg : null
+  if (!leg) return refuse('notFound', 'Call not found')
+  const refusal = e2eeClientRefusal(p, me)
+  if (refusal) return refusal
+  if (leg.cryptoDeviceId === String(p.cryptoDeviceId).trim()) return { callLegId: leg.callLegId, call: view(session, me), repeated: true }
+  setLegDevice(session, leg, p.cryptoDeviceId)
+  bump(session)
+  session.update()
+  pushState(session, 'rekey', { callLegId: leg.callLegId })
+  return { callLegId: leg.callLegId, call: view(session, me) }
+}
+
+/** set#RoomCallEncryption: a room's owner or moderator makes every new call of the room end-to-end encrypted, or not. */
+function setRoomEncryption(p) {
+  const me = currentUser()
+  if (!me || !p.chatRoomId) return refuse('notFound', 'Chat room not found')
+  const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameters({ chatRoomId: p.chatRoomId, userId: me })
+    .disableAuthz().call() || {}
+  if (!access.isMember) return refuse('notFound', 'Chat room not found')
+  if (access.room?.roomTypeEnumId === 'CrtDirect') return refuse('notAllowed', 'A direct room has no settings: start an encrypted call instead')
+  if (!access.canModerate && !access.isOwner) return refuse('notAllowed', 'Only a moderator or owner may change the room')
+  const room = find('moqui.chat.ChatRoom').condition('chatRoomId', p.chatRoomId).forUpdate(true).one()
+  const flag = truthy(p.required) ? 'Y' : 'N'
+  if ((room.callE2eeRequired || 'N') !== flag) {
+    room.set('callE2eeRequired', flag)
+    room.update()
+  }
+  return { required: flag === 'Y' }
+}
+
+/**
+ * Internal (ChatKeys.js revokeDevice): a revoked crypto device's legs in end-to-end encrypted calls leave them: it gets no
+ * new keys, and everyone else rotates theirs as the roster changes.
+ */
+function deviceRevoked(p) {
+  if (!p.userId || !p.deviceId) return {}
+  const legs = Array.from(find(LEG).condition('cryptoDeviceId', p.deviceId).condition('statusId', 'ClsAnswered').list())
+  for (const leg of legs) {
+    const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
+    if (participant?.userId !== p.userId) continue
+    const session = lockSession(leg.callSessionId)
+    if (!session || session.statusId === 'CssEnded') continue
+    leaveLeg(session, leg, 'CerRemoved', p.userId)
+  }
+  return {}
+}
+
 // ---------- operations ----------
+
+/**
+ * The call-target providers' answer for the users the current user would call, transfer a call to or add to one (an app
+ * keeps them to the user's organizations, IronStone BOSS): the ones refused. With no provider every enabled user may be
+ * called; a provider that says allowed false refuses that user, and one that fails refuses them all (strict: this guards
+ * who may be reached).
+ */
+function refusedTargets(userIds) {
+  const ids = Array.from(new Set((userIds || []).filter((id) => id)))
+  if (!ids.length) return []
+  ec.message.pushErrors()
+  try {
+    const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({ hook: 'call-target',
+      parameters: { userIdList: ids } }).call() || {}
+    if (out.unavailable === true) return []
+    if (Array.from(out.failedParts || []).length) {
+      ec.logger.warn(`The call-target providers failed for ${ids.join(', ')}: every one is refused`)
+      return ids
+    }
+    const refused = new Set()
+    for (const answer of Array.from(out.results || [])) {
+      for (const id of Array.from(answer?.refusedUserIdList || [])) if (ids.includes(String(id))) refused.add(String(id))
+    }
+    return Array.from(refused)
+  } catch (err) {
+    ec.logger.warn(`The call-target providers failed for ${ids.join(', ')}: ${err && err.message ? err.message : err}`)
+    return ids
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
 
 function start(p) {
   const me = currentUser()
@@ -494,12 +690,18 @@ function start(p) {
     if (!access?.canPost) return refuse('notFound', 'Chat room not found')
     const current = Array.from(find(SESSION).condition('chatRoomId', chatRoomId).condition('statusId', '!=', 'CssEnded')
       .orderBy('-startedDate').limit(1).list())[0]
+    // an encrypted call was asked for, or the room's policy asks for one: a call going on that is not is never offered in
+    // its place (no downgrade)
+    if (current && !isE2ee(current) && (truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId))) {
+      return Object.assign(refuse('callNotEncrypted', 'A call that is not end-to-end encrypted is going on in this room'),
+        { callSessionId: current.callSessionId })
+    }
     if (current) return { callSessionId: current.callSessionId, call: view(current, me), reasonCode: 'callActive' }
     const room = one('moqui.chat.ChatRoom', { chatRoomId })
     const isDirect = room.roomTypeEnumId === 'CrtDirect'
     invitees = Array.from(find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).selectField('userId')
       .selectField('leftDate').selectField('roleEnumId').list())
-      .filter((m) => (isDirect || !m.leftDate) && m.userId !== me && m.roleEnumId !== 'CmrAgent').map((m) => m.userId)
+      .filter((m) => m.userId && (isDirect || !m.leftDate) && m.userId !== me && m.roleEnumId !== 'CmrAgent').map((m) => m.userId)
     kind = isDirect && invitees.length === 1 ? 'CskDirect' : 'CskGroup'
   } else {
     if (isExternal(me)) return refuse('notAllowed', 'Start a call from a chat room you are in')
@@ -509,6 +711,8 @@ function start(p) {
     const known = Array.from(find('moqui.security.UserAccount').condition('userId', 'in', invitees)
       .selectField('userId').selectField('disabled').list()).filter((a) => a.disabled !== 'Y').map((a) => a.userId)
     if (known.length !== invitees.length) return refuse('noCallee', 'Choose someone to call')
+    // an app's call-target providers may keep the people called to the user's own (the same answer as for no such user)
+    if (refusedTargets(invitees).length) return refuse('noCallee', 'Choose someone to call')
     const room = ec.service.sync().name('org.moqui.impl.ChatServices.create#Room')
       .parameters({ roomTypeEnumId: 'CrtDirect', memberUserIdList: invitees }).call()
     if (ec.message.hasError() || !room?.chatRoomId) return { reasonCode: 'failed' }
@@ -516,6 +720,14 @@ function start(p) {
     kind = invitees.length === 1 ? 'CskDirect' : 'CskGroup'
   }
   if (invitees.length > MAX_INVITEES) invitees = invitees.slice(0, MAX_INVITEES)
+  // W8: end to end when asked, or when the room's policy says so; a browser that names its device is checked now (one
+  // that does not, a form's start, names it before its media binds: register#CallDevice)
+  const e2ee = truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId)
+  if (e2ee && preferredNode) return refuse('unsupportedClient', 'A phone cannot start an end-to-end encrypted call')
+  if (e2ee && (p.cryptoDeviceId || p.scriptTransform != null)) {
+    const refusal = e2eeClientRefusal(p, me)
+    if (refusal) return refusal
+  }
 
   const nodes = liveMediaNodes().filter((n) => n.draining !== 'Y' && (!preferredNode || n.instanceId === preferredNode))
   if (!nodes.length) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
@@ -528,11 +740,12 @@ function start(p) {
     directionEnumId: 'CdrInternal', video: p.video === false || p.video === 'false' || p.video === 'N' ? 'N' : 'Y',
     startedByUserId: me, idempotencyKey: key, startedDate: now,
     ringExpireDate: new Date(nowMs() + ringSeconds() * 1000), mediaNodeId: nodes[0].instanceId, mediaGeneration: 1,
-    encryptionMode: 'dtls-srtp',
+    encryptionMode: e2ee ? E2EE_MEDIA : PLAIN_MEDIA,
   }, true, null, null)
   session.create()
   const host = makeParticipant(session, me, 'CprHost', 'CasAdmitted')
   const myLeg = makeLeg(session, host, 'ClsAnswered')
+  if (e2ee && p.cryptoDeviceId) setLegDevice(session, myLeg, p.cryptoDeviceId)
   setLog(session.callSessionId, me, { roleEnumId: 'CurCaller', outcomeEnumId: 'CuoPlaced', logDate: now })
   for (const userId of invitees) {
     const participant = makeParticipant(session, userId, 'CprMember', 'CasInvited')
@@ -558,7 +771,9 @@ function ring(session, userIds, fromUserId, fromName) {
     userIdList: userIds, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
     topic: 'IncomingCall', tag: 'call-' + session.callSessionId, ttlSeconds: ringSeconds(), urgency: 'high',
   }).call()
-  // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing
+  // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing. A phone cannot take an end-to-end
+  // encrypted call (W8): it is not rung.
+  if (isE2ee(session)) return
   ec.message.pushErrors()
   try {
     ec.service.sync().name('org.moqui.impl.SipDeviceServices.ring#SipDevices').parameters({ callSessionId: session.callSessionId,
@@ -572,13 +787,13 @@ function ring(session, userIds, fromUserId, fromName) {
   }
 }
 
-/** Tells the SIP engine of the call's node about one leg ({action: 'answer' | 'hangup'}), after the commit; logged if not. */
+/** Tells the SIP engine of the leg's node about one leg ({action: 'answer' | 'hangup'}), after the commit; logged if not. */
 function sipLegControl(session, callLegId, action) {
   if (!session.mediaNodeId) return
   ec.message.pushErrors()
   try {
     ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
-      instanceId: session.mediaNodeId, message: { action, callSessionId: session.callSessionId, callLegId },
+      instanceId: legNode(session, callLegId), message: { action, callSessionId: session.callSessionId, callLegId },
     }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${callLegId}: ${ec.message.errorsString}`)
   } catch (err) {
@@ -641,9 +856,15 @@ function answer(p) {
   if (answered.leg) return { callLegId: answered.leg.callLegId, call: view(session, me), repeated: true }
   const offered = legOfMine(session, me, ['ClsOffered'])
   if (!offered.leg) return refuse('notRinging', 'This call is not ringing for you')
+  // W8: a browser that cannot take part in an encrypted call does not answer it (the ring goes on for the user's others)
+  if (isE2ee(session)) {
+    const refusal = e2eeClientRefusal(p, me)
+    if (refusal) return refusal
+  }
   const now = ec.user.nowTimestamp
   offered.leg.setFields({ statusId: 'ClsAnswered', answeredDate: now }, true, null, null)
   offered.leg.update()
+  if (isE2ee(session)) setLegDevice(session, offered.leg, p.cryptoDeviceId)
   offered.participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: now }, true, null, null)
   offered.participant.update()
   setLog(session.callSessionId, me, { outcomeEnumId: 'CuoAnswered' })
@@ -720,6 +941,13 @@ function join(p) {
   if (session.kindEnumId === 'CskDirect' && !participant) return refuse('notFound', 'Call not found')
   const owner = !participant && linkOwner(session) === me
   if (answeredLegCount(session.callSessionId) >= MAX_INVITEES) return refuse('callFull', 'The call is full')
+  // W8: a browser joins an encrypted call with its device; the owner opening a link's meeting from a form (deferDevice)
+  // names it before the media binds, as the starter of a call from a form does
+  const deferred = p.deferDevice === true && !p.cryptoDeviceId && p.scriptTransform == null
+  if (isE2ee(session) && !deferred) {
+    const refusal = e2eeClientRefusal(p, me)
+    if (refusal) return refusal
+  }
   const now = ec.user.nowTimestamp
   if (participant) {
     participant.setFields({ admissionStatusId: 'CasAdmitted', admittedDate: participant.admittedDate || now }, true, null, null)
@@ -728,6 +956,7 @@ function join(p) {
     participant = makeParticipant(session, me, owner ? 'CprHost' : 'CprMember', 'CasAdmitted')
   }
   const leg = makeLeg(session, participant, 'ClsAnswered')
+  if (isE2ee(session) && !deferred) setLegDevice(session, leg, p.cryptoDeviceId)
   setLog(session.callSessionId, me, Object.assign({ outcomeEnumId: 'CuoAnswered' },
     one(USER_LOG, { callSessionId: session.callSessionId, userId: me }) ? {} : { roleEnumId: 'CurCallee', logDate: now }))
   if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
@@ -797,10 +1026,32 @@ function bind(p) {
   return bindLeg(session, leg, participant, p.signalingNodeId, me)
 }
 
+/**
+ * The node a leg's media goes to as it binds (W7): with rtc_cascade_enabled the node of its signaling socket, when that is
+ * a live media node not draining, and the leg was not sent back to the call's node (its relay link refused); else the
+ * call's.
+ */
+function bindNode(session, leg, signalingNodeId) {
+  if (!cascadeOn() || !signalingNodeId || signalingNodeId === session.mediaNodeId || leg.mediaNodePinned === 'Y') {
+    return session.mediaNodeId
+  }
+  const live = liveMediaNodes().some((n) => n.instanceId === signalingNodeId && n.draining !== 'Y')
+  return live ? signalingNodeId : session.mediaNodeId
+}
+
 /** Binds a socket to an admitted leg that is in the call: the leg's next generation, the older connection fenced. */
 function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
+  // W8: a browser's leg in an encrypted call has named its crypto device; no other leg (a guest's, a phone's) has media in it
+  if (isE2ee(session) && (leg.legTypeEnumId !== 'CltWeb' || !leg.cryptoDeviceId)) {
+    return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this browser has not named its encryption device')
+  }
+  const node = bindNode(session, leg, signalingNodeId)
+  if (leg.mediaNodeId !== node) {
+    leg.set('mediaNodeId', node)
+    leg.update()
+  }
   const now = ec.user.nowTimestamp
   let generation = 0
   for (const conn of rows(CONNECTION, { callLegId: leg.callLegId })) {
@@ -819,8 +1070,14 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
   }, true, null, null)
   conn.create()
   recordingChange(session.callSessionId, 'legBound', leg.callLegId)
+  // W8: a new connection of a leg (a reconnect, a reload) is a new key generation: everyone hears the roster and rotates
+  if (isE2ee(session)) {
+    bump(session)
+    session.update()
+    pushState(session, 'rekey', { callLegId: leg.callLegId })
+  }
   return {
-    callConnectionId: conn.callConnectionId, generation, mediaNodeId: session.mediaNodeId,
+    callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,
   }
 }
@@ -856,6 +1113,12 @@ function mediaEvent(p) {
   if (!conn || conn.statusId !== 'CcsActive') return {}
   if (p.event === 'connected' && !leg.joinedDate) {
     leg.set('joinedDate', ec.user.nowTimestamp)
+    leg.update()
+  } else if (p.event === 'relayRefused') {
+    // the call's node refused its edge's relay link, or the link never connected (W7): the leg's media goes to the
+    // call's node when it reconnects
+    const session = one(SESSION, { callSessionId: leg.callSessionId })
+    leg.setFields({ mediaNodeId: session ? session.mediaNodeId : null, mediaNodePinned: 'Y' }, true, null, null)
     leg.update()
   } else if (p.event === 'quality' && p.quality) {
     leg.set('qualityJson', JSON.stringify(p.quality).slice(0, 4000))
@@ -918,6 +1181,15 @@ function expire() {
   const orphaned = Array.from(find(SESSION).condition('statusId', '!=', 'CssEnded').selectField('callSessionId')
     .selectField('mediaNodeId').limit(2000).list()).filter((s) => s.mediaNodeId && !liveNodes.has(s.mediaNodeId))
     .map((s) => ({ callSessionId: s.callSessionId }))
+  // W7: a leg whose media is on another node than the call's (an edge) that stopped leaves; the call goes on
+  const orphanedCalls = new Set(orphaned.map((s) => s.callSessionId))
+  // the live nodes are left out in the query, so the limit is spent only on legs whose node stopped
+  let edgeFind = find(LEG).condition('statusId', 'in', OPEN_LEG).condition('mediaNodeId', '!=', null)
+  if (liveNodes.size) edgeFind = edgeFind.condition('mediaNodeId', 'not-in', Array.from(liveNodes))
+  const edgeLost = Array.from(edgeFind
+    .selectField('callLegId').selectField('callSessionId').selectField('mediaNodeId').limit(2000).list())
+    .filter((leg) => !liveNodes.has(leg.mediaNodeId) && !orphanedCalls.has(leg.callSessionId))
+    .map((leg) => ({ callLegId: leg.callLegId }))
   // a meeting nobody is in or waiting for, a while after it started (a link opened and left)
   const startedBefore = new Date(now - NEVER_CONNECTED_MS)
   const empty = Array.from(find(SESSION).condition('statusId', 'CssActive').condition('kindEnumId', 'CskMeeting')
@@ -928,7 +1200,8 @@ function expire() {
     .selectField('callGuestId').limit(500).list()).map((g) => ({ callGuestId: g.callGuestId }))
   return {
     endedCount: eachSafely('ringing', ringing) + eachSafely('mediaNodeLost', orphaned) + eachSafely('empty', empty),
-    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost) + eachSafely('guestExpired', expiredGuests),
+    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost) + eachSafely('guestExpired', expiredGuests) +
+      eachSafely('edgeLost', edgeLost),
   }
 }
 
@@ -978,6 +1251,18 @@ function expireItem(p) {
   }
   if (p.itemKind === 'connectionLost' && current.statusId === 'ClsAnswered') {
     leaveLeg(session, current, 'CerConnectionLost', participant?.userId || null)
+    return { done: true }
+  }
+  if (p.itemKind === 'edgeLost' && OPEN_LEG.includes(current.statusId) && current.mediaNodeId &&
+    current.mediaNodeId !== session.mediaNodeId && !liveMediaNodes().some((n) => n.instanceId === current.mediaNodeId)) {
+    if (current.statusId === 'ClsOffered') {
+      closeLeg(current, 'ClsFailed', 'CerMediaNodeLost')
+      bump(session)
+      session.update()
+      pushState(session, 'left')
+    } else {
+      leaveLeg(session, current, 'CerMediaNodeLost', participant?.userId || null)
+    }
     return { done: true }
   }
   return { done: false }
@@ -1033,6 +1318,7 @@ function createLink(p) {
     tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId,
     policyEnumId: p.policy === 'link' ? 'ClpLink' : 'ClpLobby', video: p.video === false || p.video === 'false' ? 'N' : 'Y',
     createdDate: ec.user.nowTimestamp, expiryDate: new Date(nowMs() + hours * 3600000),
+    e2eeRequired: truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId) ? 'Y' : 'N',
   }, true, null, null)
   link.create()
   return { callLinkId: link.callLinkId, token, path: '/call/' + token }
@@ -1047,7 +1333,7 @@ function linkView(link) {
     callLinkId: link.callLinkId, name: link.name, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
     video: link.video !== 'N', chatRoomId: link.chatRoomId || null, createdDate: ms(link.createdDate),
     expiryDate: ms(link.expiryDate), lastUsedDate: ms(link.lastUsedDate), callSessionId: active ? active.callSessionId : null,
-    waitingCount: waiting,
+    waitingCount: waiting, e2ee: link.e2eeRequired === 'Y',
   }
 }
 
@@ -1108,7 +1394,8 @@ function checkToken(p) {
   const owner = userNames([link.ownerUserId])[link.ownerUserId] || null
   return {
     valid: true,
-    routeContext: { name: link.name, ownerName: owner, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby', video: link.video !== 'N' },
+    routeContext: { name: link.name, ownerName: owner, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby', video: link.video !== 'N',
+      encrypted: link.e2eeRequired === 'Y' },
   }
 }
 
@@ -1125,7 +1412,8 @@ function linkSession(link) {
   session.setFields({
     chatRoomId: link.chatRoomId || null, callLinkId: link.callLinkId, kindEnumId: 'CskMeeting', statusId: 'CssActive', revision: 1,
     directionEnumId: 'CdrInternal', video: link.video !== 'N' ? 'Y' : 'N', startedByUserId: link.ownerUserId, startedDate: now,
-    answeredDate: now, mediaNodeId: nodes[0].instanceId, mediaGeneration: 1, encryptionMode: 'dtls-srtp',
+    answeredDate: now, mediaNodeId: nodes[0].instanceId, mediaGeneration: 1,
+    encryptionMode: link.e2eeRequired === 'Y' || roomRequiresE2ee(link.chatRoomId) ? E2EE_MEDIA : PLAIN_MEDIA,
   }, true, null, null)
   session.create()
   return session
@@ -1140,7 +1428,8 @@ function openLink(p) {
   }
   const session = linkSession(link)
   if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
-  const joined = join({ callSessionId: session.callSessionId })
+  const joined = join({ callSessionId: session.callSessionId, cryptoDeviceId: p.cryptoDeviceId || null,
+    scriptTransform: p.scriptTransform != null ? p.scriptTransform : null, deferDevice: true })
   return Object.assign({ callSessionId: session.callSessionId }, joined)
 }
 
@@ -1148,10 +1437,14 @@ function openLink(p) {
 function guestJoin(p) {
   const link = linkByToken(p.token)
   if (!link) return refuse('notFound', 'This link has expired or was not found')
+  // W8: a guest has no crypto device, so an end-to-end encrypted meeting takes none (checked again below, for a meeting
+  // that became encrypted by its room's policy)
+  if (link.e2eeRequired === 'Y') return refuse('encryptedNoGuests', 'This meeting is end-to-end encrypted: guests cannot join it')
   const name = String(p.displayName || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 60)
   if (!name) return refuse('noName', 'Give your name')
   const session = linkSession(link)
   if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
+  if (isE2ee(session)) return refuse('encryptedNoGuests', 'This meeting is end-to-end encrypted: guests cannot join it')
   const guests = find(PARTICIPANT).condition('callSessionId', session.callSessionId).condition('identityKindEnumId', 'CikGuest')
     .condition('admissionStatusId', 'in', ['CasWaiting', 'CasAdmitted']).count()
   if (guests >= MAX_INVITEES) return refuse('callFull', 'The call is full')
@@ -1332,6 +1625,8 @@ function history(p) {
       role: log.roleEnumId === 'CurCaller' ? 'caller' : 'callee',
       kind: KIND_CODES[session.kindEnumId] || null,
       video: session.video === 'Y',
+      // W8: an end-to-end encrypted call is called back encrypted (History's Call back)
+      e2ee: isE2ee(session),
       status: STATUS_CODES[session.statusId] || null,
       chatRoomId: session.chatRoomId || null,
       startedDate: ms(log.logDate || session.startedDate),
@@ -1425,7 +1720,7 @@ function capabilities() {
   const live = liveMediaNodes().filter((n) => n.draining !== 'Y')
   const configured = supported && String(System.getProperty('rtc_media_port') || '').trim() !== ''
   const reasonCode = live.length ? null : !supported && !live.length ? 'notBuilt' : 'noMediaServer'
-  return { supported, configured, active: live.length > 0, reasonCode }
+  return { supported, configured, active: live.length > 0, reasonCode, e2ee: supported }
 }
 
 // ---------- phone legs (V1; org.moqui.impl.VoiceServices and Voice.js) ----------
@@ -1458,7 +1753,8 @@ function phoneControl(session, action, extra) {
     ec.message.pushErrors()
     try {
       ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
-        instanceId: session.mediaNodeId, message: Object.assign({ action, callSessionId: session.callSessionId, callLegId: leg.callLegId }, extra || {}),
+        instanceId: leg.mediaNodeId || session.mediaNodeId,
+        message: Object.assign({ action, callSessionId: session.callSessionId, callLegId: leg.callLegId }, extra || {}),
       }).disableAuthz().call()
       if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${ec.message.errorsString}`)
     } catch (err) {
@@ -1472,15 +1768,10 @@ function phoneControl(session, action, extra) {
 
 /**
  * A phone leg that answered hears the call's notices, as a browser leg that binds gets their rtc frames: the recording's
- * (note#CallChange, logged per leg) and, while captions are on, the captions' (VoiceServices.notify#PhoneLeg).
+ * (note#CallChange) and, while captions are on, the captions' (note#CaptionsLeg), each logged per leg.
  */
 function phoneJoined(session, leg) {
   recordingChange(session.callSessionId, 'legBound', leg.callLegId)
-  const captions = one('moqui.call.CallCaptions', { callSessionId: session.callSessionId })
-  if (captions && captions.captionsOn === 'Y') {
-    ec.service.sync().name('org.moqui.impl.VoiceServices.notify#PhoneLeg')
-      .parameters({ callLegId: leg.callLegId, notice: 'captions' }).disableAuthz().call()
-  }
 }
 
 function makePhoneParticipant(session, displayName, admission) {
@@ -1500,7 +1791,8 @@ function makePhoneParticipant(session, displayName, admission) {
  * answered). Inbound: the phone is in it (its leg answered) and the user is rung like any callee; silent (V2: the user is
  * busy, the call goes straight to voicemail) offers the user's leg without ringing it, and with no userId (V2: the
  * voicemail access number) nobody is rung and the call is active at once. ringExpireSeconds (V2) keeps an inbound call
- * ringing past call_ring_seconds while its voicemail waits for more rings.
+ * ringing past call_ring_seconds while its voicemail waits for more rings. chatRoomId (C4-SMS) is the room of the number
+ * pair (our number, theirs), where the call's start and end are shown with the pair's texts; it changes nothing else.
  */
 function startPhone(p) {
   const userId = p.userId
@@ -1525,9 +1817,10 @@ function startPhone(p) {
     directionEnumId: outbound ? 'CdrOutbound' : 'CdrInbound',
     video: 'N', startedByUserId: outbound ? userId : null, idempotencyKey: key, startedDate: now,
     ringExpireDate: new Date(nowMs() + expireSeconds * 1000), mediaNodeId: p.mediaNodeId, mediaGeneration: 1,
-    encryptionMode: 'dtls-srtp',
+    encryptionMode: 'dtls-srtp', chatRoomId: p.chatRoomId || null,
   }, true, null, null)
   session.create()
+  if (session.chatRoomId) roomEvent(session, 'started', { phoneNumber: p.phoneNumber || null })
   const name = p.displayName || p.phoneNumber
   let userLeg
   let phoneLeg
@@ -1793,11 +2086,14 @@ function forwardEvent(session, leg, p) {
   return {}
 }
 
-/** Internal (Voice.js dialForward): a forwarded leg that was not dialed (refused by the policy) closes as failed. */
+/**
+ * Internal (Voice.js dialForward): a forwarded leg that was not dialed (refused by the policy or the limits) closes as
+ * failed, CerRefused, so it does not count toward the limits.
+ */
 function closeForward(p) {
   const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
   if (!leg || leg.statusId !== 'ClsOffered') return {}
-  closeLeg(leg, 'ClsFailed', 'CerFailed')
+  closeLeg(leg, 'ClsFailed', 'CerRefused')
   return {}
 }
 
@@ -1821,7 +2117,13 @@ function ringStep(p) {
   const users = Array.from(new Set(Array.from(p.userIdList || []).filter((id) => id)))
   for (const userId of users) makeLeg(session, participantFor(userId), 'ClsOffered')
   const forwardLegList = []
-  for (const n of Array.from(p.numberList || [])) {
+  // W8: an end-to-end encrypted call rings no numbers (a user's mobile, a forward): a phone cannot decrypt it
+  const numbers = Array.from(p.numberList || [])
+  if (isE2ee(session) && numbers.length) {
+    ec.logger.info(`Call ${session.callSessionId} is end-to-end encrypted: ${numbers.length} forwarded number(s) not rung`)
+    numbers.length = 0
+  }
+  for (const n of numbers) {
     let participant
     if (n.userId) participant = participantFor(n.userId)
     else {
@@ -1906,7 +2208,7 @@ function sipMessage(session, message) {
   if (!session.mediaNodeId) return
   ec.message.pushErrors()
   try {
-    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: session.mediaNodeId,
+    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: legNode(session, message.callLegId),
       message: Object.assign({ callSessionId: session.callSessionId }, message) }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${message.action} leg ${message.callLegId}: ${ec.message.errorsString}`)
   } catch (err) {
@@ -1924,6 +2226,8 @@ function sipMessage(session, message) {
 function addPhoneLeg(p) {
   const session = p.callSessionId ? lockSession(p.callSessionId) : null
   if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  // W8: a phone number cannot be in an end-to-end encrypted call (CallTransfers.js dialNumber refuses first)
+  if (isE2ee(session)) return { reasonCode: 'encrypted' }
   const participant = makePhoneParticipant(session, p.displayName || p.phoneNumber, 'CasInvited')
   const leg = makeLeg(session, participant, 'ClsOffered', 'CltPstn')
   // the user who added it: their limits at once and per day count it (Voice.js dialForward)
@@ -2048,6 +2352,8 @@ function mergeInto(p) {
   const target = p.callSessionId ? lockSession(p.callSessionId) : null
   const source = p.fromCallSessionId ? lockSession(p.fromCallSessionId) : null
   if (!target || !source || target.statusId === 'CssEnded' || source.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  // W8: legs of an encrypted call never move into another call, nor others into one (CallTransfers.js merge refuses first)
+  if (isE2ee(target) || isE2ee(source)) return { reasonCode: 'encrypted' }
   const now = ec.user.nowTimestamp
   const moved = []
   for (const participant of participantsOf(source.callSessionId)) {
@@ -2068,7 +2374,10 @@ function mergeInto(p) {
       into = participant
     }
     for (const leg of open) {
-      leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId }, true, null, null)
+      // a phone's media stays on its SIP engine's node, now an edge of the target call when that is another (W7)
+      const phone = leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)
+      const node = leg.mediaNodeId || (phone && source.mediaNodeId !== target.mediaNodeId ? source.mediaNodeId : null)
+      leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId, mediaNodeId: node }, true, null, null)
       leg.update()
       for (const conn of rows(CONNECTION, { callLegId: leg.callLegId, statusId: 'CcsActive' })) {
         conn.setFields({ statusId: 'CcsReplaced', closedDate: now }, true, null, null)
@@ -2086,6 +2395,7 @@ function mergeInto(p) {
   const movedUsers = new Set()
   for (const { leg, userId } of moved) {
     if (leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)) {
+      linkEdge(target, leg.mediaNodeId)
       sipMessage(target, { action: 'move', callLegId: leg.callLegId, fromCallSessionId: source.callSessionId })
       if (leg.statusId === 'ClsAnswered') phoneJoined(target, leg)
     } else {
@@ -2136,10 +2446,11 @@ function context(p) {
 const operations = {
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
+  refusedTargets: (p) => ({ refusedUserIdList: refusedTargets(Array.from(p.userIdList || [])) }),
   start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
-  removeParticipant, iceServers, guestIceServers,
+  removeParticipant, iceServers, guestIceServers, registerDevice, setRoomEncryption, deviceRevoked,
 }
 
 function execute(op, parameters) {
