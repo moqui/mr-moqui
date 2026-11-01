@@ -36,6 +36,10 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
 
   A browser whose device was revoked deletes its store and makes a new device the next time it needs one. Revoking does
   not sign the browser out.
+
+  A device with keys needs a sign-in in the last five minutes ([Recent sign-in](../security/Recent-Auth.md);
+  `reauthRequired`), since the server cannot tell which browser asks. Not for a device without keys (a browser dropping a
+  device whose first keys were refused), nor for the re-key of a store from before the derived store key.
 - **Logout and account switch.** Logout and leaving the page close the store. A store belongs to one user and device,
   and a page of another user never opens it. The server refuses a device that is not the session user's ("not found"),
   so a tab left open across an account switch gets nothing; that tab only closes the store (it deletes it only when the
@@ -53,15 +57,24 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   - Each follower waits for the lock. When the leader's tab closes (or closes its store), one of them takes the store
     and leads; calls still waiting are asked of it. A call not answered in 30 seconds is refused (`busy`).
   - Encrypted files are encrypted and decrypted in any tab: that needs the module, not the store.
-- **At rest.** The store is encrypted with its store key, a random passphrase the server keeps for the device
-  (`ChatDevice.storeKey`, an encrypted field). It is given only to the device's own signed-in user (`/ChatKeys/storeKey`)
-  and dropped when the device is revoked. A copy of the browser profile alone does not open the store; with a signed-in
-  session it does. A store made before the store key (unencrypted) does not open with it: the browser makes a new device.
+- **At rest.** The store is encrypted with its store key, a passphrase the server derives for the device and does not
+  store: HMAC-SHA-256 under the platform secret `chat_store_key_secret` of `userId|deviceId|revision`
+  (`derive#ChatStoreKey`). It is given only to the device's own signed-in user (`/ChatKeys/storeKey`); a revoke bumps the
+  revision (`ChatDevice.storeRevision`). A copy of the browser profile alone does not open the store; with a signed-in
+  session it does. No table or export holds the key, so an administrator with entity data access in Tools does not get it.
   - What it does not protect against: anyone who can sign in as the user (or holds a stolen session) together with the
-    browser profile; whoever reads the server's database with its field-encryption key, or an administrator with entity
-    data access in Tools (the field is encrypted at rest on the server, not hidden from those tools); and script running in
-    a page of this origin while the user is signed in. It is a lock against a copied or stolen profile, not against the
-    server.
+    browser profile; whoever holds the server's `chat_store_key_secret`; and script running in a page of this origin
+    while the user is signed in. It is a lock against a copied or stolen profile, not against the server.
+  - **Stores from before the derived key.** Such a device still has the random key it was given (`ChatDevice.storeKey`,
+    answered once as `legacyStoreKey`). The browser opens the store with it, exports its room keys, cross-signing keys and
+    backup key, makes a new device and imports them there under the derived key. Its own device is signed with the
+    self-signing key when there is one. Only then is the old device revoked (`replacedBy`, which drops its stored key) and
+    its store deleted. A failure part way leaves the old store for the next page. The field goes once no device holds one.
+- **A store that does not open.** It is tried again (three times); a passing IndexedDB failure never deletes it. Only a
+  definite one (a wrong key, a store of another device, data that does not decode) stops it, and the store is kept: the
+  user is told (`state.problem`, `storeUnreadable`) and Settings, My devices offers "Start over" (after the user confirms
+  who they are): the store is deleted, the device revoked and a new one made, whose older messages come from the key
+  backup. Keys that cannot be read are never deleted silently.
 - **A refused key upload.** The machine's upload is not retried as it is: a device whose keys the server refuses
   (`keysChanged`, `keyExists`, `badKeys`, `tooLarge`) is revoked and made again once; a second refusal stops this page's
   uploads (`state.status` error). `tooManyKeys` stops uploads until keys are claimed.
@@ -73,12 +86,14 @@ members now) or a live call (not ended, neither denied nor removed) with them. O
 devices.
 
 - **One-time keys.** A claim locks the device's row and takes its oldest unclaimed one-time key, so two claims at once
-  never get the same key. With none left, the device's fallback key answers.
+  never get the same key. With none left, the device's fallback key answers. One user gets at most 10 of a device's
+  one-time keys a minute; past that the fallback key answers, so a user in reach cannot drain them.
 - **To-device messages.** Each is queued per device at the device's next stream position, and kept until the device
   acknowledges it. A sync from a position deletes everything at or before it.
   - A queued message wakes the recipient's tabs with `{kind: 'toDevice'}` on `chatUser:<userId>`. The push carries
     nothing of the message.
-  - A retried send whose transaction ID is still queued is not queued again.
+  - A retried send whose transaction ID is still queued is not queued again, also when retries come at once: the sender's
+    device row is locked with the targets' rows, in one order, before the transaction is looked up.
 - **Device lists.** A sync answers the users in reach whose devices changed since the last one, so the machine queries
   them again.
 
@@ -107,6 +122,8 @@ The services take and answer Matrix's payloads, so the Matrix client API (C6a) c
 | `signaturesUpload` | `upload#KeySignatures` | `keys/signatures/upload` |
 | `backupVersionCreate`, `backupVersion`, `backupVersionUpdate`, `backupVersionDelete` | `create#`, `get#`, `update#`, `delete#KeyBackupVersion` | `room_keys/version` (POST, GET, PUT, DELETE) |
 | `backupKeysPut`, `backupKeys`, `backupKeysDelete` | `store#`, `get#`, `delete#BackupKeys` | `room_keys/keys[/{roomId}[/{sessionId}]]` (PUT, GET, DELETE) |
+| `backupVersions` | `find#KeyBackupVersions` | none: the versions not deleted, with their public keys |
+| `settings`, `settingsStore` | `get#`, `store#ChatKeySettings` | none: room keys to verified devices only |
 
 The key counts (`one_time_key_counts`, `device_one_time_keys_count`) always hold `signed_curve25519`, 0 when none is
 left: the machine updates its count only from an algorithm the answer names, so a device whose keys were all claimed
@@ -117,14 +134,19 @@ would otherwise never upload more. A sync's `since` past the last position queue
 - **Device.** The device is named by `deviceId` in the body, where Matrix takes it from the access token.
 - **Errors.** A refusal answers `{errors, reasonCode}` and the refusal's own fields: `notFound`, `revoked`,
   `keysChanged`, `keyExists`, `badKeys`, `noMasterKey`, `tooManyKeys`, `tooManyDevices`, `tooLarge`, `tooMany`,
-  `badRequest`, `algorithmChanged`, `wrongVersion` (with `current_version`); in the browser also `busy` (another tab has
-  the store).
+  `badRequest`, `algorithmChanged`, `wrongVersion` (with `current_version`), `reauthRequired` (no sign-in in the last five
+  minutes); in the browser also `busy` (another tab has the store) and `storeUnreadable`.
 
-**Store key.** `storeKey` (`{deviceId}`) answers `{storeKey}`, the passphrase the browser passes to
-`OlmMachine.initialize` as `store_passphrase`, so the IndexedDB store is encrypted: 43 characters of URL-safe base64,
-made on the first ask and the same after. Only the device's own user gets it, so a copied browser profile without a
-signed-in session cannot open the store. A revoke clears it, so a revoked device's store cannot be opened again. It is
-never logged and in no other answer.
+**Store key.** `storeKey` (`{deviceId}`) answers `{storeKey, legacyStoreKey}`. `storeKey` is the passphrase the browser
+passes to `OlmMachine.initialize` as `store_passphrase`, so the IndexedDB store is encrypted: 43 characters of URL-safe
+base64, derived (not stored) and the same at each ask. Only the device's own user gets it, so a copied browser profile
+without a signed-in session cannot open the store. A revoked device gets none. `legacyStoreKey` is the random key of a
+device from before (null for others), for its one re-key. Neither is logged or in another answer.
+
+**Recent sign-in.** These need a sign-in in the last five minutes, else `reauthRequired` ([Recent
+sign-in](../security/Recent-Auth.md)): a cross-signing `reset` that replaces the master key, `backupVersionCreate` (a new
+backup, also the first, and "New recovery key"), `backupVersionDelete`, and `revoke` of a device with keys (see Devices).
+The page asks the user for the password and second factor, or a fresh SSO sign-in, and tries again (`moqui.reauth`).
 
 **Cross-signing.**
 - `signingUpload` takes `{master_key, self_signing_key, user_signing_key, reset}`, each key a Matrix
@@ -232,7 +254,17 @@ is kept in the page only. Drafts of an encrypted room are kept in the page, not 
   encrypted to the recovery key, to `room_keys/keys`.
 
 A new device reads older messages only after Restore with the recovery key (or when another of the user's devices shares
-the keys). A wrong key is refused (`wrongRecoveryKey`) and nothing is reset.
+the keys). A wrong key is refused (`wrongRecoveryKey`) and nothing is reset. Restore reads the version the recovery key
+opens (`backupVersions` lists each with its public key): the current one, or an older one that "New recovery key" left with
+its keys. Only the current version takes this device's keys from then on.
+
+**Only verified devices.** A user may turn on "Send my room keys only to verified devices" (Settings, My devices; the
+preference `CHAT_VERIFIED_DEVICES_ONLY`), and a moderator of an encrypted room the room's own setting (room settings;
+`ChatRoom.verifiedDevicesOnly`, `set#RoomVerifiedDevicesOnly`). With either on, the sending browser shares the room's keys
+only with verified or cross-signed devices (matrix-sdk-crypto's `onlyTrustedDevices`); a device nobody verified cannot read
+what follows. A change of the setting, and the first message of a page under it, starts a new session. The browsers apply
+it; the server only keeps it. An encrypted call warns when its roster has a device of a participant this browser has not
+verified (`moqui.callKeys.state.unverified`; the call's keys still go to the roster's devices).
 
 **Verification.** My devices shows each device's verification as this browser's store holds it (trust is the clients'):
 Verify asks another device; the two compare emoji (SAS), or one shows a QR code that the other reads with its camera
@@ -250,21 +282,25 @@ In `moqui.crypto` (the store's tab runs each call; another tab's call is relayed
 | `sendToDevices(targets, eventType, content)` | Olm-encrypts `content` as an event of `eventType` for each device of `targets` and sends it. `targets` is a list of userIds (every device of each) or `{userId, deviceIds}`. It never goes to this device. Resolves to `{sent, devices, skipped}`: `sent` is how many the server queued; `devices` and `skipped` are lists of `{userId, deviceId}` |
 | `onToDevice(fn)` | `fn({type, content, senderUserId, senderMatrixId, senderDeviceId, senderCurve25519Key, verified})` for each to-device event that decrypted. Returns the unsubscribe |
 | `devicesOf(userId)` | The devices of a user as this store knows them: `[{deviceId, displayName, ed25519Key, verified}]` |
-| `sync()`, `close()`, `forget()` | A sync now; close the store; revoke this device and delete its store |
+| `sync()`, `close()`, `forget()` | A sync now; close the store; revoke this device and delete its store (a refused revoke deletes nothing) |
+| `startOver()` | After `state.problem`: delete the unreadable store and revoke its device; the next `ensureDevice` makes another |
+| `settingsChanged()` | The verified-devices-only settings are read again before the next room message |
 | `thisDeviceId()` | This browser's deviceId for the signed-in user, without loading anything |
-| `state` | `{status, deviceId, matrixUserId, error, role, verifications}`; `status` is `idle`, `loading`, `ready` or `error`; `role` is `leader` or `follower` |
+| `state` | `{status, deviceId, matrixUserId, error, role, verifications, problem}`; `status` is `idle`, `loading`, `ready` or `error`; `role` is `leader` or `follower`; `problem` is `{reasonCode: storeUnreadable, deviceId}` when the store cannot be read |
 | `encryptRoom(chatRoomId, memberUserIds, eventType, content)` | Shares the room key with the members' devices that lack it, and resolves to the Megolm ciphertext of the event |
 | `decryptRoom(chatRoomId, {eventSeq, sentDate, senderUserId, encrypted})` | `{type, content, verified}`, or `{error}` when this device has no key for it |
 | `rotateRoom(chatRoomId)` | A new session for the room's next message |
 | `onRoomKeys(fn)` | `fn([{roomId, sessionId}])` when room keys arrive (from a member, or a restore). Returns the unsubscribe |
 | `encryptFile(blob)`, `decryptFile(data, info)` | `{blob, info}` for upload; the decrypted bytes (the hash is checked) |
-| `enableBackup()`, `backupStatus()`, `restoreBackup(recoveryKey)` | `{version, recoveryKey}`; `{version, enabled, total, backedUp}`; `{version, imported, total, failed}` |
+| `enableBackup()`, `backupStatus()`, `restoreBackup(recoveryKey)` | `{version, recoveryKey}`; `{version, enabled, total, backedUp}`; `{version, imported, total, failed, current}` (the version the key opens, an older one too) |
 | `crossSigningStatus()`, `setupCrossSigning(reset)` | `{hasMaster, hasSelfSigning, hasUserSigning, identity, verified}` |
 | `verifyDevice(userId, deviceId)`, `verification(flowId, action, arg)`, `dismissVerification(flowId)` | Start a verification (its flowId); a step: `accept`, `sas`, `confirm`, `mismatch`, `cancel`, `showQr`, `scanned` (the code's bytes), `qrConfirm`. `state.verifications` lists them with their emoji or QR image |
 
 In `moqui.chat`: `sealMessage(roomId, memberIds, html, files)` (the send parameters `{encryptedJson, mentionUserIds}`),
-`sealReaction`, `sealFile`, `openFile(url, file)` (a blob URL), `openEvents(roomId, list, attachmentUrl)`,
-`openEvent(roomId, event, attachmentUrl)` and `myReaction(roomId, messageSeq, key, me)`.
+`sealReaction`, `sealFile`, `openFile(url, file, roomId)` (a blob URL), `releaseFiles(roomId, ids)`,
+`openEvents(roomId, list, attachmentUrl)`, `openEvent(roomId, event, attachmentUrl)` and
+`myReaction(roomId, messageSeq, key, me)`. A decrypted file's blob URL is revoked when its room closes (the last view of it
+goes: `closeRoom`), or for the attachments named; opened again, it is fetched and decrypted again.
 
 ## Settings
 
@@ -272,6 +308,7 @@ In `moqui.chat`: `sealMessage(roomId, memberIds, html, files)` (the send paramet
 | --- | --- | --- |
 | `chat_server_name` | `localhost` | The server name in device user IDs |
 | `chat_to_device_retention_days` | `30` | How long a to-device message waits for a device that does not acknowledge it (the job `clean_ChatToDevice_daily`, which also deletes one-time keys claimed over a day ago) |
+| `chat_store_key_secret` | generated | The secret the store keys are derived under. A new value makes every browser's store unreadable (each starts over and reads older messages from the key backup) |
 
 **Content Security Policy.** WebAssembly needs `'wasm-unsafe-eval'` in a policy that sets `script-src`. The default
 policy sets none.
@@ -282,11 +319,19 @@ policy sets none.
   - user IDs that map back, and identity keys that cannot change;
   - another user refused with the very same parameters;
   - reach by room and by live call;
-  - concurrent claims (8 threads, 32 claims of 20 keys);
-  - the queue's cursor, acknowledgement and repeated transactions, and a wake push with no content;
-  - device-list changes, a revoked device, a member who left the room, and a sender the server sets.
+  - concurrent claims (8 threads, 32 claims of 20 keys), at most 10 a minute for one claimer and the fallback key past it,
+    another claimer not held;
+  - the queue's cursor, acknowledgement and repeated transactions, six retries of one send at once queuing one copy, and a
+    wake push with no content;
+  - device-list changes, a revoked device, a member who left the room, and a sender the server sets;
+  - a revoke refused without a recent sign-in with the same parameters, allowed after `reauthenticate#User`; a device
+    without keys revoked without one; an account with a second factor confirming with the password and then the code.
 - **Server, trust and backup:** `./moq test framework --spec ChatKeyBackup`. It covers:
-  - a store key answered only to its own user, the same at each ask, absent from the device list, cleared by a revoke;
+  - a store key answered only to its own user, the same at each ask, absent from the device list and its row, another
+    after a revoke; a device from before answered its `legacyStoreKey`, revoked without a recent sign-in only to its
+    replacement;
+  - a reset and a new backup refused without a recent sign-in, with the same parameters; the versions listed with their
+    public keys;
   - cross-signing keys uploaded once, the same again a no-op, a different master key refused unless reset;
   - signatures stored only by keys that may sign, refused out of reach and by another signer, and merged into key
     queries; a reset deleting every signature by or over the old keys;
@@ -303,7 +348,14 @@ policy sets none.
   - a member who leaves cannot decrypt the next message, which is in a new session;
   - a second tab (a window of the same browser) reads through the leader, and takes the store when the leader closes it;
   - a new device of the same user reads nothing older until it restores the backup with the recovery key; a wrong key is
-    refused.
+    refused; after "New recovery key", the old recovery key still restores its older version on another new device;
+  - only verified devices: with the sender's setting, or the room's (set by its owner, refused to a non-member), an
+    unverified device cannot read the next message;
+  - a store re-made under another key is refused `storeUnreadable` and kept, again on the next try; "Start over" makes
+    a new device and drops the old one.
+- **Browser, the chat store:** `./moq test-client webroot --offline --spec WebrootChat`: a closed room's decrypted files
+  revoked, another room's kept, and a file decrypted again when opened again.
+- **Browser, encrypted calls:** `EncryptedCallFlow` also checks the warning of unverified devices on the roster.
 - **Browser:** `./moq test-client basic-comms --serve --spec CryptoFlow`. Two Chromium pages of two users who share a
   room:
   - each makes a device;
@@ -314,5 +366,7 @@ policy sets none.
   About 5 seconds.
 
 **Not checked live:** Element or another Matrix client against these endpoints (C6a serves them), and Firefox and
-Safari (the client specs run Chromium). Emoji and QR verification are built on the SDK's flows but no client spec drives
+Safari (the client specs run Chromium). The re-key of a store from before the derived key is built on the SDK's export and
+import but no client spec drives it (the spec server makes no such store), and the dialogs of `moqui.reauth` (a spec page
+has always just signed in). Emoji and QR verification are built on the SDK's flows but no client spec drives
 them, and reading a QR code needs a camera and `BarcodeDetector` (Chrome on Android, macOS and ChromeOS; not headless).

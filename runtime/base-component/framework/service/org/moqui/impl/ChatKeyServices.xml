@@ -79,9 +79,17 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Remove one of the current user's devices: it gets no new keys or messages, its keys, its store key,
             the signatures by it and over it and the messages waiting for it are deleted, it drops out of key queries, and it
             cannot be used again (the browser makes a new device the next time it needs one). It does not sign that browser
-            out. Again for a revoked one: repeated.
-            reasonCode notFound.</description>
-        <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
+            out. Again for a revoked one: repeated. A device with identity keys needs a sign-in in the last five minutes
+            (check#RecentAuth; reasonCode reauthRequired), as the server cannot tell which browser asks; not needed for a
+            device without keys (nothing is encrypted to it), nor for the one-time re-key of a device that still has a stored
+            store key (from before it was derived) to the newer device replacedBy. The revoke drops that stored key and bumps
+            the revision its derived store key is made from.
+            reasonCode notFound, reauthRequired.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="replacedBy"><description>The re-key of a store from before the derived store key: the new
+                device of this browser that takes its keys</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="deviceId"/>
             <parameter name="repeated" type="Boolean"/>
@@ -92,16 +100,32 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ChatDeviceStoreKey">
         <description>The passphrase the browser encrypts the crypto store of the current user's device deviceId with
-            (OlmMachine.initialize store_passphrase): made on the first ask (43 characters of URL-safe base64, 258 random
-            bits) and the same at each ask after, so a copied browser profile without a signed-in session cannot open the
-            store. Never logged and in no other answer. reasonCode notFound (another user's device, with the same
-            parameters), revoked (its key was cleared).</description>
+            (OlmMachine.initialize store_passphrase), so a copied browser profile without a signed-in session cannot open the
+            store. Derived, not stored (derive#ChatStoreKey): no table or export holds it, and it is the same at each ask
+            until a revoke bumps the device's revision. legacyStoreKey is the random key a device made before the derived key
+            was given (ChatDevice.storeKey), until the browser moves that store's keys to a new device and revokes it. Never
+            logged and in no other answer. reasonCode notFound (another user's device, with the same parameters), revoked,
+            failed (chat_store_key_secret not set).</description>
         <in-parameters><parameter name="deviceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="storeKey"/>
+            <parameter name="legacyStoreKey"/>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('storeKey', context))</script></actions>
+    </service>
+
+    <service verb="derive" noun="ChatStoreKey" type="rust" location="moqui_core::service::chat_keys::derive_store_key"
+            allow-remote="false">
+        <description>Internal (get#ChatDeviceStoreKey answers it to the device's own user only): the store key of userId's
+            device deviceId at revision, HMAC-SHA-256 under the platform secret chat_store_key_secret (an is-secret
+            default-property, generated when unset) of userId|deviceId|revision, as 43 characters of URL-safe base64.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="revision" type="Integer" default="1"/>
+        </in-parameters>
+        <out-parameters><parameter name="storeKey"/></out-parameters>
     </service>
 
     <service verb="get" noun="ChatKeyIdentity">
@@ -176,7 +200,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Matrix keys/claim: one_time_keys is Matrix user ID to device ID to algorithm. For each device of a
             user who shares a room or a live call with the current user (or is the user), one key: its oldest unclaimed
             one-time key, which no other claim gets, else its fallback key. Answers one_time_keys, user to device to
-            {keyId: key}; a device with no key, revoked or out of reach is left out.</description>
+            {keyId: key}; a device with no key, revoked or out of reach is left out. A user who claimed 10 of one device's
+            one-time keys in the last minute gets its fallback key, so one-time keys cannot be drained.</description>
         <in-parameters>
             <parameter name="one_time_keys" type="Map"/>
             <parameter name="timeout" type="Integer"/>
@@ -197,7 +222,8 @@ along with this software (see the LICENSE.md file). If not, see
             64 KB at most). Each is queued to its device at the device's next stream position and the recipient's tabs are
             woken on chatUser:userId ({kind: toDevice}, nothing of the message). Only to users who share a room or a live
             call with the sender, or the sender's other devices; never to a revoked device. A txn_id still queued is not
-            queued again (repeated). queued is how many were.</description>
+            queued again (repeated), also when retries come at once: the sender's device row is locked with the targets', in
+            one order, before the transaction is looked up. queued is how many were.</description>
         <in-parameters>
             <parameter name="deviceId" required="true"/>
             <parameter name="event_type" required="true"/>
@@ -251,7 +277,8 @@ along with this software (see the LICENSE.md file). If not, see
             (else badKeys; over 16 KB tooLarge). The signed-in session stands for Matrix's user-interactive auth: the first
             upload is allowed and the same keys again change nothing (changed false). A different master key is refused
             (keysChanged: never a silent reset) unless reset is true, the user's explicit "reset my identity": then the old
-            keys and every signature by or over them are deleted. Without master_key the user must have one (noMasterKey); a
+            keys and every signature by or over them are deleted; a reset needs a sign-in in the last five minutes
+            (check#RecentAuth; reauthRequired). Without master_key the user must have one (noMasterKey); a
             self-signing or user-signing key must carry a signature by the master key (badKeys; the server does not verify
             it, the clients do). A change bumps the user's device lists, so syncs of users in reach name them.</description>
         <in-parameters>
@@ -292,7 +319,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="KeyBackupVersion">
         <description>Matrix POST room_keys/version for the current user: a new backup version ("1", "2", ...; never reused)
             with algorithm (m.megolm_backup.v1.curve25519-aes-sha2; stored as given) and auth_data (an object, at most 16 KB);
-            it becomes the current one. reasonCode badRequest, tooLarge, tooMany (1000 versions).</description>
+            it becomes the current one. It needs a sign-in in the last five minutes (check#RecentAuth). reasonCode badRequest,
+            tooLarge, tooMany (1000 versions), reauthRequired.</description>
         <in-parameters>
             <parameter name="algorithm"/>
             <parameter name="auth_data" type="Map"/>
@@ -337,7 +365,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="delete" noun="KeyBackupVersion">
         <description>Matrix DELETE room_keys/version/{version}: marks the current user's backup version deleted and deletes
-            its sessions; the version before it, if any is left, becomes the current one. reasonCode notFound.</description>
+            its sessions; the version before it, if any is left, becomes the current one. It needs a sign-in in the last five
+            minutes (check#RecentAuth). reasonCode notFound, reauthRequired.</description>
         <in-parameters><parameter name="version"/></in-parameters>
         <out-parameters>
             <parameter name="version"/>
@@ -402,6 +431,60 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('deleteBackupKeys', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="KeyBackupVersions">
+        <description>The current user's backup versions not deleted, newest first (versionList: version, algorithm,
+            publicKey (auth_data.public_key, so the browser finds the version its recovery key opens), count, createdDate
+            and current). An older version keeps the keys backed up to it until it is deleted, so a restore can read it
+            after "New recovery key". No Matrix counterpart (Matrix lists none).</description>
+        <out-parameters>
+            <parameter name="versionList" type="List"><parameter name="backupVersion" type="Map"/></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('findBackupVersions', context))</script></actions>
+    </service>
+
+    <!-- ========== Only verified devices ========== -->
+
+    <service verb="get" noun="ChatKeySettings">
+        <description>The current user's encryption settings: verifiedDevicesOnly (the preference CHAT_VERIFIED_DEVICES_ONLY,
+            for every encrypted room) and, with chatRoomId, roomVerifiedDevicesOnly (the room's own, which its moderators
+            set; false for a room the user is not a member of). When either is on the browser shares the room's keys only
+            with verified or cross-signed devices (matrix-sdk-crypto's onlyTrustedDevices).</description>
+        <in-parameters><parameter name="chatRoomId"/></in-parameters>
+        <out-parameters>
+            <parameter name="verifiedDevicesOnly" type="Boolean"/>
+            <parameter name="roomVerifiedDevicesOnly" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('getKeySettings', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="ChatKeySettings">
+        <description>The current user's setting verifiedDevicesOnly: room keys only to verified or cross-signed devices, in
+            every encrypted room.</description>
+        <in-parameters><parameter name="verifiedDevicesOnly" type="Boolean"/></in-parameters>
+        <out-parameters>
+            <parameter name="verifiedDevicesOnly" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('storeKeySettings', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="RoomVerifiedDevicesOnly">
+        <description>An encrypted room's setting (ChatRoom.verifiedDevicesOnly), by a moderator or owner: its members'
+            browsers share its keys only with verified or cross-signed devices. reasonCode notFound (not a member),
+            notModerator, notEncrypted.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="verifiedDevicesOnly" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="verifiedDevicesOnly" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('setRoomVerifiedOnly', context))</script></actions>
     </service>
 
     <service verb="clean" noun="ChatToDevice" authenticate="anonymous-all">

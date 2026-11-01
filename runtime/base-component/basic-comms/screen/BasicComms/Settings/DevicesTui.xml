@@ -36,6 +36,19 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <!-- removing a device with keys needs a sign-in in the last five minutes: the password (and the code of a second factor) -->
+    <transition name="reauth">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.reauthenticate#User').parameters({password: password || '',
+                code: code || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+            if (!ec.message.hasError()) {
+                if (out.reauthenticated) ec.message.addMessage(ec.l10n.localize('Confirmed: you may remove a device for the next five minutes'), 'success')
+                else if (out.codeNeeded) ec.message.addMessage(out.codeText || ec.l10n.localize('Enter the authentication code'), 'warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
 
     <actions><script><![CDATA[
         const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.find#ChatDevices').requireNewTransaction(true).disableAuthz().call() || {}
@@ -66,6 +79,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <list-options list="deviceList" key="${deviceId}" text="${displayName}"/></drop-down></default-field></field>
             <field name="displayName"><default-field title="New name"><text-line size="30"/></default-field></field>
             <field name="submitButton"><default-field title="Rename"><submit/></default-field></field>
+        </form-single>
+        <label type="p" text="Removing a device that has keys asks you to confirm it is you when you signed in more than five minutes ago." style="m-muted"/>
+        <form-single name="ConfirmItIsYou" transition="reauth">
+            <field name="password"><default-field title="Password"><password size="30"/></default-field></field>
+            <field name="code"><default-field title="Authentication code" tooltip="Only for an account with a second factor"><text-line size="10"/></default-field></field>
+            <field name="submitButton"><default-field title="Confirm it is you"><submit/></default-field></field>
         </form-single>
     </widgets>
 </screen>

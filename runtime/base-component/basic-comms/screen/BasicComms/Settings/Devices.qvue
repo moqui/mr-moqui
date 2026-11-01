@@ -18,7 +18,10 @@ along with this software (see the LICENSE.md file). If not, see
     With the rest of C7: each device's verification as this browser's store holds it (moqui.crypto.devicesOf; trust is the
     browsers', the server's flag gives none), Verify (emoji, or a QR code shown here or read with the camera where the browser
     has BarcodeDetector), the verifications going on, and the key backup: set up (cross-signing and a new recovery key,
-    shown once) or restore from the recovery key on a new device. -->
+    shown once) or restore from the recovery key on a new device. Hardening: removing a device with keys and a new backup
+    ask the user to confirm who they are when they have not signed in in the last five minutes (moqui.reauth); Restore reads
+    the backup version the recovery key opens, an older one too; "Send my room keys only to verified devices"; and a store
+    this browser cannot open is reported here, kept, with "Start over" (a new device, then the backup). -->
 <template><div class="m-chat-devices q-pa-sm column q-gutter-md" style="max-width:900px">
     <div class="row items-center">
         <div class="text-h6">{{t('My devices')}}</div><q-space></q-space>
@@ -26,6 +29,15 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
     <div class="m-muted">{{t('The browsers that hold your encryption keys, for encrypted rooms and calls. A browser gets one the first time it needs it.')}}
         {{t('Remove one you no longer use: it gets no new keys, and others stop encrypting to it.')}}</div>
+    <q-banner v-if="problem" rounded class="m-tonal text-negative m-chat-store-problem">
+        <template v-slot:avatar><q-icon name="sym_o_key_off"></q-icon></template>
+        {{t("This browser's encryption keys cannot be opened. They are kept as they are. To go on, start over with a new device here, then restore older messages from your key backup with your recovery key.")}}
+        <template v-slot:action><q-btn flat no-caps color="negative" :label="t('Start over')" class="m-chat-start-over" @click="startOver"></q-btn></template>
+    </q-banner>
+    <q-card flat bordered class="q-pa-md">
+        <q-toggle v-model="verifiedOnly" :label="t('Send my room keys only to verified devices')" class="m-chat-verified-only" @update:model-value="saveVerifiedOnly"></q-toggle>
+        <div class="text-caption m-muted">{{t("In every encrypted room, your messages are encrypted only for devices that were verified (by emoji or QR code, or by their owner's cross-signing). A device that is not verified cannot read them.")}}</div>
+    </q-card>
     <q-card flat bordered class="q-pa-md m-chat-backup">
         <div class="row items-center no-wrap">
             <q-icon name="sym_o_key" size="22px" class="q-mr-sm text-primary"></q-icon>
@@ -100,10 +112,11 @@ module.exports = {
     name: 'ChatDevices',
     data() {
         return { devices: [], loaded: false, thisId: null, trust: {}, backup: { version: null, enabled: false, total: 0, backedUp: 0, busy: false },
-            recoveryKey: '', restore: { open: false, text: '', busy: false } };
+            recoveryKey: '', restore: { open: false, text: '', busy: false }, verifiedOnly: false };
     },
     computed: {
         verifications() { return (moqui.crypto && moqui.crypto.state.verifications) || []; },
+        problem() { return (moqui.crypto && moqui.crypto.state.problem) || null; },
         canScan() { return typeof window.BarcodeDetector === 'function' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
         backupText() {
             const b = this.backup;
@@ -117,20 +130,44 @@ module.exports = {
     methods: {
         t,
         url(name) { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms', 'Settings', 'Devices']).join('/') + '/' + name; },
+        // a refusal for want of a recent sign-in is not shown: it rejects, so moqui.reauth.retry asks the user and tries again
         request(name, params, method) {
             return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
                 const json = result.json || {};
+                if (json.reasonCode === 'reauthRequired') throw json;
                 if (json.errors) moqui.notifyMessages([], json.errors);
                 return json;
             }, (err) => { moqui.handleAjaxError(err); throw err; });
         },
+        // an action that needs a sign-in in the last five minutes: asked for first, and again if the server still refuses
+        confirmed(fn) {
+            if (!moqui.reauth) return Promise.resolve().then(fn);
+            return moqui.reauth.ensure().then(() => moqui.reauth.retry(fn));
+        },
+        refused(err, fallback) {
+            if (err && err.reasonCode === 'cancelled') return;
+            moqui.notifyMessages([], (err && err.errors) || fallback);
+        },
         load() {
             this.thisId = moqui.crypto ? moqui.crypto.thisDeviceId() : null;
+            this.request('keySettings').then((json) => { this.verifiedOnly = !!json.verifiedDevicesOnly; }, () => null);
             return this.request('devices').then((json) => {
                 this.devices = json.deviceList || [];
                 this.loaded = true;
                 this.loadCrypto();
             }, () => { this.loaded = true; });
+        },
+        saveVerifiedOnly(on) {
+            this.request('storeKeySettings', { verifiedDevicesOnly: on ? 'true' : 'false' }, 'POST').then(() => {
+                if (moqui.crypto && moqui.crypto.settingsChanged) moqui.crypto.settingsChanged();
+            }, () => { this.verifiedOnly = !on; });
+        },
+        // a store that cannot be opened: after the user confirms who they are, a new device, then the backup
+        startOver() {
+            this.$q.dialog({ title: t('Start over with a new device?'), message: t('This browser\'s encryption keys that cannot be opened are deleted, and it gets a new device. Messages it read before come back from your key backup: restore it with your recovery key next.'),
+                ok: { label: t('Start over'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
+                .onOk(() => this.confirmed(() => moqui.crypto.startOver()).then(() => { this.restore.open = true; this.load(); },
+                    (err) => this.refused(err, t('This browser did not start over'))));
         },
         // what this browser's store knows: each device's verification and the key backup (only when it has a device)
         loadCrypto() {
@@ -154,19 +191,21 @@ module.exports = {
             }
             this.makeBackup();
         },
+        // a new backup (and its recovery key) needs a sign-in in the last five minutes: the user confirms who they are first
         makeBackup() {
             this.backup.busy = true;
-            moqui.crypto.enableBackup().then((out) => {
+            this.confirmed(() => moqui.crypto.enableBackup()).then((out) => {
                 this.recoveryKey = out.recoveryKey;
                 this.backup.busy = false;
                 this.loadCrypto();
-            }, (err) => { this.backup.busy = false; moqui.notifyMessages([], (err && err.errors) || t('The key backup was not set up')); });
+            }, (err) => { this.backup.busy = false; this.refused(err, t('The key backup was not set up')); });
         },
+        // the recovery key opens the backup version it was made for: the current one, or an older one "New recovery key" left
         restoreBackup() {
             this.restore.busy = true;
             moqui.crypto.restoreBackup(this.restore.text).then((out) => {
                 this.restore = { open: false, text: '', busy: false };
-                moqui.notifyMessages([{ type: 'success', message: t('Keys restored:') + ' ' + out.imported }]);
+                moqui.notifyMessages([{ type: 'success', message: (out.current ? t('Keys restored:') : t('Keys restored from an older key backup:')) + ' ' + out.imported }]);
                 this.loadCrypto();
             }, (err) => { this.restore.busy = false; moqui.notifyMessages([], (err && err.errors) || t('The keys were not restored')); });
         },
@@ -206,8 +245,11 @@ module.exports = {
                 message: mine ? t('This browser deletes its keys; it gets a new device the next time it needs one.') : t('It gets no new keys, and others stop encrypting to it.'),
                 ok: { label: t('Remove'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
                 .onOk(() => {
-                    const done = mine && moqui.crypto ? moqui.crypto.forget() : this.request('revoke', { deviceId: d.deviceId }, 'POST');
-                    Promise.resolve(done).then(() => this.load(), () => this.load());
+                    // a device with keys is removed only after a sign-in in the last five minutes (the server cannot tell
+                    // which browser asks)
+                    const run = () => (mine && moqui.crypto ? moqui.crypto.forget() : this.request('revoke', { deviceId: d.deviceId }, 'POST'));
+                    (d.hasKeys ? this.confirmed(run) : Promise.resolve().then(run)).then(() => this.load(),
+                        (err) => { this.refused(err, t('The device was not removed')); this.load(); });
                 });
         },
         fingerprint(key) { return String(key || '').replace(/(.{4})/g, '$1 ').trim(); },

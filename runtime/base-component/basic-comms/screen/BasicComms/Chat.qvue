@@ -1020,6 +1020,10 @@ const roomTemplate = `
             <m-drop-down v-model="settings.visibility" :name="'settingsVisibility' + uid" :options="visibilityOptions" :label="t('Who may join')" class="q-mt-xs"></m-drop-down>
         </template>
         <div v-if="sealed" class="q-mt-sm q-pa-sm rounded-borders m-tonal text-body2 m-chat-encrypted-note"><q-icon name="sym_o_lock" class="q-mr-xs"></q-icon>{{t('Messages here are end-to-end encrypted, and that cannot be turned off. Only the devices of its members read them; the server keeps ciphertext. So this room has no server search, link previews, agents, polls, bridges, forwards or filing on records, and the terminal cannot read it. A new device reads older messages only from your key backup (Settings, My devices) or from another of your devices.')}}</div>
+        <template v-if="sealed">
+            <q-toggle v-model="settings.verifiedOnly" :label="t('Messages only to verified devices')" class="q-mt-sm m-chat-room-verified-only"></q-toggle>
+            <div class="text-caption m-muted">{{t("Each member's browser encrypts for the devices that were verified (by emoji or QR code, or by their owner's cross-signing) only; a device that is not verified cannot read what follows.")}}</div>
+        </template>
         <q-toggle v-model="settings.callE2ee" :label="t('Calls in this room are end-to-end encrypted')" class="q-mt-sm"></q-toggle>
         <div class="text-caption m-muted">{{t('Only the people in a call hear and see it: no recording, captions, phones or guests. This is apart from the encryption of the messages.')}}</div>
         <div class="row q-gutter-sm q-mt-md items-center">
@@ -2114,7 +2118,7 @@ const chatRoom = {
         },
         openSettings() {
             this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
-                callE2ee: !!this.room.callE2eeRequired, busy: false };
+                callE2ee: !!this.room.callE2eeRequired, verifiedOnly: !!this.room.verifiedDevicesOnly, busy: false };
         },
         saveSettings() {
             const params = { chatRoomId: this.roomId, roomName: this.settings.roomName, topic: this.settings.topic || '' };
@@ -2125,7 +2129,13 @@ const chatRoom = {
                 ? this.post('setCallEncryption', { chatRoomId: this.roomId, required: this.settings.callE2ee ? 'true' : 'false' }).then((json) => {
                     if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
                 }) : Promise.resolve();
-            e2ee.then(() => this.post('updateRoom', params)).then(() => {
+            // C7 hardening: the room's keys to verified devices only (ChatKeyServices; the browsers read it before the next message)
+            const verified = this.sealed && !!this.settings.verifiedOnly !== !!this.room.verifiedDevicesOnly
+                ? () => this.post('setVerifiedDevicesOnly', { chatRoomId: this.roomId, verifiedDevicesOnly: this.settings.verifiedOnly ? 'true' : 'false' }).then((json) => {
+                    if (json.errors) { moqui.notifyMessages([], json.errors); throw json; }
+                    if (moqui.crypto && moqui.crypto.settingsChanged) moqui.crypto.settingsChanged();
+                }) : () => null;
+            e2ee.then(verified).then(() => this.post('updateRoom', params)).then(() => {
                 this.settings = Object.assign({}, this.settings, { open: false, busy: false });
                 this.reloadMeta();
                 this.$emit('changed');

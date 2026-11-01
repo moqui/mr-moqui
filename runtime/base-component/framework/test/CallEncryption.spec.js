@@ -40,13 +40,20 @@ function as(userId, name, parameters) {
     ec.message.clearErrors()
     return Object.assign({errors}, out)
 }
+const PASSWORD = "Calls-spec-9!"
 function makeUser(userId) {
     sys(() => {
-        if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() > 0) return
-        const account = ec.entity.makeValue("moqui.security.UserAccount")
-        account.setFields({userId, username: userId.toLowerCase().replace(/_/g, "."), userFullName: "Encrypted " + userId.slice(-1),
-            disabled: "N"}, true, null, null)
-        account.create()
+        if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() === 0) {
+            const account = ec.entity.makeValue("moqui.security.UserAccount")
+            account.setFields({userId, username: userId.toLowerCase().replace(/_/g, "."), userFullName: "Encrypted " + userId.slice(-1),
+                disabled: "N"}, true, null, null)
+            account.create()
+        }
+        // a password: a revoke of a device with keys needs a sign-in in the last five minutes (check#RecentAuth)
+        const account = ec.entity.find("moqui.security.UserAccount").condition("userId", userId).one()
+        account.setFields({currentPassword: ec.user.hashPassword(PASSWORD), passwordHashType: "argon2", passwordSalt: "",
+            passwordBase64: "N", successiveFailedLogins: 0, requirePasswordChange: "N"}, true, null, null)
+        account.update()
     })
 }
 /** A crypto device with its keys uploaded (opaque here, as the server treats them); revoked when asked. */
@@ -326,6 +333,8 @@ feature("a room's owner or moderator makes its calls encrypted; a plain call goi
 
 feature("revoking a device takes its leg out of the encrypted call, and the others' roster no longer has it", {
     when() {
+        // signed in with the password just now: a revoke of a device with keys needs a recent sign-in
+        ec.user.loginUser(B.toLowerCase().replace(/_/g, "."), PASSWORD)
         const revoked = as(B, "org.moqui.impl.ChatKeyServices.revoke#ChatDevice", {deviceId: DEVICES[B]})
         const seen = as(A, "get#Call", {callSessionId: roomCall})
         return {revoked, seen}

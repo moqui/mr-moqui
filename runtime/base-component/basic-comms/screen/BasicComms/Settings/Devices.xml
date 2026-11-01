@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Settings, My devices (plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): the browsers that hold
     the user's encryption keys (crypto devices, made the first time a browser needs one), each with its name, when it was
     added and last seen, its browser and its key's fingerprint (to compare with what the device shows), this browser
-    marked; Rename and Remove (revoke: it gets no new keys or messages, and others stop encrypting to it). All through
+    marked; Rename and Remove (revoke: it gets no new keys or messages, and others stop encrypting to it; a device with keys
+    needs a sign-in in the last five minutes, reasonCode reauthRequired, which the page asks for); the setting "Send my room
+    keys only to verified devices" (keySettings, storeKeySettings). All through
     org.moqui.impl.ChatKeyServices, which acts only on the user's own devices, so these transitions run with authorization
     off as the call transitions do. The component is Devices.qvue next to this file; the terminal twin is DevicesTui. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -48,6 +50,27 @@ along with this software (see the LICENSE.md file). If not, see
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
             ec.web.sendJsonResponse({errors, reasonCode: out.reasonCode || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- room keys to verified or cross-signed devices only, in every encrypted room (the user's setting) -->
+    <transition name="keySettings" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.get#ChatKeySettings').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, verifiedDevicesOnly: !!out.verifiedDevicesOnly})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="storeKeySettings">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.store#ChatKeySettings')
+                .parameter('verifiedDevicesOnly', String(verifiedDevicesOnly) === 'true').requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({errors, verifiedDevicesOnly: !!out.verifiedDevicesOnly})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

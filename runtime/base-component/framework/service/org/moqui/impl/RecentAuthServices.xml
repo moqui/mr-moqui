@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The recent sign-in check for sensitive actions, and the re-authentication that satisfies it (docs/security/Recent-Auth.md).
+    The session records when its user last signed in in a way that proves who they are: a password login (the form, an
+    SSH or terminal password, Basic credentials), the code that finishes a second factor, an SSO login, and
+    reauthenticate#User. A login key, an API key, an app password and an internal login never count. A service that
+    guards an action calls check#RecentAuth and refuses when it is not recent (the ChatKeys services answer reasonCode
+    reauthRequired); the browser asks with js/WebrootReAuth.js (moqui.reauth) over the /ReAuth transitions. The bodies are
+    Rust (crates/moqui-core/src/service/recent_auth.rs, crates/moqui-core/src/user/login.rs). No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="check" noun="RecentAuth" type="rust" location="moqui_core::service::recent_auth::check_recent_auth"
+            authenticate="anonymous-all">
+        <description>Whether the session's user signed in within maxAgeSeconds (default 300): recent, and authAgeSeconds
+            (empty when this session's user never signed in that way: they came by a key or an internal login). How the user
+            confirms who they are again: method password (and secondFactor when the account has one; reauthenticate#User),
+            sso for an account without a password (a fresh sign-in at authFlowId, the session's own flow, or one of
+            authFlowList), none with nobody signed in. With required, a sign-in that is not recent is also an error.</description>
+        <in-parameters>
+            <parameter name="maxAgeSeconds" type="Integer" default="300"/>
+            <parameter name="required" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recent" type="Boolean"/>
+            <parameter name="authAgeSeconds" type="Long"/>
+            <parameter name="method"/>
+            <parameter name="secondFactor" type="Boolean"/>
+            <parameter name="authFlowId"/>
+            <parameter name="authFlowList" type="List"><parameter name="authFlow" type="Map">
+                <parameter name="authFlowId"/><parameter name="description"/></parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="reauthenticate" noun="User" type="rust" location="moqui_core::service::recent_auth::reauthenticate_user">
+        <description>Confirm the signed-in user again: their password, then the code of their second factor when the account
+            has one (a password checked here waits five minutes for the code, which may come without it). Nothing about the
+            login changes: the session keeps its user and id. A wrong password or code counts as a failed login and is an
+            error (the password) or codeNeeded with codeText saying so (the code). reauthenticated: the session's last sign-in
+            is now. codeNeeded: codeText and sendableFactors ({factorId, label}: send#ReauthCode). An account without a
+            password signs in again through its identity provider instead (an error here).</description>
+        <in-parameters>
+            <parameter name="password"/>
+            <parameter name="code"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reauthenticated" type="Boolean"/>
+            <parameter name="codeNeeded" type="Boolean"/>
+            <parameter name="codeText"/>
+            <parameter name="sendableFactors" type="List"><parameter name="factor" type="Map">
+                <parameter name="factorId"/><parameter name="label"/></parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="send" noun="ReauthCode" type="rust" location="moqui_core::service::recent_auth::send_reauth_code">
+        <description>Send a code to the signed-in user's email or SMS factor factorId for reauthenticate#User, once its
+            password was checked (in the last five minutes); else an error.</description>
+        <in-parameters><parameter name="factorId" required="true"/></in-parameters>
+        <out-parameters><parameter name="sent" type="Boolean"/></out-parameters>
+    </service>
+</services>

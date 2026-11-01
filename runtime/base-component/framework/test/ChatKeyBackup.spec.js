@@ -55,7 +55,18 @@ function makeUser(userId) {
             )
             account.create()
         }
+        // a password, so a spec can sign in for real: a reset, a new or deleted backup and a revoke need a recent sign-in
+        const account = ec.entity.find("moqui.security.UserAccount").condition("userId", userId).one()
+        account.setFields({currentPassword: ec.user.hashPassword(PASSWORD), passwordHashType: "argon2", passwordSalt: "",
+            passwordBase64: "N", successiveFailedLogins: 0, requirePasswordChange: "N"}, true, null, null)
+        account.update()
     })
+}
+const PASSWORD = "Trust-spec-9!"
+/** as, signed in with the password just now (a recent sign-in, check#RecentAuth), not by an internal login. */
+function asFresh(userId, name, parameters) {
+    ec.user.loginUser(username(userId), PASSWORD)
+    return as(null, name, parameters)
 }
 const mx = userId => as(null, "map#ChatKeyUserIds", {userIdList: [userId]}).matrixIds[userId]
 function deviceKeys(userId, deviceId, tag) {
@@ -137,34 +148,75 @@ spec({
 })
 
 feature(
-    "a device's store key is made on the first ask, the same after, only for its own user, absent from the device list, and cleared by a revoke",
+    "a device's store key is derived, not stored: the same at each ask, only for its own user, absent from the device list and every table, and another after a revoke",
     {
         when() {
             const first = as(A, "get#ChatDeviceStoreKey", {deviceId: dev.A1})
             const again = as(A, "get#ChatDeviceStoreKey", {deviceId: dev.A1})
             const other = as(B, "get#ChatDeviceStoreKey", {deviceId: dev.A1})
             const listed = JSON.stringify(as(A, "find#ChatDevices", {includeRevoked: true}))
+            const row = sys(() => ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: dev.A1}).one())
+            const rowText = JSON.stringify(row.getMap ? row.getMap() : row)
             const doomed = device(A, "a-doomed")
             const doomedKey = as(A, "get#ChatDeviceStoreKey", {deviceId: doomed})
-            as(A, "revoke#ChatDevice", {deviceId: doomed})
+            const revoked = asFresh(A, "revoke#ChatDevice", {deviceId: doomed})
             const afterRevoke = as(A, "get#ChatDeviceStoreKey", {deviceId: doomed})
-            const stored = sys(
-                () => ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: doomed}).one().storeKey
-            )
-            return {first, again, other, listed, doomedKey, afterRevoke, stored}
+            const doomedRow = sys(() => ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: doomed}).one())
+            const rekeyed = as(null, "derive#ChatStoreKey", {userId: A, deviceId: doomed, revision: Number(doomedRow.storeRevision)})
+            return {first, again, other, listed, row, rowText, doomedKey, revoked, afterRevoke, doomedRow, rekeyed}
         },
-        then({first, again, other, listed, doomedKey, afterRevoke, stored}) {
+        then({first, again, other, listed, row, rowText, doomedKey, revoked, afterRevoke, doomedRow, rekeyed}) {
             first.errors == ""
             first.storeKey.length == 43
+            first.legacyStoreKey == null
             again.storeKey == first.storeKey
             other.reasonCode == "notFound"
             other.storeKey == null
             listed.indexOf(first.storeKey) < 0
             listed.indexOf("storeKey") < 0
+            row.storeKey == null
+            rowText.indexOf(first.storeKey) < 0
             doomedKey.storeKey.length == 43
             doomedKey.storeKey != first.storeKey
+            revoked.errors == ""
             afterRevoke.reasonCode == "revoked"
-            stored == null
+            doomedRow.storeKey == null
+            Number(doomedRow.storeRevision) == 2
+            rekeyed.storeKey != doomedKey.storeKey
+        }
+    }
+)
+
+feature(
+    "a device from before the derived store key gets its old key as legacyStoreKey once, and is revoked without a recent sign-in only to the new device that takes its keys",
+    {
+        when() {
+            // a device as made before: its random key stored on its row
+            const old = device(A, "a-legacy")
+            sys(() => {
+                const row = ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: old}).one()
+                row.set("storeKey", "legacy-key-0123456789-0123456789-0123456789")
+                row.update()
+            })
+            const keys = as(A, "get#ChatDeviceStoreKey", {deviceId: old})
+            const next = device(A, "a-next")
+            // the same parameters as the re-key, without the newer device: refused without a recent sign-in
+            ec.user.logoutUser()
+            const plain = as(A, "revoke#ChatDevice", {deviceId: old})
+            const toItself = as(A, "revoke#ChatDevice", {deviceId: old, replacedBy: old})
+            const moved = as(A, "revoke#ChatDevice", {deviceId: old, replacedBy: next})
+            const row = sys(() => ec.entity.find("moqui.chat.ChatDevice").condition({userId: A, deviceId: old}).one())
+            return {keys, plain, toItself, moved, row}
+        },
+        then({keys, plain, toItself, moved, row}) {
+            keys.legacyStoreKey == "legacy-key-0123456789-0123456789-0123456789"
+            keys.storeKey.length == 43
+            keys.storeKey != keys.legacyStoreKey
+            plain.reasonCode == "reauthRequired"
+            toItself.reasonCode == "reauthRequired"
+            moved.errors == ""
+            row.revokedDate != null
+            row.storeKey == null
         }
     }
 )
@@ -250,12 +302,16 @@ feature(
             const aSeesA = as(A, "query#Keys", {device_keys: {[mx(A)]: []}})
             const aSeesC = as(A, "query#Keys", {device_keys: {[mx(C)]: []}})
             // a reset of A's identity deletes every signature by or over its old keys
-            const reset = as(A, "upload#CrossSigningKeys", Object.assign(crossKeys(A, "A3"), {reset: true}))
+            // a reset needs a sign-in in the last five minutes: after a logout and an internal login it is refused, with the
+            // same parameters, and taken once the user signed in with the password
+            ec.user.logoutUser()
+            const resetRefused = as(A, "upload#CrossSigningKeys", Object.assign(crossKeys(A, "A3"), {reset: true}))
+            const reset = asFresh(A, "upload#CrossSigningKeys", Object.assign(crossKeys(A, "A3"), {reset: true}))
             const bSeesAAfter = as(B, "query#Keys", {device_keys: {[mx(A)]: []}})
             const leftOver = sys(() => ec.entity.find("moqui.chat.ChatKeySignature").condition("signerUserId", A).count())
-            return {own, other, outOfReach, wrongSigner, aSeesB, bSeesA, bSeesB, aSeesA, aSeesC, reset, bSeesAAfter, leftOver}
+            return {own, other, outOfReach, wrongSigner, aSeesB, bSeesA, bSeesB, aSeesA, aSeesC, resetRefused, reset, bSeesAAfter, leftOver}
         },
-        then({own, other, outOfReach, wrongSigner, aSeesB, bSeesA, bSeesB, aSeesA, aSeesC, reset, bSeesAAfter, leftOver}) {
+        then({own, other, outOfReach, wrongSigner, aSeesB, bSeesA, bSeesB, aSeesA, aSeesC, resetRefused, reset, bSeesAAfter, leftOver}) {
             own.errors == ""
             Object.keys(own.failures).length == 0
             other.errors == ""
@@ -277,6 +333,7 @@ feature(
             bSeesB.user_signing_keys[mx(B)].keys["ed25519:uskB1"] == "uskB1"
             aSeesA.user_signing_keys[mx(A)].keys["ed25519:uskA1"] == "uskA1"
             aSeesC.master_keys[mx(C)] == null
+            resetRefused.reasonCode == "reauthRequired"
             reset.changed == true
             bSeesAAfter.master_keys[mx(A)].keys["ed25519:mstA3"] == "mstA3"
             sigs(bSeesAAfter.device_keys[mx(A)][dev.A1], A) == "ed25519:" + dev.A1
@@ -298,7 +355,10 @@ feature(
             const put = (version, roomId, sessionId, data) =>
                 as(A, "store#BackupKeys", {version, rooms: {[roomId]: {sessions: {[sessionId]: data}}}})
             const none = as(A, "get#KeyBackupVersion", {})
-            const v1 = as(A, "create#KeyBackupVersion", {
+            // a new backup needs a sign-in in the last five minutes: refused after an internal login, with the same parameters
+            ec.user.logoutUser()
+            const v1Refused = as(A, "create#KeyBackupVersion", {algorithm: "m.megolm_backup.v1.curve25519-aes-sha2", auth_data: {public_key: "pk1", signatures: {}}})
+            const v1 = asFresh(A, "create#KeyBackupVersion", {
                 algorithm: "m.megolm_backup.v1.curve25519-aes-sha2",
                 auth_data: {public_key: "pk1", signatures: {}}
             })
@@ -362,6 +422,8 @@ feature(
                 algorithm: "m.megolm_backup.v1.curve25519-aes-sha2",
                 auth_data: {public_key: "pk3"}
             })
+            // the versions left, newest first, with the public key a recovery key is matched to (an older one restores too)
+            const versions = as(A, "find#KeyBackupVersions", {}).versionList.map((v) => v.version + ":" + v.publicKey + ":" + v.current).join(",")
             return {
                 none,
                 v1,
@@ -392,7 +454,9 @@ feature(
                 afterDelete,
                 gone,
                 goneSessions,
-                v3
+                v3,
+                v1Refused,
+                versions
             }
         },
         then({
@@ -425,9 +489,13 @@ feature(
             afterDelete,
             gone,
             goneSessions,
-            v3
+            v3,
+            v1Refused,
+            versions
         }) {
             none.reasonCode == "notFound"
+            v1Refused.reasonCode == "reauthRequired"
+            versions == "3:pk3:true,1:pk1:false"
             v1.version == "1"
             v2.version == "2"
             current.version == "2"

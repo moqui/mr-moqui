@@ -432,6 +432,18 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- an encrypted room's keys to verified or cross-signed devices only (C7 hardening: moderators; ChatKeyServices) -->
+    <transition name="setVerifiedDevicesOnly">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.set#RoomVerifiedDevicesOnly').parameters({chatRoomId: chatRoomId || '',
+                verifiedDevicesOnly: String(verifiedDevicesOnly) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, verifiedDevicesOnly: !!out.verifiedDevicesOnly})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <widgets>
         <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Chat.qvue" template="false"/>
             <!-- the terminal twin (style-guide 4.8): the rooms of ChatTui, or a room, with chatRoomId -->

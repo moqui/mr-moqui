@@ -83,6 +83,11 @@ feature("an encrypted call: media both ways under SFrame, a third joiner gets th
         // the host's Record is refused: the server cannot hear the call
         const recording = caller.evaluate(id => window.moqui.call.request("startRecording", {callSessionId: id}, "POST", true), started.callSessionId)
         const indicator = caller.locator(".m-call-e2ee").count()
+        // nobody verified the others' devices here: the call warns, naming them
+        let unverified = false
+        try {
+            unverified = caller.waitFor(() => window.moqui.callKeys.state.unverified.length >= 2 && !!document.querySelector(".m-call-unverified"), {timeout: 8})
+        } catch (err) { unverified = false }
         // the third leaves: the others make new keys, sent only to the two still in the call
         const callerRotations = caller.evaluate(() => window.moqui.callKeys.state.rotations)
         const calleeRotations = callee.evaluate(() => window.moqui.callKeys.state.rotations)
@@ -103,10 +108,10 @@ feature("an encrypted call: media both ways under SFrame, a third joiner gets th
             newKeyThere = callee.waitFor(([leg, kid]) => (window.moqui.callKeys.state.keys[leg] || {}).kid === kid, {timeout: 5, arg: [aLeg, after[0].lastSend.kid]})
         } catch (err) { newKeyThere = false }
         caller.evaluate(() => window.moqui.call.leave())
-        return {started, aLeg, bLeg, cLeg, twoWay, before, threeWay, recording, indicator, rotated, calleeRotated, after, newKeyThere,
+        return {started, aLeg, bLeg, cLeg, twoWay, before, threeWay, recording, indicator, unverified, rotated, calleeRotated, after, newKeyThere,
             thirdDevice: third.evaluate(() => window.moqui.crypto.state.deviceId)}
     },
-    then({started, aLeg, bLeg, cLeg, twoWay, before, threeWay, recording, indicator, rotated, calleeRotated, after, newKeyThere, thirdDevice}) {
+    then({started, aLeg, bLeg, cLeg, twoWay, before, threeWay, recording, indicator, unverified, rotated, calleeRotated, after, newKeyThere, thirdDevice}) {
         started.e2ee == true
         started.mode == "e2ee-sframe"
         twoWay.every(ok => ok)
@@ -116,6 +121,7 @@ feature("an encrypted call: media both ways under SFrame, a third joiner gets th
         threeWay.every(ok => ok)
         recording.reasonCode == "encrypted"
         indicator >= 1
+        unverified == true
         rotated == true
         calleeRotated == true
         after[0].lastSend.devices.every(d => d.deviceId != thirdDevice)

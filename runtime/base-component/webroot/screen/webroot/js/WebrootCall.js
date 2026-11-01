@@ -1259,6 +1259,9 @@
             '<q-banner v-if="e2eeNotice || (e2eeUnsupported && !inThis && canJoin)" dense rounded class="m-tonal text-negative m-call-e2ee-notice"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>' +
             '{{e2eeNotice || t(\'This call is end-to-end encrypted, and this browser cannot encrypt call media (it has no RTCRtpScriptTransform). Join it from a current Chrome, Edge, Firefox or Safari.\')}}</q-banner>' +
             '<q-banner v-if="inThis && e2ee && callKeys && callKeys.error" dense rounded class="m-tonal text-warning">{{callKeys.error}}</q-banner>' +
+            // C7 hardening: the roster has a device of a participant this browser has not verified (WebrootCallKeys.js unverified)
+            '<q-banner v-if="inThis && e2ee && callKeys && callKeys.unverified && callKeys.unverified.length" dense rounded class="m-tonal text-warning m-call-unverified"><template v-slot:avatar><q-icon name="sym_o_gpp_maybe"></q-icon></template>' +
+            '{{t(\'Not verified: a device in this call gets its keys though you have not verified it. Verify it in Settings, My devices, if you do not know it:\')}} {{callKeys.unverified.map((u) => ((known && known.participants || []).find((p) => p.userId === u.userId) || {}).displayName || u.userId).join(\', \')}}</q-banner>' +
             '<m-call-context v-if="known && known.kind === \'phone\'" :call-session-id="callSessionId"></m-call-context>' +
             '<q-banner v-if="recording && inThis" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" color="negative"></q-icon></template>' +
             '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +

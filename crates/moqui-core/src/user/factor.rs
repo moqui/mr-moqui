@@ -222,6 +222,8 @@ mod tests {
 pub(crate) const FACTOR_INFO: &str = "org.moqui.impl.UserServices.get#ExternalUserAuthcFactorInfo";
 pub(crate) const VALIDATE_CODE: &str = "org.moqui.impl.UserServices.validate#ExternalUserAuthcCode";
 pub(crate) const SEND_CODE: &str = "org.moqui.impl.UserServices.send#ExternalAuthcCode";
+/// A code of a named user, counted as a login when wrong (a re-authentication's second factor).
+const VALIDATE_USER_CODE: &str = "org.moqui.impl.UserServices.validate#UserAuthcFactorCode";
 pub(crate) const CODE_NOT_VALID: &str = "Authentication code is not valid";
 
 /// What a login with a password and maybe a code came to.
@@ -271,6 +273,12 @@ pub fn login_with_code(username: &str, password: &str, code: &str) -> Result<Cod
         }
         wrong = true;
     }
+    code_needed(wrong)
+}
+
+/// The answer that asks for a code: which factors take one (or that the code given was not valid), and the factors a
+/// code can be sent to. The user is the pre-authenticated one, else the signed-in one.
+fn code_needed(wrong: bool) -> Result<CodeLogin, Error> {
     let info = factor_service(FACTOR_INFO, &[])?;
     let kinds: Vec<String> = list_of(info.get("factorTypeDescriptions"))
         .iter()
@@ -304,6 +312,58 @@ pub fn login_with_code(username: &str, password: &str, code: &str) -> Result<Cod
         format!("Enter the authentication code ({})", kinds.join(", "))
     };
     Ok(CodeLogin::CodeNeeded { text, sendable })
+}
+
+/// Confirm the signed-in user again, for an action that needs a recent sign-in (`check#RecentAuth`): the account's
+/// password, then the code of its second factor when it has one. Nothing about the login changes: the session keeps its
+/// user and id. A wrong password or code counts as a failed login. A password checked here is remembered for five
+/// minutes, so the code may come in a later request without it. On success the session's last sign-in is now.
+///
+/// # Errors
+///
+/// Returns an error with nobody signed in, for a wrong password (the login's own message), for an account without a
+/// password (it signs in through an identity provider), and the factor services' errors.
+pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
+    let user_id = signed_in()?;
+    if !password.is_empty() || !super::login::reauth_password_checked(&user_id) {
+        super::login::check_reauth_password(&user_id, password)?;
+    }
+    if second_factor_required(&user_id)? {
+        if code.is_empty() {
+            let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+            return code_needed(false);
+        }
+        // the user's own factor rows, whatever the caller may do
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let validated = factor_service(
+            VALIDATE_USER_CODE,
+            &[("userId", &user_id), ("code", code), ("countFailure", "true")],
+        )?;
+        if !validated.get("verified").is_some_and(truthy) {
+            // a refused code leaves the password checked, so the user may try another code
+            return code_needed(true);
+        }
+    }
+    super::login::note_recent_auth(&user_id);
+    Ok(CodeLogin::LoggedIn)
+}
+
+/// Send a code to `factor_id` for [`reauthenticate`], once the password was checked in the last five minutes.
+///
+/// # Errors
+///
+/// Returns an error with nobody signed in, before the password was checked, and the service's errors.
+pub fn send_reauth_code(factor_id: &str) -> Result<(), Error> {
+    let user_id = signed_in()?;
+    if !super::login::reauth_password_checked(&user_id) {
+        return Err(Error::new("Enter your password first"));
+    }
+    let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+    factor_service(SEND_CODE, &[("factorId", factor_id)]).map(|_| ())
+}
+
+fn signed_in() -> Result<String, Error> {
+    super::login::current_user()
 }
 
 /// Send a code to `factor_id` for a login the password starts here, as `/rest/login` then `sendOtp` do in one

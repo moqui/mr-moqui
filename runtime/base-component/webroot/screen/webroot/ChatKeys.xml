@@ -8,7 +8,8 @@
     (sendToDevice), /ChatKeys/sync (the to-device part of /sync), /ChatKeys/storeKey (get#ChatDeviceStoreKey),
     /ChatKeys/signingUpload and /ChatKeys/signaturesUpload (cross-signing; the signatures body as the parameter signed),
     and the key backup's /ChatKeys/backupVersionCreate, backupVersion, backupVersionUpdate, backupVersionDelete,
-    backupKeysPut, backupKeys and backupKeysDelete. Each works as the session's user only, which the
+    backupKeysPut, backupKeys, backupKeysDelete and backupVersions (find#KeyBackupVersions); /ChatKeys/settings and
+    settingsStore (get# and store#ChatKeySettings: room keys to verified devices only). Each works as the session's user only, which the
     services check (a device of another user is "not found"), so authorization is not asked; without a user it is 401.
     Posts need the session's CSRF token. Each runs its service in its own transaction, so a refusal answers as JSON
     ({errors, reasonCode} and the refusal's own fields, such as current_version; ChatKeys.js web). -->
@@ -27,7 +28,7 @@
         <default-response type="none"/>
     </transition>
     <transition name="revoke" method="post" begin-transaction="false">
-        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'revoke#ChatDevice', names: ['deviceId']})</script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'revoke#ChatDevice', names: ['deviceId', 'replacedBy']})</script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="whoami" read-only="true" begin-transaction="false">
@@ -92,6 +93,18 @@
     </transition>
     <transition name="backupKeysDelete" method="post" begin-transaction="false">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'delete#BackupKeys', names: ['version', 'roomId', 'sessionId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="backupVersions" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'find#KeyBackupVersions', names: []})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="settings" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'get#ChatKeySettings', names: ['chatRoomId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="settingsStore" method="post" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/ChatKeys.js').execute('web', {verb: 'store#ChatKeySettings', names: ['verifiedDevicesOnly']})</script></actions>
         <default-response type="none"/>
     </transition>
     <widgets/>

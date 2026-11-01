@@ -484,6 +484,60 @@ fn internal_login_skips_the_password_and_anonymous_does_not_set_a_username() {
     session::reset_session();
 }
 
+/// A password login is a recent sign-in, an internal login is not, and the code that finishes a second factor is; the
+/// sign-in is the user's own (another user's session does not take it), and a logout drops it.
+#[test]
+fn a_password_login_and_a_finished_second_factor_are_recent_sign_ins_an_internal_login_is_not() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    create_user(&facade, "bob", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    assert!(!recent_auth(300_000));
+    assert_eq!(last_auth_millis(), None);
+    login_user("ada", "Secret1!").unwrap();
+    assert!(recent_auth(300_000));
+    let at = last_auth_millis().unwrap();
+    assert!((now_millis() - at).abs() < 5_000);
+    // another user's internal login in the same session does not take ada's sign-in
+    internal_login_user("bob").unwrap();
+    assert!(!recent_auth(300_000));
+    internal_login_user("ada").unwrap();
+    assert!(recent_auth(300_000));
+    assert!(!recent_auth(-1));
+    logout().unwrap();
+    internal_login_user("ada").unwrap();
+    assert!(!recent_auth(300_000));
+    // the internal login that finishes a second factor (the password was checked, then the code)
+    logout().unwrap();
+    session::set_session_attribute(PRE_AUTHC_USERNAME, Some("bob"));
+    session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
+    internal_login_user("bob").unwrap();
+    assert!(recent_auth(300_000));
+    session::reset_session();
+}
+
+/// A re-authentication checks the signed-in user's password without changing the login: a wrong one fails and counts,
+/// a right one is a recent sign-in.
+#[test]
+fn a_reauthentication_checks_the_password_and_counts_a_wrong_one() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    assert_eq!(check_reauth_password("ada", "wrong").unwrap_err().to_string(), INVALID_LOGIN);
+    assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 1);
+    assert!(!reauth_password_checked("ada"));
+    check_reauth_password("ada", "Secret1!").unwrap();
+    assert!(reauth_password_checked("ada"));
+    assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 0);
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("ada"));
+    note_recent_auth("ada");
+    assert!(recent_auth(300_000));
+    assert!(!reauth_password_checked("ada"));
+    session::reset_session();
+}
+
 #[test]
 fn change_password_stores_argon2_and_rejects_history() {
     let (ctx, facade) = open_ctx();

@@ -133,9 +133,13 @@
     <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
         user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
         new (the Matrix client API, C6a, needs it to be the domain). chat_to_device_retention_days: how long a to-device
-        message waits for a device that does not acknowledge it. -->
+        message waits for a device that does not acknowledge it. chat_store_key_secret: the platform secret each device's
+        browser-store key is derived under (HMAC of userId|deviceId|revision), so no table holds the keys; generated when
+        unset. A new value makes every browser's store unreadable (each makes a new device; older messages then need the
+        key backup). -->
     <default-property name="chat_server_name" value="localhost"/>
     <default-property name="chat_to_device_retention_days" value="30"/>
+    <default-property name="chat_store_key_secret" value="CHANGEME" is-secret="true"/>
 
     <!-- Call media (the rtc feature; plans/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
         of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.

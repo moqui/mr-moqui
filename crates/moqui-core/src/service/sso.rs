@@ -210,7 +210,16 @@ fn login(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<
     let started = crate::sso::client()?.start(&flow, &redirect_uri)?;
     let pending = serde_json::json!({ "authFlowId": auth_flow_id, "pending": started.pending });
     set_session_attribute(PENDING, Some(&pending.to_string()));
-    crate::web::send_redirect(&started.authorize_url);
+    // A re-authentication (check#RecentAuth) asks an OpenID provider to sign the user in again rather than answer from
+    // its own session (OIDC `prompt=login`); a provider that ignores it answers as for any login.
+    let reauth = matches!(param_text(parameters, "reauth").as_str(), "true" | "Y");
+    let authorize_url = if reauth && matches!(flow.kind, FlowKind::Oidc(_)) {
+        let separator = if started.authorize_url.contains('?') { '&' } else { '?' };
+        format!("{}{separator}prompt=login", started.authorize_url)
+    } else {
+        started.authorize_url
+    };
+    crate::web::send_redirect(&authorize_url);
     Ok(())
 }
 

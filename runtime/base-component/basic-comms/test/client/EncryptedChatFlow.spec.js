@@ -6,7 +6,9 @@
 // message is in a new Megolm session that c cannot decrypt. A second tab of the same browser (a window the page opens, which
 // shares the browser's storage, Web Locks and BroadcastChannel) reads through the tab that holds the store, and takes the store
 // when that one closes it. A new device of john.doe (a page of its own, so a new store) reads nothing older until it
-// restores the key backup with the recovery key.
+// restores the key backup with the recovery key, and after "New recovery key" the old key still restores its older version.
+// With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message. A
+// store re-made under another key is reported and kept, never deleted unasked, until "Start over".
 // Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
 const PASSWORD = "CallsClient1!!"
 const SECRET = "Encrypted lunch plans 7f3a"
@@ -185,6 +187,88 @@ feature("a second tab of the same browser reads through the tab that holds the s
     }
 })
 
+feature("only verified devices: with the sender's setting, or the room's, a device nobody verified gets no key of what follows", {
+    when() {
+        const members = [room.a, room.b]
+        const readBy = (page, seq) => page.evaluate(([roomId, seq]) => window.__e2ee.get("timeline", {chatRoomId: roomId, eventSeq: seq})
+            .then((p) => window.moqui.crypto.decryptRoom(roomId, p.eventList[0])).then((out) => (out.content ? out.content.body : null)), [room.id, seq])
+        const setMine = (page, on) => page.evaluate((on) => window.moqui.request("/apps/BasicComms/Settings/Devices/storeKeySettings",
+            {method: "POST", params: {verifiedDevicesOnly: on ? "true" : "false"}}).then(() => window.moqui.crypto.settingsChanged()), on)
+        // b's own setting: john.doe's device is not verified for b, so it cannot read b's next message
+        setMine(b, true)
+        const mine = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>Only verified b</p>"), [room.id, members])
+        const aReadsMine = readBy(a, mine.eventSeq)
+        const bReadsMine = readBy(b, mine.eventSeq)
+        setMine(b, false)
+        const open = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>To all b</p>"), [room.id, members])
+        const aReadsOpen = readBy(a, open.eventSeq)
+        // the room's setting, by its owner john.doe: b's device is not verified for john.doe
+        const roomOn = a.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "true"})
+            .then((out) => { window.moqui.crypto.settingsChanged(); return out }), room.id)
+        const notMember = c.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "false"}), room.id)
+        const roomMessage = a.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>Only verified room</p>"), [room.id, members])
+        const bReadsRoom = readBy(b, roomMessage.eventSeq)
+        a.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "false"})
+            .then(() => window.moqui.crypto.settingsChanged()), room.id)
+        return {aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom}
+    },
+    then({aReadsMine, bReadsMine, aReadsOpen, roomOn, notMember, bReadsRoom}) {
+        aReadsMine == null
+        bReadsMine == "Only verified b"
+        aReadsOpen == "To all b"
+        roomOn.verifiedDevicesOnly == true
+        notMember.reasonCode == "notFound"
+        bReadsRoom == null
+    }
+})
+
+feature("a store this browser cannot open is kept and reported, never deleted unasked; Start over makes a new device", {
+    when() {
+        const page = browser.newPage({user: "calls.client.c", password: PASSWORD, timeout: 30})
+        page.allowProblems(/userPhoto\?userId=|crypto store|encryption keys/)
+        page.goto("/qapps/BasicComms/Home")
+        const result = page.evaluate(async () => {
+            const crypto = window.moqui.crypto
+            const first = await crypto.ensureDevice()
+            const prefix = "moqui-crypto-" + first.userId + "-" + first.deviceId
+            await crypto.close()
+            // the store made again under another key: what a wrong key, or a store spoilt on disk, is to this browser
+            const drop = (name) => new Promise((resolve) => { const req = indexedDB.deleteDatabase(name); req.onsuccess = req.onerror = req.onblocked = () => resolve() })
+            await drop(prefix + "::matrix-sdk-crypto")
+            await drop(prefix + "::matrix-sdk-crypto-meta")
+            const sdk = await import("/libs/matrix-sdk-crypto/index.mjs")
+            await sdk.initAsync()
+            const other = await sdk.OlmMachine.initialize(new sdk.UserId(first.matrixUserId), new sdk.DeviceId(first.deviceId), prefix, "not-this-device-key")
+            other.close()
+            const refused = await crypto.ensureDevice().then(() => null, (err) => err)
+            const kept = (await indexedDB.databases()).map((d) => d.name).filter((name) => name && name.indexOf(prefix) === 0).length
+            const problem = crypto.state.problem ? crypto.state.problem.reasonCode : null
+            const again = await crypto.ensureDevice().then(() => null, (err) => err && err.reasonCode)
+            const started = await crypto.startOver()
+            const next = await crypto.ensureDevice()
+            const keptAfter = (await indexedDB.databases()).map((d) => d.name).filter((name) => name && name.indexOf(prefix) === 0).length
+            return {first: first.deviceId, refused: refused && refused.reasonCode, kept, problem, again, started, next: next.deviceId, keptAfter,
+                problemAfter: crypto.state.problem}
+        })
+        const listed = page.evaluate(() => window.moqui.request("/apps/BasicComms/Settings/Devices/devices").then((r) => (r.json.deviceList || []).map((d) => d.deviceId)))
+        page.close()
+        return {result, listed}
+    },
+    then({result, listed}) {
+        result.refused == "storeUnreadable"
+        result.kept > 0
+        result.problem == "storeUnreadable"
+        result.again == "storeUnreadable"
+        result.started == true
+        result.next != result.first
+        // the delete is asked; a database the failed open still holds goes when that connection closes
+        result.keptAfter < result.kept
+        result.problemAfter == null
+        listed.indexOf(result.first) < 0
+        listed.indexOf(result.next) >= 0
+    }
+})
+
 feature("a new device of the same user reads older messages only after restoring the key backup with the recovery key", {
     when() {
         const backup = a.evaluate(() => window.moqui.crypto.enableBackup().then((out) => window.moqui.crypto.backupStatus().then((status) => ({out, status}))))
@@ -200,9 +284,24 @@ feature("a new device of the same user reads older messages only after restoring
         const restored = fresh.evaluate((key) => window.moqui.crypto.restoreBackup(key), backup.out.recoveryKey)
         const after = fresh.evaluate(([roomId, item]) => window.moqui.crypto.decryptRoom(roomId, item), [room.id, item])
         const firstDevice = a.evaluate(() => window.moqui.crypto.state.deviceId)
-        return {backup, device, before, wrong, restored, after, firstDevice}
+        // the newest encrypted message, as its sender reads it
+        const expected = a.evaluate(([roomId, item]) => window.moqui.crypto.decryptRoom(roomId, item).then((out) => out.content.body), [room.id, item])
+        // "New recovery key": a new backup version; the old one keeps its keys, and the old recovery key still restores them
+        const second = a.evaluate(() => window.moqui.crypto.enableBackup())
+        const later = browser.newPage({user: "john.doe", timeout: 30})
+        later.allowProblems(/userPhoto\?userId=/)
+        later.goto("/qapps/BasicComms/Home")
+        later.evaluate(() => window.moqui.crypto.ensureDevice().then(() => true))
+        const older = later.evaluate((key) => window.moqui.crypto.restoreBackup(key), backup.out.recoveryKey)
+        const olderRead = later.evaluate(([roomId, item]) => window.moqui.crypto.decryptRoom(roomId, item), [room.id, item])
+        return {backup, device, before, wrong, restored, after, firstDevice, second, older, olderRead, expected}
     },
-    then({backup, device, before, wrong, restored, after, firstDevice}) {
+    then({backup, device, before, wrong, restored, after, firstDevice, second, older, olderRead, expected}) {
+        second.version != backup.out.version
+        older.version == backup.out.version
+        older.current == false
+        older.imported > 0
+        olderRead.content.body == expected
         backup.out.recoveryKey.split(" ").length == 12
         backup.status.enabled == true
         backup.status.backedUp == backup.status.total
@@ -210,6 +309,6 @@ feature("a new device of the same user reads older messages only after restoring
         !!before.error
         wrong == "wrongRecoveryKey" || wrong == "badRecoveryKey"
         restored.imported > 0
-        after.content.body == LATER
+        after.content.body == expected
     }
 })

@@ -497,3 +497,38 @@ test("an encrypted room's decrypted HTML keeps what a plain room's message may h
         assert.equal(chat.blobType(type), "application/octet-stream", String(type));
     }
 });
+
+test("an encrypted room's decrypted files are let go when the room closes: their blob URLs revoked, decrypted again when opened", async () => {
+    const realFetch = window.fetch;
+    const realDecrypt = window.moqui.crypto;
+    const revoked = [];
+    const realRevoke = URL.revokeObjectURL;
+    let decrypted = 0;
+    window.fetch = () => Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
+    window.moqui.crypto = { decryptFile: () => { decrypted++; return Promise.resolve(new Uint8Array([4, 5])); } };
+    URL.revokeObjectURL = (url) => { revoked.push(url); realRevoke.call(URL, url); };
+    try {
+        chat.openRoom("R1");
+        chat.openRoom("R2");
+        const first = await chat.openFile("/a", { chatAttachmentId: "F1", contentType: "image/png", sealed: {} }, "R1");
+        const again = await chat.openFile("/a", { chatAttachmentId: "F1", contentType: "image/png", sealed: {} }, "R1");
+        const other = await chat.openFile("/b", { chatAttachmentId: "F2", contentType: "image/png", sealed: {} }, "R2");
+        assert.equal(again, first, "opened once while the room is open");
+        assert.equal(decrypted, 2);
+        chat.closeRoom("R1");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.deepEqual(revoked, [first], "the closed room's file only");
+        assert.ok(!chat.fileUrls.F1 && !!chat.fileUrls.F2);
+        const reopened = await chat.openFile("/a", { chatAttachmentId: "F1", contentType: "image/png", sealed: {} }, "R1");
+        assert.ok(reopened !== first && decrypted === 3, "decrypted again");
+        chat.releaseFiles("R2", ["F2"]);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.ok(revoked.includes(other), "a message that left the page lets its file go");
+        chat.closeRoom("R2");
+        chat.releaseFiles("R1");
+    } finally {
+        window.fetch = realFetch;
+        window.moqui.crypto = realDecrypt;
+        URL.revokeObjectURL = realRevoke;
+    }
+});

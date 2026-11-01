@@ -36,6 +36,7 @@ function as(userId, name, parameters) {
     ec.message.clearErrors()
     return Object.assign({errors}, out)
 }
+const PASSWORD = "Keys-spec-9!"
 function makeUser(userId) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() === 0) {
@@ -43,7 +44,17 @@ function makeUser(userId) {
             account.setFields({userId, username: username(userId), userFullName: "Keys " + userId.slice(-1), disabled: "N"}, true, null, null)
             account.create()
         }
+        // a password, so a spec can sign in for real: a revoke of a device with keys needs a sign-in in the last five minutes
+        const account = ec.entity.find("moqui.security.UserAccount").condition("userId", userId).one()
+        account.setFields({currentPassword: ec.user.hashPassword(PASSWORD), passwordHashType: "argon2", passwordSalt: "", passwordBase64: "N",
+            successiveFailedLogins: 0, requirePasswordChange: "N"}, true, null, null)
+        account.update()
     })
+}
+/** as, signed in with the password just now (a recent sign-in, check#RecentAuth), not by an internal login. */
+function asFresh(userId, name, parameters) {
+    ec.user.loginUser(username(userId), PASSWORD)
+    return as(null, name, parameters)
 }
 function waitFor(test, millis) {
     const deadline = Date.now() + millis
@@ -213,10 +224,10 @@ feature("queries and claims reach only users who share a room or a live call, an
     }
 })
 
-feature("concurrent claims never hand out the same one-time key; the fallback key answers when none is left", {
+feature("concurrent claims never hand out the same one-time key, and one user takes at most 10 a minute of a device: the fallback key answers past it", {
     when() {
         const target = device(B, 20, "conc")
-        // 8 threads, each claiming 4 times in its own transactions: 32 claims of 20 one-time keys
+        // 8 threads, each claiming 4 times in its own transactions: 32 claims by one user of 20 one-time keys, 10 a minute
         const results = parallel(8, (n, args) => {
             ec.user.internalLoginUser(args.user)
             const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -236,16 +247,18 @@ feature("concurrent claims never hand out the same one-time key; the fallback ke
         const claimed = [].concat(...Array.from(results).map((list) => Array.from(list)))
         const oneTime = claimed.filter((id) => id.indexOf(":fb") < 0 && id)
         const fallback = claimed.filter((id) => id.indexOf(":fb") >= 0)
+        // another claimer is not held by the first one's limit
+        const other = Object.keys(((as(B, "claim#Keys", {one_time_keys: {[mx(B)]: {[target]: "signed_curve25519"}}}).one_time_keys || {})[mx(B)] || {})[target] || {})[0] || ""
         const left = as(B, "sync#ToDevice", {deviceId: target, since: 0})
-        return {claimed, oneTime, fallback, left}
+        return {claimed, oneTime, fallback, other, left}
     },
-    then({claimed, oneTime, fallback, left}) {
+    then({claimed, oneTime, fallback, other, left}) {
         claimed.length == 32
-        oneTime.length == 20
-        new Set(oneTime).size == 20
-        fallback.length == 12
-        // 0, not left out: the OlmMachine uploads more only when the count names the algorithm
-        left.device_one_time_keys_count.signed_curve25519 == 0
+        oneTime.length == 10
+        new Set(oneTime).size == 10
+        fallback.length == 22
+        other != "" && other.indexOf(":fb") < 0 && !oneTime.includes(other)
+        left.device_one_time_keys_count.signed_curve25519 == 9
         left.device_unused_fallback_key_types.length == 0
     }
 })
@@ -317,7 +330,7 @@ feature("a device list change is in the next sync of the users who share a room,
         const added = device(B, 1, "b3")
         const aSync = as(A, "sync#ToDevice", {deviceId: dev.A1, since: 0, deviceListSince: before})
         const cSync = as(C, "sync#ToDevice", {deviceId: dev.C1, since: 0, deviceListSince: before})
-        as(B, "revoke#ChatDevice", {deviceId: added})
+        asFresh(B, "revoke#ChatDevice", {deviceId: added})
         return {aSync, cSync}
     },
     then({aSync, cSync}) {
@@ -333,8 +346,8 @@ feature("a revoked device gets no new keys or messages, drops out of queries, an
         const seenBefore = queried(A, B)
         const sentBefore = as(A, "send#ToDevice", {deviceId: dev.A1, event_type: "m.room.encrypted", txn_id: "t-r1",
             messages: {[mx(B)]: {[doomed]: {ciphertext: "before"}}}})
-        const revoked = as(B, "revoke#ChatDevice", {deviceId: doomed})
-        const again = as(B, "revoke#ChatDevice", {deviceId: doomed})
+        const revoked = asFresh(B, "revoke#ChatDevice", {deviceId: doomed})
+        const again = asFresh(B, "revoke#ChatDevice", {deviceId: doomed})
         const queueAfter = toDeviceRows(B, doomed)
         const seenAfter = queried(A, B)
         const sentAfter = as(A, "send#ToDevice", {deviceId: dev.A1, event_type: "m.room.encrypted", txn_id: "t-r2",
@@ -394,5 +407,114 @@ feature("a member who left the room, and a forged sender, reach nothing: the sen
         cSeesALeft.length == 0
         toCLeft.queued == 0
         Object.keys(claimLeft.one_time_keys).length == 0
+    }
+})
+
+feature("retries of one to-device send at once queue one copy: the sender's row is locked before its transaction is looked up", {
+    when() {
+        const before = toDeviceRows(B, dev.B1)
+        // 6 threads send the very same transaction at once, each in its own transaction
+        const results = parallel(6, (n, args) => {
+            ec.user.internalLoginUser(args.user)
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const out = ec.service.sync().name("org.moqui.impl.ChatKeyServices.send#ToDevice").requireNewTransaction(true)
+                    .parameters({deviceId: args.from, event_type: "m.room.encrypted", txn_id: "t-concurrent",
+                        messages: {[args.mxB]: {[args.to]: {ciphertext: "once"}}}}).call() || {}
+                return {queued: Number(out.queued || 0), repeated: out.repeated === true}
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        }, {user: username(A), from: dev.A1, to: dev.B1, mxB: mx(B)}, {transaction: false})
+        const answers = Array.from(results)
+        return {added: toDeviceRows(B, dev.B1) - before, queued: answers.filter((a) => a.queued === 1).length,
+            repeated: answers.filter((a) => a.repeated).length}
+    },
+    then({added, queued, repeated}) {
+        added == 1
+        queued == 1
+        repeated == 5
+    }
+})
+
+feature("a revoke of a device with keys needs a recent sign-in, refused with the same parameters until the user confirms who they are", {
+    when() {
+        const doomed = device(B, 1, "b4")
+        const bare = as(B, "create#ChatDevice", {displayName: "No keys"}).deviceId
+        // signed in by an internal login (no password, no code) after a logout: not a recent sign-in
+        ec.user.logoutUser()
+        const refused = as(B, "revoke#ChatDevice", {deviceId: doomed})
+        const stillThere = as(B, "find#ChatDevices", {}).deviceList.map((d) => d.deviceId).includes(doomed)
+        // a device without keys has nothing encrypted to it: no sign-in asked
+        const bareRevoked = as(B, "revoke#ChatDevice", {deviceId: bare})
+        const check = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+        const wrong = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: "not-it"})
+        const confirmed = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
+        const checkAfter = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+        const allowed = as(null, "revoke#ChatDevice", {deviceId: doomed})
+        // a sign-in older than the age asked is not recent
+        const pause = Date.now() + 1100
+        while (Date.now() < pause) { /* let a second pass */ }
+        const aged = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {maxAgeSeconds: 1})
+        // another user's internal login does not take B's recent sign-in
+        const otherUser = as(A, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+        return {refused, stillThere, bareRevoked, check, wrong, confirmed, checkAfter, allowed, aged, otherUser}
+    },
+    then({refused, stillThere, bareRevoked, check, wrong, confirmed, checkAfter, allowed, aged, otherUser}) {
+        refused.reasonCode == "reauthRequired"
+        stillThere
+        bareRevoked.errors == ""
+        check.recent == false
+        check.method == "password"
+        wrong.errors != ""
+        wrong.reauthenticated == false
+        confirmed.reauthenticated == true
+        checkAfter.recent == true
+        allowed.errors == ""
+        aged.recent == false
+        otherUser.recent == false
+    }
+})
+
+feature("an account with a second factor confirms who it is with the password and then the code", {
+    when() {
+        // D gets single-use codes: a second factor
+        const codes = sys(() => call("org.moqui.impl.UserServices.create#SingleUseAuthcCodes", {userId: D, numberOfCodes: 2})).singleUseCodes
+        ec.user.logoutUser()
+        ec.user.internalLoginUser(username(D))
+        try {
+            const check = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+            const codeOnly = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: codes[0]})
+            const password = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
+            const wrongCode = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: "00000000"})
+            const afterWrong = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+            // the password was checked a moment ago: the code may come alone
+            const code = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: codes[0]})
+            const after = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+            return {check, codeOnly, password, wrongCode, afterWrong, code, after}
+        } finally {
+            sys(() => {
+                for (const factor of ec.entity.find("moqui.security.UserAuthcFactor").condition("userId", D).list()) {
+                    factor.set("thruDate", ec.user.nowTimestamp)
+                    factor.update()
+                }
+                const account = ec.entity.find("moqui.security.UserAccount").condition("userId", D).one()
+                account.set("successiveFailedLogins", 0)
+                account.update()
+            })
+        }
+    },
+    then({check, codeOnly, password, wrongCode, afterWrong, code, after}) {
+        check.secondFactor == true
+        check.recent == false
+        codeOnly.errors != ""
+        codeOnly.reauthenticated == false
+        password.codeNeeded == true
+        password.reauthenticated == false
+        wrongCode.codeNeeded == true
+        wrongCode.codeText.indexOf("not valid") >= 0
+        afterWrong.recent == false
+        code.reauthenticated == true
+        after.recent == true
     }
 })

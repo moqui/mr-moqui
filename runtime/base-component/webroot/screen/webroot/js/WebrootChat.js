@@ -450,7 +450,10 @@
         },
         closeRoom(roomId) {
             if (!chat.state.openRooms[roomId]) return;
-            if (--chat.state.openRooms[roomId] <= 0) delete chat.state.openRooms[roomId];
+            if (--chat.state.openRooms[roomId] <= 0) {
+                delete chat.state.openRooms[roomId];
+                chat.releaseFiles(roomId);
+            }
         },
         // typing in a room's composer: told at most every 3 seconds, and once when it stops
         typing(roomId, typing) {
@@ -484,6 +487,7 @@
         opened: {},
         reactionKeys: {},
         fileUrls: {},
+        fileRooms: {},
         purifyLoad: null,
         mentionsIn(html) {
             return Array.from(new Set(Array.from(String(html || "").matchAll(/data-mention-id="([^"]*)"/g)).map((match) => match[1]).filter((id) => id)));
@@ -540,9 +544,11 @@
         },
         // a file for an encrypted room: {blob (to upload, named encrypted), info (its key and hash, for the message)}
         sealFile(file) { return moqui.crypto.encryptFile(file); },
-        // the blob URL of an encrypted room's file, fetched from url and decrypted (once per page)
-        openFile(url, file) {
+        // the blob URL of an encrypted room's file, fetched from url and decrypted (once while its room is open: the
+        // decrypted bytes go when the room closes, releaseFiles)
+        openFile(url, file, roomId) {
             const id = file.chatAttachmentId;
+            if (roomId) chat.fileRooms[id] = roomId;
             if (chat.fileUrls[id]) return chat.fileUrls[id];
             chat.fileUrls[id] = root.fetch(url, { credentials: "same-origin" }).then((response) => {
                 if (!response.ok) throw new Error("status " + response.status);
@@ -550,6 +556,19 @@
             }).then((data) => moqui.crypto.decryptFile(data, file.sealed)).then((bytes) => root.URL.createObjectURL(new root.Blob([bytes],
                 { type: chat.blobType(file.contentType) }))).catch((err) => { delete chat.fileUrls[id]; throw err; });
             return chat.fileUrls[id];
+        },
+        // The decrypted files of a room let go (its blob URLs revoked, the bytes freed): all of them when the room closes
+        // (closeRoom, when no view of it is left), or the attachments ids (a message that left the page). Opened again later,
+        // a file is fetched and decrypted again.
+        releaseFiles(roomId, ids) {
+            const wanted = ids ? new Set(Array.from(ids).map(String)) : null;
+            for (const id of Object.keys(chat.fileUrls)) {
+                if (wanted ? !wanted.has(String(id)) : chat.fileRooms[id] !== roomId) continue;
+                const made = chat.fileUrls[id];
+                delete chat.fileUrls[id];
+                delete chat.fileRooms[id];
+                Promise.resolve(made).then((url) => root.URL.revokeObjectURL(url), () => null);
+            }
         },
         // my reaction with key to a message of a room (its eventSeq, to take it back), null when none
         myReaction(roomId, messageSeq, key, me) {
@@ -571,7 +590,7 @@
             }, (err) => ({ error: (err && (err.errors || err.message)) || "unreadable" }));
         },
         // a decrypted message's content on an event or timeline item: body (cleaned), bodyText, files and mentions
-        applyOpened(item, opened, attachmentUrl) {
+        applyOpened(item, opened, attachmentUrl, roomId) {
             if (!opened || opened.error) {
                 Object.assign(item, { body: null, bodyText: null, undecryptable: true });
                 return Promise.resolve(item);
@@ -592,7 +611,7 @@
             }
             // an image is shown from its decrypted blob
             const images = attachmentUrl ? item.attachments.filter((file) => file.sealed && /^image\//i.test(file.contentType || "")) : [];
-            return Promise.all(images.map((file) => chat.openFile(attachmentUrl(file), file).then((url) => { file.blobUrl = url; }, () => null))).then(() => item);
+            return Promise.all(images.map((file) => chat.openFile(attachmentUrl(file), file, roomId).then((url) => { file.blobUrl = url; }, () => null))).then(() => item);
         },
         // Decrypts the encrypted events of a page of a room's timeline in place (get#Timeline's items). Nothing for plain ones.
         openEvents(roomId, list, attachmentUrl) {
@@ -601,7 +620,7 @@
             return chat.loadPurify().then(() => Promise.all(items.map((item) => {
                 const work = [];
                 if (item.encrypted) work.push(chat.openSealed(roomId, item.encryptedEventSeq || item.eventSeq, item.encryptedSentDate || item.sentDate,
-                    item.senderUserId, item.encrypted).then((opened) => chat.applyOpened(item, opened, attachmentUrl)));
+                    item.senderUserId, item.encrypted).then((opened) => chat.applyOpened(item, opened, attachmentUrl, roomId)));
                 if ((item.encryptedReactions || []).length) work.push(Promise.all(item.encryptedReactions.map((reaction) =>
                     chat.openSealed(roomId, reaction.eventSeq, reaction.sentDate, reaction.senderUserId, reaction.encrypted).then((opened) => ({ reaction, opened }))))
                     .then((all) => {
@@ -645,7 +664,7 @@
                     }
                     return event;
                 }
-                return chat.applyOpened(event, opened, attachmentUrl);
+                return chat.applyOpened(event, opened, attachmentUrl, roomId);
             }).then(() => event, (err) => { console.error("An encrypted event was not opened", err); return event; });
         },
 

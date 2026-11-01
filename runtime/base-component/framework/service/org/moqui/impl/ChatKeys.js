@@ -66,6 +66,13 @@ const MAX_BACKUP_SESSIONS = 100000
 const MAX_BACKUP_SESSION_JSON = 16384
 /** A device-list cursor looks back this far, so a change committed a little late is still seen (repeating one is harmless). */
 const LIST_OVERLAP_MS = 120000
+/** One-time keys one user may claim of one device in a minute; past it the device's fallback key answers. */
+const MAX_CLAIMS_PER_MINUTE = 10
+/** The age of a sign-in an identity reset, a new or deleted key backup and a revoke of a device need. */
+const RECENT_AUTH_SECONDS = 300
+/** The user's preference: room keys only to verified or cross-signed devices, in every encrypted room. */
+const VERIFIED_ONLY_PREFERENCE = 'CHAT_VERIFIED_DEVICES_ONLY'
+const ROOM = 'moqui.chat.ChatRoom'
 
 const ms = (value) => {
   if (value == null || value === '') return null
@@ -88,6 +95,17 @@ function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
   return { reasonCode }
 }
+
+/**
+ * Whether the session's user signed in (or confirmed who they are) in the last five minutes (check#RecentAuth): a password,
+ * a second factor's code, an SSO login or a re-authentication; never a key or an internal login.
+ */
+function recentAuth() {
+  const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.check#RecentAuth')
+    .parameters({ maxAgeSeconds: RECENT_AUTH_SECONDS }).disableAuthz().call() || {}
+  return out.recent === true
+}
+const refuseReauth = () => refuse('reauthRequired', 'Confirm it is you: sign in again to do this')
 
 // ---- Matrix user IDs ----
 
@@ -286,16 +304,34 @@ function renameDevice(p) {
   return { device: deviceView(found.device) }
 }
 
-/** Revoke one of my devices: no new keys or messages reach it, its keys and queue go, and it drops out of queries. */
+/**
+ * Whether a revoke of device may go without a recent sign-in: a device with no identity keys (nothing is encrypted to it:
+ * a browser dropping a device whose first keys were refused), or the one-time re-key of a store made before the store key
+ * was derived (it still has a stored key, legacyStoreKey) to a newer device of mine that replaces it (replacedBy).
+ */
+function revokeWithoutReauth(me, device, replacedBy) {
+  if (!device.ed25519Key) return true
+  if (blank(device.storeKey) || blank(replacedBy) || String(replacedBy) === device.deviceId) return false
+  const newer = one(DEVICE, { userId: me, deviceId: String(replacedBy) })
+  return !!newer && !newer.revokedDate && blank(newer.storeKey)
+}
+
+/**
+ * Revoke one of my devices: no new keys or messages reach it, its keys and queue go, and it drops out of queries. A device
+ * with keys needs a sign-in in the last five minutes (reauthRequired), as the server cannot tell which browser asks.
+ */
 function revokeDevice(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in first')
   const device = blank(p.deviceId) ? null : find(DEVICE).condition({ userId: me, deviceId: String(p.deviceId) }).forUpdate(true).one()
   if (!device) return refuse('notFound', 'Device not found')
   if (device.revokedDate) return { deviceId: device.deviceId, repeated: true }
+  if (!revokeWithoutReauth(me, device, p.replacedBy) && !recentAuth()) return refuseReauth()
   device.set('revokedDate', ec.user.nowTimestamp)
-  // its store can no longer be opened with a key from here
+  // its store can no longer be opened with a key from here: a stored key (from before the derived one) is dropped, and the
+  // revision the key is derived from goes up
   device.set('storeKey', null)
+  device.set('storeRevision', Number(device.storeRevision || 1) + 1)
   listChanged(device)
   device.update()
   find(KEY).condition({ userId: me, deviceId: device.deviceId }).deleteAll()
@@ -309,19 +345,26 @@ function revokeDevice(p) {
 }
 
 /**
- * The passphrase my device's browser store is encrypted with (OlmMachine.initialize store_passphrase): made on the first
- * ask, 43 characters of URL-safe base64 (258 random bits), and the same at each ask after. Only for my own device that is
- * not revoked; a revoke clears it. Never logged.
+ * The passphrase my device's browser store is encrypted with (OlmMachine.initialize store_passphrase): derived, not stored
+ * (derive#ChatStoreKey: HMAC-SHA-256 under the platform secret chat_store_key_secret of userId|deviceId|revision, 43
+ * characters of URL-safe base64), so no table or export holds it. A device made before the derived key still has the
+ * random one it was given (ChatDevice.storeKey): it is answered as legacyStoreKey, so the browser opens its store once with
+ * it and moves the keys to a new device under the derived key (the old one is then revoked, which drops it). Only for my
+ * own device that is not revoked. Never logged.
  */
 function storeKey(p) {
-  const found = ownDevice(p.deviceId, true)
+  const found = ownDevice(p.deviceId, false)
   if (found.refusal) return found.refusal
-  const { device } = found
-  if (blank(device.storeKey)) {
-    device.set('storeKey', String(ec.user.randomString(43)))
-    device.update()
+  const { me, device } = found
+  let derived = {}
+  try {
+    derived = ec.service.sync().name('org.moqui.impl.ChatKeyServices.derive#ChatStoreKey')
+      .parameters({ userId: me, deviceId: device.deviceId, revision: Number(device.storeRevision || 1) }).disableAuthz().call() || {}
+  } catch (err) {
+    ec.logger.error(`The store key of device ${device.deviceId} of ${me} was not made: ${err && err.message ? err.message : err}`)
   }
-  return { storeKey: String(device.storeKey) }
+  if (ec.message.hasError() || blank(derived.storeKey)) return refuse('failed', 'This device\'s store key could not be made')
+  return { storeKey: String(derived.storeKey), legacyStoreKey: blank(device.storeKey) ? null : String(device.storeKey) }
 }
 
 // ---- keys/upload, keys/query, keys/claim ----
@@ -472,12 +515,19 @@ function queryKeys(p) {
     user_signing_keys: cross.user_signing_keys }
 }
 
-/** Takes one key of the device (its row locked first): the oldest unclaimed one-time key, else its fallback key. */
+/**
+ * Takes one key of the device (its row locked first): the oldest unclaimed one-time key, else its fallback key. A claimer
+ * who took MAX_CLAIMS_PER_MINUTE of the device's one-time keys in the last minute gets the fallback key, so one user
+ * cannot drain a device's one-time keys (Olm sessions on a fallback key still work).
+ */
 function claimOne(me, userId, deviceId, algorithm) {
   const device = find(DEVICE).condition({ userId, deviceId }).forUpdate(true).one()
   if (!device || device.revokedDate) return null
   const first = (query) => Array.from(query.limit(1).list())[0] || null
-  const key = first(find(KEY).condition({ userId, deviceId, algorithm, isFallback: 'N', claimedDate: null }).orderBy('uploadedDate').orderBy('keyId'))
+  const recent = find(KEY).condition({ userId, deviceId, isFallback: 'N', claimedByUserId: me })
+    .condition('claimedDate', '>', new Date(ms(ec.user.nowTimestamp) - 60000)).count()
+  const key = recent >= MAX_CLAIMS_PER_MINUTE ? null
+    : first(find(KEY).condition({ userId, deviceId, algorithm, isFallback: 'N', claimedDate: null }).orderBy('uploadedDate').orderBy('keyId'))
   const chosen = key || first(find(KEY).condition({ userId, deviceId, algorithm, isFallback: 'Y' }).orderBy('-uploadedDate'))
   if (!chosen) return null
   if (!chosen.claimedDate) {
@@ -533,9 +583,6 @@ function sendToDevice(p) {
   if (!eventType || eventType.length > 255) return refuse('badRequest', 'The event type is required')
   if (!txnId || txnId.length > 255) return refuse('badRequest', 'The transaction ID is required')
   const messages = isObject(p.messages) ? p.messages : {}
-  if (find(TO_DEVICE).condition({ senderUserId: me, senderDeviceId: sender.deviceId, txnId }).count() > 0) {
-    return { queued: 0, repeated: true }
-  }
   const asked = []
   for (const id of Object.keys(messages)) {
     const userId = userOf(id)
@@ -561,13 +608,24 @@ function sendToDevice(p) {
       }
     } else targets.set(a.userId + '\u0000' + a.deviceId, a)
   }
-  const ordered = Array.from(targets.values())
-  ordered.sort((a, b) => (a.userId === b.userId ? (a.deviceId < b.deviceId ? -1 : 1) : (a.userId < b.userId ? -1 : 1)))
+  // The rows are locked in one order (user, then device), the sender's own among them, before the transaction is looked
+  // up: two sends of one transaction at once (a retry) wait on the sender's row, and the second finds the first's copies.
+  // One order everywhere (claims too) means two sends cannot wait on each other.
+  const senderKey = me + '\u0000' + sender.deviceId
+  const order = (a, b) => (a.userId === b.userId ? (a.deviceId < b.deviceId ? -1 : 1) : (a.userId < b.userId ? -1 : 1))
+  const ordered = Array.from(targets.values()).filter((t) => t.userId + '\u0000' + t.deviceId !== senderKey)
+  const locks = ordered.concat([{ userId: me, deviceId: sender.deviceId, sender: true }])
+  locks.sort(order)
+  const rowsOf = new Map()
+  for (const t of locks) rowsOf.set(t.userId + '\u0000' + t.deviceId, find(DEVICE).condition({ userId: t.userId, deviceId: t.deviceId }).forUpdate(true).one())
+  if (find(TO_DEVICE).condition({ senderUserId: me, senderDeviceId: sender.deviceId, txnId }).count() > 0) {
+    return { queued: 0, repeated: true }
+  }
+  ordered.sort(order)
   const woken = new Set()
   let queued = 0
   for (const t of ordered) {
-    if (t.userId === me && t.deviceId === sender.deviceId) continue
-    const device = find(DEVICE).condition({ userId: t.userId, deviceId: t.deviceId }).forUpdate(true).one()
+    const device = rowsOf.get(t.userId + '\u0000' + t.deviceId)
     if (!device || device.revokedDate) continue
     const pos = Number(device.lastToDevicePos || 0) + 1
     if (pos - Number(device.ackedToDevicePos || 0) > MAX_QUEUED) {
@@ -728,6 +786,8 @@ function uploadCrossSigningKeys(p) {
   if (replacesMaster && !reset) {
     return refuse('keysChanged', 'Your identity (master key) cannot change unless you choose to reset it')
   }
+  // a reset replaces who the user is to everyone they talk to: it needs a sign-in in the last five minutes
+  if (replacesMaster && !recentAuth()) return refuseReauth()
   if (!master && !current.master) return refuse('noMasterKey', 'Upload the master key first')
   const masterKey = master ? master.publicKey : current.master.publicKey
   for (const usage of ['self_signing', 'user_signing']) {
@@ -945,6 +1005,8 @@ function createBackupVersion(p) {
   if (!algorithm || algorithm.length > 255) return refuse('badRequest', 'The backup algorithm is required')
   const auth = authData(p)
   if (auth.refusal) return auth.refusal
+  // a new backup takes the room keys of the user's devices from now on, encrypted to its key: it needs a recent sign-in
+  if (!recentAuth()) return refuseReauth()
   const made = find(BACKUP).condition('userId', me).count()
   if (made >= MAX_BACKUP_VERSIONS) return refuse('tooMany', 'Too many key backup versions')
   let number = made + 1
@@ -985,6 +1047,7 @@ function deleteBackupVersion(p) {
   if (!me) return refuse('notSignedIn', 'Sign in first')
   const row = liveBackup(me, p.version, true)
   if (!row) return refuse('notFound', 'No key backup')
+  if (!recentAuth()) return refuseReauth()
   find(BACKUP_SESSION).condition({ userId: me, version: row.version }).deleteAll()
   row.set('deletedDate', ec.user.nowTimestamp)
   row.update()
@@ -1093,6 +1156,74 @@ function deleteBackupKeys(p) {
   return { count: backupCount(me, row.version), etag: String(row.etag || 0) }
 }
 
+/**
+ * My backup versions not deleted, newest first: version, algorithm, the backup's public key (auth_data.public_key, so a
+ * browser finds the version its recovery key opens), count, createdDate, and current (the latest). An older one still
+ * holds the keys backed up to it until it is deleted.
+ */
+function findBackupVersions() {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const list = Array.from(find(BACKUP).condition('userId', me).condition('deletedDate', null).limit(MAX_BACKUP_VERSIONS + 10).list())
+  list.sort((a, b) => Number(b.version) - Number(a.version))
+  const versionList = list.map((row, index) => {
+    const auth = parseJson(row.authDataJson, `Key backup ${row.version} auth_data of ${me}`)
+    return { version: row.version, algorithm: row.algorithm, publicKey: isObject(auth) ? auth.public_key || null : null,
+      count: backupCount(me, row.version), createdDate: ms(row.createdDate), current: index === 0 }
+  })
+  return { versionList }
+}
+
+// ---- only verified devices (room keys to verified or cross-signed devices only) ----
+
+const isTrue = (value) => value === true || value === 'true' || value === 'Y'
+
+/**
+ * My encryption settings: verifiedDevicesOnly (mine, for every encrypted room), and with chatRoomId the room's
+ * (roomVerifiedDevicesOnly, set by its moderators; false for a room I am not a member of). The browser shares a room's keys
+ * only with verified or cross-signed devices when either is on.
+ */
+function getKeySettings(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  let roomVerifiedDevicesOnly = false
+  if (!blank(p.chatRoomId)) {
+    const member = find(MEMBER).condition({ chatRoomId: String(p.chatRoomId), userId: me }).condition('leftDate', null).count() > 0
+    const room = member ? one(ROOM, { chatRoomId: String(p.chatRoomId) }) : null
+    roomVerifiedDevicesOnly = !!room && room.verifiedDevicesOnly === 'Y'
+  }
+  return { verifiedDevicesOnly: ec.user.getPreference(VERIFIED_ONLY_PREFERENCE) === 'Y', roomVerifiedDevicesOnly }
+}
+
+/** My setting: room keys only to verified or cross-signed devices, in every encrypted room. */
+function storeKeySettings(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const on = isTrue(p.verifiedDevicesOnly)
+  ec.user.setPreference(VERIFIED_ONLY_PREFERENCE, on ? 'Y' : 'N')
+  return { verifiedDevicesOnly: on }
+}
+
+/**
+ * An encrypted room's setting, by a moderator or owner: its members' browsers share its keys only with verified or
+ * cross-signed devices. reasonCode notFound (not a member), notModerator, notEncrypted.
+ */
+function setRoomVerifiedOnly(p) {
+  const me = ec.user.userId
+  if (!me) return refuse('notSignedIn', 'Sign in first')
+  const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', String(p.chatRoomId || ''))
+    .call() || {}
+  if (ec.message.hasError()) return { reasonCode: 'failed' }
+  if (!access.isMember) return refuse('notFound', 'Chat room not found')
+  if (!access.canModerate) return refuse('notModerator', 'Only a moderator or owner may change the room')
+  const room = find(ROOM).condition('chatRoomId', String(p.chatRoomId)).forUpdate(true).one()
+  if (!room || room.encrypted !== 'Y') return refuse('notEncrypted', 'Only an encrypted room has this setting')
+  const on = isTrue(p.verifiedDevicesOnly)
+  room.set('verifiedDevicesOnly', on ? 'Y' : 'N')
+  room.update()
+  return { verifiedDevicesOnly: on }
+}
+
 /** The cleanup job: messages waiting longer than chat_to_device_retention_days (default 30), and claimed one-time keys. */
 function clean(p) {
   const days = Math.max(1, Number(property('chat_to_device_retention_days')) || 30)
@@ -1160,6 +1291,7 @@ const operations = {
   createDevice, findDevices, renameDevice, revokeDevice, storeKey, uploadKeys, queryKeys, claimKeys, sendToDevice, syncToDevice,
   uploadCrossSigningKeys, uploadKeySignatures, createBackupVersion, getBackupVersion, updateBackupVersion,
   deleteBackupVersion, storeBackupKeys, getBackupKeys, deleteBackupKeys, clean, whoami, mapIds, web,
+  findBackupVersions, getKeySettings, storeKeySettings, setRoomVerifiedOnly,
 }
 
 function execute(op, parameters) {

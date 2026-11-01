@@ -27,7 +27,8 @@
  * The API: supported(), prepare() (Promise<{cryptoDeviceId, scriptTransform: true}>, or a rejection with reasonCode and
  * message), begin(callSessionId, legId), onView(view), attachSender(sender, kind), attachReceiver(receiver, kind, legId),
  * end(), and state (reactive): {active, callSessionId, legId, epoch, kid, rotations, error, keys: {legId: {kid, epoch,
- * verified, at}}, frames: {legId: {received, failed}}, sent, dropped, lastSend: {kid, devices}}.
+ * verified, at}}, frames: {legId: {received, failed}}, sent, dropped, lastSend: {kid, devices}, unverified: [{userId, deviceId}]
+ * (the roster's devices this browser has not verified, which the call page warns of)}.
  */
 (function (root) {
     "use strict";
@@ -41,7 +42,7 @@
     const PENDING_MS = 15000;
 
     const state = reactive({ active: false, callSessionId: null, legId: null, epoch: 0, kid: null, rotations: 0, error: "",
-        keys: {}, frames: {}, sent: 0, dropped: 0, lastSend: null });
+        keys: {}, frames: {}, sent: 0, dropped: 0, lastSend: null, unverified: [] });
     let worker = null;
     let roster = new Map(); // legId -> {legId, userId, deviceId, keyIndex, keyGeneration}
     let rosterKey = "";
@@ -88,7 +89,7 @@
         worker = new root.Worker("/js/WebrootSFrameWorker.js");
         worker.onmessage = (event) => onStats(event.data || {});
         Object.assign(state, { active: true, callSessionId, legId, epoch: 0, kid: null, rotations: 0, error: "", keys: {}, frames: {},
-            sent: 0, dropped: 0, lastSend: null });
+            sent: 0, dropped: 0, lastSend: null, unverified: [] });
         roster = new Map();
         rosterKey = "";
         pending = [];
@@ -105,7 +106,7 @@
         roster = new Map();
         rosterKey = "";
         pending = [];
-        Object.assign(state, { active: false, callSessionId: null, legId: null, epoch: 0, kid: null, keys: {}, frames: {}, lastSend: null });
+        Object.assign(state, { active: false, callSessionId: null, legId: null, epoch: 0, kid: null, keys: {}, frames: {}, lastSend: null, unverified: [] });
     }
 
     function onStats(m) {
@@ -200,6 +201,9 @@
             state.epoch = epoch;
             state.rotations++;
             state.lastSend = { kid, devices: sent.devices || [], skipped: sent.skipped || [] };
+            // the roster's devices this browser has not verified (by emoji or QR, or through their user's cross-signing):
+            // the page warns, since a device the server added to a participant would get the keys too
+            unverifiedOf(targets).then((list) => { if (state.active && state.legId === legId) state.unverified = list; }, () => null);
             if (first) {
                 state.kid = kid;
                 return;
@@ -212,6 +216,20 @@
             }, SWITCH_MS);
         }).catch((err) => { state.error = String((err && err.message) || err); });
         return rotating;
+    }
+
+    /** The devices of targets ({userId, deviceIds}) this browser's store does not hold as verified: [{userId, deviceId}]. */
+    async function unverifiedOf(targets) {
+        const out = [];
+        for (const { userId, deviceIds } of targets) {
+            let known = [];
+            try { known = (await moqui.crypto.devicesOf(userId)) || []; } catch (err) { continue; }
+            for (const deviceId of deviceIds) {
+                const device = known.find((d) => d.deviceId === deviceId);
+                if (!device || !device.verified) out.push({ userId, deviceId });
+            }
+        }
+        return out;
     }
 
     /**

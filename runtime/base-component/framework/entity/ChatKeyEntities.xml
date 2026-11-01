@@ -18,8 +18,8 @@ along with this software (see the LICENSE.md file). If not, see
     ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are
     org.moqui.impl.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
 
-    Beside them: each device's store key (the passphrase its browser store is encrypted with, a secret answered only to
-    its user), the users' cross-signing keys and the signatures they upload, and key backups (Megolm sessions encrypted
+    Beside them: each device's store revision (its store key, the passphrase its browser store is encrypted with, is derived
+    from it under a platform secret, not stored, and answered only to its user), the users' cross-signing keys and the signatures they upload, and key backups (Megolm sessions encrypted
     in the browser to the user's backup key, opaque here).
 
     These are moqui.* entities, which entity filters never apply to: screens reach them only through ChatKeyServices. -->
@@ -49,11 +49,13 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastSeenDate" type="date-time"/>
         <field name="verifiedDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
-        <field name="storeKey" type="text-medium" encrypt="true"><description>The passphrase the browser encrypts this
-            device's crypto store with (OlmMachine.initialize store_passphrase): made on the first ask
-            (get#ChatDeviceStoreKey) and answered only to the device's own user, so a copied browser profile without a
-            signed-in session cannot open the store; cleared when the device is revoked. Never logged, never in another
-            answer.</description></field>
+        <field name="storeKey" type="text-medium" encrypt="true"><description>Legacy: the random passphrase a device made
+            before the store key was derived (get#ChatDeviceStoreKey answers it as legacyStoreKey) encrypted its browser
+            store with. The browser moves that store's keys to a new device under the derived key and revokes this one,
+            which clears it; nothing writes it any more. The field goes once no device holds one.</description></field>
+        <field name="storeRevision" type="number-integer" default="1"><description>The revision the device's store key is
+            derived from (derive#ChatStoreKey: userId|deviceId|revision under chat_store_key_secret); a revoke bumps
+            it.</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="many" related="moqui.chat.ChatDeviceKey" short-alias="keys">
             <key-map field-name="userId"/><key-map field-name="deviceId"/></relationship>
@@ -167,4 +169,13 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="uploadedDate" type="date-time"/>
         <relationship type="one" related="moqui.chat.ChatKeyBackup" short-alias="backup"/>
     </entity>
+
+    <!-- ========== Only verified devices ========== -->
+
+    <extend-entity entity-name="ChatRoom" package="moqui.chat">
+        <field name="verifiedDevicesOnly" type="text-indicator"><description>Y: an encrypted room whose members' browsers
+            share its keys only with verified or cross-signed devices (set by a moderator: set#RoomVerifiedDevicesOnly). Each
+            user may also turn this on for all their encrypted rooms (the preference CHAT_VERIFIED_DEVICES_ONLY). The browsers
+            apply it; the server only keeps it.</description></field>
+    </extend-entity>
 </entities>
