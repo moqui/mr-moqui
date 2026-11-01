@@ -80,7 +80,8 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
 - <a id="in-call"></a>**In a call** (V5). Hold puts the phone on hold (it hears hold music, and nobody hears it). More
   has Transfer (to a person, a number or a queue; Now hands the caller over and you leave, Talk to them first holds the
   caller while you talk to the person, then Complete transfer or Cancel transfer), Add a participant (a person, or a
-  number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server)
+  number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server unless
+  cascading media servers are on, `rtc_cascade_enabled`)
   and Make it a meeting. A number you transfer to or add is a call you place, with your permissions and limits. A
   transfer needs the call answered, and if the call changed since you looked, try again. When a phone call rings you,
   the ring bar and the call show who is calling when an app knows the number (in IronStone, the contact and their open

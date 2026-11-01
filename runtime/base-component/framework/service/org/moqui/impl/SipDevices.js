@@ -61,6 +61,15 @@ function liveSipNodes() {
   return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS)
 }
 
+/** Cascading media nodes (W7, Calls.js cascadeOn): a phone may ring on another node than the call's. */
+const cascade = () => ['true', 'y', 'yes', '1'].includes(property('rtc_cascade_enabled').toLowerCase())
+
+/** A live media node that takes calls (CallMediaNode), for a phone's room there to relay to the call's node. */
+function liveMediaNode(instanceId) {
+  const node = one('moqui.call.CallMediaNode', { instanceId })
+  return !!node && node.draining !== 'Y' && ms(node.heartbeatDate) >= nowMs() - NODE_STALE_MS
+}
+
 /** What a phone is set up with: the domain, the server's ports, and the transport to choose. */
 function serverSetup() {
   const port = (address, name) => {
@@ -283,13 +292,20 @@ function expireRegistrations() {
 /**
  * Rings the devices of these users that are registered with the call's node (Calls.js ring, beside their tabs): a CltSipDevice
  * leg offered for each, which the engine forks to the device's live bindings. The first answer wins (Calls.js deviceEvent).
- * Nothing while the registrar is off, or the call's node has no SIP engine.
+ * Nothing while the registrar is off, or the call's node has no SIP engine. With rtc_cascade_enabled (W7) a phone
+ * registered with another node rings there too: its leg's media is on that node (CallLeg.mediaNodeId), whose room is
+ * linked to the call's node first.
  */
 function ringDevices(p) {
   if (!registrarOn()) return { ringCount: 0 }
   const session = p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
   if (!session || session.statusId === 'CssEnded' || !session.mediaNodeId) return { ringCount: 0 }
-  if (!liveSipNodes().some((n) => n.instanceId === session.mediaNodeId)) return { ringCount: 0 }
+  // the nodes a phone may ring on: the call's, and with cascading media nodes (W7) any live one with a SIP engine and
+  // media, whose room relays to the call's node
+  const sipNodes = new Set(liveSipNodes().map((n) => n.instanceId))
+  const ringNodes = cascade() ? new Set(Array.from(sipNodes).filter((id) => id === session.mediaNodeId || liveMediaNode(id)))
+    : new Set(sipNodes.has(session.mediaNodeId) ? [session.mediaNodeId] : [])
+  if (!ringNodes.size) return { ringCount: 0 }
   const now = nowMs()
   let fromUser = null
   if (p.fromUserId) fromUser = one('moqui.security.UserAccount', { userId: p.fromUserId })?.username || null
@@ -302,15 +318,22 @@ function ringDevices(p) {
     const participant = one(PARTICIPANT, { callSessionId: session.callSessionId, userId })
     if (!participant) continue
     for (const device of rows(DEVICE, { userId, statusId: 'SdsActive' })) {
-      const live = find(REGISTRATION).condition('sipDeviceId', device.sipDeviceId).condition('instanceId', session.mediaNodeId)
-        .condition('expiresDate', '>', new Date(now)).count() > 0
-      if (!live) continue
+      // the node the phone is registered with: the call's when it is there too
+      const nodes = Array.from(find(REGISTRATION).condition('sipDeviceId', device.sipDeviceId)
+        .condition('expiresDate', '>', new Date(now)).list()).map((r) => r.instanceId).filter((id) => ringNodes.has(id))
+      if (!nodes.length) continue
+      const node = nodes.includes(session.mediaNodeId) ? session.mediaNodeId : nodes[0]
       const leg = ec.entity.makeValue(LEG)
       leg.setSequencedIdPrimary()
       leg.setFields({ callSessionId: session.callSessionId, callParticipantId: participant.callParticipantId, legTypeEnumId: 'CltSipDevice',
-        sipDeviceId: device.sipDeviceId, statusId: 'ClsOffered', offeredDate: ec.user.nowTimestamp }, true, null, null)
+        sipDeviceId: device.sipDeviceId, statusId: 'ClsOffered', offeredDate: ec.user.nowTimestamp,
+        mediaNodeId: node === session.mediaNodeId ? null : node }, true, null, null)
       leg.create()
-      sipControl(session.mediaNodeId, { action: 'ringDevice', callSessionId: session.callSessionId, callLegId: leg.callLegId,
+      if (node !== session.mediaNodeId) {
+        ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({ mediaNodeId: node,
+          message: { action: 'link', callSessionId: session.callSessionId, originNodeId: session.mediaNodeId } }).disableAuthz().call()
+      }
+      sipControl(node, { action: 'ringDevice', callSessionId: session.callSessionId, callLegId: leg.callLegId,
         sipDeviceId: device.sipDeviceId, username: device.username, fromUser, fromName: p.fromName || fromUser, ringSeconds })
       ringCount++
     }

@@ -26,6 +26,10 @@
 //! go to the call's media node, on this server or another (`rtc-signal`, to that node only). While the socket is open
 //! its bindings are kept alive (`heartbeat#Connections`, every 20 seconds); when it closes they are released
 //! (`release#Connection`) and the leg leaves after the reconnect grace unless a new socket binds it.
+//!
+//! With cascading media nodes (W7) `bind#Connection` answers the leg's media node (this one, when it holds media) and
+//! the call's; the frames go to the leg's, which links the room to the call's node. The `rtc-signal` messages between
+//! two media nodes of a room, `relay` and `roomFrame`, go to the driver here.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -59,13 +63,15 @@ const MAX_BINDINGS: usize = 4;
 
 static SIGNAL: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 
-/// A leg this socket bound, with the generation it claimed and the node holding its media.
+/// A leg this socket bound, with the generation it claimed, the node holding its media and the call's media node (W7:
+/// another when the leg's is an edge).
 #[derive(Clone, Debug)]
 struct Binding {
     call: String,
     leg: String,
     generation: u64,
     media_node: String,
+    origin_node: String,
 }
 
 fn bindings() -> &'static Mutex<HashMap<u64, Vec<Binding>>> {
@@ -275,11 +281,17 @@ fn join(
         if generation == 0 || media_node.is_empty() {
             return error(&slot, &call, &leg, &id, "failed", "the call has no media server");
         }
+        let origin_node = out
+            .get("originNodeId")
+            .map(to_plain_string)
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| media_node.clone());
         let binding = Binding {
             call: call.clone(),
             leg: leg.clone(),
             generation,
             media_node,
+            origin_node,
         };
         {
             let mut all = lock(bindings());
@@ -357,6 +369,7 @@ fn forward(factory: &Arc<ExecutionContextFactory>, slot: &Slot, binding: &Bindin
             room: binding.call.clone(),
             leg: binding.leg.clone(),
             generation: binding.generation,
+            origin: binding.origin_node.clone(),
             frame,
         };
         if let Err(code) = crate::rtc::command(command) {
@@ -376,7 +389,8 @@ fn forward(factory: &Arc<ExecutionContextFactory>, slot: &Slot, binding: &Bindin
         origin_id: moqui_core::notify::origin_id().to_string(),
         message_id: moqui_core::entity::uuid_v4().unwrap_or_default(),
         body: json!({"target": binding.media_node, "kind": "frame", "origin": own, "socketId": slot.id,
-            "callSessionId": binding.call, "callLegId": binding.leg, "generation": binding.generation, "frame": frame}),
+            "callSessionId": binding.call, "callLegId": binding.leg, "generation": binding.generation,
+            "originNode": binding.origin_node, "frame": frame}),
     };
     let (node, call, leg, id) = (
         binding.media_node.clone(),
@@ -460,10 +474,47 @@ fn deliver_signal(message: &TopicMessage) {
                 room: text("callSessionId"),
                 leg: text("callLegId"),
                 generation: body.get("generation").and_then(Json::as_u64).unwrap_or(0),
+                origin: text("originNode"),
                 frame: body.get("frame").cloned().unwrap_or(Json::Null),
             };
             if let Err(code) = crate::rtc::command(command) {
                 tracing::debug!("call frame for {} not taken: {code}", text("callSessionId"));
+            }
+        }
+        // W7: the SFU of another media node of the room, about their relay link
+        Some("relay") => {
+            let message = body
+                .get("message")
+                .cloned()
+                .map(serde_json::from_value::<moqui_rtc::RelayMessage>);
+            let Some(Ok(message)) = message else {
+                tracing::debug!("call relay message for {} not read", text("callSessionId"));
+                return;
+            };
+            let command = Command::Relay {
+                room: text("callSessionId"),
+                from: text("from"),
+                message: Box::new(message),
+            };
+            if let Err(code) = crate::rtc::command(command) {
+                tracing::debug!("call relay message for {} not taken: {code}", text("callSessionId"));
+            }
+        }
+        Some("roomFrame") => {
+            let notice = body
+                .get("notice")
+                .and_then(Json::as_str)
+                .and_then(crate::rtc::NoticeKind::parse)
+                .map(|kind| (kind, body.get("keep").and_then(Json::as_bool).unwrap_or(false)));
+            let command = Command::RoomFrame {
+                room: text("callSessionId"),
+                from: text("from"),
+                except: body.get("except").and_then(Json::as_str).map(str::to_string),
+                frame: body.get("frame").cloned().unwrap_or(Json::Null),
+                notice,
+            };
+            if let Err(code) = crate::rtc::command(command) {
+                tracing::debug!("call room frame for {} not taken: {code}", text("callSessionId"));
             }
         }
         Some("control") => {
@@ -474,6 +525,10 @@ fn deliver_signal(message: &TopicMessage) {
                 },
                 Some("closeRoom") => Command::CloseRoom {
                     room: text("callSessionId"),
+                },
+                Some("link") => Command::Link {
+                    room: text("callSessionId"),
+                    origin: text("originNodeId"),
                 },
                 // captions run beside the driver, not in it (rtc/captions.rs)
                 Some("startCaptions") => {

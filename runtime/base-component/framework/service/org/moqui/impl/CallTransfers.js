@@ -66,12 +66,16 @@ function userName(userId) {
   return account ? account.userFullName || account.username || userId : userId
 }
 
-/** Tells the SIP engine of the call's node about one of its legs, after the commit; logged when it cannot. */
+/** Cascading media nodes (W7, Calls.js cascadeOn). */
+const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
+
+/** Tells the SIP engine of the leg's node (its own, W7, else the call's) about one of its legs, after the commit; logged when it cannot. */
 function engine(session, message) {
   if (!session?.mediaNodeId) return
+  const leg = message.callLegId ? one(LEG, { callLegId: message.callLegId }) : null
   ec.message.pushErrors()
   try {
-    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: session.mediaNodeId,
+    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: (leg && leg.mediaNodeId) || session.mediaNodeId,
       message: Object.assign({ callSessionId: session.callSessionId }, message) }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${message.action}: ${ec.message.errorsString}`)
   } catch (err) {
@@ -455,7 +459,9 @@ function addParticipant(p) {
 
 /**
  * merge#Calls: the other call (otherCallSessionId), which the user is in too, moves into this one, which becomes a
- * meeting; the legs on hold in it come back. Both must be on one media node.
+ * meeting; the legs on hold in it come back. Calls on two media nodes merge with cascading media nodes on
+ * (rtc_cascade_enabled, W7): the other call's phones stay on their node, which relays to this call's node, and its
+ * browsers bind again (on their own node). Without it, both must be on one media node.
  */
 function merge(p) {
   if (blank(p.otherCallSessionId) || p.otherCallSessionId === p.callSessionId) return refuse('badTarget', 'Choose another call to merge')
@@ -468,8 +474,8 @@ function merge(p) {
     if (s.encryptionMode && s.encryptionMode !== PLAIN_MEDIA) return refuse('encrypted', 'An end-to-end encrypted call is not merged')
     if (openTransfer(s.callSessionId)) return refuse('transferring', 'A call being transferred is not merged')
   }
-  if (session.mediaNodeId !== other.session.mediaNodeId) {
-    return refuse('differentNodes', 'These calls are on different media servers, so they cannot be merged (that comes with cascading media servers)')
+  if (session.mediaNodeId !== other.session.mediaNodeId && !cascadeOn()) {
+    return refuse('differentNodes', 'These calls are on different media servers, so they cannot be merged (turn on rtc_cascade_enabled)')
   }
   const out = calls('mergeInto', { callSessionId: session.callSessionId, fromCallSessionId: other.session.callSessionId })
   if (out.reasonCode) return refuse(out.reasonCode, 'The call has ended')

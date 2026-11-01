@@ -123,6 +123,25 @@ function liveMediaNodes() {
   return Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', since).orderBy('-heartbeatDate').list())
 }
 
+/**
+ * Cascading media nodes (W7, plans/Comms-Framework.md §6.3 "Cluster"): with rtc_cascade_enabled a leg's media is on the
+ * node its signaling socket is on, when that node holds media, and the node relays to the call's node (its origin).
+ * Off by default: every leg's media is on the call's node.
+ */
+const cascadeOn = () => ['true', 'y', 'yes', '1'].includes(String(System.getProperty('rtc_cascade_enabled') || '').trim().toLowerCase())
+
+/** The node holding a leg's media: its own (an edge, W7), else the call's. */
+function legNode(session, callLegId) {
+  const leg = callLegId ? one(LEG, { callLegId }) : null
+  return (leg && leg.mediaNodeId) || session.mediaNodeId
+}
+
+/** The other nodes holding legs of the call (its edges, W7). */
+function edgeNodes(session) {
+  return Array.from(new Set(rows(LEG, { callSessionId: session.callSessionId }).map((leg) => leg.mediaNodeId)
+    .filter((node) => node && node !== session.mediaNodeId)))
+}
+
 function lockSession(callSessionId) {
   return find(SESSION).condition('callSessionId', callSessionId).forUpdate(true).one()
 }
@@ -254,11 +273,25 @@ function roomEvent(session, action, extra) {
   }).disableAuthz().call()
 }
 
-/** Tells the call's media node to close a leg or the whole room, after the commit. */
+/**
+ * Tells the media node of a leg (its own, W7, else the call's) to close it, or every node of the call to close the
+ * room, after the commit.
+ */
 function mediaControl(session, message) {
   if (!session.mediaNodeId) return
+  const nodes = message.callLegId ? [legNode(session, message.callLegId)] : [session.mediaNodeId].concat(edgeNodes(session))
+  for (const node of nodes) {
+    ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
+      mediaNodeId: node, message: Object.assign({ callSessionId: session.callSessionId }, message),
+    }).disableAuthz().call()
+  }
+}
+
+/** Tells an edge node (W7) the call's room there relays to the call's node: a phone leg's media is on that edge. */
+function linkEdge(session, node) {
+  if (!node || node === session.mediaNodeId || !session.mediaNodeId) return
   ec.service.sync().name('org.moqui.impl.CallServices.send#MediaControl').parameters({
-    mediaNodeId: session.mediaNodeId, message: Object.assign({ callSessionId: session.callSessionId }, message),
+    mediaNodeId: node, message: { action: 'link', callSessionId: session.callSessionId, originNodeId: session.mediaNodeId },
   }).disableAuthz().call()
 }
 
@@ -575,13 +608,13 @@ function ring(session, userIds, fromUserId, fromName) {
   }
 }
 
-/** Tells the SIP engine of the call's node about one leg ({action: 'answer' | 'hangup'}), after the commit; logged if not. */
+/** Tells the SIP engine of the leg's node about one leg ({action: 'answer' | 'hangup'}), after the commit; logged if not. */
 function sipLegControl(session, callLegId, action) {
   if (!session.mediaNodeId) return
   ec.message.pushErrors()
   try {
     ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
-      instanceId: session.mediaNodeId, message: { action, callSessionId: session.callSessionId, callLegId },
+      instanceId: legNode(session, callLegId), message: { action, callSessionId: session.callSessionId, callLegId },
     }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${callLegId}: ${ec.message.errorsString}`)
   } catch (err) {
@@ -800,10 +833,28 @@ function bind(p) {
   return bindLeg(session, leg, participant, p.signalingNodeId, me)
 }
 
+/**
+ * The node a leg's media goes to as it binds (W7): with rtc_cascade_enabled the node of its signaling socket, when that is
+ * a live media node not draining, and the leg was not sent back to the call's node (its relay link refused); else the
+ * call's.
+ */
+function bindNode(session, leg, signalingNodeId) {
+  if (!cascadeOn() || !signalingNodeId || signalingNodeId === session.mediaNodeId || leg.mediaNodePinned === 'Y') {
+    return session.mediaNodeId
+  }
+  const live = liveMediaNodes().some((n) => n.instanceId === signalingNodeId && n.draining !== 'Y')
+  return live ? signalingNodeId : session.mediaNodeId
+}
+
 /** Binds a socket to an admitted leg that is in the call: the leg's next generation, the older connection fenced. */
 function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
+  const node = bindNode(session, leg, signalingNodeId)
+  if (leg.mediaNodeId !== node) {
+    leg.set('mediaNodeId', node)
+    leg.update()
+  }
   const now = ec.user.nowTimestamp
   let generation = 0
   for (const conn of rows(CONNECTION, { callLegId: leg.callLegId })) {
@@ -823,7 +874,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId) {
   conn.create()
   recordingChange(session.callSessionId, 'legBound', leg.callLegId)
   return {
-    callConnectionId: conn.callConnectionId, generation, mediaNodeId: session.mediaNodeId,
+    callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,
   }
 }
@@ -859,6 +910,11 @@ function mediaEvent(p) {
   if (!conn || conn.statusId !== 'CcsActive') return {}
   if (p.event === 'connected' && !leg.joinedDate) {
     leg.set('joinedDate', ec.user.nowTimestamp)
+    leg.update()
+  } else if (p.event === 'relayRefused') {
+    // the call's node refused its edge's relay link (W7): the leg's media goes to the call's node when it reconnects
+    const session = one(SESSION, { callSessionId: leg.callSessionId })
+    leg.setFields({ mediaNodeId: session ? session.mediaNodeId : null, mediaNodePinned: 'Y' }, true, null, null)
     leg.update()
   } else if (p.event === 'quality' && p.quality) {
     leg.set('qualityJson', JSON.stringify(p.quality).slice(0, 4000))
@@ -921,6 +977,12 @@ function expire() {
   const orphaned = Array.from(find(SESSION).condition('statusId', '!=', 'CssEnded').selectField('callSessionId')
     .selectField('mediaNodeId').limit(2000).list()).filter((s) => s.mediaNodeId && !liveNodes.has(s.mediaNodeId))
     .map((s) => ({ callSessionId: s.callSessionId }))
+  // W7: a leg whose media is on another node than the call's (an edge) that stopped leaves; the call goes on
+  const orphanedCalls = new Set(orphaned.map((s) => s.callSessionId))
+  const edgeLost = Array.from(find(LEG).condition('statusId', 'in', OPEN_LEG).condition('mediaNodeId', '!=', null)
+    .selectField('callLegId').selectField('callSessionId').selectField('mediaNodeId').limit(2000).list())
+    .filter((leg) => !liveNodes.has(leg.mediaNodeId) && !orphanedCalls.has(leg.callSessionId))
+    .map((leg) => ({ callLegId: leg.callLegId }))
   // a meeting nobody is in or waiting for, a while after it started (a link opened and left)
   const startedBefore = new Date(now - NEVER_CONNECTED_MS)
   const empty = Array.from(find(SESSION).condition('statusId', 'CssActive').condition('kindEnumId', 'CskMeeting')
@@ -931,7 +993,8 @@ function expire() {
     .selectField('callGuestId').limit(500).list()).map((g) => ({ callGuestId: g.callGuestId }))
   return {
     endedCount: eachSafely('ringing', ringing) + eachSafely('mediaNodeLost', orphaned) + eachSafely('empty', empty),
-    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost) + eachSafely('guestExpired', expiredGuests),
+    legCount: eachSafely('offered', offered) + eachSafely('connectionLost', lost) + eachSafely('guestExpired', expiredGuests) +
+      eachSafely('edgeLost', edgeLost),
   }
 }
 
@@ -981,6 +1044,18 @@ function expireItem(p) {
   }
   if (p.itemKind === 'connectionLost' && current.statusId === 'ClsAnswered') {
     leaveLeg(session, current, 'CerConnectionLost', participant?.userId || null)
+    return { done: true }
+  }
+  if (p.itemKind === 'edgeLost' && OPEN_LEG.includes(current.statusId) && current.mediaNodeId &&
+    current.mediaNodeId !== session.mediaNodeId && !liveMediaNodes().some((n) => n.instanceId === current.mediaNodeId)) {
+    if (current.statusId === 'ClsOffered') {
+      closeLeg(current, 'ClsFailed', 'CerMediaNodeLost')
+      bump(session)
+      session.update()
+      pushState(session, 'left')
+    } else {
+      leaveLeg(session, current, 'CerMediaNodeLost', participant?.userId || null)
+    }
     return { done: true }
   }
   return { done: false }
@@ -1461,7 +1536,8 @@ function phoneControl(session, action, extra) {
     ec.message.pushErrors()
     try {
       ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({
-        instanceId: session.mediaNodeId, message: Object.assign({ action, callSessionId: session.callSessionId, callLegId: leg.callLegId }, extra || {}),
+        instanceId: leg.mediaNodeId || session.mediaNodeId,
+        message: Object.assign({ action, callSessionId: session.callSessionId, callLegId: leg.callLegId }, extra || {}),
       }).disableAuthz().call()
       if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${action} leg ${leg.callLegId}: ${ec.message.errorsString}`)
     } catch (err) {
@@ -1909,7 +1985,7 @@ function sipMessage(session, message) {
   if (!session.mediaNodeId) return
   ec.message.pushErrors()
   try {
-    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: session.mediaNodeId,
+    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: legNode(session, message.callLegId),
       message: Object.assign({ callSessionId: session.callSessionId }, message) }).disableAuthz().call()
     if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${message.action} leg ${message.callLegId}: ${ec.message.errorsString}`)
   } catch (err) {
@@ -2071,7 +2147,10 @@ function mergeInto(p) {
       into = participant
     }
     for (const leg of open) {
-      leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId }, true, null, null)
+      // a phone's media stays on its SIP engine's node, now an edge of the target call when that is another (W7)
+      const phone = leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)
+      const node = leg.mediaNodeId || (phone && source.mediaNodeId !== target.mediaNodeId ? source.mediaNodeId : null)
+      leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId, mediaNodeId: node }, true, null, null)
       leg.update()
       for (const conn of rows(CONNECTION, { callLegId: leg.callLegId, statusId: 'CcsActive' })) {
         conn.setFields({ statusId: 'CcsReplaced', closedDate: now }, true, null, null)
@@ -2089,6 +2168,7 @@ function mergeInto(p) {
   const movedUsers = new Set()
   for (const { leg, userId } of moved) {
     if (leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)) {
+      linkEdge(target, leg.mediaNodeId)
       sipMessage(target, { action: 'move', callLegId: leg.callLegId, fromCallSessionId: source.callSessionId })
       if (leg.statusId === 'ClsAnswered') phoneJoined(target, leg)
     } else {

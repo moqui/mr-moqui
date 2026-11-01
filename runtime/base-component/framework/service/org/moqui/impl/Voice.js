@@ -547,7 +547,8 @@ function notifyPhoneLeg(p) {
   if (!leg || !PHONE_LEGS.includes(leg.legTypeEnumId) || leg.statusId !== 'ClsAnswered') return { notified: false }
   const session = one(SESSION, { callSessionId: leg.callSessionId })
   if (!session || !session.mediaNodeId || session.statusId === 'CssEnded') return { notified: false }
-  sipControl(session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
+  // the leg's own node when it is on an edge of the call (W7: a merged or cross-node phone)
+  sipControl(leg.mediaNodeId || session.mediaNodeId, { action: 'prompt', notice: p.notice, callSessionId: session.callSessionId, callLegId: leg.callLegId })
   return { notified: true }
 }
 
@@ -568,7 +569,9 @@ function sendDtmf(p) {
   if (!/^[0-9*#A-D]{1,32}$/.test(digits)) return refuse('badDigits', 'Keys are 0 to 9, * and #')
   const mine = myPhoneLegs(p.callSessionId)
   if (mine.refusal) return mine.refusal
-  for (const leg of mine.legs) sipControl(mine.session.mediaNodeId, { action: 'dtmf', callSessionId: p.callSessionId, callLegId: leg.callLegId, digits })
+  for (const leg of mine.legs) {
+    sipControl(leg.mediaNodeId || mine.session.mediaNodeId, { action: 'dtmf', callSessionId: p.callSessionId, callLegId: leg.callLegId, digits })
+  }
   return { sent: true }
 }
 
@@ -581,7 +584,7 @@ function holdOrResume(p, action) {
   if (mine.refusal) return mine.refusal
   for (const leg of mine.legs) {
     calls('setHeld', { callLegId: leg.callLegId, held: action === 'hold' })
-    sipControl(mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
+    sipControl(leg.mediaNodeId || mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
   }
   return {}
 }

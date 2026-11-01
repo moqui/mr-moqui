@@ -6,7 +6,7 @@
 // far end goes to the target's voicemail; a transfer to an international number is refused under the fraud policy (the
 // same transfer to a domestic number goes); a number transferred to hears the recording notice and acknowledges it by
 // pressing 1; a person is added, a number is not added to an end-to-end encrypted call; two calls on one media node
-// merge into a meeting, and calls on different nodes are refused. The numbers a user adds count toward their limit of calls
+// merge into a meeting, and calls on different nodes are refused unless cascading media nodes are on (W7). The numbers a user adds count toward their limit of calls
 // at once; an external user (EXTERNAL_USER) in a call neither adds to it nor transfers it. No SIP engine runs here: fake SipNode and CallMediaNode
 // rows stand in for one, and the phones' events come through note#PhoneLeg.
 // Run: ./moq test framework --spec Transfer
@@ -333,7 +333,7 @@ feature("a number transferred to hears the recording notice and acknowledges it 
     }
 })
 
-feature("a person is added; a number is not added to an encrypted call; calls on one media node merge into a meeting, on two they do not", {
+feature("a person is added; a number is not added to an encrypted call; calls on one media node merge into a meeting, on two only with cascading media nodes", {
     when() {
         endAll()
         const first = inbound()
@@ -368,11 +368,17 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         })
         const otherNode = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId})
         const meeting = as(A, "convert#CallToMeeting", {callSessionId: third.callSessionId})
-        return {added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting,
+        // with cascading media nodes (W7) it merges: its phone stays on its node, now an edge of the first call
+        setProperty("rtc_cascade_enabled", "true")
+        const acrossNodes = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: third.callSessionId,
+            revision: rev(first.callSessionId)})
+        setProperty("rtc_cascade_enabled", "false")
+        return {added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, acrossNodes,
             firstAfter: session(first.callSessionId), secondAfter: session(second.callSessionId), farFirst: leg(first.phoneLegId),
-            aSecond: lastLeg(second.callSessionId, A)}
+            aSecond: lastLeg(second.callSessionId, A), thirdAfter: session(third.callSessionId), farThird: leg(third.phoneLegId)}
     },
-    then({added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, firstAfter, secondAfter, farFirst, aSecond}) {
+    then({added, cRinging, addedAgain, abroad, encrypted, heldFirst, merged, moved, otherNode, meeting, acrossNodes, firstAfter,
+            secondAfter, farFirst, aSecond, thirdAfter, farThird}) {
         added.errors == ""
         cRinging.statusId == "ClsOffered"
         addedAgain.reasonCode == "alreadyIn"
@@ -391,6 +397,13 @@ feature("a person is added; a number is not added to an encrypted call; calls on
         aSecond.statusId == "ClsLeft"
         otherNode.reasonCode == "differentNodes"
         meeting.call.kind == "meeting"
+        acrossNodes.errors == ""
+        acrossNodes.movedCount >= 1
+        thirdAfter.statusId == "CssEnded"
+        thirdAfter.endReasonEnumId == "CerMerged"
+        farThird.callSessionId == firstAfter.callSessionId
+        farThird.statusId == "ClsAnswered"
+        farThird.mediaNodeId == NODE2
     }
 })
 

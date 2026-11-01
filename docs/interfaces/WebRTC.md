@@ -22,6 +22,7 @@ port:
 | `rtc_media_host` | `127.0.0.1` | The address it binds |
 | `rtc_public_address` | empty: the bound address | What browsers are told: an IP, or IP:port, for a server behind 1:1 NAT. Required when `rtc_media_host` binds every address |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
+| `rtc_cascade_enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
 
 On a single server reachable at its own address, `rtc_media_port=10000` with `rtc_media_host` set to that address is
 enough. Behind 1:1 NAT, bind the private address and set `rtc_public_address` to the public one, then forward UDP 10000.
@@ -121,6 +122,43 @@ from a page on another node goes to that node only, on the cluster's `rtc-signal
 and the replies come back the same way. A media node that stops registering (20-second heartbeat) ends its calls with
 the reason "media server lost"; the users start a new call. There is no seamless failover.
 
+### Cascading media nodes
+
+With `rtc_cascade_enabled` (off by default; set it on every node) a call spans media nodes (W7):
+
+- **Where a leg's media goes.** As a leg binds (`bind#Connection`), its media goes to the node of its own signaling
+  socket when that node is a live media node that is not draining, else to the call's node. `CallLeg.mediaNodeId` keeps
+  it, and the answer names both nodes. A phone (SIP) leg's media is on its SIP engine's node: a desk phone registered
+  with another node rings there, and a merged call's phones stay on their node.
+- **The relay link.** The leg's node (an edge) links the call's room to the call's node (the origin): one str0m peer on
+  each side per room, on the two nodes' media sockets. The origin is ICE-lite, as it is to browsers; the edge is full
+  ICE, the controlling side, and makes the first offer. The offers and answers go on `rtc-signal` (kind `relay`), with a
+  link id that a new link replaces.
+- **What crosses.** Each side sends the other every track of the room it has that did not come from that side, so the
+  origin sees every leg (recording, captions and the SIP mix are there) and each edge every leg. A video track crosses a
+  link once, in its simulcast layers up to the highest layer any subscriber behind the link wants; each subscriber then
+  gets its own layer as on one node. With no one wanting it, no video crosses. A room recorded at the origin wants the
+  high layer of the edges' tracks.
+- **Room frames.** The notices (recording, captions), `participant`, the relayed `mute`, `hand` and `reaction`, and the
+  captions' lines go to the room's other nodes too (kind `roomFrame`); the origin passes an edge's on to the others. Each
+  node works out the active speaker itself, since it hears every leg.
+- **Limits.** At most 8 links a room and 64 a node (`SfuConfig`). Past them the origin refuses the link explicitly
+  (`tooManyRelays`): the edge's legs get `mediaLost` and, as they reconnect, bind to the call's node
+  (`CallLeg.mediaNodePinned`).
+- **Losses.** The origin lost ends the call ("media server lost"), as before. An edge lost ends only its legs, with the
+  same reason (`expire#Calls`). A link lost (its ICE or DTLS failed) is fenced at both ends: the edge's legs get
+  `mediaLost`, reconnect, and the edge links again with a new link.
+- **Calls across nodes merge** (`merge#Calls`): without cascading they are refused (`differentNodes`).
+
+The relay link uses the media ports of both nodes (`rtc_media_port`): the edge sends from its port to the origin's
+public address, so the nodes must reach each other's media port. It carries no TCP or TURN fallback and does not share
+out a bandwidth estimate: the link between servers is not a browser's last mile.
+
+The choice of one peer per room and edge node, beside one peer for every pair of legs or a single link per node pair:
+it keeps a track to one copy per node, uses the same str0m code and ICE as the browser legs (so no second transport),
+and a room ends its own link. A link per node pair carrying many rooms would save ICE and DTLS handshakes but needs its
+own multiplexing of rooms; that waits for a measured need.
+
 ## Tests
 
 - `cargo test -p moqui-rtc`: the media gate on an in-memory network with simulated time. It covers two and five parties,
@@ -129,7 +167,16 @@ the reason "media server lost"; the users start a new call. There is no seamless
 - `cargo test -p moqui-host --test it rtc::`: a direct call on a real server, with str0m peers on loopback UDP signaling
   through `/notws`, and a guest on `/callws`: a bad credential refused, media both ways, another leg's frames refused,
   and revoking the link ending it.
-- `./moq test framework --spec Calls`: the call state machine.
+- `./moq test framework --spec Calls`: the call state machine, and the node of a leg with cascading on: its signaling
+  node, the call's node when that is no media node or its relay was refused, and an edge lost ending only its legs.
+  `--spec Transfer` merges calls on two nodes; `--spec SipDevice` rings a phone registered with another node.
+- `cargo test -p moqui-rtc sfu::relay_tests`: two SFUs on the in-memory network: media both ways over one link, a track
+  crossing once in the layers up to the highest wanted (a layer change at the edge, nothing wanted), an edge's tracks
+  reaching the origin's taps in every layer, the caps refusing a link, a lost link reported and replaced (an old link's
+  message dropped), and the link closed when the edge's last leg leaves or the room ends.
+- `cargo test -p moqui-host --test it rtc::cascade`: two servers of one cluster on one test database, the second in a
+  child process of the test binary (the media driver and the socket bindings are process globals, and its loss is a
+  real kill): media both ways between a leg on each, a layer change at the edge, and the edge lost ending only its leg.
 - `cargo test -p moqui-host --lib rtc::captions`: captions with a fake transcriber on simulated time: speaker and chunk
   order with answers out of order, a timeout, backpressure with its gap, silence making nothing, and a provider that
   hangs while the frames keep flowing. `cargo test -p moqui-llm --lib speech`: the transcription call against a fake

@@ -1,7 +1,9 @@
 // Calls (org.moqui.impl.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/Comms-Framework.md §5.4,
 // §6.3, W1): starting, ringing, the first answer winning, repeated requests, binding a socket with a fenced generation,
 // presence across two calls, leaving and ending, declining, ringing out, a lost connection and a lost media node, and a
-// room's group call. Every refusal has its negative user with the same parameters as the positive one.
+// room's group call. With cascading media nodes (W7, rtc_cascade_enabled) a leg's media goes to its signaling node, an
+// edge, unless that is no live media node or its relay was refused; losing the edge ends only its legs. Every refusal has
+// its negative user with the same parameters as the positive one.
 // Run: ./moq test framework --spec Calls
 const A = "CALLS_SPEC_A"
 const B = "CALLS_SPEC_B"
@@ -457,6 +459,59 @@ feature("a link that lets guests straight in, guests who leave, and a meeting no
         before.statusId == "CssActive"
         expired.endedCount >= 1
         emptied.endReasonEnumId == "CerEmpty"
+    }
+})
+
+const EDGE = "calls-spec-edge"
+feature("with cascading media nodes a leg's media is on its signaling node, and losing that node ends only its legs", {
+    when() {
+        nodeUp()
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE, mediaAddress: "127.0.0.1:10002"}))
+        const started = as(A, "start#Call", {calleeUserIdList: [B, C]})
+        const id = started.callSessionId
+        sys(() => {
+            const s = ec.entity.find(SESSION).condition("callSessionId", id).one()
+            s.set("mediaNodeId", NODE)
+            s.update()
+        })
+        const bLeg = as(B, "answer#Call", {callSessionId: id}).callLegId
+        const cLeg = as(C, "answer#Call", {callSessionId: id}).callLegId
+        // off: every leg's media is on the call's node, whatever its socket's
+        setProperty("rtc_cascade_enabled", "false")
+        const off = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        setProperty("rtc_cascade_enabled", "true")
+        const onEdge = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        const stranger = as(D, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        const noMedia = as(A, "bind#Connection", {callSessionId: id, callLegId: started.callLegId, signalingNodeId: "calls-spec-nowhere"})
+        // the call's node refused B's edge's relay: B's media goes back to the call's node, and stays there
+        sys(() => call("org.moqui.impl.CallServices.note#MediaEvent", {callLegId: bLeg, generation: onEdge.generation, event: "relayRefused"}))
+        const pinned = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: EDGE})
+        const cOnEdge = as(C, "bind#Connection", {callSessionId: id, callLegId: cLeg, signalingNodeId: EDGE})
+        // the edge is lost: C's leg leaves with that reason; the call and the others go on
+        age("moqui.call.CallMediaNode", {instanceId: EDGE}, "heartbeatDate", 120000)
+        const expired = expire()
+        setProperty("rtc_cascade_enabled", "false")
+        const leg = (legId) => sys(() => ec.entity.find(LEG).condition("callLegId", legId).one())
+        const out = {off, onEdge, stranger, noMedia, pinned, cOnEdge, expired, row: session(id), b: leg(bLeg), c: leg(cLeg)}
+        as(A, "end#Call", {callSessionId: id})
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE).deleteAll())
+        return out
+    },
+    then({off, onEdge, stranger, noMedia, pinned, cOnEdge, expired, row, b, c}) {
+        off.mediaNodeId == NODE
+        off.originNodeId == NODE
+        onEdge.mediaNodeId == EDGE
+        onEdge.originNodeId == NODE
+        stranger.reasonCode == "notFound"
+        noMedia.mediaNodeId == NODE
+        pinned.mediaNodeId == NODE
+        b.mediaNodePinned == "Y"
+        cOnEdge.mediaNodeId == EDGE
+        expired.legCount >= 1
+        row.statusId == "CssActive"
+        c.statusId == "ClsLeft"
+        c.endReasonEnumId == "CerMediaNodeLost"
+        b.statusId == "ClsAnswered"
     }
 })
 

@@ -424,6 +424,13 @@ Postgres `LISTEN moqui_cluster` is off unless `cluster_transport=notify`. It nee
 
 Off unless `rtc_media_port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `rtc_media_host` (127.0.0.1 by default); browsers are told `rtc_public_address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream (encrypted calls are W8). The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
+Cascading media nodes (`rtc_cascade_enabled`, off by default) add relay links between the media nodes of a call on the
+same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
+messages on the cluster's client-certificate HTTPS transport (kind `relay`), so only a cluster member opens one. The
+origin takes at most 8 links a room and 64 in all, and refuses more (`tooManyRelays`); a message of an older link is
+dropped. An edge forwards to the origin only its own legs' tracks; the origin decides nothing an edge asks beyond the
+layers it sends it.
+
 ICE-TCP (`rtc_media_tcp_port`, off unless set) takes TCP connections on the same address: at most 1,000. Each carries
 RFC 4571 frames of up to 2,048 bytes into the same SFU, which accepts only what a peer's ICE session takes.
 

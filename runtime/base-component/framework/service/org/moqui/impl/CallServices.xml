@@ -34,7 +34,12 @@ along with this software (see the LICENSE.md file). If not, see
     (register#MediaNode). The host's /notws binds a leg's socket with bind#Connection, which claims the next generation
     and fences the older socket; the media node refuses frames of an older generation. When a leg leaves or the call
     ends, send#MediaControl tells the media node after the commit. expire#Calls (every minute) ends calls that rang out,
-    legs whose socket did not come back, and calls whose media node stopped. -->
+    legs whose socket did not come back, and calls whose media node stopped.
+
+    Cascading media nodes (W7). With rtc_cascade_enabled (off by default) a leg's media is on the node of its signaling
+    socket when that node holds media (CallLeg.mediaNodeId), and that node (an edge) relays to the call's node (its
+    origin). bind#Connection answers both. An edge that stops ends only its legs (CerMediaNodeLost); the origin stopping
+    ends the call, as before. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <!-- ========== Calls ========== -->
@@ -358,7 +363,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
-            <parameter name="mediaNodeId"/>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Calls.js').execute('guestBind', context))</script></actions>
@@ -422,7 +428,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
-            <parameter name="mediaNodeId"/>
+            <parameter name="mediaNodeId"><description>The node holding the leg's media: the call's, or with rtc_cascade_enabled the signaling node (W7)</description></parameter>
+            <parameter name="originNodeId"><description>The call's media node (W7)</description></parameter>
             <parameter name="call" type="Map"/>
             <parameter name="reasonCode"/>
         </out-parameters>
@@ -456,7 +463,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="note" noun="MediaEvent" authenticate="false" allow-remote="false">
         <description>Internal (the media node): what the media of a leg of that generation did: connected (its
-            joinedDate), or quality (qualityJson).</description>
+            joinedDate), quality (qualityJson), or relayRefused (W7: the call's node refused the relay link of the leg's
+            node, so the leg's media stays on the call's node from its next bind).</description>
         <in-parameters>
             <parameter name="callLegId" required="true"/>
             <parameter name="generation" type="Integer" required="true"/>
@@ -510,8 +518,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="send" noun="MediaControl" type="rust" location="moqui_core::service::call_media::send_media_control"
             authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: tell the media node of a call to close a leg ({action: 'closeLeg', callSessionId, callLegId}) or
-            the call ({action: 'closeRoom', callSessionId}), on the rtc-signal cluster topic to that node only, after the
-            caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
+            the call ({action: 'closeRoom', callSessionId}), or an edge node (W7) to link the call's room there to the
+            call's node ({action: 'link', callSessionId, originNodeId}), on the rtc-signal cluster topic to that node only,
+            after the caller's transaction commits. A node that is gone is logged; its calls end when its heartbeat stops.</description>
         <in-parameters>
             <parameter name="mediaNodeId" required="true"/>
             <parameter name="message" type="Map"/>
