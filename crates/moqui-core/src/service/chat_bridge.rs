@@ -512,6 +512,8 @@ struct Worker {
     wake: Mutex<bool>,
     signal: Condvar,
     state: Mutex<WorkerState>,
+    /// The worker thread, joined by [`shutdown`].
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 #[derive(Default)]
@@ -576,14 +578,17 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
         .spawn(move || {
             let mut first = true;
             loop {
-                let Some(factory) = weak.upgrade() else {
-                    return;
+                // The factory is held only for a round, not while waiting, so a stopped server releases it.
+                let worker = {
+                    let Some(factory) = weak.upgrade() else {
+                        return;
+                    };
+                    if factory.is_shutting_down() {
+                        stop_all(&factory);
+                        return;
+                    }
+                    worker(&factory)
                 };
-                if factory.is_shutting_down() {
-                    stop_all(&factory);
-                    return;
-                }
-                let worker = worker(&factory);
                 if !first {
                     let woken = {
                         let guard = lock(&worker.wake);
@@ -598,6 +603,13 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                     }
                 }
                 first = false;
+                let Some(factory) = weak.upgrade() else {
+                    return;
+                };
+                if factory.is_shutting_down() {
+                    stop_all(&factory);
+                    return;
+                }
                 let Some(facade) = factory.entity() else {
                     return;
                 };
@@ -616,8 +628,22 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                 }
             }
         });
-    if let Err(error) = spawned {
-        tracing::error!("the chat bridge worker did not start: {error}");
+    match spawned {
+        Ok(handle) => *lock(&state.thread) = Some(handle),
+        Err(error) => tracing::error!("the chat bridge worker did not start: {error}"),
+    }
+}
+
+/// Wake this node's worker to stop its adapters and end, and wait for it. The factory calls it as it shuts down.
+pub(crate) fn shutdown(factory: &ExecutionContextFactory) {
+    let worker = worker(factory);
+    let Some(handle) = lock(&worker.thread).take() else {
+        return;
+    };
+    *lock(&worker.wake) = true;
+    worker.signal.notify_all();
+    if handle.thread().id() != std::thread::current().id() && handle.join().is_err() {
+        tracing::error!("the chat bridge worker panicked");
     }
 }
 

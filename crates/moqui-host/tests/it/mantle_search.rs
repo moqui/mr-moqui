@@ -160,9 +160,12 @@ fn mantle_search_callers_on_the_search_facade() {
         {
             let _authz = context.disable_authz();
             the_feed_indexed_everything(&facade);
-            sales_reports(&day(1), &at(8));
             projected_inventory();
             party_search();
+            // The sales summaries check accounting read and the user's organizations, with authz off too.
+            moqui_core::user::internal_login_user("john.doe").unwrap();
+            sales_reports(&day(1), &at(8));
+            moqui_core::user::logout().unwrap();
         }
         universal_search_results();
         shipped_sales_dashboard(&factory, &day(40), &day(-1));

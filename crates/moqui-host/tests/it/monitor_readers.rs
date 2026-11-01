@@ -71,11 +71,16 @@ fn verify_readers(opensearch_url: Option<&str>) {
     ]).unwrap();
     let same = jiff::Timestamp::from_millisecond(now - 3000).unwrap().to_string();
     facade.index_entries("otel_logs", (0..3).map(|at| document(json!({"_id":format!("reader-context-{at}"),"timestamp":same,"severity_text":"ERROR","severity_number":17,"body":format!("readermarker line {at}"),"thread.name":"reader-worker","user.id":"EX_JOHN_DOE","exception.type":"ReaderError","exception.message":"reader exception","exception.stacktrace":"reader.rs:42"}))).collect()).unwrap();
+    // The minute rows and their hour rollup: a "now-7d" range across a daylight saving change is more than the
+    // 7 days minute rows are kept, so the report reads the hour rollup then.
     let minute = now - 86_400_000;
-    facade.index_entries("otel_metrics", vec![
-        document(json!({"_id":"reader-duration","name":"moqui.artifact.duration","bucket_start":minute,"bucket_end":minute+60000,"granularity":"minute","count":3,"sum":0.3,"min":0.05,"max":0.15,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.sub_type":"inline","moqui.artifact.name":"reader.artifact"})),
-        document(json!({"_id":"reader-slow","name":"moqui.artifact.slow","bucket_start":minute,"bucket_end":minute+60000,"granularity":"minute","count":1,"sum":2,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.sub_type":"inline","moqui.artifact.name":"reader.artifact"})),
-    ]).unwrap();
+    let hour = minute.div_euclid(3_600_000) * 3_600_000;
+    let mut metrics = Vec::new();
+    for (granularity, start, length) in [("minute", minute, 60_000), ("hour", hour, 3_600_000)] {
+        metrics.push(document(json!({"_id":format!("reader-duration-{granularity}"),"name":"moqui.artifact.duration","bucket_start":start,"bucket_end":start+length,"granularity":granularity,"count":3,"sum":0.3,"min":0.05,"max":0.15,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.sub_type":"inline","moqui.artifact.name":"reader.artifact"})));
+        metrics.push(document(json!({"_id":format!("reader-slow-{granularity}"),"name":"moqui.artifact.slow","bucket_start":start,"bucket_end":start+length,"granularity":granularity,"count":1,"sum":2,"moqui.artifact.type":"AT_SERVICE","moqui.artifact.sub_type":"inline","moqui.artifact.name":"reader.artifact"})));
+    }
+    facade.index_entries("otel_metrics", metrics).unwrap();
     let auth = common::basic("john.doe", "moqui");
     let read = |path: &str| {
         let (status, _, body) = common::exchange(
