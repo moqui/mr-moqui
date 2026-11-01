@@ -118,7 +118,8 @@ impl extract::RecordModel for FactoryModel<'_> {
     fn related(&self, entity: &str, name: &str) -> Option<(String, Vec<(String, String)>)> {
         self.0.entity()?.with_model(|model| {
             let relationship = model.entity(entity).ok()?.relationship(name)?;
-            Some((relationship.related_entity_name.clone(), relationship.key_pairs.clone()))
+            // the full name: `related_entity_name` is the short one, which two packages may share
+            Some((relationship.related.clone(), relationship.key_pairs.clone()))
         })
     }
 }
@@ -613,7 +614,7 @@ impl MemoryIndex {
             self.artifacts
                 .iter()
                 .filter(|artifact| artifact.parent.as_deref() == Some(id))
-                .filter(|artifact| parameters || artifact.kind != "parameter")
+                .filter(|artifact| artifact.kind != "record" && (parameters || artifact.kind != "parameter"))
                 .map(|artifact| artifact.id.as_str()),
         );
         self.refs
@@ -2050,7 +2051,9 @@ pub fn refs(
         .list()?
         .values()
     {
-        if parameters || text(child, "artifactKind") != "parameter" {
+        // a data file's records refer to nothing and nothing refers to them: not asked for, one id each
+        let kind = text(child, "artifactKind");
+        if kind != "record" && (parameters || kind != "parameter") {
             ids.push(Value::string(text(child, "artifactId")));
         }
     }

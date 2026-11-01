@@ -499,10 +499,7 @@ impl Reader<'_> {
                 Some(id)
             }
             (ArtifactKind::Entity, "field" | "alias") => {
-                let entity = from
-                    .strip_prefix("entity:")
-                    .or_else(|| from.split_once('#').map(|(_, entity)| entity))?
-                    .to_string();
+                let entity = entity_of(from)?.to_string();
                 let name = node.attribute("name")?;
                 let mut summary = node
                     .attribute("type")
@@ -1000,7 +997,7 @@ impl Reader<'_> {
     /// is skipped, and the others go on.
     fn records(&mut self, container: &MNode, parent: &str) {
         for node in container.child_iter() {
-            if let Some((entity, pk)) = self.model.keys(&node.name()) {
+            if let Some((entity, pk)) = self.model.keys(&data_element_key(&node.name())) {
                 self.record(&node, &entity, &pk, &std::collections::BTreeMap::new(), parent);
             }
         }
@@ -1018,10 +1015,12 @@ impl Reader<'_> {
         inherited: &std::collections::BTreeMap<String, String>,
         parent: &str,
     ) {
+        // an empty value is none, as the loader takes it: a parent's value fills it
         let value_of = |field: &str| {
             node.attribute(field)
                 .or_else(|| node.first_named(field).and_then(|child| child.text()))
                 .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
                 .or_else(|| inherited.get(field).cloned())
                 .filter(|value| !value.is_empty())
         };
@@ -1039,7 +1038,7 @@ impl Reader<'_> {
             }
         }
         for child in node.child_iter() {
-            let name = child.name();
+            let name = data_element_key(&child.name());
             if pk.contains(&name) {
                 continue;
             }
@@ -1587,6 +1586,12 @@ fn form_field_summary(node: &MNode) -> String {
         Some(title) => format!("{widget}, title {title}"),
         None => widget,
     }
+}
+
+/// The name a data file's element gives, as the loader reads it: without a namespace prefix, `-` for `#`
+/// (`Owner-mantle.party.PartyRole` is the relationship `Owner#mantle.party.PartyRole`).
+fn data_element_key(name: &str) -> String {
+    name.rsplit(':').next().unwrap_or(name).replace('-', "#")
 }
 
 /// The id of a data record: `record:<entity full name>:<primary key values>`, the values in the order of the entity's

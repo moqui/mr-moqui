@@ -38,7 +38,7 @@ impl RecordModel for Model {
     }
 
     fn related(&self, entity: &str, name: &str) -> Option<(String, Vec<(String, String)>)> {
-        (entity == "a.Party" && matches!(name, "roles" | "a.PartyRole")).then(|| {
+        (entity == "a.Party" && matches!(name, "roles" | "a.PartyRole" | "Owner#a.PartyRole")).then(|| {
             (
                 "a.PartyRole".to_string(),
                 vec![("partyId".to_string(), "partyId".to_string())],
@@ -258,6 +258,36 @@ fn data_records_by_primary_key_with_nested_records_and_escapes() {
         Some("record".to_string())
     );
     assert_eq!(index.find("P1", &[], 5)[0].id, "record:a.Party:P1");
+    // a data file's refs are not asked for each of its records
+    let data_id = "data:component://c/data/D.xml";
+    assert!(index
+        .artifacts
+        .iter()
+        .any(|row| row.parent.as_deref() == Some(data_id) && row.kind == "record"));
+    assert!(index.refs(data_id, Direction::In).is_empty());
+}
+
+/// A nested record's element is read as the loader reads it: `Title-entity` is the relationship `Title#entity`, and an
+/// empty key value is filled from the parent.
+#[test]
+fn nested_records_by_titled_relationship_and_an_empty_key_from_the_parent() {
+    let file = read(
+        ArtifactKind::Data,
+        "component://c/data/N.xml",
+        r#"<entity-facade-xml type="seed">
+    <a.Party partyId="P2"><Owner-a.PartyRole roleTypeId="Owner"/><roles partyId="" roleTypeId="Agent"/></a.Party>
+</entity-facade-xml>"#,
+    );
+    let ids: Vec<&str> = file.artifacts.iter().map(|artifact| artifact.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "data:component://c/data/N.xml",
+            "record:a.Party:P2",
+            "record:a.PartyRole:P2,Owner",
+            "record:a.PartyRole:P2,Agent",
+        ]
+    );
 }
 
 #[test]

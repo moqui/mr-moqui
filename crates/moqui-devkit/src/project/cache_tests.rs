@@ -142,3 +142,47 @@ fn an_allowed_project_is_read_anywhere_and_its_stamp_follows_its_files() {
     }
     clean(&root);
 }
+
+/// A project's data records are read with its entity model: a nested record is of its relationship's related entity by
+/// the full name, also when the framework has an entity of the same short name (`Enumeration`).
+#[test]
+fn a_projects_nested_record_is_of_the_related_entity_by_its_full_name() {
+    let root = mr_clone("records");
+    let component = root.join("runtime/component/proj-a");
+    std::fs::write(
+        component.join("entity/HolderEntities.xml"),
+        r#"<entities>
+    <entity entity-name="Holder" package="proj">
+        <field name="holderId" type="id" is-pk="true"/>
+        <relationship type="many" related="proj.other.Enumeration"><key-map field-name="holderId"/></relationship>
+    </entity>
+    <entity entity-name="Enumeration" package="proj.other">
+        <field name="holderId" type="id" is-pk="true"/>
+        <field name="itemSeqId" type="id" is-pk="true"/>
+    </entity>
+</entities>"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(component.join("data")).unwrap();
+    std::fs::write(
+        component.join("data/HolderData.xml"),
+        r#"<entity-facade-xml type="seed">
+    <proj.Holder holderId="H1"><proj.other.Enumeration itemSeqId="01"/></proj.Holder>
+</entity-facade-xml>"#,
+    )
+    .unwrap();
+    let project = super::super::detect(&root).unwrap();
+    let dirs = project.model_dirs(|| None).unwrap();
+    let index = open(project, dirs, false).unwrap();
+    assert!(index.describe("record:proj.Holder:H1").is_some());
+    assert!(
+        index.describe("record:proj.other.Enumeration:H1,01").is_some(),
+        "{:?}",
+        index
+            .find("H1", &[], &[], 20)
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>()
+    );
+    clean(&root);
+}
