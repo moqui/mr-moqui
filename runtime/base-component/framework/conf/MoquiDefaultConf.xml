@@ -247,6 +247,17 @@
     <default-property name="voicemail_transcribe_language" value=""/>
     <default-property name="voicemail_pin_min_digits" value="6"/>
 
+    <!-- The IVR, queues and transfer (V5; docs/interfaces/SIP.md "Queues", "Transfer and merge"): call_queue_tick_seconds,
+        how often the SIP engine checks each call waiting in a queue (1 to 30); call_transfer_ring_seconds, how long a blind
+        transfer's target rings before the caller goes to their voicemail (10 to 120); call_hold_music_location, hold music
+        for calls on hold and in queues without their own (WAV or Ogg Opus, any resource location; empty: a tone pattern;
+        use only audio the deployment may use); call_queue_prompt_location, a folder with 0.wav to 9.wav that speaks a
+        queue caller's place (empty: pips). -->
+    <default-property name="call_queue_tick_seconds" value="5"/>
+    <default-property name="call_transfer_ring_seconds" value="30"/>
+    <default-property name="call_hold_music_location" value=""/>
+    <default-property name="call_queue_prompt_location" value=""/>
+
     <!-- Properties for the primary (transactional group) datasource -->
     <default-property name="entity_ds_db_conf" value="h2"/>
     <default-property name="entity_ds_host" value="127.0.0.1"/>

@@ -77,7 +77,9 @@
         captions: { allowed: false, on: false, provider: "", local: false, unavailable: null, lines: [] },
         // recording (W5), by callSessionId: {enabled, ackRequired, canRecord, recording: {callRecordingId, state, pauseReason,
         // kind, ackRequired} or null, myConsent: {acknowledged, withdrawn, ackRequired} or null, failed}
-        recordingOf: {}
+        recordingOf: {},
+        // V5: the call-context providers' answer for a phone call, by callSessionId (a screen pop: who it is, open records)
+        contextOf: {}
     });
 
     const call = {
@@ -124,6 +126,8 @@
             const ringingForMe = view.status !== "ended" && view.myLegStatus === "offered";
             const at = state.ringing.indexOf(view.callSessionId);
             if (ringingForMe && at < 0) state.ringing.push(view.callSessionId);
+            // V5: who a phone caller is, once a call, when it rings for me or I am in it
+            if (view.kind === "phone" && view.status !== "ended" && !(view.callSessionId in state.contextOf)) call.loadContext(view.callSessionId);
             if (!ringingForMe && at >= 0) state.ringing.splice(at, 1);
             call.ring(state.ringing.length > 0);
         },
@@ -150,6 +154,8 @@
             }
             if (!data || data.kind !== "call") return;
             if (data.call) call.remember(data.call);
+            // V5: a merge moved this page's leg into another call: its media joins that call's room with the same leg
+            if (data.action === "moved" && data.toCallSessionId && state.current === data.callSessionId) call.moveTo(data.toCallSessionId);
             if (data.action === "ended" && state.current === data.callSessionId) call.hangUp("ended");
             if (data.action === "captions" && data.callSessionId === state.current) call.loadCaptions(data.callSessionId);
             if (data.action === "guestWaiting") state.lobbyNotice = { callSessionId: data.callSessionId, guestName: data.guestName || "" };
@@ -239,6 +245,36 @@
         },
         open(callSessionId) {
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
+        },
+
+        // ---- V5: call-context, a merge's move, and the call actions of m-call-actions ----
+        loadContext(callSessionId) {
+            if (call.guest || !callSessionId) return Promise.resolve(null);
+            state.contextOf[callSessionId] = null;
+            return call.request("callContext", { callSessionId }, "GET").then((json) => {
+                state.contextOf[callSessionId] = json && !json.reasonCode ? json : null;
+                return json;
+            }, () => null);
+        },
+        moveTo(toCallSessionId) {
+            if (!state.current) return Promise.resolve();
+            // the call screen of the old call shows the new one
+            const vm = call.vm || {};
+            const list = vm.currentPathList || [];
+            const onScreen = list[list.length - 1] === "Call" && (vm.currentParameters || {}).callSessionId === state.current;
+            state.current = toCallSessionId;
+            state.remotes = {};
+            call.trackSources = {};
+            call.tracks = {};
+            state.phase = "joining";
+            if (onScreen) call.open(toCallSessionId);
+            return call.connect(state.localStream).catch((err) => (state.error = String((err && err.message) || err)));
+        },
+        callAction(name, params) {
+            return call.request(name, params).then((json) => {
+                if (json.call) call.remember(json.call);
+                return json;
+            });
         },
 
         // ---- recording (W5): the policy, the call's recording and this leg's notice; a guest asks with its credential ----
@@ -892,7 +928,8 @@
             '<q-card v-for="view in ringingCalls" :key="view.callSessionId" class="m-call-ring q-mb-sm" style="min-width:300px">' +
             '<q-card-section class="row items-center no-wrap q-py-sm">' +
             '<q-icon :name="view.video ? \'sym_o_videocam\' : \'sym_o_call\'" size="28px" class="q-mr-sm"></q-icon>' +
-            '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}</div></div>' +
+            '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}</div>' +
+            '<m-call-context :call-session-id="view.callSessionId" dense></m-call-context></div>' +
             '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="t(\'Answer\')" @click="answer(view, view.video)"><q-tooltip>{{t(\'Answer\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="t(\'Answer with audio only\')" @click="answer(view, false)"><q-tooltip>{{t(\'Answer with audio only\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" class="q-ml-xs" :aria-label="t(\'Decline\')" @click="decline(view)"><q-tooltip>{{t(\'Decline\')}}</q-tooltip></q-btn>' +
@@ -1098,6 +1135,7 @@
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
+            '<m-call-context v-if="known && known.kind === \'phone\'" :call-session-id="callSessionId"></m-call-context>' +
             '<q-banner v-if="recording && inThis" dense rounded class="m-tonal m-call-recording-notice"><template v-slot:avatar><q-icon name="sym_o_fiber_manual_record" color="negative"></q-icon></template>' +
             '{{withdrawn ? t(\'You withdrew your consent: the recording is paused while you are in the call.\') : needsAck ? t(\'This call is being recorded. The recording waits until everyone in the call acknowledges.\') : t(\'This call is being recorded. Staying in the call is consent.\')}}' +
             '<template v-slot:action><q-btn v-if="needsAck || withdrawn" flat no-caps color="primary" :label="withdrawn ? t(\'Consent again\') : t(\'Acknowledge\')" @click="recAction(\'ackRecording\')"></q-btn>' +
@@ -1157,6 +1195,7 @@
             '<q-btn flat no-caps align="left" color="negative" icon="sym_o_stop" :label="t(\'Stop recording\')" v-close-popup @click="recAction(\'stopRecording\')"></q-btn></div></q-menu></q-btn>' +
             '<q-btn v-if="hasPhone" round unelevated color="grey-8" icon="sym_o_dialpad" :aria-label="t(\'Keypad\')"><q-tooltip>{{t(\'Keypad\')}}</q-tooltip><q-menu>' +
             '<div class="q-pa-sm" style="display:grid;grid-template-columns:repeat(3,48px);gap:4px"><q-btn v-for="key in keys" :key="key" outline dense size="lg" @click="dtmf(key)">{{key}}</q-btn></div></q-menu></q-btn>' +
+            '<m-call-actions v-if="inThis && known && known.status !== \'ended\'" :view="known"></m-call-actions>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" :aria-label="t(\'Leave\')" @click="leave"><q-tooltip>{{t(\'Leave\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="isHost && known && known.kind !== \'direct\'" flat no-caps color="negative" :label="t(\'End for everyone\')" @click="endForAll"></q-btn>' +
             '<m-ext-actions v-if="known" slot="call-actions" :item="{callSessionId: callSessionId}"></m-ext-actions></div>' +
@@ -1170,6 +1209,117 @@
             '</q-item-section></q-item></q-list>' +
             "</div>"
     };
+    // V5: who a phone caller is (the call-context providers, as the user rung): names with their record links, open records
+    components["m-call-context"] = {
+        name: "mCallContext",
+        props: { callSessionId: String, dense: Boolean },
+        data() { return { state }; },
+        computed: {
+            context() { return this.state.contextOf[this.callSessionId] || null; },
+            contacts() { return this.context ? (this.context.contactList || []).slice(0, this.dense ? 1 : 5) : []; },
+            records() { return this.context && !this.dense ? (this.context.recordList || []).slice(0, 5) : []; }
+        },
+        methods: { t },
+        template:
+            '<div v-if="contacts.length || records.length" class="m-call-context">' +
+            '<div v-for="c in contacts" :key="c.sourceId + c.url + c.name" class="text-caption">' +
+            '<q-icon :name="c.kind === \'organization\' ? \'sym_o_domain\' : \'sym_o_person\'" size="16px" class="q-mr-xs"></q-icon>' +
+            '<a v-if="c.url" :href="c.url">{{c.name}}</a><span v-else>{{c.name}}</span><span v-if="c.detail" class="m-muted"> · {{c.detail}}</span></div>' +
+            '<div v-for="r in records" :key="r.sourceId + r.url + r.title" class="text-caption">' +
+            '<q-icon name="sym_o_assignment" size="16px" class="q-mr-xs"></q-icon><a v-if="r.url" :href="r.url">{{r.title}}</a><span v-else>{{r.title}}</span>' +
+            '<span v-if="r.status" class="m-muted"> · {{r.status}}</span></div></div>'
+    };
+
+    // V5: hold, transfer (blind or attended, then complete or cancel), add a person or a number, merge another call, make it a
+    // meeting; each with the call's revision, so a stale view is refused rather than acting twice
+    components["m-call-actions"] = {
+        name: "mCallActions",
+        props: { view: Object },
+        data() {
+            return { state, dialog: null, targetType: "user", userId: null, userOptions: [], number: "", queueId: null, queueOptions: [],
+                mode: "blind", otherId: null, busy: false };
+        },
+        computed: {
+            phoneParticipants() { return (this.view.participants || []).filter((p) => p.identity === "phone" && p.inCall); },
+            hasPhone() { return this.phoneParticipants.length > 0; },
+            held() { return this.phoneParticipants.some((p) => p.onHold); },
+            myConsult() { const x = this.view.transfer; return x && x.mine && x.status === "consulting" ? x : null; },
+            otherCalls() {
+                return Object.values(this.state.calls).filter((v) => v.callSessionId !== this.view.callSessionId && v.status === "active" &&
+                    v.myLegStatus === "answered").map((v) => ({ value: v.callSessionId,
+                    label: (v.participants || []).filter((p) => p.userId !== moqui.call.me).map((p) => p.displayName).join(", ") || t("Call") }));
+            },
+            canSend() {
+                if (this.dialog === "merge") return !!this.otherId;
+                if (this.targetType === "user") return !!this.userId;
+                if (this.targetType === "number") return !!this.number.trim();
+                return !!this.queueId;
+            }
+        },
+        methods: {
+            t,
+            act(name, params) {
+                this.busy = true;
+                return moqui.call.callAction(name, Object.assign({ callSessionId: this.view.callSessionId, revision: this.view.revision }, params || {}))
+                    .then((json) => { this.busy = false; if (!json.reasonCode) this.dialog = null; return json; }, () => (this.busy = false));
+            },
+            open(kind) {
+                this.dialog = kind;
+                this.targetType = "user";
+                this.userId = null;
+                this.number = "";
+                this.queueId = null;
+                this.otherId = null;
+                this.mode = "blind";
+                if (kind === "transfer") moqui.call.request("transferTargets", {}, "GET").then((json) => (this.queueOptions = (json.queueList || [])
+                    .map((q) => ({ value: q.callQueueId, label: q.name + " (" + q.waitingCount + " " + t("waiting") + ", " + q.agentsAvailable + " " + t("free") + ")" }))));
+            },
+            searchUsers(term, update) {
+                moqui.request(moqui.call.base() + "/searchUsers", { method: "GET", params: { term: term || "" } })
+                    .then((result) => update(() => (this.userOptions = Array.isArray(result.json) ? result.json : [])), () => update(() => null));
+            },
+            send() {
+                if (this.dialog === "merge") return this.act("mergeCalls", { otherCallSessionId: this.otherId });
+                const target = this.targetType === "user" ? this.userId : this.targetType === "number" ? this.number.trim() : this.queueId;
+                if (this.dialog === "add") {
+                    return this.act("addParticipant", this.targetType === "user" ? { userId: target } : { phoneNumber: target });
+                }
+                return this.act("transferCall", { targetType: this.targetType, targetId: target, mode: this.targetType === "queue" ? "blind" : this.mode });
+            },
+            hold() { this.act(this.held ? "resumeCall" : "holdCall"); },
+            meeting() { this.act("toMeeting"); },
+            finish(complete) { moqui.call.callAction(complete ? "completeTransfer" : "cancelTransfer", { callTransferId: this.myConsult.callTransferId }); }
+        },
+        template:
+            '<span class="m-call-actions">' +
+            '<q-btn v-if="hasPhone" round unelevated :color="held ? \'warning\' : \'grey-8\'" :icon="held ? \'sym_o_play_arrow\' : \'sym_o_pause\'" :disable="busy"' +
+            ' :aria-label="held ? t(\'Resume\') : t(\'Hold\')" @click="hold" class="q-ml-xs"><q-tooltip>{{held ? t(\'Take off hold\') : t(\'Put on hold\')}}</q-tooltip></q-btn>' +
+            '<q-btn round unelevated color="grey-8" icon="sym_o_more_horiz" :aria-label="t(\'More call actions\')" class="q-ml-xs"><q-menu><q-list dense style="min-width:220px">' +
+            '<q-item v-if="hasPhone && !view.transfer" clickable v-close-popup @click="open(\'transfer\')"><q-item-section avatar><q-icon name="sym_o_phone_forwarded"></q-icon></q-item-section><q-item-section>{{t(\'Transfer\')}}</q-item-section></q-item>' +
+            '<q-item clickable v-close-popup @click="open(\'add\')"><q-item-section avatar><q-icon name="sym_o_person_add"></q-icon></q-item-section><q-item-section>{{t(\'Add a participant\')}}</q-item-section></q-item>' +
+            '<q-item v-if="otherCalls.length" clickable v-close-popup @click="open(\'merge\')"><q-item-section avatar><q-icon name="sym_o_call_merge"></q-icon></q-item-section><q-item-section>{{t(\'Merge another call\')}}</q-item-section></q-item>' +
+            '<q-item v-if="view.kind !== \'meeting\'" clickable v-close-popup @click="meeting"><q-item-section avatar><q-icon name="sym_o_groups"></q-icon></q-item-section><q-item-section>{{t(\'Make it a meeting\')}}</q-item-section></q-item>' +
+            '</q-list></q-menu></q-btn>' +
+            '<q-banner v-if="myConsult" dense rounded class="m-tonal q-mt-sm"><template v-slot:avatar><q-icon name="sym_o_phone_forwarded"></q-icon></template>' +
+            '{{t(\'Transferring to\')}} {{myConsult.targetName}}: {{t(\'the caller is on hold\')}}' +
+            '<template v-slot:action><q-btn flat no-caps color="positive" :label="t(\'Complete transfer\')" @click="finish(true)"></q-btn>' +
+            '<q-btn flat no-caps color="negative" :label="t(\'Cancel transfer\')" @click="finish(false)"></q-btn></template></q-banner>' +
+            '<q-dialog :model-value="!!dialog" @update:model-value="v => { if (!v) dialog = null }"><q-card style="min-width:360px">' +
+            '<q-card-section class="text-h6">{{dialog === \'transfer\' ? t(\'Transfer the call\') : dialog === \'add\' ? t(\'Add a participant\') : t(\'Merge another call into this one\')}}</q-card-section>' +
+            '<q-card-section v-if="dialog === \'merge\'"><q-select dense outlined emit-value map-options v-model="otherId" :options="otherCalls" :label="t(\'Call\')"></q-select>' +
+            '<div class="text-caption m-muted q-mt-sm">{{t(\'The calls become one meeting.\')}}</div></q-card-section>' +
+            '<q-card-section v-else class="q-gutter-sm">' +
+            '<q-btn-toggle v-model="targetType" no-caps dense unelevated toggle-color="primary" :options="dialog === \'transfer\' ? [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}, {label: t(\'Queue\'), value: \'queue\'}] : [{label: t(\'Person\'), value: \'user\'}, {label: t(\'Number\'), value: \'number\'}]"></q-btn-toggle>' +
+            '<q-select v-if="targetType === \'user\'" dense outlined use-input emit-value map-options v-model="userId" :options="userOptions" @filter="searchUsers" :label="t(\'Who\')"></q-select>' +
+            '<q-input v-if="targetType === \'number\'" dense outlined v-model="number" :label="t(\'Number\')" type="tel"></q-input>' +
+            '<q-select v-if="targetType === \'queue\'" dense outlined emit-value map-options v-model="queueId" :options="queueOptions" :label="t(\'Queue\')"></q-select>' +
+            '<q-option-group v-if="dialog === \'transfer\' && targetType !== \'queue\'" v-model="mode" inline dense :options="[{label: t(\'Now (blind)\'), value: \'blind\'}, {label: t(\'Talk to them first\'), value: \'attended\'}]"></q-option-group>' +
+            '</q-card-section>' +
+            '<q-card-actions align="right"><q-btn flat no-caps :label="t(\'Cancel\')" @click="dialog = null"></q-btn>' +
+            '<q-btn unelevated no-caps color="primary" :disable="!canSend || busy" :label="dialog === \'transfer\' ? t(\'Transfer\') : dialog === \'add\' ? t(\'Add\') : t(\'Merge\')" @click="send"></q-btn></q-card-actions>' +
+            '</q-card></q-dialog></span>'
+    };
+
     components["m-call"].methods.moquiCall = () => moqui.call;
     components["m-call"].methods.moquiCallMe = () => moqui.call.me;
     // The captions notice, as m-call and m-call-guest show it: who hears what people say

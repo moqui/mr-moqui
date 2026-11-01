@@ -631,6 +631,53 @@ function advance(p) {
   return { handled: true, reasonCode: 'noRoute' }
 }
 
+/**
+ * Internal (V5: Ivr.js, CallQueues.js and CallTransfers.js): an inbound phone call that is already up (the IVR answered it,
+ * a queue's fallback, a transfer's) goes to a user (by their rules), a ring group (its strategy), a voicemail box (or a
+ * user's, voicemailUserId: a transfer nobody answered) or an outside number (set by a voice admin: the deployment's fraud policy alone). Its plan replaces any it had and its first
+ * step runs. Answers mode ring (ringSeconds, stepToken: the engine rings on with that timer), voicemail (stepToken: the
+ * engine starts it, reason busy), or reasonCode noRoute (nothing rings and no box) or callEnded.
+ */
+function routeTo(p) {
+  const session = p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
+  if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  const atMs = blank(p.atMs) ? nowMs() : Number(p.atMs)
+  const from = p.fromNumber && /^\+\d{7,15}$/.test(String(p.fromNumber)) ? String(p.fromNumber) : null
+  let steps
+  if (!blank(p.voicemailUserId)) {
+    steps = enabledUser(p.voicemailUserId) ? [{ type: 'voicemail', userId: p.voicemailUserId }] : []
+  } else if (!blank(p.voicemailBoxId)) {
+    const box = one(BOX, { voicemailBoxId: p.voicemailBoxId })
+    steps = !box ? [] : [box.ringGroupId ? { type: 'voicemail', ringGroupId: box.ringGroupId } : { type: 'voicemail', userId: box.userId }]
+  } else if (!blank(p.phoneNumber)) {
+    const ctx = { atMs, from, anonymous: !from, hops: 0, seen: new Set(), trace: [] }
+    steps = (numberSteps(p.phoneNumber, null, ctx, true) || []).concat([{ type: 'end' }])
+    if (ctx.trace.length) ec.logger.info(`Call ${p.callSessionId} to ${p.phoneNumber}: ${ctx.trace.join('; ')}`)
+  } else if (!blank(p.userId) || !blank(p.ringGroupId)) {
+    const plan = buildPlan({ userId: p.userId || null, ringGroupId: p.ringGroupId || null, fromNumber: from, rawFrom: p.fromNumber, atMs })
+    if (plan.trace.length) ec.logger.info(`Call ${p.callSessionId}: ${plan.trace.join('; ')}`)
+    steps = plan.steps
+  } else {
+    steps = []
+  }
+  if (!steps.length || steps[0].type === 'reject' || steps[0].type === 'end') return { reasonCode: 'noRoute' }
+  let route = routeOf(p.callSessionId)
+  const fields = { planJson: JSON.stringify(steps), stepIndex: 0, hopCount: 0, userId: p.userId || null, ringGroupId: p.ringGroupId || null,
+    toNumber: p.toNumber || route?.toNumber || null, fromNumber: from || route?.fromNumber || null, stepDate: ec.user.nowTimestamp }
+  if (route) {
+    route.setFields(fields, true, null, null)
+    route.update()
+  } else {
+    route = ec.entity.makeValue(ROUTE)
+    route.setFields(Object.assign({ callSessionId: p.callSessionId, createdDate: ec.user.nowTimestamp }, fields), true, null, null)
+    route.create()
+  }
+  const out = runFrom(route, 0, p.displayName || null)
+  if (out.mode === 'ring') return { mode: 'ring', ringSeconds: out.ringSeconds, stepToken: stepToken(route) }
+  if (out.mode === 'voicemail') return { mode: 'voicemail', voicemailBoxId: out.voicemailBoxId, stepToken: stepToken(route) }
+  return { reasonCode: 'noRoute' }
+}
+
 // ---------- the user's settings ----------
 
 function ruleView(rule) {
@@ -1155,7 +1202,8 @@ const operations = {
   inbound, advance, evaluate, getSettings, updateSettings, storeRule, deleteRule, storeList, deleteList, addEntry, removeEntry,
   findGroups, storeGroup, deleteGroup, storeMember, deleteMember, findSchedules, storeSchedule, deleteSchedule,
   storeScheduleRule, deleteScheduleRule, checkSchedule, searchDialable, dialerData, normalize,
-  // for Voice.js and Voicemail.js
+  // for Voice.js, Voicemail.js and V5's IVR, queues and transfers
+  routeTo,
   scheduleOpen: (p) => ({ open: scheduleOpen(p.commsScheduleId, blank(p.atMs) ? nowMs() : Number(p.atMs)) }),
 }
 

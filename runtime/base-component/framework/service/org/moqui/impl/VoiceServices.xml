@@ -172,7 +172,8 @@ along with this software (see the LICENSE.md file). If not, see
             access (the voicemail access number, PnrVoicemail); voicemailSeconds, how long it rings before voicemail. V3: a
             number routed to a user is handled by their rules, one routed to a ring group (PnrRingGroup) by its strategy
             (CallHandlingServices inbound#PhoneCall); voicemailSeconds is then how long its first step rings, and reasonCode
-            anonymous (433) or declined (603) a refusal by the user's rules.</description>
+            anonymous (433) or declined (603) a refusal by the user's rules. V5: a number routed to an IVR menu (PnrIvr) or a queue
+            (PnrQueue) is answered by the engine, which does what ivr says (IvrServices).</description>
         <in-parameters>
             <parameter name="voiceTrunkId"/>
             <parameter name="toNumber" required="true"/>
@@ -189,6 +190,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="voicemail"/>
             <parameter name="voicemailSeconds" type="Integer"/>
             <parameter name="stepToken"><description>V3: the token of the plan's first step, which the engine's ring timer carries back to begin#Voicemail</description></parameter>
+            <parameter name="ivr" type="Map"><description>V5: a number routed to an IVR menu or a queue: the engine answers the call and does this first (as route#IvrCall's answer)</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('receive', context))</script></actions>
     </service>

@@ -166,6 +166,109 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- V5: hold for the phones in a call (hold music), transfer (blind or attended, then complete or cancel), add a person or a
+        number, merge another call in, make it a meeting (org.moqui.impl.CallTransferServices: the user's own call, its revision,
+        the fraud policy for numbers); and the call-context providers' screen pop for a phone caller -->
+    <transition name="holdCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.hold#PhoneCall').parameters({callSessionId: callSessionId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="resumeCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.resume#PhoneCall').parameters({callSessionId: callSessionId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="transferCall">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.transfer#Call').parameters({callSessionId: callSessionId || '', targetType: targetType || '', targetId: targetId || null, mode: mode || 'blind', revision: revision ? Number(revision) : null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, callTransferId: out.callTransferId || null, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="completeTransfer">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.complete#CallTransfer').parameters({callTransferId: callTransferId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelTransfer">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.cancel#CallTransfer').parameters({callTransferId: callTransferId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="addParticipant">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.add#CallParticipant').parameters({callSessionId: callSessionId || '', userId: userId || null, phoneNumber: phoneNumber || null, revision: revision ? Number(revision) : null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="mergeCalls">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.merge#Calls').parameters({callSessionId: callSessionId || '', otherCallSessionId: otherCallSessionId || '', revision: revision ? Number(revision) : null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, movedCount: out.movedCount || 0, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="toMeeting">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallTransferServices.convert#CallToMeeting').parameters({callSessionId: callSessionId || '', revision: revision ? Number(revision) : null})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, call: out.call || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="callContext" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallServices.get#CallContext').parameters({callSessionId: callSessionId || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, number: out.number || null, contactList: out.contactList || [], recordList: out.recordList || [], failedParts: out.failedParts || [], unavailable: !!out.unavailable})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="transferTargets" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.CallQueueServices.find#TransferQueues').parameters({term: term || ''})
+                .requireNewTransaction(true).disableAuthz().call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, errors, queueList: out.queueList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the leg's ICE servers (TURN with a short-lived credential), for its RTCPeerConnection: an admitted leg only -->
     <transition name="iceServers" method="get" read-only="true">
         <actions><script><![CDATA[

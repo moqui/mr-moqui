@@ -252,3 +252,51 @@ feature("Voicemail lists a message for its owner, and its audio is nothing for a
         })
     }
 })
+
+// V5: the call-context providers' screen pop for a phone caller, as the user rung (Calls/callContext): two providers of the
+// example gallery, one answering and one failing on purpose for this number, left out and named in failedParts; a user
+// not in the call gets not found with the same post. Skipped when the example component is not loaded.
+const exampleInstalled = ec.resource.getLocationReference("component://example/screen/Gallery.xml").getExists()
+feature("call-context: a phone caller's providers answer for the user rung, one failing is left out; another user is refused", {
+    when() {
+        if (!exampleInstalled) return {skip: true}
+        const NUMBER = "+15550109101"
+        const TRUNK = "BASIC_COMMS_CTX_TRUNK"
+        sys(() => {
+            call("org.moqui.impl.VoiceServices.register#SipNode", {instanceId: NODE, sipAddress: "127.0.0.1:5060"})
+            ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", NUMBER).deleteAll()
+            ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", TRUNK).deleteAll()
+            const trunk = ec.entity.makeValue("moqui.call.VoiceTrunk")
+            trunk.setFields({voiceTrunkId: TRUNK, name: "Context trunk", host: "sip.example.invalid", transportEnumId: "VtrTls",
+                mediaEncryptionEnumId: "VmeSrtp", providerProfileEnumId: "VppGeneric", statusId: "VtsOk", disabled: "N"}, true, null, null)
+            trunk.create()
+            const number = ec.entity.makeValue("moqui.call.PhoneNumber")
+            number.setFields({phoneNumber: NUMBER, voiceTrunkId: TRUNK, routeTypeEnumId: "PnrUser", routeId: john()}, true, null, null)
+            number.create()
+        })
+        const ring = sys(() => call("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: NUMBER, fromNumber: "+15550100666", instanceId: NODE})) || {}
+        ec.user.internalLoginUser("john.doe")
+        const mine = request(root, "Calls/callContext", {callSessionId: ring.callSessionId}, "get")
+        ec.user.internalLoginUser("basic.comms.call.stranger")
+        const stranger = request(root, "Calls/callContext", {callSessionId: ring.callSessionId}, "get")
+        ec.user.internalLoginUser("john.doe")
+        sys(() => {
+            const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", ring.callSessionId).one()
+            if (s) { s.set("statusId", "CssEnded"); s.update() }
+            ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", NUMBER).deleteAll()
+            ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", TRUNK).deleteAll()
+            ec.entity.find("moqui.call.SipNode").condition("instanceId", NODE).deleteAll()
+        })
+        return {ring, mine: mine.json, stranger: stranger.json}
+    },
+    then({skip, ring, mine, stranger}) {
+        skip || ring.callSessionId != null
+        skip || mine.number == "+15550100666"
+        skip || mine.contactList.some((c) => c.sourceId == "gallery.callContext" && c.name == "Gallery caller 0666")
+        skip || mine.recordList.some((r) => r.sourceId == "gallery.callContext")
+        skip || mine.failedParts.map((f) => f.sourceId).includes("gallery.callContextFailing")
+        skip || !mine.contactList.some((c) => c.sourceId == "gallery.callContextFailing")
+        skip || stranger.reasonCode == "notFound"
+        skip || JSON.stringify(stranger.contactList) == "[]"
+    }
+})

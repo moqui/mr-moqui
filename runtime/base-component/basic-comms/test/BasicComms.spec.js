@@ -133,7 +133,8 @@ feature("the user search finds active people by name and leaves out disabled and
 feature("a hook nobody declares is unavailable and a hook name that is not one is refused", {
     when() {
         login("john.doe")
-        const none = sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "call-context"})) || {}
+        // V5: call-context has providers now (the example gallery's, IronStone's); external-conversation has none yet
+        const none = sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "external-conversation"})) || {}
         let refused = ""
         try {
             sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "not-a-hook"}))
@@ -198,8 +199,17 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         handling("store#CommsScheduleRule", {commsScheduleId: hours.commsScheduleId, ruleTypeEnumId: "CsrHoliday", onDate: "2026-12-25", repeatYearly: "Y"})
         ec.message.clearErrors()
         const problems = []
+        // V5: an IVR menu with an option and a queue with an agent
+        const ivr = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.IvrServices." + name).parameters(parameters).call()) || {}
+        const menu = ivr("store#IvrMenu", {name: "Render menu"})
+        ivr("store#IvrOption", {ivrMenuId: menu.ivrMenuId, digits: "1", targetTypeEnumId: "CtgUser", targetId: USER})
+        const queues = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.CallQueueServices." + name).parameters(parameters).call()) || {}
+        const queue = queues("store#CallQueue", {name: "Render queue"})
+        queues("store#CallQueueAgent", {callQueueId: queue.callQueueId, userId: USER})
+        ec.message.clearErrors()
         const texts = {Status: "SIP servers", Trunks: "Render trunk", Numbers: "+15550109999", CallerIds: "Let someone call from a number",
-            Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone", RingGroups: "Render group", Schedules: "Render hours"}
+            Fraud: "198.51.100.7", Emergency: "Render office", Phones: "Render phone", RingGroups: "Render group", Schedules: "Render hours",
+            IvrMenus: "Render menu", Queues: "Render queue"}
         for (const [path, text] of Object.entries(texts)) {
             for (const mode of ["qvt", "tui"]) {
                 const shown = render(systemRoot, "Voice/" + path, mode, {})
@@ -209,13 +219,28 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         }
         const history = render(root, "Calls/History", "qvt", {})
         const historyTui = render(root, "Calls/History", "tui", {})
+        // V5: the user's queues (an agent of Render queue), in the browser and the terminal
+        ec.user.internalLoginUser("basic.comms.spec")
+        const queuesQvt = render(root, "Calls/Queues", "qvt", {})
+        const queuesTui = render(root, "Calls/Queues", "tui", {})
+        login("john.doe")
+        sys(() => {
+            ec.entity.find("moqui.call.CallQueueAgent").condition("callQueueId", queue.callQueueId).deleteAll()
+            ec.entity.find("moqui.call.CallQueue").condition("callQueueId", queue.callQueueId).deleteAll()
+            ec.entity.find("moqui.call.IvrOption").condition("ivrMenuId", menu.ivrMenuId).deleteAll()
+            ec.entity.find("moqui.call.IvrMenu").condition("ivrMenuId", menu.ivrMenuId).deleteAll()
+        })
         // V3: the user's call handling and the dialer, in the terminal
         const handlingTui = render(root, "Settings/CallHandlingTui", "tui", {})
         const dialerTui = render(root, "Calls/DialerTui", "tui", {text: "Render"})
-        return {problems, history, historyTui, handlingTui, dialerTui}
+        return {problems, history, historyTui, handlingTui, dialerTui, queuesQvt, queuesTui}
     },
-    then({problems, history, historyTui, handlingTui, dialerTui}) {
+    then({problems, history, historyTui, handlingTui, dialerTui, queuesQvt, queuesTui}) {
         problems.join("\n") == ""
+        queuesQvt.status == 200
+        queuesQvt.output.includes("Render queue")
+        queuesTui.output.includes("Render queue")
+        !queuesTui.broken
         handlingTui.output.includes("Caller lists")
         !handlingTui.broken
         dialerTui.output.includes("call from the browser")

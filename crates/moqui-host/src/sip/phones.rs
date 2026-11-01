@@ -216,6 +216,8 @@ impl Engine {
                 answered: false,
                 device: Some(text(body, "sipDeviceId")),
                 srtp_local: Some(srtp),
+                sip_answered: false,
+                held: false,
             },
         );
         if let Err(err) = self.ua.ring_device(ring) {
@@ -343,6 +345,8 @@ impl Engine {
                         answered: true,
                         device: Some(device),
                         srtp_local: None,
+                        sip_answered: false,
+                        held: false,
                     },
                 );
             }

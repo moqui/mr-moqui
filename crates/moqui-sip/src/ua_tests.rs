@@ -978,3 +978,20 @@ fn a_display_name_or_header_cannot_add_headers() {
     assert!(!header_safe("P-Asserted-Identity", "<tel:+1>\r\nX-Evil: 1"));
     assert!(!header_safe("Bad Name", "x"));
 }
+
+#[test]
+fn a_refer_target_is_the_user_of_its_uri_and_an_attended_one_is_not_taken() {
+    assert_eq!(refer_target("<sip:alice@pbx.example.com>").as_deref(), Some("alice"));
+    assert_eq!(
+        refer_target("\"Sales\" <sips:+15550100@pbx.example.com;transport=tls>").as_deref(),
+        Some("+15550100")
+    );
+    assert_eq!(refer_target("<tel:+15550101>").as_deref(), Some("+15550101"));
+    assert_eq!(refer_target("sip:1003@10.0.0.5").as_deref(), Some("1003"));
+    // Replaces (RFC 3891): an attended transfer from the phone, not taken
+    assert_eq!(
+        refer_target("<sip:bob@pbx?Replaces=abc%3Bto-tag%3D1%3Bfrom-tag%3D2>"),
+        None
+    );
+    assert_eq!(refer_target("<sip:@pbx>"), None);
+}

@@ -310,6 +310,12 @@ pub enum UaEvent {
         change: BindingChange,
         binding: Binding,
     },
+    /// A leg's far end sent REFER (a desk phone's blind transfer): the user part of its `Refer-To`, a username or a
+    /// number.
+    Refer {
+        leg: String,
+        target: String,
+    },
     /// A device leg ([`Ua::ring_device`]) was answered by one of its bindings, which signals from `source`.
     DeviceAnswered {
         leg: String,
@@ -519,6 +525,26 @@ fn header_values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
         .filter(|h| h.name().eq_ignore_ascii_case(name))
         .map(|h| h.value().to_string())
         .collect()
+}
+
+/// The target of a REFER's `Refer-To` (a blind transfer): the user part of its SIP or tel URI, a username or a number;
+/// `None` for one with `Replaces` (an attended transfer, not taken) or no user.
+pub fn refer_target(value: &str) -> Option<String> {
+    let target = rsipstack::sip::event_packages::parse_refer_to(value);
+    if target.replaces.is_some() {
+        return None;
+    }
+    let uri = target.uri.trim();
+    let rest = ["sips:", "sip:", "tel:"]
+        .iter()
+        .find_map(|scheme| {
+            uri.get(..scheme.len())
+                .filter(|s| s.eq_ignore_ascii_case(scheme))
+                .map(|_| &uri[scheme.len()..])
+        })
+        .unwrap_or(uri);
+    let user = rest.split(['@', ';', '?']).next().unwrap_or("").trim();
+    (!user.is_empty()).then(|| user.to_string())
 }
 
 fn user_of(uri: &Uri) -> String {
@@ -1218,9 +1244,36 @@ impl Inner {
                 DialogState::Info(_, _, handle) | DialogState::Options(_, _, handle) => {
                     let _ = handle.reply(StatusCode::OK).await;
                 }
+                // a desk phone's blind transfer (RFC 3515): accepted, told to the host, and the phone told it went (its
+                // NOTIFY, so it hangs up); an attended one (Replaces, RFC 3891) is not taken
+                DialogState::Refer(id, req, handle) => {
+                    let target = header_values(&req.headers, "Refer-To")
+                        .into_iter()
+                        .chain(header_values(&req.headers, "r"))
+                        .next()
+                        .and_then(|value| refer_target(&value));
+                    match target {
+                        Some(target) => {
+                            let _ = handle.reply(StatusCode::Accepted).await;
+                            self.emit(UaEvent::Refer {
+                                leg: leg.clone(),
+                                target,
+                            });
+                            if let Some(Dialog::Invite(dialog)) = self.dialogs.get_dialog(&id) {
+                                tokio::spawn(async move {
+                                    let _ = dialog
+                                        .notify_refer(StatusCode::OK, "terminated;reason=noresource")
+                                        .await;
+                                });
+                            }
+                        }
+                        None => {
+                            let _ = handle.reply(StatusCode::NotImplemented).await;
+                        }
+                    }
+                }
                 DialogState::Notify(_, _, handle)
                 | DialogState::Message(_, _, handle)
-                | DialogState::Refer(_, _, handle)
                 | DialogState::Publish(_, _, handle) => {
                     let _ = handle.reply(StatusCode::NotImplemented).await;
                 }

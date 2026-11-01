@@ -529,7 +529,7 @@ pub(super) struct VmCall {
     target: Json,
 }
 
-fn location_bytes_job(
+pub(super) fn location_bytes_job(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     location: &str,
 ) -> Result<Vec<u8>, String> {
@@ -648,11 +648,13 @@ impl Engine {
             }
             return;
         }
-        if let Err(err) = self.ua.answer(&leg) {
+        if let Err(err) = self.answer_leg(&leg) {
             tracing::warn!("SIP leg {leg}: not answered for voicemail: {err}");
             self.end_leg(&leg, &room);
             return;
         }
+        // V5: no ringback or music under the greeting
+        self.set_loop(&leg, None);
         let max_ms = super::number(&out, "maxSeconds").unwrap_or(120) * 1000;
         let (machine, actions) = if text(&out, "mode") == "access" {
             Machine::access()

@@ -5,14 +5,16 @@ MessageDetail, Home, chat (rooms, direct messages, threads, the tray's Chat tab)
 settings. It works with only the framework. An app that has more (IronStone BOSS: internal messages, mailboxes, contact books,
 records) mounts the same screens under its own root and adds its parts, without a copy of them. The design and its
 order of work are in [plans/Comms-Framework.md](../../plans/Comms-Framework.md); phone calls through SIP trunks are there
-(V1), voicemail (V2), call handling, ring groups and the dialer (V3); chat bridges come later.
+(V1), voicemail (V2), call handling, ring groups and the dialer (V3), the IVR, queues, transfer and merge (V5); chat
+bridges come later.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
 `org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
 `org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
 `org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
-([SIP](../interfaces/SIP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`.
+([SIP](../interfaces/SIP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
+menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices`.
 
 ## For users
 
@@ -68,6 +70,17 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   once and in a day. An emergency number is always tried first: it goes through a trunk that takes emergency calls, from
   your registered location with its callback number, and tells the location's contact; when any of that is missing the
   call is refused and says what is missing, so call from another phone.
+- <a id="in-call"></a>**In a call** (V5). Hold puts the phone on hold (it hears hold music, and nobody hears it). More
+  has Transfer (to a person, a number or a queue; Now hands the caller over and you leave, Talk to them first holds the
+  caller while you talk to the person, then Complete transfer or Cancel transfer), Add a participant (a person, or a
+  number), Merge another call (another call you are in joins this one as a meeting; both must be on one media server)
+  and Make it a meeting. A number you transfer to or add is a call you place, with your permissions and limits. A
+  transfer needs the call answered, and if the call changed since you looked, try again. When a phone call rings you,
+  the ring bar and the call show who is calling when an app knows the number (in IronStone, the contact and their open
+  requests). See [SIP, Transfer and merge](../interfaces/SIP.md#transfer-and-merge).
+- <a id="queues"></a>**Queues** (Calls, Queues; V5). The call queues you take calls for: log in, pause, resume, log out;
+  each with its calls waiting, the longest wait and the agents free. Logged in and free, a queue's calls ring you as
+  any call does; after one you have the queue's wrap-up time before the next. See [SIP, Queues](../interfaces/SIP.md#queues).
 - <a id="voicemail"></a>**Voicemail.** A call to your number goes to your voicemail when you don't answer within your
   rings, when you are in another call, or when you decline it. The caller hears your greeting (or the default one), a
   beep, and leaves a message of up to two minutes; `#` ends it. You are told at once (here, and on your devices by Web
@@ -110,7 +123,14 @@ The code: `runtime/base-component/basic-comms` (screens, services, data, specs);
   registrations, whether the registrar is on, and Remove. Ring groups: each group's members in order, how it rings
   (all at once, in order, round robin), seconds each, its hours, and what happens when nobody answers (the group's
   voicemail, which its members share; another group; an outside number; the end). Schedules: the business hours, dated
-  hours and holidays (once or each year) with their time zone, and whether each is open now. The screens are basic-comms' (`screen/System/`), mounted
+  hours and holidays (once or each year) with their time zone, and whether each is open now. IVR menus (V5): each menu's
+  prompt (an uploaded recording; without one, tones), how long it waits and how often it plays again, how many keys,
+  its options and where they go (a person, a ring group, a queue, another menu, a voicemail box, an outside number,
+  the menu again, the end), and where no key, a wrong key and its closed hours go. Queues (V5): each queue's calls
+  waiting now, its agents and their state, its strategy (the agent idle longest, round robin, all at once), the
+  limits and where calls go past them, wrap-up, how often callers hear their place, and its hold music and position
+  prompt (uploaded; without them, tones: Moqui ships no music or recorded speech). Numbers route to a menu or a queue too.
+  The screens are basic-comms' (`screen/System/`), mounted
   into the tools System app; in the terminal they are the same forms.
 - **Home.** Unread by account, flagged, snoozed, mentions, mail that was not sent, missed calls, unheard voicemail (once
   you have a voicemail box), and rooms with unread.
@@ -152,8 +172,9 @@ records drive's folders by their records.
 
 | `meetings-source` | The user's meetings in a range, for the Calls screen's Meetings (IronStone: the calendar's) |
 | `recipient-source` | People with phone numbers for the Dialer's search (`kinds` phone; IronStone: the parties and contacts the user may see) |
+| `call-context` | Who a phone caller is, for the ring bar and the call (V5; `number`; IronStone: the party with that number the user may see, and its open requests; the example gallery has two, one failing on purpose) |
 
-The other hooks (`invitation`, `contact-card`, `call-context`, `home-source`,
+The other hooks (`invitation`, `contact-card`, `home-source`,
 `external-conversation`) are declared for the work after this one. A provider runs with the app's authorization and
 entity filters; a read that fails is left out and named, and a mutation that fails is an error.
 

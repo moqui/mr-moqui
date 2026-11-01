@@ -68,6 +68,9 @@ along with this software (see the LICENSE.md file). If not, see
         <palette-source group="GalleryEnumerations" label="Enumerations" icon="sym_o_label" prefix="~" sequence="90"
                 service="example.ExampleServices.search#GalleryEnumerations"/>
         <keymap scope="gallery"><key keys="g w" label="Go to the widgets" screen="gallery/Widgets"/></keymap>
+        <!-- who a phone caller is (V5): an example that answers, and one that fails for one number (service/example/ExampleServices.xml) -->
+        <call-context name="gallery.callContext" service="example.ExampleServices.get#GalleryCallContext" sequence="90"/>
+        <call-context name="gallery.callContextFailing" service="example.ExampleServices.get#GalleryCallContextFailing" sequence="91"/>
     </shell-providers>
 
     <widgets><subscreens-panel id="gallery-panel" type="popup"/></widgets>

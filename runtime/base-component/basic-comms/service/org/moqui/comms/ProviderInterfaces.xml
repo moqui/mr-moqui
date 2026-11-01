@@ -108,11 +108,18 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="call" noun="Context" type="interface">
-        <description>call-context: who a caller is and their open records, for a screen pop (contact, recordList).</description>
+        <description>call-context: who a caller is and their open records, for a screen pop (V5: the ring bar and m-call,
+            CallServices.get#CallContext, as the user rung). number is E.164. Answers contactList (each {name, kind: person or
+            organization, url, detail}) and recordList (each {title, status, url}), at most 10 and 20, only what the user
+            may see.</description>
         <in-parameters>
             <parameter name="number"/>
             <parameter name="address"/>
         </in-parameters>
+        <out-parameters>
+            <parameter name="contactList" type="List"/>
+            <parameter name="recordList" type="List"/>
+        </out-parameters>
     </service>
     <service verb="home" noun="Source" type="interface">
         <description>home-source: the Comms Home cards it adds (cardList, each with its rows and a link to more).</description>

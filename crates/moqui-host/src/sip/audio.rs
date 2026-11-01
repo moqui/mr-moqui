@@ -173,8 +173,15 @@ pub(crate) fn encode_ogg_opus(pcm: &[i16], serial: u32) -> Result<Vec<u8>, Strin
     file.finish()
 }
 
+/// Where the admin's IVR prompts and hold music are kept (V5, Ivr.js PROMPT_ROOT); converted as greetings are.
+const PROMPT_ROOT: &str = "dbresource://moqui/call/prompt/";
+
 fn greeting_location(location: &str) -> bool {
-    location.strip_prefix(GREETING_ROOT).is_some_and(|rest| {
+    [GREETING_ROOT, PROMPT_ROOT].iter().any(|root| under(root, location))
+}
+
+fn under(root: &str, location: &str) -> bool {
+    location.strip_prefix(root).is_some_and(|rest| {
         !rest.is_empty()
             && !rest
                 .split('/')
@@ -196,7 +203,11 @@ fn convert_greeting_audio(
             .unwrap_or_default()
     };
     let (source, target) = (text("sourceLocation"), text("targetLocation"));
-    if !greeting_location(&source) || !greeting_location(&target) {
+    // both under one root: a greeting stays a greeting, a prompt a prompt
+    let same_root = [GREETING_ROOT, PROMPT_ROOT]
+        .iter()
+        .any(|root| under(root, &source) && under(root, &target));
+    if !greeting_location(&source) || !greeting_location(&target) || !same_root {
         return Err(LibError::new(format!(
             "{source} or {target} is not a voicemail greeting location"
         )));

@@ -28,9 +28,14 @@ const ADMISSION_CODES = {
 const END_CODES = {
   CerHangup: 'hangup', CerDeclined: 'declined', CerNoAnswer: 'noAnswer', CerCanceled: 'canceled',
   CerConnectionLost: 'connectionLost', CerMediaNodeLost: 'mediaNodeLost', CerEmpty: 'empty', CerFailed: 'failed',
-  CerRemoved: 'removed',
+  CerRemoved: 'removed', CerMerged: 'merged', CerTransferred: 'transferred',
 }
 const OPEN_LEG = ['ClsOffered', 'ClsAnswered']
+// V5: transfers, queues (CallTransfers.js, CallQueues.js)
+const TRANSFER = 'moqui.call.CallTransfer'
+const QUEUE_ENTRY = 'moqui.call.CallQueueEntry'
+const OPEN_TRANSFER = ['CtsRinging', 'CtsConsulting']
+const TRANSFER_CODES = { CtsRinging: 'ringing', CtsConsulting: 'consulting', CtsCompleted: 'completed', CtsCanceled: 'canceled', CtsFailed: 'failed' }
 const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone' }
 const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
 
@@ -182,9 +187,13 @@ function view(session, forUserId) {
       inCall: own.some((leg) => leg.statusId === 'ClsAnswered'),
       ringing: own.some((leg) => leg.statusId === 'ClsOffered'),
       legs: own.map((leg) => ({ callLegId: leg.callLegId, status: LEG_CODES[leg.statusId] || null,
-        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web' })),
+        type: LEG_TYPE_CODES[leg.legTypeEnumId] || 'web', held: !!leg.heldDate && leg.statusId === 'ClsAnswered' })),
+      onHold: own.some((leg) => leg.heldDate && leg.statusId === 'ClsAnswered'),
     }
   })
+  // V5: the call's transfer going on, for its controls
+  const transfer = Array.from(find(TRANSFER).condition('callSessionId', session.callSessionId)
+    .condition('statusId', 'in', OPEN_TRANSFER).limit(1).list())[0]
   return {
     callSessionId: session.callSessionId,
     kind: KIND_CODES[session.kindEnumId] || null,
@@ -203,6 +212,9 @@ function view(session, forUserId) {
     participants: list,
     myLegId: myLeg ? myLeg.callLegId : null,
     myLegStatus: myLeg ? LEG_CODES[myLeg.statusId] || null : null,
+    transfer: transfer ? { callTransferId: transfer.callTransferId, kind: transfer.kindEnumId === 'CtkAttended' ? 'attended' : 'blind',
+      status: TRANSFER_CODES[transfer.statusId] || null, fromUserId: transfer.fromUserId || null,
+      mine: !!forUserId && transfer.fromUserId === forUserId, targetName: transfer.reasonText || transfer.targetId || null } : null,
     url: callLink(session.callSessionId),
   }
 }
@@ -349,13 +361,60 @@ function closeLeg(leg, status, reason) {
       const log = one(USER_LOG, { callSessionId: leg.callSessionId, userId: participant.userId })
       const total = Number(log?.durationSeconds || 0) + seconds(leg.answeredDate, now)
       setLog(leg.callSessionId, participant.userId, { durationSeconds: total })
+      // V5: an agent who answered a queue call goes into the queue's wrap-up
+      if (find(QUEUE_ENTRY).condition('callSessionId', leg.callSessionId).condition('statusId', 'CqeAnswered')
+        .condition('answeredUserId', participant.userId).count()) {
+        v5('CallQueues', 'legClosed', { callSessionId: leg.callSessionId, userId: participant.userId })
+      }
     }
     recordingChange(leg.callSessionId, 'legLeft', leg.callLegId)
   }
 }
 
-/** Ends the call: its open legs close, the callees it rang and nobody answered have missed it. */
-function endSession(session, reason) {
+/** V5: an operation of CallQueues.js or CallTransfers.js. */
+function v5(script, op, parameters) {
+  return ec.resource.script(`component://framework/service/org/moqui/impl/${script}.js`).execute(op, parameters) || {}
+}
+
+/** V5: a call waits for a transfer's target, or in a queue: its far end stays though nobody here is in it. */
+function farEndWaits(callSessionId) {
+  return find(TRANSFER).condition('callSessionId', callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count() > 0 ||
+    find(QUEUE_ENTRY).condition('callSessionId', callSessionId).condition('statusId', 'CqeWaiting').count() > 0
+}
+
+/** The far end's answered phone legs (not numbers dialed for people here). */
+function answeredPhoneCount(callSessionId) {
+  return rows(LEG, { callSessionId, legTypeEnumId: 'CltPstn', statusId: 'ClsAnswered' }).filter((leg) => !isForwardLeg(leg)).length
+}
+
+/**
+ * Whether a phone call is over: nobody here is in it, nothing waits (a transfer, a queue), and no two phones are left
+ * talking to each other (a call transferred to an outside number bridges the two, V5).
+ */
+function phoneCallOver(session) {
+  if (localAnsweredCount(session.callSessionId)) return false
+  if (farEndWaits(session.callSessionId)) return false
+  return answeredPhoneCount(session.callSessionId) < 2
+}
+
+/**
+ * V5: someone answered (a tab, a phone, a forwarded or added number): a queue call's entry is answered, and a transfer
+ * whose target this is goes on (CallTransfers.js answered).
+ */
+function afterAnswer(session, userId, callLegId) {
+  if (find(QUEUE_ENTRY).condition('callSessionId', session.callSessionId).condition('statusId', 'CqeWaiting').count()) {
+    v5('CallQueues', 'answered', { callSessionId: session.callSessionId, userId })
+  }
+  if (find(TRANSFER).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count()) {
+    v5('CallTransfers', 'answered', { callSessionId: session.callSessionId, userId, callLegId })
+  }
+}
+
+/**
+ * Ends the call: its open legs close, the callees it rang and nobody answered have missed it. keepRoom (a merge, V5)
+ * leaves the media room to the legs that moved out of it; it goes when they have.
+ */
+function endSession(session, reason, keepRoom) {
   if (session.statusId === 'CssEnded') return
   const now = ec.user.nowTimestamp
   // a recording stops first, so the legs closing below do not resume it
@@ -365,8 +424,8 @@ function endSession(session, reason) {
       closeLeg(leg, 'ClsLeft', reason)
     } else if (leg.statusId === 'ClsOffered') {
       closeLeg(leg, reason === 'CerNoAnswer' ? 'ClsTimedOut' : 'ClsCanceled', reason)
-      // a phone or a forwarded number still ringing stops (V3, V4)
-      if (isDeviceLeg(leg) || isForwardLeg(leg)) sipLegControl(session, leg.callLegId, 'hangup')
+      // a phone or a number still ringing stops (V3, V4; an added or transferred-to number, V5)
+      if (isDeviceLeg(leg) || leg.legTypeEnumId === 'CltPstn') sipLegControl(session, leg.callLegId, 'hangup')
     }
   }
   for (const log of rows(USER_LOG, { callSessionId: session.callSessionId })) {
@@ -378,9 +437,16 @@ function endSession(session, reason) {
   session.setFields({ statusId: 'CssEnded', endedDate: now, endReasonEnumId: reason }, true, null, null)
   bump(session)
   session.update()
+  // V5: its queue entries were abandoned, its transfer is over
+  if (find(QUEUE_ENTRY).condition('callSessionId', session.callSessionId).condition('statusId', 'CqeWaiting').count()) {
+    v5('CallQueues', 'sessionEnded', { callSessionId: session.callSessionId })
+  }
+  if (find(TRANSFER).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count()) {
+    v5('CallTransfers', 'sessionEnded', { callSessionId: session.callSessionId })
+  }
   const duration = seconds(session.answeredDate, now)
   roomEvent(session, 'ended', { endReason: END_CODES[reason] || null, durationSeconds: duration })
-  mediaControl(session, { action: 'closeRoom' })
+  if (!keepRoom) mediaControl(session, { action: 'closeRoom' })
   pushState(session, 'ended')
   // everyone who was in it, the leg that just left too (updatePresence publishes only a change)
   updatePresence(participantsOf(session.callSessionId).filter((p) => p.admissionStatusId === 'CasAdmitted')
@@ -587,6 +653,7 @@ function answer(p) {
   else if (!session.answeredDate) session.set('answeredDate', now)
   bump(session)
   session.update()
+  afterAnswer(session, me, offered.leg.callLegId)
   pushState(session, 'answered', { answeredBy: me, callLegId: offered.leg.callLegId })
   updatePresence([me])
   if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound') phoneControl(session, 'answer')
@@ -622,6 +689,9 @@ function declineRing(session, participant, leg, userId) {
   bump(session)
   session.update()
   pushState(session, 'declined', { declinedBy: userId })
+  // V5: a transfer's target declined: the transfer decides (the target's voicemail, or back to the consult)
+  if (find(TRANSFER).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count() &&
+    v5('CallTransfers', 'declined', { callSessionId: session.callSessionId, userId }).handled) return
   // V3: the call's handling plan goes on (a ring group's next member, a forward), or to voicemail
   if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound' && !stillRinging) {
     phoneControl(session, 'voicemail', { reason: 'declined', stepToken: routeStepToken(session.callSessionId) })
@@ -683,8 +753,8 @@ function leaveLeg(session, leg, reason, userId) {
   const remaining = answeredLegCount(session.callSessionId)
   if (session.statusId === 'CssRinging') {
     endSession(session, 'CerCanceled')
-  } else if (session.kindEnumId === 'CskDirect' || remaining === 0 ||
-    (session.kindEnumId === 'CskPhone' && !localAnsweredCount(session.callSessionId))) {
+  } else if (session.kindEnumId === 'CskDirect' || (remaining === 0 && !farEndWaits(session.callSessionId)) ||
+    (session.kindEnumId === 'CskPhone' && phoneCallOver(session))) {
     endSession(session, remaining === 0 && !['CskDirect', 'CskPhone'].includes(session.kindEnumId) ? 'CerEmpty' : reason)
   } else {
     bump(session)
@@ -1365,7 +1435,6 @@ function phoneLegsOf(callSessionId) {
   return rows(LEG, { callSessionId, legTypeEnumId: 'CltPstn' }).filter((leg) => OPEN_LEG.includes(leg.statusId) && !isForwardLeg(leg))
 }
 
-/** Tells the SIP engine on the call's node about its phone legs ({action: 'answer'}, and extra), after the commit. */
 /**
  * The token of the step an inbound call's handling plan is on (V3, CallRoute.stepSeq), null for a call with none: the
  * voicemail control carries it, so the engine's begin#Voicemail for a step the plan has since left does nothing.
@@ -1375,6 +1444,7 @@ function routeStepToken(callSessionId) {
   return route ? String(Number(route.stepSeq) || 0) : null
 }
 
+/** Tells the SIP engine on the call's node about its phone legs ({action: 'answer'}, and extra), after the commit. */
 function phoneControl(session, action, extra) {
   if (!session.mediaNodeId) return
   for (const leg of phoneLegsOf(session.callSessionId)) {
@@ -1503,6 +1573,8 @@ function phoneEvent(p) {
     if (session.statusId === 'CssRinging') session.setFields({ statusId: 'CssActive', answeredDate: now }, true, null, null)
     bump(session)
     session.update()
+    // V5: a number added to the call, or a transfer's target
+    afterAnswer(session, null, leg.callLegId)
     pushState(session, 'answered', { callLegId: leg.callLegId })
     phoneJoined(session, leg)
     answerCallerDevices(session)
@@ -1512,25 +1584,38 @@ function phoneEvent(p) {
     if (leg.statusId === 'ClsAnswered') return phoneEvent(Object.assign({}, p, { event: 'ended' }))
     const busy = p.event === 'busy' || p.event === 'declined'
     closeLeg(leg, busy ? 'ClsDeclined' : 'ClsFailed', busy ? 'CerDeclined' : 'CerFailed')
-    if (!phoneLegsOf(session.callSessionId).length) endSession(session, busy ? 'CerDeclined' : 'CerFailed')
+    phoneLegGone(session, leg, busy ? 'CerDeclined' : 'CerFailed')
     return {}
   }
   if (p.event === 'ended' || p.event === 'canceled') {
     const wasAnswered = leg.statusId === 'ClsAnswered'
     closeLeg(leg, wasAnswered ? 'ClsLeft' : 'ClsCanceled', wasAnswered ? 'CerHangup' : 'CerCanceled')
-    if (!phoneLegsOf(session.callSessionId).length) {
-      endSession(session, session.statusId === 'CssRinging' ? 'CerCanceled' : 'CerHangup')
-    } else {
-      bump(session)
-      session.update()
-      pushState(session, 'left')
-    }
+    phoneLegGone(session, leg, session.statusId === 'CssRinging' ? 'CerCanceled' : 'CerHangup')
     return {}
   }
   if (p.event === 'held' || p.event === 'resumed') {
     pushState(session, p.event, { callLegId: leg.callLegId })
   }
   return {}
+}
+
+/**
+ * A phone leg closed (it failed, was refused or hung up). A transfer it was part of hears of it first (V5: the party being
+ * transferred left, or the number transferred to failed). A phone call ends with its last phone leg, or when nothing is
+ * left of it (phoneCallOver: two phones bridged by a transfer, one hung up); another kind of call (a meeting with a
+ * number added) goes on.
+ */
+function phoneLegGone(session, leg, reason) {
+  if (find(TRANSFER).condition('callSessionId', session.callSessionId).condition('statusId', 'in', OPEN_TRANSFER).count()) {
+    v5('CallTransfers', 'legGone', { callSessionId: session.callSessionId, callLegId: leg.callLegId })
+  }
+  if (session.kindEnumId === 'CskPhone' && (!phoneLegsOf(session.callSessionId).length || phoneCallOver(session))) {
+    endSession(session, reason)
+    return
+  }
+  bump(session)
+  session.update()
+  pushState(session, 'left')
 }
 
 /**
@@ -1594,8 +1679,10 @@ function deviceEvent(session, leg, p) {
     if (leg.statusId === 'ClsAnswered') return { repeated: true }
     // the first answer wins: the user's own other leg, or for a phone call anyone's (V3)
     const inboundPhone = session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound'
+    // an offer made after the call was answered (an added person, a transfer's target, V5) is not one of its forks
+    const lateOffer = !!session.answeredDate && (ms(leg.offeredDate) || 0) >= (ms(session.answeredDate) || 0)
     const answeredFirst = rows(LEG, { callParticipantId: leg.callParticipantId, statusId: 'ClsAnswered' }).length > 0 ||
-      (inboundPhone && localAnsweredCount(session.callSessionId) > 0)
+      (inboundPhone && !lateOffer && localAnsweredCount(session.callSessionId) > 0)
     if (answeredFirst || !participant) {
       closeLeg(leg, 'ClsCanceled', 'CerCanceled')
       sipLegControl(session, leg.callLegId, 'hangup')
@@ -1611,6 +1698,7 @@ function deviceEvent(session, leg, p) {
     else if (!session.answeredDate) session.set('answeredDate', now)
     bump(session)
     session.update()
+    afterAnswer(session, userId, leg.callLegId)
     pushState(session, 'answered', { answeredBy: userId, callLegId: leg.callLegId, onPhone: true })
     updatePresence([userId])
     if (session.kindEnumId === 'CskPhone' && session.directionEnumId === 'CdrInbound') phoneControl(session, 'answer')
@@ -1674,6 +1762,7 @@ function forwardEvent(session, leg, p) {
     else if (!session.answeredDate) session.set('answeredDate', now)
     bump(session)
     session.update()
+    afterAnswer(session, userId, leg.callLegId)
     pushState(session, 'answered', { answeredBy: userId, callLegId: leg.callLegId, onPhone: true, forwarded: true })
     if (userId) updatePresence([userId])
     phoneControl(session, 'answer')
@@ -1716,7 +1805,7 @@ function ringStep(p) {
   const session = p.callSessionId ? lockSession(p.callSessionId) : null
   if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded', forwardLegList: [] }
   const now = ec.user.nowTimestamp
-  const role = p.role === 'ringGroupMember' ? 'CurRingGroupMember' : 'CurCallee'
+  const role = p.role === 'ringGroupMember' ? 'CurRingGroupMember' : p.role === 'queueAgent' ? 'CurQueueAgent' : 'CurCallee'
   const participantFor = (userId) => {
     let participant = participantOf(session.callSessionId, userId)
     if (!participant) participant = makeParticipant(session, userId, 'CprMember', 'CasInvited')
@@ -1804,7 +1893,241 @@ function deviceCaller(p) {
   return {}
 }
 
+// ---------- transfer, add, hold and merge (V5; org.moqui.impl.CallTransferServices and CallTransfers.js) ----------
+
+/** Tells the SIP engine of the call's node about one leg, with more than sipLegControl sends, after the commit. */
+function sipMessage(session, message) {
+  if (!session.mediaNodeId) return
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.VoiceServices.send#SipControl').parameters({ instanceId: session.mediaNodeId,
+      message: Object.assign({ callSessionId: session.callSessionId }, message) }).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`SIP engine not told to ${message.action} leg ${message.callLegId}: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`SIP engine not told to ${message.action} leg ${message.callLegId}: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
+/**
+ * Internal (CallTransfers.js): a number joins the call as one more far end (an added participant, a transfer's target):
+ * a phone participant and its leg, offered until the SIP engine dials it (VoiceServices dialTransfer) and it answers.
+ */
+function addPhoneLeg(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  const participant = makePhoneParticipant(session, p.displayName || p.phoneNumber, 'CasInvited')
+  const leg = makeLeg(session, participant, 'ClsOffered', 'CltPstn')
+  leg.set('phoneNumber', p.phoneNumber)
+  leg.update()
+  bump(session)
+  session.update()
+  pushState(session, 'added', { callLegId: leg.callLegId })
+  return { callLegId: leg.callLegId, callParticipantId: participant.callParticipantId }
+}
+
+/**
+ * Internal (CallTransfers.js): the call is offered to users (an added person, a transfer's target): their tabs and phones
+ * ring (ringStep). A direct call becomes a group call first, so it does not end when one of its two people leaves.
+ */
+function offerUsers(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  if (session.kindEnumId === 'CskDirect') {
+    session.set('kindEnumId', 'CskGroup')
+    session.update()
+  }
+  return ringStep(p)
+}
+
+/** Internal (CallTransfers.js): a user's open legs in the call end (a canceled consult's target): offers stop, a leg in it leaves. */
+function closeUserLegs(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  const participant = session ? participantOf(session.callSessionId, p.userId) : null
+  if (!session || !participant || session.statusId === 'CssEnded') return {}
+  for (const leg of rows(LEG, { callParticipantId: participant.callParticipantId })) {
+    if (leg.statusId === 'ClsOffered') {
+      closeLeg(leg, 'ClsCanceled', 'CerCanceled')
+      if (isDeviceLeg(leg) || isForwardLeg(leg)) sipLegControl(session, leg.callLegId, 'hangup')
+    } else if (leg.statusId === 'ClsAnswered') {
+      if (isDeviceLeg(leg)) sipLegControl(session, leg.callLegId, 'hangup')
+      else mediaControl(session, { action: 'closeLeg', callLegId: leg.callLegId })
+      closeLeg(leg, 'ClsLeft', 'CerRemoved')
+    }
+  }
+  bump(session)
+  session.update()
+  pushState(session, 'left', { leftBy: p.userId })
+  updatePresence([p.userId])
+  return {}
+}
+
+/** Internal (CallTransfers.js): a phone leg of the call ends here (a canceled consult's number): the engine hangs it up. */
+function closePhoneLeg(p) {
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  const session = leg ? lockSession(leg.callSessionId) : null
+  if (!session || !OPEN_LEG.includes(leg.statusId)) return {}
+  sipLegControl(session, leg.callLegId, 'hangup')
+  closeLeg(leg, leg.statusId === 'ClsAnswered' ? 'ClsLeft' : 'ClsCanceled', leg.statusId === 'ClsAnswered' ? 'CerRemoved' : 'CerCanceled')
+  bump(session)
+  session.update()
+  pushState(session, 'left')
+  return {}
+}
+
+/**
+ * Internal (CallTransfers.js): the transferring user's leg leaves (CerTransferred): a tab's, or a phone's, which the
+ * engine hangs up. The call goes on with its far end while the transfer's target rings or a queue holds it.
+ */
+function transferLeave(p) {
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  const session = leg ? lockSession(leg.callSessionId) : null
+  if (!session || leg.statusId !== 'ClsAnswered') return {}
+  if (isDeviceLeg(leg)) sipLegControl(session, leg.callLegId, 'hangup')
+  else mediaControl(session, { action: 'closeLeg', callLegId: leg.callLegId })
+  const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
+  closeLeg(leg, 'ClsLeft', 'CerTransferred')
+  const userId = participant?.userId || null
+  if (session.kindEnumId === 'CskPhone' ? phoneCallOver(session) : answeredLegCount(session.callSessionId) === 0) {
+    endSession(session, 'CerTransferred')
+  } else {
+    bump(session)
+    session.update()
+    pushState(session, 'left', { leftBy: userId, transferred: true })
+  }
+  if (userId) updatePresence([userId])
+  return {}
+}
+
+/** Internal (VoiceServices hold#PhoneCall, CallTransfers.js): a leg is on hold (held true) or back: its heldDate, everyone told. */
+function setHeld(p) {
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  const session = leg ? lockSession(leg.callSessionId) : null
+  if (!session || leg.statusId !== 'ClsAnswered') return {}
+  const held = p.held === true || p.held === 'true'
+  if (!!leg.heldDate === held) return { repeated: true }
+  leg.set('heldDate', held ? ec.user.nowTimestamp : null)
+  leg.update()
+  bump(session)
+  session.update()
+  pushState(session, held ? 'held' : 'resumed', { callLegId: leg.callLegId })
+  return {}
+}
+
+/** Internal (CallTransfers.js): a call becomes a meeting (it goes on as long as anyone is in it), or another kind. */
+function setKind(p) {
+  const session = p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || session.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  if (session.kindEnumId !== p.kindEnumId) {
+    session.set('kindEnumId', p.kindEnumId)
+    bump(session)
+    session.update()
+    pushState(session, 'converted', { kind: KIND_CODES[p.kindEnumId] || null })
+  }
+  return { call: view(session, currentUser()) }
+}
+
+/**
+ * Internal (CallTransfers.js merge#Calls, which checked the user is in both and both are on one media node): the other
+ * call's people and legs move into this one, which becomes a meeting. The user's own legs in the other call close (they
+ * are in this one). A browser leg that moved is told (push moved) and joins this call's room again with the same leg; a
+ * phone leg is moved by its SIP engine (control move) and hears this call's notices (phoneJoined). The other call ends
+ * (CerMerged), its media room going with its last leg.
+ */
+function mergeInto(p) {
+  const me = currentUser()
+  const target = p.callSessionId ? lockSession(p.callSessionId) : null
+  const source = p.fromCallSessionId ? lockSession(p.fromCallSessionId) : null
+  if (!target || !source || target.statusId === 'CssEnded' || source.statusId === 'CssEnded') return { reasonCode: 'callEnded' }
+  const now = ec.user.nowTimestamp
+  const moved = []
+  for (const participant of participantsOf(source.callSessionId)) {
+    const open = rows(LEG, { callParticipantId: participant.callParticipantId }).filter((leg) => OPEN_LEG.includes(leg.statusId))
+    if (participant.userId && participant.userId === me) {
+      for (const leg of open) {
+        if (isDeviceLeg(leg)) sipLegControl(source, leg.callLegId, 'hangup')
+        else if (isTabLeg(leg)) mediaControl(source, { action: 'closeLeg', callLegId: leg.callLegId })
+        closeLeg(leg, leg.statusId === 'ClsAnswered' ? 'ClsLeft' : 'ClsCanceled', 'CerMerged')
+      }
+      continue
+    }
+    if (!open.length) continue
+    let into = participant.userId ? participantOf(target.callSessionId, participant.userId) : null
+    if (!into) {
+      participant.set('callSessionId', target.callSessionId)
+      participant.update()
+      into = participant
+    }
+    for (const leg of open) {
+      leg.setFields({ callSessionId: target.callSessionId, callParticipantId: into.callParticipantId }, true, null, null)
+      leg.update()
+      for (const conn of rows(CONNECTION, { callLegId: leg.callLegId, statusId: 'CcsActive' })) {
+        conn.setFields({ statusId: 'CcsReplaced', closedDate: now }, true, null, null)
+        conn.update()
+      }
+      moved.push({ leg, userId: participant.userId || null })
+    }
+    if (participant.userId && !one(USER_LOG, { callSessionId: target.callSessionId, userId: participant.userId })) {
+      setLog(target.callSessionId, participant.userId, { roleEnumId: 'CurCallee', outcomeEnumId: 'CuoAnswered', logDate: now })
+    }
+  }
+  target.setFields({ kindEnumId: 'CskMeeting', statusId: 'CssActive', answeredDate: target.answeredDate || now }, true, null, null)
+  bump(target)
+  target.update()
+  const movedUsers = new Set()
+  for (const { leg, userId } of moved) {
+    if (leg.legTypeEnumId === 'CltPstn' || isDeviceLeg(leg)) {
+      sipMessage(target, { action: 'move', callLegId: leg.callLegId, fromCallSessionId: source.callSessionId })
+      if (leg.statusId === 'ClsAnswered') phoneJoined(target, leg)
+    } else {
+      mediaControl(source, { action: 'closeLeg', callLegId: leg.callLegId })
+      if (userId) movedUsers.add(userId)
+    }
+  }
+  for (const userId of movedUsers) {
+    push([userId], { action: 'moved', callSessionId: source.callSessionId, toCallSessionId: target.callSessionId,
+      revision: Number(target.revision || 1), call: view(target, userId) })
+  }
+  endSession(source, 'CerMerged', true)
+  pushState(target, 'merged', { fromCallSessionId: source.callSessionId })
+  return { call: view(target, me), movedCount: moved.length }
+}
+
+/**
+ * The call-context of a call for the current user (§3.3): who its phone caller is and their open records (a screen pop),
+ * from the call-context providers of the apps the user may open (ShellServices.call#Providers, as this user: each in
+ * its own transaction, one that fails left out and named in failedParts). For a call they may see; a call with no phone
+ * far end has no number and asks nobody.
+ */
+function context(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  const phone = rows(LEG, { callSessionId: session.callSessionId, legTypeEnumId: 'CltPstn' })
+    .filter((leg) => leg.phoneNumber && !isForwardLeg(leg)).sort((a, b) => (ms(a.offeredDate) || 0) - (ms(b.offeredDate) || 0))[0]
+  const number = phone ? phone.phoneNumber : null
+  const out = { number, contactList: [], recordList: [], failedParts: [], unavailable: false }
+  if (!number) return out
+  const answers = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers')
+    .parameters({ hook: 'call-context', parameters: { number } }).call() || {}
+  ec.message.clearErrors()
+  out.unavailable = !!answers.unavailable
+  out.failedParts = Array.from(answers.failedParts || [])
+  for (const answer of Array.from(answers.results || [])) {
+    for (const contact of Array.from(answer.contactList || []).slice(0, 10)) {
+      out.contactList.push(Object.assign({}, contact, { sourceId: answer.sourceId }))
+    }
+    for (const record of Array.from(answer.recordList || []).slice(0, 20)) {
+      out.recordList.push(Object.assign({}, record, { sourceId: answer.sourceId }))
+    }
+  }
+  return out
+}
+
 const operations = {
+  addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
   start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,

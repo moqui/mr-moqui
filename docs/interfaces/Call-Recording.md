@@ -84,7 +84,8 @@ call goes on.
 - Phone legs (phone numbers, and SIP devices later) get the notice through `notify#LegRecording` as a prompt that their
   SIP engine plays over what the phone hears (`VoiceServices.notify#PhoneLeg`, [SIP, Notices](SIP.md#notices)): a
   1400 Hz tone, then the audio that `call_recording_prompt_audio` names, if any. A phone that answers later hears it
-  when it answers.
+  when it answers: a late joiner, and a leg that joins by a transfer, an added number or a merge (V5,
+  [SIP, Transfer and merge](SIP.md#transfer-and-merge)); a browser leg that joins that way gets its frame when it binds.
 - **A phone acknowledges by pressing 1.** Under `call_recording_ack_required` its tone plays twice, which asks for the
   key; set `call_recording_prompt_audio` to a recording that says so ("This call is recorded. Press 1 to accept, or hang
   up."). The key comes back as the phone's DTMF (`note#PhoneLeg`), and `ack#LegRecordingNotice` logs it in the leg's

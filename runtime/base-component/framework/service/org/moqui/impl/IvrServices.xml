@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The IVR and auto attendant (plans/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "IVR"): menus, their options and
+    prompts, and the SIP engine's questions while a call is in a menu. The model is the V5 block of
+    framework/entity/VoiceEntities.xml; the logic is Ivr.js beside this file. The menu services need the VoiceAdmin permission
+    (notAllowed otherwise); route#IvrCall is internal (the SIP engine). No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="route" noun="IvrCall" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): the caller in menu ivrMenuId chose: kind option (digits, one of its
+            options), invalid (a key no option has) or timeout (no key after the retries). answer is where the call goes now: mode
+            menu (the next menu: promptLocation, timeoutSeconds, maxRetries, maxDigits, optionList, hasInvalid), queue
+            (callQueueEntryId, holdMusicLocation, tickSeconds, position), ring (ringSeconds, stepToken), voicemail (stepToken)
+            or end; sayLocation, an option's prompt to play first.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"/>
+            <parameter name="ivrMenuId" required="true"/>
+            <parameter name="kind"/>
+            <parameter name="digits"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="answer" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll({answer: ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('route', context)})</script></actions>
+    </service>
+
+    <service verb="find" noun="IvrMenus">
+        <description>The IVR menus with their options, targets and the numbers routed to them.</description>
+        <out-parameters>
+            <parameter name="menuList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('findMenus', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="IvrMenu">
+        <description>Add or change a menu: name, description, timeoutSeconds (1 to 60, default 5), maxRetries (0 to 5,
+            default 2), maxDigits (1 to 10; more than 1 is an extension ended by #), the invalid, timeout and closed targets
+            (invalidTypeEnumId and invalidId ...; targets are CallTarget enums (CtgUser, CtgGroup, CtgQueue, CtgMenu, CtgVoicemail, CtgNumber, CtgRepeat, CtgEnd) with their id; a number under the deployment's fraud policy) and
+            commsScheduleId (outside it the closed target runs).</description>
+        <in-parameters>
+            <parameter name="ivrMenuId"/>
+            <parameter name="name"/>
+            <parameter name="description"/>
+            <parameter name="timeoutSeconds" type="Integer"/>
+            <parameter name="maxRetries" type="Integer"/>
+            <parameter name="maxDigits" type="Integer"/>
+            <parameter name="invalidTypeEnumId"/>
+            <parameter name="invalidId"/>
+            <parameter name="timeoutTypeEnumId"/>
+            <parameter name="timeoutId"/>
+            <parameter name="commsScheduleId"/>
+            <parameter name="closedTypeEnumId"/>
+            <parameter name="closedId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ivrMenuId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('storeMenu', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="IvrMenu">
+        <description>Remove a menu no number, menu or queue sends calls to, with its options and prompts.</description>
+        <in-parameters>
+            <parameter name="ivrMenuId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('deleteMenu', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="IvrOption">
+        <description>An option of a menu: digits (a key 0 to 9, * or #, or up to the menu's maxDigits of them) and its target (targets are CallTarget enums (CtgUser, CtgGroup, CtgQueue, CtgMenu, CtgVoicemail, CtgNumber, CtgRepeat, CtgEnd) with their id).</description>
+        <in-parameters>
+            <parameter name="ivrMenuId" required="true"/>
+            <parameter name="digits" required="true"/>
+            <parameter name="targetTypeEnumId"/>
+            <parameter name="targetId"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('storeOption', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="IvrOption">
+        <description>Remove an option of a menu.</description>
+        <in-parameters>
+            <parameter name="ivrMenuId" required="true"/>
+            <parameter name="digits" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('deleteOption', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="IvrPrompt">
+        <description>A menu's prompt (digits empty) or an option's: an uploaded WAV (16-bit PCM) or Ogg Opus file of at
+            most 10 MB and a minute, kept as Ogg Opus (convert#GreetingAudio); remove true takes it away (the tones play instead).</description>
+        <in-parameters>
+            <parameter name="ivrMenuId" required="true"/>
+            <parameter name="digits"/>
+            <parameter name="file" type="org.apache.commons.fileupload2.core.FileItem"/>
+            <parameter name="remove" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="promptLocation"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('storePrompt', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="IvrPromptAudio">
+        <description>An uploaded prompt or hold music, for a voice admin to play: location (under the prompts' root only) and contentType.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="contentType"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('promptAudio', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CallTargetOptions">
+        <description>What the IVR and queue screens offer as targets: the target types, ring groups, queues, menus and voicemail boxes.</description>
+        <out-parameters>
+            <parameter name="typeList" type="List"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="queueList" type="List"/>
+            <parameter name="menuList" type="List"/>
+            <parameter name="boxList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Ivr.js').execute('targetOptions', context))</script></actions>
+    </service>
+</services>

@@ -60,7 +60,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="PhoneNumber" package="moqui.call" use="configuration" cache="never">
         <description>A number a trunk brings, in E.164 (+15551234567). A call to it goes where routeTypeEnumId and routeId
             say: PnrUser rings that user (routeId the userId) under their call handling rules, PnrRingGroup that ring group
-            (routeId its ringGroupId, V3), PnrVoicemail is the voicemail access number; IVR menus and queues come later. A number's
+            (routeId its ringGroupId, V3), PnrIvr an IVR menu and PnrQueue a call queue (routeId its ivrMenuId or callQueueId,
+            V5), PnrVoicemail is the voicemail access number. A number's
             emergency location is the one its calls report. messagingBridgeId is its SMS connector (C4).</description>
         <field name="phoneNumber" type="id" is-pk="true"/>
         <field name="voiceTrunkId" type="id"/>
@@ -525,4 +526,198 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
     </entity>
     <!-- ========== end V3 ========== -->
+    <!-- ========== V5: the IVR, call queues, transfer and merge (plans/Comms-Framework.md §5.1, §5.3, §5.4; docs/interfaces/SIP.md
+        "IVR", "Queues", "Transfer and merge"). The services are org.moqui.impl.IvrServices (Ivr.js), CallQueueServices
+        (CallQueues.js) and CallTransferServices (CallTransfers.js). ========== -->
+
+    <entity entity-name="IvrMenu" package="moqui.call" use="configuration" cache="never">
+        <description>An auto attendant menu: a number routed to it (PhoneNumber PnrIvr), an option or a queue's fallback plays
+            its prompt (promptLocation, Ogg Opus the admin uploaded under dbresource://moqui/call/prompt/; without one a tone
+            pattern) and takes the caller's key (maxDigits 1), or up to maxDigits keys ended by # (an extension). No key in
+            timeoutSeconds plays it again, up to maxRetries times, then the timeout target runs; a key no option has runs the
+            invalid target (without one it counts as a retry). Outside its schedule (commsScheduleId) the closed target runs
+            instead. Each target is a CallTarget (CtgUser, CtgGroup, CtgQueue, CtgMenu, CtgVoicemail, CtgNumber, CtgRepeat,
+            CtgEnd) with its id: a userId, ringGroupId, callQueueId, ivrMenuId, voicemailBoxId or outside number.</description>
+        <field name="ivrMenuId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="promptLocation" type="text-medium"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <field name="maxRetries" type="number-integer"/>
+        <field name="maxDigits" type="number-integer"/>
+        <field name="invalidTypeEnumId" type="id"/>
+        <field name="invalidId" type="text-medium"/>
+        <field name="timeoutTypeEnumId" type="id"/>
+        <field name="timeoutId" type="text-medium"/>
+        <field name="commsScheduleId" type="id"/>
+        <field name="closedTypeEnumId" type="id"/>
+        <field name="closedId" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.call.CommsSchedule" short-alias="schedule"/>
+        <relationship type="many" related="moqui.call.IvrOption" short-alias="options">
+            <key-map field-name="ivrMenuId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Target" enumTypeId="CallTarget"/>
+            <moqui.basic.Enumeration description="A user" enumId="CtgUser" enumCode="user" enumTypeId="CallTarget" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="A ring group" enumId="CtgGroup" enumCode="group" enumTypeId="CallTarget" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="A queue" enumId="CtgQueue" enumCode="queue" enumTypeId="CallTarget" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Another menu" enumId="CtgMenu" enumCode="menu" enumTypeId="CallTarget" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="A voicemail box" enumId="CtgVoicemail" enumCode="voicemail" enumTypeId="CallTarget" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="An outside number" enumId="CtgNumber" enumCode="number" enumTypeId="CallTarget" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="This menu again" enumId="CtgRepeat" enumCode="repeat" enumTypeId="CallTarget" sequenceNum="7"/>
+            <moqui.basic.Enumeration description="End the call" enumId="CtgEnd" enumCode="end" enumTypeId="CallTarget" sequenceNum="8"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="IvrOption" package="moqui.call" use="configuration" cache="never">
+        <description>A key (or keys, for a menu of several digits) of a menu and where it goes; promptLocation, when set, plays
+            before the call goes there ("connecting you to sales").</description>
+        <field name="ivrMenuId" type="id" is-pk="true"/>
+        <field name="digits" type="text-short" is-pk="true"/>
+        <field name="targetTypeEnumId" type="id"/>
+        <field name="targetId" type="text-medium"/>
+        <field name="promptLocation" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <relationship type="one" related="moqui.call.IvrMenu" short-alias="menu"/>
+        <relationship type="one" title="CallTarget" related="moqui.basic.Enumeration" short-alias="targetType">
+            <key-map field-name="targetTypeEnumId"/></relationship>
+    </entity>
+
+    <entity entity-name="CallIvrState" package="moqui.call" use="transactional" cache="never">
+        <description>An inbound call in the IVR: the menu it is in, how many menus it went through (menuCount, bounded so a
+            loop of menus ends) and the keys it chose (pathText, for history and support).</description>
+        <field name="callSessionId" type="id" is-pk="true"/>
+        <field name="ivrMenuId" type="id"/>
+        <field name="menuCount" type="number-integer"/>
+        <field name="pathText" type="text-medium"/>
+        <field name="enteredDate" type="date-time"/>
+        <field name="lastDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+    </entity>
+
+    <entity entity-name="CallQueue" package="moqui.call" use="configuration" cache="never">
+        <description>A call queue: a number routed to it (PnrQueue), an IVR option or a transfer puts a call in it; the caller
+            hears hold music (holdMusicLocation, else the deployment's call_hold_music_location, else a tone pattern) and,
+            every announceSeconds, their place in the queue. Its agents (CallQueueAgent) are offered calls in order by
+            strategyEnumId: CqsLongestIdle (the agent idle longest), CqsRoundRobin (after the last one offered,
+            lastAgentUserId) or CqsAllAtOnce, each offer ringing ringSeconds. After a call an agent is in wrap-up for
+            wrapUpSeconds. A call that waited maxWaitSeconds, one that finds maxLength calls waiting, or one outside its
+            schedule goes to the fallback (a CallTarget).</description>
+        <field name="callQueueId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="strategyEnumId" type="id"/>
+        <field name="ringSeconds" type="number-integer"/>
+        <field name="maxWaitSeconds" type="number-integer"/>
+        <field name="maxLength" type="number-integer"/>
+        <field name="wrapUpSeconds" type="number-integer"/>
+        <field name="announceSeconds" type="number-integer"/>
+        <field name="holdMusicLocation" type="text-medium"/>
+        <field name="positionPromptLocation" type="text-medium"/>
+        <field name="fallbackTypeEnumId" type="id"/>
+        <field name="fallbackId" type="text-medium"/>
+        <field name="commsScheduleId" type="id"/>
+        <field name="lastAgentUserId" type="id"/>
+        <relationship type="one" title="CallQueueStrategy" related="moqui.basic.Enumeration" short-alias="strategy">
+            <key-map field-name="strategyEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.call.CommsSchedule" short-alias="schedule"/>
+        <relationship type="many" related="moqui.call.CallQueueAgent" short-alias="agents">
+            <key-map field-name="callQueueId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Queue Strategy" enumTypeId="CallQueueStrategy"/>
+            <moqui.basic.Enumeration description="Longest idle agent" enumId="CqsLongestIdle" enumCode="longestIdle" enumTypeId="CallQueueStrategy" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Round robin" enumId="CqsRoundRobin" enumCode="roundRobin" enumTypeId="CallQueueStrategy" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="All agents at once" enumId="CqsAllAtOnce" enumCode="allAtOnce" enumTypeId="CallQueueStrategy" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallQueueAgent" package="moqui.call" use="transactional" cache="never">
+        <description>A user who takes a queue's calls: logged in (loggedIn Y) and not paused, not in a call (UserStatus.inCall)
+            and out of wrap-up (wrapUpUntilDate) they are offered its calls. lastCallEndDate (or loggedInDate) is how long
+            they have been idle, for the longest-idle strategy.</description>
+        <field name="callQueueId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="loggedIn" type="text-indicator"/>
+        <field name="paused" type="text-indicator"/>
+        <field name="loggedInDate" type="date-time"/>
+        <field name="lastCallEndDate" type="date-time"/>
+        <field name="wrapUpUntilDate" type="date-time"/>
+        <field name="lastOfferDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallQueue" short-alias="queue"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="CallQueueEntry" package="moqui.call" use="transactional" cache="never">
+        <description>A call waiting in a queue, and what became of it: CqeWaiting (with an offer ringing when offeredDate is
+            set, to offerUserIds), CqeAnswered (answeredUserId), CqeAbandoned (the caller hung up), CqeOverflow (it went to
+            the fallback). lastAnnounceDate is when the caller last heard their place.</description>
+        <field name="callQueueEntryId" type="id" is-pk="true"/>
+        <field name="callQueueId" type="id"/>
+        <field name="callSessionId" type="id"/>
+        <field name="callLegId" type="id"/>
+        <field name="fromNumber" type="text-short"/>
+        <field name="statusId" type="id"/>
+        <field name="enteredDate" type="date-time"/>
+        <field name="offeredDate" type="date-time"/>
+        <field name="offerUserIds" type="text-medium"/>
+        <field name="answeredUserId" type="id"/>
+        <field name="answeredDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="lastAnnounceDate" type="date-time"/>
+        <relationship type="one" related="moqui.call.CallQueue" short-alias="queue"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <relationship type="one" title="CallQueueEntry" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/></relationship>
+        <index name="CALL_QUEUE_ENTRY_Q"><index-field name="callQueueId"/><index-field name="statusId"/><index-field name="enteredDate"/></index>
+        <index name="CALL_QUEUE_ENTRY_S"><index-field name="callSessionId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Call Queue Entry" statusTypeId="CallQueueEntry"/>
+            <moqui.basic.StatusItem statusId="CqeWaiting" statusTypeId="CallQueueEntry" sequenceNum="1" description="Waiting"/>
+            <moqui.basic.StatusItem statusId="CqeAnswered" statusTypeId="CallQueueEntry" sequenceNum="2" description="Answered"/>
+            <moqui.basic.StatusItem statusId="CqeAbandoned" statusTypeId="CallQueueEntry" sequenceNum="3" description="Abandoned"/>
+            <moqui.basic.StatusItem statusId="CqeOverflow" statusTypeId="CallQueueEntry" sequenceNum="4" description="To the fallback"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="CallTransfer" package="moqui.call" use="transactional" cache="never">
+        <description>A transfer of a call's outside party (its phone leg, heldLegId) by fromUserId to a user, an outside number
+            or a queue (targetTypeEnumId CtgUser, CtgNumber, CtgQueue; targetId): CtkBlind (the transferring leg leaves at
+            once, the far end hears ringing until the target answers) or CtkAttended (the far end is on hold while the user
+            consults the target, then completes or cancels). statusId CtsRinging, CtsConsulting, CtsCompleted, CtsCanceled or
+            CtsFailed; one open transfer a call, and a request must name the call's current revision.</description>
+        <field name="callTransferId" type="id" is-pk="true"/>
+        <field name="callSessionId" type="id"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="fromUserId" type="id"/>
+        <field name="fromLegId" type="id"/>
+        <field name="heldLegId" type="id"/>
+        <field name="targetTypeEnumId" type="id"/>
+        <field name="targetId" type="text-medium"/>
+        <field name="targetLegId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="reasonText" type="text-medium"/>
+        <relationship type="one" related="moqui.call.CallSession" short-alias="session"/>
+        <index name="CALL_TRANSFER_SESSION"><index-field name="callSessionId"/><index-field name="statusId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Call Transfer Kind" enumTypeId="CallTransferKind"/>
+            <moqui.basic.Enumeration description="Blind" enumId="CtkBlind" enumCode="blind" enumTypeId="CallTransferKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Attended" enumId="CtkAttended" enumCode="attended" enumTypeId="CallTransferKind" sequenceNum="2"/>
+            <moqui.basic.StatusType description="Call Transfer" statusTypeId="CallTransfer"/>
+            <moqui.basic.StatusItem statusId="CtsRinging" statusTypeId="CallTransfer" sequenceNum="1" description="Ringing the target"/>
+            <moqui.basic.StatusItem statusId="CtsConsulting" statusTypeId="CallTransfer" sequenceNum="2" description="Consulting"/>
+            <moqui.basic.StatusItem statusId="CtsCompleted" statusTypeId="CallTransfer" sequenceNum="3" description="Completed"/>
+            <moqui.basic.StatusItem statusId="CtsCanceled" statusTypeId="CallTransfer" sequenceNum="4" description="Canceled"/>
+            <moqui.basic.StatusItem statusId="CtsFailed" statusTypeId="CallTransfer" sequenceNum="5" description="Failed"/>
+            <moqui.basic.Enumeration description="Merged into another call" enumId="CerMerged" enumCode="merged" enumTypeId="CallEndReason" sequenceNum="10"/>
+            <moqui.basic.Enumeration description="Transferred" enumId="CerTransferred" enumCode="transferred" enumTypeId="CallEndReason" sequenceNum="11"/>
+        </seed-data>
+    </entity>
+
+    <!-- hold (V5): a leg on hold, its phone hearing hold music and not heard by the others -->
+    <extend-entity entity-name="CallLeg" package="moqui.call">
+        <field name="heldDate" type="date-time"/>
+    </extend-entity>
+    <!-- ========== end V5 ========== -->
 </entities>

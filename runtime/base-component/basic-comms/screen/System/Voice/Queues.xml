@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice, Queues (plans/Comms-Framework.md §5.3, §5.4, §5.5, V5): call queues with their live stats (calls waiting, the longest
+    wait, agents free and logged in), their agents and each agent's state (available, logged out, paused, in wrap-up, in a call,
+    ringing), and their settings: the strategy (longest idle, round robin, all at once), how long an offer rings, the wait
+    and length limits and the fallback past them, wrap-up after a call, how often the caller hears their place, hold music
+    and a position prompt (uploaded; without them a tone pattern), and hours. Route a number to a queue under Numbers.
+    org.moqui.impl.CallQueueServices (the VoiceAdmin permission). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Queues" default-menu-index="11">
+
+    <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition-include name="searchTargets" location="component://basic-comms/template/VoiceTransitions.xml"/>
+    <transition name="storeQueue">
+        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueue" in-map="{callQueueId:callQueueId || null, name:name || '',
+                description:description || '', strategyEnumId:strategyEnumId || null, ringSeconds:ringSeconds || null, maxWaitSeconds:maxWaitSeconds || null,
+                maxLength:maxLength || null, wrapUpSeconds:wrapUpSeconds, announceSeconds:announceSeconds, commsScheduleId:commsScheduleId || '',
+                fallbackTypeEnumId:fallbackNumber ? 'CtgNumber' : (fallbackTarget ? fallbackTarget.split(':')[0] : ''),
+                fallbackId:fallbackNumber ? fallbackNumber : (fallbackTarget ? fallbackTarget.split(':').slice(1).join(':') : '')}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Queue saved</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteQueue">
+        <service-call name="org.moqui.impl.CallQueueServices.delete#CallQueue" in-map="{callQueueId:callQueueId}"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Queue removed</message></if></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="storeAgent">
+        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId, sequenceNum:sequenceNum || null}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteAgent">
+        <service-call name="org.moqui.impl.CallQueueServices.delete#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId}"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="uploadAudio">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallQueueServices.store#CallQueueAudio').parameters({callQueueId: ec.web.parameters.callQueueId,
+                kind: ec.web.parameters.kind || 'music', file: ec.web.multiPartParameters.audioFile || null}).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Audio saved'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="removeAudio">
+        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueueAudio" in-map="{callQueueId:callQueueId, kind:kind, remove:true}"/>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const call = (name, parameters) => ec.service.sync().name(name).parameters(parameters || {}).requireNewTransaction(true).disableAuthz().call() || {}
+        const enums = (enumTypeId) => Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', enumTypeId).orderBy('sequenceNum')
+            .disableAuthz().list()).map((e) => ({key: e.enumId, text: L(e.description)}))
+        strategyOptions = enums('CallQueueStrategy')
+        const strategyText = new Map(strategyOptions.map((o) => [o.key, o.text]))
+        scheduleOptions = Array.from(call('org.moqui.impl.CallHandlingServices.find#CommsSchedules', {shared: true}).scheduleList || [])
+            .map((s) => ({key: s.commsScheduleId, text: s.name + (s.timeZone ? ' (' + s.timeZone + ')' : '')}))
+        const queues = Array.from(call('org.moqui.impl.CallQueueServices.find#CallQueues').queueList || [])
+        ec.message.clearErrors()
+        const STATES = {available: L('Available'), out: L('Logged out'), paused: L('Paused'), wrapUp: L('In wrap-up'), inCall: L('In a call'),
+            offered: L('Ringing'), disabled: L('Disabled')}
+        queueList = queues.map((q) => Object.assign({}, q, {strategyText: strategyText.get(q.strategyEnumId) || q.strategyEnumId,
+            statsText: q.waitingCount + ' ' + L('waiting') + (q.waitingCount ? ', ' + L('longest') + ' ' + q.longestWaitSeconds + ' s' : '') + '; ' +
+                q.agentsAvailable + ' ' + L('of') + ' ' + q.agentsLoggedIn + ' ' + L('agents free'),
+            limitsText: L('rings') + ' ' + q.ringSeconds + ' s, ' + L('waits') + ' ' + q.maxWaitSeconds + ' s, ' + L('at most') + ' ' + q.maxLength + ', ' +
+                L('wrap-up') + ' ' + q.wrapUpSeconds + ' s',
+            fallbackText: q.fallbackName || L('End the call'), audioText: (q.hasHoldMusic ? L('Own music') : L('Tones')) + (q.hasPositionPrompt ? ', ' + L('position prompt') : ''),
+            numbersText: q.numberList.join(', '),
+            fallbackTarget: q.fallbackTypeEnumId && q.fallbackTypeEnumId !== 'CtgNumber' ? q.fallbackTypeEnumId + ':' + (q.fallbackId || '') : null,
+            fallbackNumber: q.fallbackTypeEnumId === 'CtgNumber' ? q.fallbackId : null}))
+        agentList = []
+        for (const q of queues) for (const a of q.agentList) agentList.push(Object.assign({queueName: q.name, stateText: STATES[a.state] || a.state}, a))
+        newQueue = {strategyEnumId: 'CqsLongestIdle', ringSeconds: 20, maxWaitSeconds: 300, maxLength: 20, wrapUpSeconds: 30, announceSeconds: 60}
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="Queues" style="q-my-none"/>
+            <container style="col"/>
+            <container-dialog id="NewQueueDialog" button-text="Add a queue" icon="sym_o_add" width="640" title="Add a queue" type="primary">
+                <form-single name="NewQueue" transition="storeQueue" map="newQueue" focus-field="name">
+                    <field name="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                    <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
+                    <field name="strategyEnumId"><default-field title="Offers to"><drop-down><list-options list="strategyOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="ringSeconds"><default-field title="Seconds an offer rings"><text-line size="5"/></default-field></field>
+                    <field name="maxWaitSeconds"><default-field title="Longest wait, seconds"><text-line size="6"/></default-field></field>
+                    <field name="maxLength"><default-field title="Most calls waiting"><text-line size="5"/></default-field></field>
+                    <field name="wrapUpSeconds"><default-field title="Wrap-up seconds"><text-line size="5"/></default-field></field>
+                    <field name="announceSeconds"><default-field title="Tell the place every (seconds)" tooltip="0: never"><text-line size="5"/></default-field></field>
+                    <field name="fallbackTarget"><default-field title="Past the limits"><drop-down allow-empty="true"><dynamic-options transition="searchTargets" server-search="true" min-length="0"/></drop-down></default-field></field>
+                    <field name="fallbackNumber"><default-field title="Or an outside number"><text-line size="20"/></default-field></field>
+                    <field name="commsScheduleId"><default-field title="Hours" tooltip="Outside them calls go past the limits at once"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </container>
+        <container-box><box-body-nopad>
+            <form-list name="QueueList" list="queueList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Queue"><display style="text-weight-medium"/></default-field></field>
+                <field name="statsText"><default-field title="Now"><display/></default-field></field>
+                <field name="strategyText"><default-field title="Offers to"><display/></default-field></field>
+                <field name="limitsText"><default-field title="Limits"><display/></default-field></field>
+                <field name="fallbackText"><default-field title="Past the limits"><display/></default-field></field>
+                <field name="audioText"><default-field title="Audio"><display/></default-field></field>
+                <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <container-dialog id="EditQueueDialog_${callQueueId}" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${name}">
+                        <form-single name="EditQueue" transition="storeQueue">
+                            <field name="callQueueId" from="callQueueId"><default-field><hidden/></default-field></field>
+                            <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>
+                            <field name="description" from="description"><default-field title="Description"><text-line size="40"/></default-field></field>
+                            <field name="strategyEnumId" from="strategyEnumId"><default-field title="Offers to"><drop-down><list-options list="strategyOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="ringSeconds" from="ringSeconds"><default-field title="Seconds an offer rings"><text-line size="5"/></default-field></field>
+                            <field name="maxWaitSeconds" from="maxWaitSeconds"><default-field title="Longest wait, seconds"><text-line size="6"/></default-field></field>
+                            <field name="maxLength" from="maxLength"><default-field title="Most calls waiting"><text-line size="5"/></default-field></field>
+                            <field name="wrapUpSeconds" from="wrapUpSeconds"><default-field title="Wrap-up seconds"><text-line size="5"/></default-field></field>
+                            <field name="announceSeconds" from="announceSeconds"><default-field title="Tell the place every (seconds)"><text-line size="5"/></default-field></field>
+                            <field name="fallbackTarget" from="fallbackTarget"><default-field title="Past the limits"><drop-down allow-empty="true"><dynamic-options transition="searchTargets" server-search="true" min-length="0"/></drop-down></default-field></field>
+                            <field name="fallbackNumber" from="fallbackNumber"><default-field title="Or an outside number"><text-line size="20"/></default-field></field>
+                            <field name="commsScheduleId" from="commsScheduleId"><default-field title="Hours"><drop-down allow-empty="true"><list-options list="scheduleOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <container-dialog id="AddAgentDialog_${callQueueId}" button-text="Add an agent" icon="sym_o_person_add" width="520" title="Add an agent to ${name}">
+                        <form-single name="AddAgent" transition="storeAgent">
+                            <field name="callQueueId" from="callQueueId"><default-field><hidden/></default-field></field>
+                            <field name="userId"><default-field title="Who"><drop-down><dynamic-options transition="searchUsers" server-search="true" min-length="0"/></drop-down></default-field></field>
+                            <field name="sequenceNum"><default-field title="Order" tooltip="Empty: last"><text-line size="5"/></default-field></field>
+                            <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                    <container-dialog id="AudioDialog_${callQueueId}" button-text="Audio" icon="sym_o_music_note" width="520" title="Hold music and position prompt of ${name}">
+                        <label type="p" text="Upload hold music you may use (WAV or Ogg Opus, at most a minute, looped), and a prompt played before the caller's place in the queue. Without them callers hear a tone pattern; Moqui ships no music or recorded speech." style="m-muted"/>
+                        <form-single name="UploadAudio" transition="uploadAudio">
+                            <field name="callQueueId" from="callQueueId"><default-field><hidden/></default-field></field>
+                            <field name="kind"><default-field title="Which"><drop-down><option key="music" text="Hold music"/><option key="position" text="Position prompt"/></drop-down></default-field></field>
+                            <field name="audioFile"><default-field title="Audio"><file size="30"/></default-field></field>
+                            <field name="submitButton"><default-field title="Upload"><submit/></default-field></field>
+                        </form-single>
+                        <link url="removeAudio" text="Remove the hold music" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, kind:'music'}" condition="hasHoldMusic"/>
+                        <link url="removeAudio" text="Remove the position prompt" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, kind:'position'}" condition="hasPositionPrompt"/>
+                    </container-dialog>
+                    <link url="deleteQueue" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Remove" style="m-btn-flat" btn-type="danger"
+                            confirmation="Remove the queue ${name} and its agents?" parameter-map="{callQueueId:callQueueId}"/>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="name"/><field-ref name="statsText"/></column>
+                    <column><field-ref name="strategyText"/><field-ref name="tools"/></column>
+                </columns>
+            </form-list>
+            <section name="NoQueues" condition="!queueList.length"><widgets>
+                <label type="p" text="No queues yet. Add one and its agents, then route a number, an IVR option or a transfer to it." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="Agents"/><box-body-nopad>
+            <form-list name="AgentList" list="agentList" skip-form="true" paginate="false">
+                <field name="queueName"><default-field title="Queue"><display/></default-field></field>
+                <field name="userName"><default-field title="Agent"><display/></default-field></field>
+                <field name="stateText"><default-field title="Now"><display/></default-field></field>
+                <field name="sequenceNum"><default-field title="Order"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="deleteAgent" link-type="hidden-form-link" icon="sym_o_person_remove" text="" tooltip="Take out" style="m-btn-flat" btn-type="danger"
+                            confirmation="Take ${userName} out of ${queueName}?" parameter-map="{callQueueId:callQueueId, userId:userId}"/>
+                </default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

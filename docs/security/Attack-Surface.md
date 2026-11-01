@@ -517,6 +517,18 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   forwards, with a user or group already in its plan skipped, so rules cannot loop a call or fan it out without bound.
   Caller lists and rules are the user's own (another user's are "not found"); the rule's target is checked when it is
   saved and again when a call uses it.
+- **Transfers and adds to outside numbers (V5).** A user in a call can make the server dial out by transferring the
+  call's outside party to a number, or adding a number to the call; a desk phone can ask for a transfer with REFER.
+  Each is a call the user places, under the same checks (`CallTransfers.js`, `VoiceServices` `forwardCheck` with
+  `transfer` and `dialForward`): outbound calls enabled for the user, international and premium only with the
+  deployment's and the user's permission, emergency numbers refused (they are dialed directly), the user's limits at
+  once and per day, the deployment's calls in a day, and the engine's own check of the class and its calls at once
+  before the INVITE. A REFER is taken only from a registered phone's answered leg in a call, as its user; its target is
+  a username or a number under those checks; an attended REFER (Replaces) is refused. Only someone in the call (an
+  answered leg of theirs) may transfer, add or merge; a call that still rings is not transferred; a stale revision or
+  a second open transfer is refused. An end-to-end encrypted call adds no phone legs. An IVR option, a menu's or a
+  queue's fallback to a number is set by a voice admin and checked against the deployment's policy when it is saved
+  and when a call uses it; a menu loop ends after 20 menus, and a queue's fallback chain after 10.
 - **Credentials.** Trunk credentials are `VoiceTrunk.authJson`, encrypted; they answer only the trunk's realm and
   allowed algorithms. TLS to a trunk verifies its certificate against `sip_tls_ca_file` (the system bundle by default).
 - **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;

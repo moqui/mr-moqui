@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Calls, Queues (plans/Comms-Framework.md §5.3, §5.5, V5): the call queues the user takes calls for, with each queue's calls
+    waiting, the longest wait and the agents free, and the user's own state in it: log in, pause, resume, log out (one queue
+    or all). A queue offers its calls to its free agents (logged in, not paused, not in a call, out of wrap-up), ringing their
+    tabs and phones as any call does. org.moqui.impl.CallQueueServices find#MyCallQueues and set#QueueAgentStatus, which act
+    on the signed-in user only. An XML screen, so it is the same in the terminal (tui). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Queues" default-menu-index="6" menu-image="sym_o_support_agent" menu-image-type="icon">
+
+    <transition name="setStatus">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.CallQueueServices.set#QueueAgentStatus').parameters({callQueueId: ec.web.parameters.callQueueId || null,
+                status: ec.web.parameters.status || ''}).requireNewTransaction(true).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const mine = ec.service.sync().name('org.moqui.impl.CallQueueServices.find#MyCallQueues').requireNewTransaction(true).disableAuthz().call() || {}
+        ec.message.clearErrors()
+        const STATES = {available: L('Available'), out: L('Logged out'), paused: L('Paused'), wrapUp: L('In wrap-up'), inCall: L('In a call'),
+            offered: L('Ringing'), disabled: L('Disabled')}
+        queueList = Array.from(mine.queueList || []).map((q) => Object.assign({}, q, {stateText: STATES[q.state] || q.state,
+            waitingText: q.waitingCount + (q.waitingCount ? ' (' + L('longest') + ' ' + q.longestWaitSeconds + ' s)' : ''),
+            agentsText: q.agentsAvailable + ' ' + L('of') + ' ' + q.agentsLoggedIn}))
+        anyIn = queueList.some((q) => q.loggedIn)
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-mb-sm">
+            <label type="h6" text="My queues" style="q-my-none"/>
+            <container style="col"/>
+            <link url="setStatus" text="Log in to all" icon="sym_o_login" link-type="hidden-form-link" parameter-map="{status:'in'}" condition="queueList.length"/>
+            <link url="setStatus" text="Log out of all" icon="sym_o_logout" link-type="hidden-form-link" parameter-map="{status:'out'}" condition="anyIn"/>
+        </container>
+        <container-box><box-body-nopad>
+            <form-list name="QueueList" list="queueList" skip-form="true" paginate="false">
+                <field name="queueName"><default-field title="Queue"><display style="text-weight-medium"/></default-field></field>
+                <field name="stateText"><default-field title="You"><display/></default-field></field>
+                <field name="waitingText"><default-field title="Waiting"><display/></default-field></field>
+                <field name="agentsText"><default-field title="Agents free"><display/></default-field></field>
+                <field name="tools" align="right"><default-field title="">
+                    <link url="setStatus" text="Log in" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, status:'in'}" condition="!loggedIn"/>
+                    <link url="setStatus" text="Pause" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, status:'pause'}" condition="loggedIn &amp;&amp; !paused"/>
+                    <link url="setStatus" text="Resume" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, status:'resume'}" condition="loggedIn &amp;&amp; paused"/>
+                    <link url="setStatus" text="Log out" link-type="hidden-form-link" parameter-map="{callQueueId:callQueueId, status:'out'}" condition="loggedIn"/>
+                </default-field></field>
+            </form-list>
+            <section name="NoQueues" condition="!queueList.length"><widgets>
+                <label type="p" text="You take calls for no queue. A voice administrator adds agents to queues under System, Voice, Queues." style="m-muted q-pa-sm q-mb-none"/>
+            </widgets></section>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

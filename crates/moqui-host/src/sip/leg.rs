@@ -24,6 +24,9 @@
 //!
 //! - **Voicemail** (V2, `voicemail.rs`): a prompt played in place of the rest ([`LegCommand::Play`], told when it ends),
 //!   and the phone's decoded audio written as Ogg Opus while a recording goes ([`LegCommand::Record`]).
+//! - **Waiting and hold** (V5, `ivr.rs`): a loop (ringback, hold or queue music) sent in place of the room's audio
+//!   ([`LegCommand::Loop`]), prompts mixed over it; on hold the phone is not heard in the room ([`LegCommand::Mute`]);
+//!   a merge moves the leg to another call's room ([`LegCommand::Move`]).
 //!
 //! None of this needs a browser in the room. The thread ends when the leg is stopped, when the room closes (the call
 //! ended) or when the media node drops the leg; the last two are reported, so the SIP side hangs up.
@@ -77,6 +80,12 @@ pub(crate) enum LegCommand {
     StopRecording,
     /// Plain RTP is taken from this address too: where a registered phone signals from (V4, its NAT's address).
     AllowSource(IpAddr),
+    /// V5: this audio, looped, in place of the room's (ringback, hold music, a queue's music); `None` the room again.
+    Loop(Option<Prompt>),
+    /// V5: the phone is not heard in the room (on hold), or heard again.
+    Mute(bool),
+    /// V5: the leg's audio joins another room (a merge): its source and consumer move there.
+    Move(String),
     Stop,
 }
 
@@ -195,6 +204,9 @@ impl LegMedia {
             recording: None,
             notes,
             allow: None,
+            looped: None,
+            loop_at: 0,
+            muted: false,
         };
         let thread = std::thread::Builder::new()
             .name("moqui-sip-leg".to_string())
@@ -236,6 +248,11 @@ struct Worker {
     notes: tokio::sync::mpsc::UnboundedSender<LegNote>,
     /// [`LegCommand::AllowSource`]'s address, for this media and any that replaces it.
     allow: Option<IpAddr>,
+    /// V5: the audio sent in place of the room's, and where in it.
+    looped: Option<Arc<[i16]>>,
+    loop_at: usize,
+    /// V5: on hold, the phone's audio does not go to the room.
+    muted: bool,
 }
 
 impl Worker {
@@ -282,7 +299,20 @@ impl Worker {
                 }
             }
             let mixer = self.room.tick();
-            let mut out = mixer.minus(&self.leg).to_vec();
+            let mut out = match self.looped.as_ref().filter(|audio| !audio.is_empty()) {
+                Some(audio) => {
+                    // the loop in place of the room's audio, from where it was, around its end
+                    let mut frame = Vec::with_capacity(FRAME);
+                    while frame.len() < FRAME {
+                        let at = self.loop_at % audio.len();
+                        let take = (FRAME - frame.len()).min(audio.len() - at);
+                        frame.extend_from_slice(&audio[at..at + take]);
+                        self.loop_at = (at + take) % audio.len();
+                    }
+                    frame
+                }
+                None => mixer.minus(&self.leg).to_vec(),
+            };
             out.resize(FRAME, 0);
             self.mix_prompt(&mut out);
             if let Some(tag) = self.play_tag.filter(|_| self.prompt_at >= self.prompt.len()) {
@@ -306,7 +336,7 @@ impl Worker {
                     self.end_recording();
                 }
             }
-            if pulled {
+            if pulled && !self.muted {
                 if let Err("closed") = self.source.push(&pcm) {
                     self.gone();
                     return;
@@ -369,6 +399,12 @@ impl Worker {
                 }
             }
             LegCommand::StopRecording => self.end_recording(),
+            LegCommand::Loop(audio) => {
+                self.looped = audio.map(|a| a.0);
+                self.loop_at = 0;
+            }
+            LegCommand::Mute(muted) => self.muted = muted,
+            LegCommand::Move(room) => self.move_to(&room),
             LegCommand::Stop => {}
         }
     }
@@ -382,6 +418,28 @@ impl Worker {
             *sample = saturate(i32::from(*sample) + i32::from(*add));
         }
         self.prompt_at = end;
+    }
+
+    /// Joins another room (a merge): a new source and consumer there; the old ones go when dropped. One that cannot
+    /// join stays where it was, logged.
+    fn move_to(&mut self, room: &str) {
+        let source = match media::add_pcm_source(room, &self.leg) {
+            Ok(source) => source,
+            Err(code) => {
+                tracing::warn!("SIP leg {}: not moved to {room}: {code}", self.leg);
+                return;
+            }
+        };
+        let consumer = match media::attach(room, Kinds::Audio, CONSUMER_QUEUE) {
+            Ok(consumer) => consumer,
+            Err(code) => {
+                tracing::warn!("SIP leg {}: not moved to {room}: {code}", self.leg);
+                return;
+            }
+        };
+        self.source = source;
+        self.consumer = consumer;
+        self.room = AudioRoom::new(Default::default());
     }
 
     fn gone(&self) {

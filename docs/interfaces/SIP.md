@@ -12,7 +12,9 @@ call out as their user.
 - The engine, the listeners and the RTP sockets are in `crates/moqui-host/src/sip/`.
 - The voice services are `org.moqui.impl.VoiceServices` (`framework/service/org/moqui/impl/Voice.js`), with
   `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.impl.SipDeviceServices` (`SipDevices.js`); call
-  handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices` (`CallHandling.js`, V3).
+  handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices` (`CallHandling.js`, V3); the IVR, queues and
+  transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices` (`Ivr.js`, `CallQueues.js`,
+  `CallTransfers.js`, V5), with the engine's side in `src/sip/ivr.rs`.
 - Administration is System, Voice (in basic-comms).
 - The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.
 
@@ -47,6 +49,10 @@ Every listener is off until its setting is set.
 | `sip_registrar_nat_expires` | `60` | The longest expiry of a phone behind a NAT that does not use Outbound, so its REGISTER keeps the NAT's mapping open |
 | `call_forward_max_hops` | `5` | The most forwards one call takes ([Call handling](#call-handling)): a user's to another user or group, a group's fallback group; past it the forward is skipped. 1 to 10 |
 | `call_forward_ring_seconds` | `30` | How long a forward to an outside number rings before the call goes on (to voicemail, or the next step). 10 to 120 |
+| `call_queue_tick_seconds` | `5` | How often the engine asks about each call waiting in a queue ([Queues](#queues)): offers that rang out, the next offer, the wait limit, the caller's place. 1 to 30 |
+| `call_transfer_ring_seconds` | `30` | How long a blind transfer's target rings before the far end goes to the target's voicemail ([Transfer and merge](#transfer-and-merge)). 10 to 120 |
+| `call_hold_music_location` | empty | Hold music for calls on hold and in queues without their own (any resource location; WAV or Ogg Opus, looped). Empty: a tone pattern. Use only audio you may use |
+| `call_queue_prompt_location` | empty | A folder with `0.wav` to `9.wav`: a queue caller's place spoken as digits. Without all ten, the place is pips |
 
 Trunks, numbers, caller-ID grants, fraud limits and emergency locations are records, set up in System, Voice:
 `VoiceTrunk`, `PhoneNumber`, `PhoneNumberUser`, `VoicePolicy`, `VoiceUserSetting` and `EmergencyLocation`.
@@ -177,10 +183,11 @@ Each provider is unverified until its own live check.
 - **DTMF** is RFC 4733 telephone-event, both ways.
   - The in-call keypad of `m-call` sends digits (`send#PhoneDtmf`).
   - The digits a phone sends are noted (`note#PhoneLeg` `dtmf`): a 1 acknowledges a recording that asks for it
-    ([Notices](#notices)); the IVR and queues come later.
+    ([Notices](#notices)); in an IVR menu the engine takes them itself ([IVR](#ivr)).
 - **Hold** is a re-INVITE either way.
   - The provider's `sendonly` or `inactive` is answered `recvonly` or `inactive`, and Moqui stops sending.
-  - `hold#PhoneCall` and `resume#PhoneCall` send Moqui's own re-INVITE.
+  - `hold#PhoneCall` and `resume#PhoneCall` (m-call's Hold) send Moqui's own re-INVITE (`sendonly`); the phone hears hold
+    music (`call_hold_music_location`, else a tone pattern) and is not heard by the others (`CallLeg.heldDate`, V5).
 - **Cancel and forks.**
   - A call the user gives up while it rings is canceled (CANCEL, 487).
   - An answer that crosses the CANCEL is ACKed and ended with a BYE, and the call counts as canceled.
@@ -247,6 +254,99 @@ with a dated rule is read from its dated rules alone.
 
 **Presence** comes from the user's answered legs (`UserStatus.inCall`): leaving one of two calls keeps it, whichever
 leg (a tab, a phone, a forwarded number) is left.
+
+## IVR
+
+A number routed to a menu (`PnrIvr`, System, Voice, IVR menus; `IvrMenu`, `IvrOption`) is answered by the engine at once:
+`receive#PhoneCall` answers `ivr`, the menu, and the engine runs its keys (`src/sip/ivr.rs`, a state machine with no
+I/O, like voicemail's):
+
+- the menu's prompt (the admin's uploaded audio, made Ogg Opus as a greeting is; without one, three rising tones), then
+  a key; a key during the prompt cuts it short;
+- `maxDigits` above 1 is an extension: keys until `#`, the most keys, or a pause of `timeoutSeconds`;
+- no key in `timeoutSeconds` plays the menu again, `maxRetries` times, then the timeout target;
+- a key no option has goes to the invalid target; a menu without one plays two falling tones and the menu again, and
+  counts it as a retry;
+- outside the menu's schedule (`commsScheduleId`, a `CommsSchedule`) its closed target runs instead of the menu.
+
+Where a choice goes is `IvrServices.route#IvrCall`'s answer (`CallTarget`):
+
+| Target | The call |
+| --- | --- |
+| `CtgUser`, `CtgGroup` | A user (their call handling rules) or a ring group (its strategy): V3's plan (`CallRoute`); the caller hears ringback, and the engine's timer moves the plan on as for any inbound call |
+| `CtgVoicemail` | A voicemail box: the engine starts voicemail with the plan's step token |
+| `CtgNumber` | An outside number, set by a voice admin: the deployment's fraud policy (international and premium off until enabled, emergency numbers never) |
+| `CtgQueue` | A queue ([Queues](#queues)) |
+| `CtgMenu`, `CtgRepeat` | Another menu, or this one again; a call goes through at most 20 menus (`CallIvrState`), so a loop of menus ends |
+| `CtgEnd` | The engine hangs up |
+
+An option may have its own prompt ("connecting you to sales"), played as the call goes on. The call's path through
+the menus is kept in `CallIvrState.pathText`. Moqui ships no recorded speech and calls no text to speech: prompts are
+the admin's recordings or tones.
+
+## Queues
+
+A call goes into a queue (`CallQueue`; System, Voice, Queues) from a number routed to it (`PnrQueue`), an IVR option or
+a transfer: a `CallQueueEntry`, waiting.
+
+- **What the caller hears.** Hold music looped (the queue's uploaded audio, else `call_hold_music_location`, else a soft
+  four-tone figure), and every `announceSeconds` their place: a chime, the queue's position prompt when uploaded, then
+  the place as digits when `call_queue_prompt_location` has `0.wav` to `9.wav`, else a pip a place (a long tone past 9).
+- **Offers.** Every `call_queue_tick_seconds` the engine asks `tick#QueueCall`. The waiting calls are offered oldest
+  first to the queue's free agents (`CallQueueAgent`: logged in, not paused, not in a call, out of wrap-up, not ringing
+  for another queue call) by its strategy: the agent idle longest (since their last queue call ended, else since they
+  logged in), round robin (after the last one offered) or all at once. An offer rings the agents' tabs and phones as
+  any call does, with a `CallUserLog` row (`CurQueueAgent`); the first answer wins. An offer that rings `ringSeconds`
+  ends (the agents rung missed it) and the next agent is offered; one who missed the call is offered it again only when
+  nobody else is free.
+- **After the call** the agent who answered is in wrap-up for `wrapUpSeconds` and skipped.
+- **Limits.** A call that waited `maxWaitSeconds`, one that finds `maxLength` calls waiting, and one outside the queue's
+  schedule go to its fallback (a `CallTarget`, as an IVR option's). A caller who hangs up abandons the entry.
+- **Agents** log in, pause, resume and log out in Calls, Queues (`set#QueueAgentStatus`), which shows each queue's calls
+  waiting, the longest wait and the agents free; System, Voice, Queues shows the same for every queue and each agent's
+  state.
+
+## Transfer and merge
+
+Every call is one `CallSession`; these move legs and people, not media (§5.1). `CallTransferServices`, from m-call's
+Hold and its More menu (Transfer, Add a participant, Merge another call, Make it a meeting):
+
+- **Blind transfer** (`transfer#Call` mode `blind`): the call's outside party (its answered phone leg) goes to a user, an
+  outside number or a queue, and the user's leg leaves at once (`CerTransferred`). The far end hears ringback until the
+  target answers; a target that does not answer in `call_transfer_ring_seconds` (the engine's timer, then
+  `expire#CallTransfer`), or declines, missed it, and the far end goes to the target user's voicemail (a number's: the
+  call ends). A transfer to a queue puts the far end in it at once.
+- **Attended transfer** (mode `attended`): the far end is put on hold (hold music, not heard by the others), the target
+  rings in the same call, the user talks to them, then `complete#CallTransfer` (the target answered: the far end comes
+  off hold with them and the user leaves) or `cancel#CallTransfer` (the target leaves, the far end comes back).
+- **Races.** A call that still rings is not transferred. A request names the call's `revision`: a stale one is refused,
+  and so is a second transfer while one is open (`CallTransfer`), so two cannot both win. The target answering and the
+  far end hanging up are each one transaction on the call's row: if the far end hangs up first, the transfer is
+  canceled, the call ends and the target's answer finds it ended; if the target answers first, the transfer completes
+  and the call goes on until either hangs up. Two outside parties left alone by a transfer to a number stay bridged
+  until one of them hangs up.
+- **Add a participant** (`add#CallParticipant`): a user rings in the call (a direct call becomes a group call first), or
+  a number joins it as one more phone leg. An end-to-end encrypted call adds no phone legs.
+- **Numbers** a transfer or an add calls are calls the user places: their outbound permission, the deployment's and
+  their international and premium permissions, emergency numbers refused, and their limits at once and per day; the
+  number presented is the one the call came in on, else the user's first caller ID. One of our own numbers goes to the
+  user or queue it routes to.
+- **Merge** (`merge#Calls`): another call the user is in moves into this one, which becomes a meeting; its people and
+  legs move (a browser joins the new room with the same leg, a phone leg is moved by its engine: the control `move`),
+  its own legs on hold come back, and the other call ends (`CerMerged`). Both calls must be on one media node (cascading
+  SFUs are W7): calls on two are refused. **Make it a meeting** (`convert#CallToMeeting`): the call goes on as long as
+  anyone is in it.
+- **A desk phone's transfer.** A registered phone's blind transfer (REFER, RFC 3515) is taken: 202, then a NOTIFY that
+  it went; its user transfers the call to the `Refer-To` user (a username, or a number) as in the browser. A phone's
+  attended transfer (REFER with Replaces, RFC 3891) is refused (501): transfer from the browser instead.
+- **New legs hear the notices.** A leg that joins by a transfer, an add or a merge gets the recording and captions
+  notices as a late joiner does: a browser leg when it binds, a phone leg when it answers (`notify#PhoneLeg`, and a 1 to
+  acknowledge under `call_recording_ack_required`).
+
+**Screen pop.** When a phone call rings a user or an agent, their ring bar (and m-call) asks `get#CallContext`, which
+calls the apps' `call-context` providers as that user (`ShellServices.call#Providers`: each read in its own transaction,
+one that fails left out) with the caller's number, and shows who it is with links to their records. IronStone's provider
+matches its parties' phone numbers, under the Comms app's organization filters, and lists their open requests.
 
 ## Voicemail
 
@@ -457,6 +557,15 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - A forward presents the number the call came in on, not the original caller's.
   - A calendar-based schedule from a provider (BOSS's calendar) is not built; schedules are hours and dates.
   - Not checked with a live provider: forwards and simultaneous ring are tested against the services and the fake trunk.
+- **IVR, queues and transfer** (V5).
+  - No text to speech: prompts are recordings the admin uploads, or tones; queue places are spoken only with uploaded
+    digit prompts.
+  - A desk phone's attended transfer (REFER with Replaces) is refused; transfer attended from the browser.
+  - A transfer moves a phone call's outside party; between users in the browser, add the person instead.
+  - Merging calls on two media nodes waits for cascading SFUs (W7).
+  - Queue offers are made on the engine's tick (`call_queue_tick_seconds`), so a waiting call may ring a newly free agent
+    a few seconds late; there are no skills, priorities or callbacks.
+  - Not checked with a live provider or a real desk phone's REFER.
 - **Registrar.**
   - Provisioning files for the common desk phones come later; a phone is set up by hand.
   - A phone rings only for calls whose media is on the node it registered with (one node a call, until W7).
@@ -495,8 +604,23 @@ Moqui supplies the controls and the notices; meeting the rules is the operator's
   - the bindings on simulated time (`registrar_tests.rs`), G.722 negotiation and audio, and plain RTP latching behind a
     NAT (`media_tests.rs`).
 - `cargo test -p moqui-host --test it sip::`: an outbound and an inbound call on a real server, through a fake trunk,
-  heard by a browser stand-in; and a desk phone that registers, rings for a colleague's call, answers in G.722 and is
-  heard by the colleague's browser.
+  heard by a browser stand-in; a desk phone that registers, rings for a colleague's call, answers in G.722 and is
+  heard by the colleague's browser; and (V5) a call to an IVR number answered by the engine, whose caller presses 1 into
+  a queue, hears its music, and is answered by the queue's agent.
+- `cargo test -p moqui-host --features sip --lib sip::ivr`: the IVR menu on simulated time: an option, a key during the
+  prompt, no key and the retries to the timeout target, a key no option has (the invalid target, or a retry), an
+  extension's keys until `#`, its length or a pause, nested menus, and the tone patterns (ringback, hold, a queue place).
+- `./moq test framework --spec Ivr`: admin only; DTMF routing to a user's ring, a nested menu, a voicemail box and a
+  queue; the timeout and invalid targets; a menu's closed hours; a loop of menus ending.
+- `./moq test framework --spec CallQueue`: admin only and agents' own status; the agent idle longest first, an offer
+  ringing out (missed) to the next agent; wrap-up skipping an agent; all at once with the first answer winning; the
+  wait limit and the length to the fallback; an abandoned call; the stats.
+- `./moq test framework --spec Transfer`: a ringing call, a stale revision and a second transfer refused; attended
+  cancel and complete; blind with the far end hanging up first and with the target answering first, and a target that
+  does not answer to voicemail; international, premium and emergency refused and a domestic number dialed; the
+  recording notice on a transferred number and its acknowledgement by pressing 1; add a person, an encrypted call
+  refusing a number; a merge on one node and a refusal across two; a call made a meeting.
+- `cargo test -p moqui-sip refer`: a REFER's target, and Replaces not taken.
 - `cargo test -p moqui-host --lib sip`: the notices' tone patterns, prompt audio from WAV, prompts queued one after
   another, the registrar's settings and a phone's ring time; voicemail's ([Voicemail, Tests](Voicemail.md#tests)).
 - `./moq test framework --spec Voice`: the services' authorization, fraud controls (inbound digest for a PBX trunk

@@ -36,8 +36,13 @@
 //! - **Voicemail** (V2, `voicemail.rs`, `audio.rs`): an inbound call unanswered after its box's rings (this engine's
 //!   timer), whose user is busy, that its user declined (the control `voicemail`), or to the access number, is answered
 //!   here with no one else in it: the greeting, a beep, the caller's message as Ogg Opus; or the PIN and the new messages.
+//! - **IVR, queues, transfer and hold** (V5, `ivr.rs`): a number routed to a menu or a queue is answered here; the menu's
+//!   keys, a queue's music and ticks, ringback during a ring step or a blind transfer, hold music, a transfer's timer,
+//!   a merge's move to another room (the controls `route`, `ringback`, `connect`, `transferTimer`, `move`), and a desk
+//!   phone's REFER.
 
 mod audio;
+mod ivr;
 mod leg;
 mod phones;
 mod prompt;
@@ -256,6 +261,33 @@ enum Command {
         leg: String,
         generation: u64,
     },
+    /// V5 (`ivr.rs`): a menu's prompt is ready.
+    IvrPlay {
+        leg: String,
+        tag: u32,
+        prompt: Prompt,
+    },
+    /// V5: a menu's wait for a key ended.
+    IvrIdle {
+        leg: String,
+        wait: u32,
+    },
+    /// V5: the services' answer of where a call goes (route#IvrCall, tick#QueueCall, expire#CallTransfer).
+    Routed {
+        leg: String,
+        result: Result<Json, String>,
+    },
+    /// V5: a queue call's next tick.
+    QueueTick {
+        leg: String,
+        generation: u64,
+    },
+    /// V5: a loop's audio (ringback, music) is ready.
+    LoopReady {
+        leg: String,
+        token: u64,
+        audio: Prompt,
+    },
 }
 
 fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
@@ -429,6 +461,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         voicemail: HashMap::new(),
         voicemail_starting: HashSet::new(),
         ring_timers: RingTimers::default(),
+        ivr: HashMap::new(),
+        queued: HashMap::new(),
+        next_tick: 0,
+        loops: HashMap::new(),
+        next_loop: 0,
     };
     runtime.spawn(engine.run(events, commands));
     let stop = Arc::new(AtomicBool::new(false));
@@ -621,6 +658,10 @@ struct Leg {
     device: Option<String>,
     /// A device leg's SDP with SRTP keys, for a binding over TLS, until a binding answers.
     srtp_local: Option<LocalMedia>,
+    /// V5: the engine answered the trunk's INVITE (for the IVR, a queue, voicemail or a person), so it is not answered again.
+    sip_answered: bool,
+    /// V5: on hold (hold music, its audio kept from the others); an answer elsewhere does not take it off hold.
+    held: bool,
 }
 
 struct Engine {
@@ -639,6 +680,13 @@ struct Engine {
     voicemail_starting: HashSet<String>,
     /// Each inbound leg's current ring timer (V3: a handling plan's steps replace it).
     ring_timers: RingTimers,
+    /// V5 (`ivr.rs`): the legs in a menu, the legs waiting in a queue (with their tick's generation), and each leg's
+    /// current loop (ringback, music), whose audio is read off the engine task.
+    ivr: HashMap<String, ivr::IvrCall>,
+    queued: HashMap<String, ivr::QueueCall>,
+    next_tick: u64,
+    loops: HashMap<String, u64>,
+    next_loop: u64,
 }
 
 /// The ring timers of the inbound legs (V3): a leg has at most one that counts, the one armed last, so a timer a later step
@@ -883,6 +931,8 @@ impl Engine {
             UaEvent::Binding { change, binding } => self.binding_changed(change, &binding),
             UaEvent::DeviceAnswered { leg, answer, source } => self.device_answered(&leg, &answer, source),
             UaEvent::Ringing { .. } => {}
+            // V5: a desk phone's blind transfer
+            UaEvent::Refer { leg, target } => self.refer(&leg, &target),
             UaEvent::Answered { leg, answer } => {
                 let Some(entry) = self.legs.get(&leg) else {
                     // the leg was hung up here as the answer came: end the answered call too
@@ -905,6 +955,7 @@ impl Engine {
             }
             UaEvent::Ended { leg, reason } => {
                 self.voicemail.remove(&leg);
+                self.forget_ivr(&leg);
                 self.ring_timers.clear(&leg);
                 let Some(entry) = self.legs.remove(&leg) else { return };
                 let (event, code) = ended_event(reason);
@@ -971,6 +1022,7 @@ impl Engine {
         let mut voicemail_now = None;
         let mut ring_seconds = None;
         let mut step = None;
+        let mut ivr_answer = None;
         let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
             Ok(out) => {
                 let room = text(&out, "callSessionId");
@@ -978,6 +1030,7 @@ impl Engine {
                 voicemail_now = Some(text(&out, "voicemail")).filter(|v| !v.is_empty());
                 ring_seconds = number(&out, "voicemailSeconds").filter(|s| *s > 0);
                 step = step_token(&out);
+                ivr_answer = out.get("ivr").filter(|a| a.is_object()).cloned();
                 if room.is_empty() || leg.is_empty() {
                     Err(404)
                 } else {
@@ -1045,8 +1098,15 @@ impl Engine {
                         answered: false,
                         device: None,
                         srtp_local: None,
+                        sip_answered: false,
+                        held: false,
                     },
                 );
+                // V5: an IVR menu or a queue answers the call itself
+                if let Some(answer) = ivr_answer {
+                    self.start_ivr(&leg, answer);
+                    return;
+                }
                 match (voicemail_now, ring_seconds) {
                     (Some(reason), _) => self.start_voicemail(&leg, &reason, step),
                     (None, Some(seconds)) => self.ring_timer(&leg, seconds, step),
@@ -1080,12 +1140,15 @@ impl Engine {
             Command::Control(body) => self.control(&body).await,
             Command::Note(LegNote::Gone { leg }) => {
                 self.voicemail.remove(&leg);
+                self.forget_ivr(&leg);
                 if self.legs.remove(&leg).is_some() {
                     self.ua.hangup(&leg);
                 }
             }
             Command::Note(LegNote::Digit { leg, digit }) => {
-                if self.voicemail_event(&leg, voicemail::Event::Digit(digit)) {
+                if self.voicemail_event(&leg, voicemail::Event::Digit(digit))
+                    || self.ivr_event(&leg, ivr::Event::Digit(digit))
+                {
                     return;
                 }
                 if let Some(entry) = self.legs.get(&leg) {
@@ -1112,7 +1175,9 @@ impl Engine {
                 }
             }
             Command::Note(LegNote::Played { leg, tag }) => {
-                self.voicemail_event(&leg, voicemail::Event::Played(tag));
+                if !self.voicemail_event(&leg, voicemail::Event::Played(tag)) {
+                    self.ivr_event(&leg, ivr::Event::Played(tag));
+                }
             }
             Command::Note(LegNote::Recorded { leg, recorded }) => self.voicemail_recorded(&leg, *recorded),
             Command::VmBegun { leg, reason, result } => self.voicemail_begun(leg, &reason, result),
@@ -1121,6 +1186,13 @@ impl Engine {
             Command::VmIdle { leg, wait } => {
                 self.voicemail_event(&leg, voicemail::Event::Idle(wait));
             }
+            Command::IvrPlay { leg, tag, prompt } => self.ivr_play(&leg, tag, prompt),
+            Command::IvrIdle { leg, wait } => {
+                self.ivr_event(&leg, ivr::Event::Idle(wait));
+            }
+            Command::Routed { leg, result } => self.routed(&leg, result),
+            Command::QueueTick { leg, generation } => self.queue_tick(&leg, generation),
+            Command::LoopReady { leg, token, audio } => self.loop_ready(&leg, token, audio),
             Command::RingTimeout { leg, generation } => {
                 let Some(step) = self.ring_timers.fire(&leg, generation) else {
                     return;
@@ -1137,13 +1209,42 @@ impl Engine {
         match body.get("action").and_then(Json::as_str).unwrap_or_default() {
             "dial" => self.dial(body),
             "answer" => {
-                if let Some(entry) = self.legs.get_mut(&leg) {
-                    entry.answered = true;
-                }
-                if let Err(err) = self.ua.answer(&leg) {
+                let Some(entry) = self.legs.get_mut(&leg) else {
+                    tracing::debug!("SIP: no leg {leg} here to answer");
+                    return;
+                };
+                entry.answered = true;
+                let held = entry.held;
+                if let Err(err) = self.answer_leg(&leg) {
                     tracing::warn!("SIP leg {leg}: not answered: {err}");
                 }
+                // V5: someone here answered: the IVR, the queue and the ringback are over (hold music stays on hold)
+                self.ivr.remove(&leg);
+                self.queued.remove(&leg);
+                if !held {
+                    self.set_loop(&leg, None);
+                }
             }
+            // V5: a transfer's target answered: the far end hears the call again
+            "connect" => {
+                self.queued.remove(&leg);
+                if self.legs.get(&leg).is_some_and(|e| !e.held) {
+                    self.set_loop(&leg, None);
+                }
+            }
+            // V5: the far end waits while a blind transfer's target rings
+            "ringback" => self.set_loop(&leg, Some(ivr::LoopKind::Ringback)),
+            // V5: where the far end goes now (a transfer to a queue, a declined target's voicemail)
+            "route" => {
+                let answer = body.get("answer").cloned().unwrap_or(Json::Null);
+                self.route_answer(&leg, &answer);
+            }
+            "transferTimer" => {
+                let seconds = number(body, "seconds").unwrap_or(30).clamp(1, 600);
+                self.transfer_timer(&leg, seconds, text(body, "callTransferId"));
+            }
+            // V5: a merge moved the leg into another call
+            "move" => self.move_leg(&leg, &text(body, "callSessionId")),
             "hangup" => {
                 self.legs.remove(&leg);
                 self.ua.hangup(&leg);
@@ -1154,6 +1255,12 @@ impl Engine {
                 }
             }
             action @ ("hold" | "resume") => {
+                let Some(entry) = self.legs.get_mut(&leg) else { return };
+                // V5: hold music in place of the call, and the phone kept from the others; or back
+                entry.held = action == "hold";
+                entry.media.send(LegCommand::Mute(action == "hold"));
+                let music = (action == "hold").then_some(ivr::LoopKind::Music(None));
+                self.set_loop(&leg, music);
                 let Some(entry) = self.legs.get_mut(&leg) else { return };
                 entry.local.direction = if action == "hold" {
                     Direction::SendOnly
@@ -1262,6 +1369,8 @@ impl Engine {
                 answered: true,
                 device: None,
                 srtp_local: None,
+                sip_answered: false,
+                held: false,
             },
         );
         let request = DialRequest {

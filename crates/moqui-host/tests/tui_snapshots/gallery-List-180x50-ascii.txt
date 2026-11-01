@@ -23,6 +23,7 @@
                          |   [ ] GAT_COUNTY_SEAT              Administrative City             Geo Assoc Type                        Plain
                          |   [ ] CmrAgent                     Agent                           Chat Member Role                      Ordered agent           4
                          |   [ ] AUTHZA_ALL                   All                             Authorization Action                  Plain   ALL
+                         |   [ ] CqsAllAtOnce                 All agents at once              Call Queue Strategy                   Ordered allAtOnce       3
                          |   [ ] RgsSimultaneous              All at once                     Ring Group Strategy                   Ordered simultaneous    1
                          |   [ ] ErmAll                       All conditions                  Email Rule Match                      Ordered                 1
                          |   [ ] CnlAll                       All messages                    Chat Notification Level               Ordered all             1
@@ -32,9 +33,8 @@
                          |   [ ] EsaaAlways                   Always Include                  Entity Sync Artifact Application Type Ordered                 3
                          |   [ ] PnrIvr                       An IVR menu                     Phone Number Route                    Ordered ivr             3
                          |   [ ] RgfGroup                     Another group                   Ring Group Fallback                   Ordered group           2
-                         |   [ ] RgfNumber                    An outside number               Ring Group Fallback                   Ordered number          3
-                         |   [ ] AgikAnswer                   Answer                          Agent Run Input Kind                  Ordered answer          2
-                         |   Rows 1-20 of 406 - Page 1/21
+                         |   [ ] CtgMenu                      Another menu                    Call Target                           Ordered menu            4
+                         |   Rows 1-20 of 421 - Page 1/22
                          | Back to the Landing
                          |
                          |

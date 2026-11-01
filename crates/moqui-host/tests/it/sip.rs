@@ -886,3 +886,202 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
     let (bye, from) = phone.request("BYE");
     phone.reply(&bye, from, 200, "", "");
 }
+
+/// V5: a call to a number routed to an IVR menu is answered by the engine; the caller presses 1, which goes to a queue; the
+/// queue offers the call to its logged-in agent at once, the agent answers, and the caller hears hold music until then.
+#[test]
+fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let trunk = Trunk::new();
+    let gate = crate::common::start_with_properties(
+        "sip-ivr",
+        None,
+        &[
+            ("rtc_media_port", "0"),
+            ("sip_port", "0"),
+            ("sip_rtp_ports", "42500-42599"),
+            ("call_queue_tick_seconds", "1"),
+        ],
+    );
+    let sip_at = gate.server.sip_address().expect("the SIP listener is up");
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let queue_id = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
+            if up("sipNodeList") && up("mediaNodeList") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let trunk_id = text(
+            &call(
+                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                &[
+                    ("name", Value::string("Fake trunk")),
+                    ("host", Value::string("127.0.0.1")),
+                    ("port", Value::I32(i32::from(trunk.addr().port()))),
+                    ("transportEnumId", Value::string("VtrUdp")),
+                    ("mediaEncryptionEnumId", Value::string("VmePlain")),
+                    ("providerProfileEnumId", Value::string("VppPlainLan")),
+                    ("username", Value::string("acct")),
+                    ("password", Value::string("pw-of-acct")),
+                    ("registerFlag", Value::string("Y")),
+                ],
+            ),
+            "voiceTrunkId",
+        );
+        let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
+        let queue_id = text(
+            &call(
+                "org.moqui.impl.CallQueueServices.store#CallQueue",
+                &[("name", Value::string("Support")), ("announceSeconds", Value::I32(0))],
+            ),
+            "callQueueId",
+        );
+        call(
+            "org.moqui.impl.CallQueueServices.store#CallQueueAgent",
+            &[
+                ("callQueueId", Value::string(&queue_id)),
+                ("userId", Value::string(&john)),
+            ],
+        );
+        call(
+            "org.moqui.impl.CallQueueServices.set#QueueAgentStatus",
+            &[
+                ("callQueueId", Value::string(&queue_id)),
+                ("status", Value::string("in")),
+            ],
+        );
+        let menu_id = text(
+            &call(
+                "org.moqui.impl.IvrServices.store#IvrMenu",
+                &[("name", Value::string("Main"))],
+            ),
+            "ivrMenuId",
+        );
+        call(
+            "org.moqui.impl.IvrServices.store#IvrOption",
+            &[
+                ("ivrMenuId", Value::string(&menu_id)),
+                ("digits", Value::string("1")),
+                ("targetTypeEnumId", Value::string("CtgQueue")),
+                ("targetId", Value::string(&queue_id)),
+            ],
+        );
+        call(
+            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            &[
+                ("phoneNumber", Value::string(NUMBER)),
+                ("voiceTrunkId", Value::string(&trunk_id)),
+                ("routeTypeEnumId", Value::string("PnrIvr")),
+                ("routeId", Value::string(&menu_id)),
+            ],
+        );
+        queue_id
+    };
+    let (register, from) = trunk.request("REGISTER");
+    let contact = values(&register.headers, "Contact")[0].clone();
+    trunk.reply(&register, from, 200, &format!("Contact: {contact};expires=300\r\n"), "");
+
+    let started = Instant::now();
+    let phone_local = trunk.local_media();
+    let offer = sdp::offer(&phone_local);
+    let invite = format!(
+        "INVITE sip:{NUMBER}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-ivr1\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=ivr1\r\nTo: <sip:{NUMBER}@{sip_at}>\r\nCall-ID: ivr-call-1\r\nCSeq: 1 INVITE\r\n\
+         Contact: <sip:trunk@{}>\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{offer}",
+        trunk.addr(),
+        trunk.addr(),
+        offer.len()
+    );
+    trunk.send(&invite, sip_at);
+    // the engine answers for the menu at once
+    let ok = trunk.response(200);
+    let settled = sdp::accept(&phone_local, &sdp::parse(&String::from_utf8_lossy(&ok.body)).unwrap()).unwrap();
+    let to = ok.to_header().unwrap().value().to_string();
+    let ack = format!(
+        "ACK sip:{NUMBER}@{sip_at} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-ivrack\r\nMax-Forwards: 70\r\n\
+         From: <sip:{OUTSIDE}@127.0.0.1>;tag=ivr1\r\nTo: {to}\r\nCall-ID: ivr-call-1\r\nCSeq: 1 ACK\r\nContent-Length: 0\r\n\r\n",
+        trunk.addr()
+    );
+    trunk.send(&ack, sip_at);
+    let mut phone = PhoneMedia::new(&settled).unwrap();
+
+    // the caller hears the menu's tones and presses 1 during them; then the queue's music while john's tabs ring
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let mut buf = vec![0u8; 2048];
+    let mut heard = 0;
+    let mut tick = 0;
+    let mut next = Instant::now();
+    let key_at = Instant::now() + Duration::from_millis(300);
+    let until = Instant::now() + Duration::from_secs(4);
+    let mut pressed = false;
+    let mut ringing = None;
+    while Instant::now() < until && ringing.is_none() {
+        if Instant::now() >= next {
+            next += Duration::from_millis(20);
+            if !pressed && Instant::now() >= key_at {
+                phone.send_digits("1");
+                pressed = true;
+            }
+            if let Some(packet) = phone.send(&tone(tick)) {
+                trunk.rtp.send_to(&packet, phone.remote()).unwrap();
+            }
+            tick += 1;
+            if pressed && tick % 10 == 0 {
+                let active = call("org.moqui.impl.CallServices.find#ActiveCalls", &[]);
+                if let Some(Value::List(list)) = active.get("callList") {
+                    ringing = list.iter().find_map(|c| match c {
+                        Value::Map(m) if m.get("myLegStatus").map(to_plain_string).as_deref() == Some("offered") => {
+                            m.get("callSessionId").map(to_plain_string)
+                        }
+                        _ => None,
+                    });
+                }
+            }
+        }
+        while let Ok((len, from)) = trunk.rtp.recv_from(&mut buf) {
+            phone.receive(from, &buf[..len]);
+            heard += 1;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let call_id = ringing.expect("the queue offers the call to john, its agent");
+    assert!(heard >= 10, "the caller hears the menu and the music: {heard} packets");
+    let answered = call(
+        "org.moqui.impl.CallServices.answer#Call",
+        &[("callSessionId", Value::string(&call_id))],
+    );
+    assert_eq!(status_of(&answered).as_deref(), Some("active"));
+    // the queue's entry is answered: nothing waits, and john, its agent, is in the call
+    let mine = call("org.moqui.impl.CallQueueServices.find#MyCallQueues", &[]);
+    let Some(Value::List(queues)) = mine.get("queueList") else {
+        panic!("john's queues: {mine:?}")
+    };
+    let Some(Value::Map(support)) = queues.first() else {
+        panic!("john's queue: {mine:?}")
+    };
+    assert_eq!(
+        support.get("callQueueId").map(to_plain_string).as_deref(),
+        Some(queue_id.as_str())
+    );
+    assert_eq!(support.get("waitingCount").map(to_plain_string).as_deref(), Some("0"));
+    assert_eq!(support.get("state").map(to_plain_string).as_deref(), Some("inCall"));
+    // john hangs up: the engine ends the caller's leg
+    call(
+        "org.moqui.impl.CallServices.leave#Call",
+        &[("callSessionId", Value::string(&call_id))],
+    );
+    let (bye, from) = trunk.request("BYE");
+    trunk.reply(&bye, from, 200, "", "");
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+}

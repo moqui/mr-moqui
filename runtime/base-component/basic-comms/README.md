@@ -7,9 +7,9 @@ usable with only the framework ([plans/Comms-Framework.md](../../../plans/Comms-
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
-| `screen/System/` | Admin: Voice (trunks, numbers, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules), mounted into the tools System app by `MoquiConf.xml` |
+| `screen/System/` | Admin: Voice (trunks, numbers, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues), mounted into the tools System app by `MoquiConf.xml` |
 | `service/org/moqui/comms/` | Screen services (`InboxServices` with `run#Operation`, `ComposeServices`, `CommsHomeServices`, `ChatScreenServices`, `MailSettingsServices`, `CommsServices`, `FilePickerServices` for Attach from Files and Save to Files) and the provider interfaces (`ProviderInterfaces`) |
-| `template/` | Transitions shared by screens (`FilePickerTransitions.xml`: the drive picker; `VoiceTransitions.xml`: the Voice screens' user search; `DialerTransitions.xml`: the Dialer's, for Calls/Dialer and the tray's Panel/Dialer) |
+| `template/` | Transitions shared by screens (`FilePickerTransitions.xml`: the drive picker; `VoiceTransitions.xml`: the Voice screens' user and target search; `DialerTransitions.xml`: the Dialer's, for Calls/Dialer and the tray's Panel/Dialer) |
 | `data/` | The `BASIC_COMMS` artifact group and the do-not-disturb job |
 | `test/` | Server specs; `test/client/` the browser specs (a call in two browsers), `test/MoquiConf.xml` turns call media on for their server |
 
@@ -21,5 +21,6 @@ IronStone BOSS does this for its Comms; it hides BasicComms from the launcher an
 Test: `./moq test basic-comms`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
 `rtc` feature (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
-[docs/interfaces/SIP.md](../../../docs/interfaces/SIP.md#call-handling); recordings, Calls/Recordings:
+[docs/interfaces/SIP.md](../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:
+[SIP, Queues](../../../docs/interfaces/SIP.md#queues); recordings, Calls/Recordings:
 [docs/interfaces/Call-Recording.md](../../../docs/interfaces/Call-Recording.md)).

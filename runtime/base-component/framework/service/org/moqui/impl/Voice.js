@@ -23,6 +23,7 @@ const POLICY = 'moqui.call.VoicePolicy'
 const AUTH_FAILURE = 'moqui.call.VoiceAuthFailure'
 const SIP_NODE = 'moqui.call.SipNode'
 const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling.js'
+const IVR = 'component://framework/service/org/moqui/impl/Ivr.js'
 const PARTICIPANT = 'moqui.call.CallParticipant'
 
 /** The key a phone presses to acknowledge the recording notice (docs/interfaces/Call-Recording.md). */
@@ -392,11 +393,16 @@ function receive(p) {
   // the voicemail access number (V2): the caller gives a box number and its PIN
   const access = number.routeTypeEnumId === 'PnrVoicemail'
   const group = number.routeTypeEnumId === 'PnrRingGroup'
-  if (!access && !['PnrUser', 'PnrRingGroup'].includes(number.routeTypeEnumId)) return { reasonCode: 'notFound' }
+  // V5: an IVR menu or a queue, which the engine answers (Ivr.js)
+  const menu = number.routeTypeEnumId === 'PnrIvr'
+  const queue = number.routeTypeEnumId === 'PnrQueue'
+  if (!access && !['PnrUser', 'PnrRingGroup', 'PnrIvr', 'PnrQueue'].includes(number.routeTypeEnumId)) return { reasonCode: 'notFound' }
   if (!access && blank(number.routeId)) return { reasonCode: 'notFound' }
   if (group && !one('moqui.call.RingGroup', { ringGroupId: number.routeId })) return { reasonCode: 'notFound' }
-  const account = access || group ? null : one('moqui.security.UserAccount', { userId: number.routeId })
-  if (!access && !group && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
+  if (menu && !one('moqui.call.IvrMenu', { ivrMenuId: number.routeId })) return { reasonCode: 'notFound' }
+  if (queue && !one('moqui.call.CallQueue', { callQueueId: number.routeId })) return { reasonCode: 'notFound' }
+  const account = access || group || menu || queue ? null : one('moqui.security.UserAccount', { userId: number.routeId })
+  if (!access && !group && !menu && !queue && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
   if (!voiceNodes().some((n) => n.instanceId === p.instanceId)) return { reasonCode: 'voiceUnavailable' }
   if (countPhoneCalls({}) >= pol.maxConcurrentCalls) return { reasonCode: 'busy' }
   const e164 = toE164(p.fromNumber, pol.homeCountryCode)
@@ -405,6 +411,10 @@ function receive(p) {
   if (access) {
     const started = calls('startPhone', { userId: null, direction: 'inbound', phoneNumber: from, displayName: name, mediaNodeId: p.instanceId })
     return { callSessionId: started.callSessionId, callLegId: started.phoneLegId, voicemail: 'access', voicemailSeconds: null }
+  }
+  if (menu || queue) {
+    return ec.resource.script(IVR).execute('inbound', { kind: menu ? 'menu' : 'queue', routeId: number.routeId, toNumber: to,
+      fromNumber: e164, rawFrom: from, displayName: name, instanceId: p.instanceId, atMs: p.atMs }) || {}
   }
   // V3: the user's call handling rules, or the ring group's strategy (CallHandling.js); V2's busy and no-answer
   // voicemail are its last steps
@@ -428,7 +438,9 @@ function forwardCheck(p) {
   const out = { number: dest.number, destinationClass: dest.destinationClass, allowed: false }
   if (dest.destinationClass === 'emergency') return Object.assign(out, { reasonCode: 'emergency' })
   const setting = p.byAdmin ? {} : userSetting(p.userId)
-  if (!p.byAdmin && !(setting.outboundEnabled === 'Y' && setting.forwardEnabled === 'Y')) return Object.assign(out, { reasonCode: 'forwardNotAllowed' })
+  // V5: a transfer to a number, or a number added to a call, is a call the user places: outbound calls, not forwards
+  if (!p.byAdmin && p.transfer && setting.outboundEnabled !== 'Y') return Object.assign(out, { reasonCode: 'outboundNotAllowed' })
+  if (!p.byAdmin && !p.transfer && !(setting.outboundEnabled === 'Y' && setting.forwardEnabled === 'Y')) return Object.assign(out, { reasonCode: 'forwardNotAllowed' })
   if (dest.destinationClass === 'international' && !(pol.internationalEnabled === 'Y' && (p.byAdmin || setting.internationalEnabled === 'Y'))) {
     return Object.assign(out, { reasonCode: 'internationalNotEnabled' })
   }
@@ -542,10 +554,17 @@ function sendDtmf(p) {
   return { sent: true }
 }
 
+/**
+ * Puts the call's phones on hold, or takes them off: the engine re-INVITEs each (sendonly), plays it hold music (the
+ * deployment's call_hold_music_location, else a tone pattern) and keeps its audio from the others (V5: CallLeg heldDate).
+ */
 function holdOrResume(p, action) {
   const mine = myPhoneLegs(p.callSessionId)
   if (mine.refusal) return mine.refusal
-  for (const leg of mine.legs) sipControl(mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
+  for (const leg of mine.legs) {
+    calls('setHeld', { callLegId: leg.callLegId, held: action === 'hold' })
+    sipControl(mine.session.mediaNodeId, { action, callSessionId: p.callSessionId, callLegId: leg.callLegId })
+  }
   return {}
 }
 
@@ -827,6 +846,8 @@ function findNumbers() {
       routeTypeEnumId: n.routeTypeEnumId, routeId: n.routeId,
       routeName: n.routeTypeEnumId === 'PnrUser' && n.routeId ? userName(n.routeId)
         : n.routeTypeEnumId === 'PnrRingGroup' && n.routeId ? (one('moqui.call.RingGroup', { ringGroupId: n.routeId })?.name || n.routeId)
+          : n.routeTypeEnumId === 'PnrIvr' && n.routeId ? (one('moqui.call.IvrMenu', { ivrMenuId: n.routeId })?.name || n.routeId)
+            : n.routeTypeEnumId === 'PnrQueue' && n.routeId ? (one('moqui.call.CallQueue', { callQueueId: n.routeId })?.name || n.routeId)
           : n.routeTypeEnumId === 'PnrVoicemail' ? ec.l10n.localize('Voicemail access') : n.routeId,
       emergencyLocationId: n.emergencyLocationId, locationName: locations.get(n.emergencyLocationId) || null, description: n.description,
     })),
@@ -841,8 +862,14 @@ function storeNumber(p) {
   if (!phoneNumber) return refuse('badNumber', 'That is not a phone number')
   if (!blank(p.voiceTrunkId) && !one(TRUNK, { voiceTrunkId: p.voiceTrunkId })) return refuse('notFound', 'Trunk not found')
   const routeTypeEnumId = blank(p.routeTypeEnumId) ? 'PnrUser' : p.routeTypeEnumId
-  if (!['PnrUser', 'PnrRingGroup', 'PnrVoicemail'].includes(routeTypeEnumId)) {
-    return refuse('notSupported', 'A number rings a user or a ring group, or is the voicemail access number, for now')
+  if (!['PnrUser', 'PnrRingGroup', 'PnrIvr', 'PnrQueue', 'PnrVoicemail'].includes(routeTypeEnumId)) {
+    return refuse('notSupported', 'A number rings a user, a ring group, an IVR menu or a queue, or is the voicemail access number')
+  }
+  if (routeTypeEnumId === 'PnrIvr' && (blank(p.routeId) || !one('moqui.call.IvrMenu', { ivrMenuId: p.routeId }))) {
+    return refuse('notFound', 'IVR menu not found')
+  }
+  if (routeTypeEnumId === 'PnrQueue' && (blank(p.routeId) || !one('moqui.call.CallQueue', { callQueueId: p.routeId }))) {
+    return refuse('notFound', 'Queue not found')
   }
   if (routeTypeEnumId === 'PnrUser' && !blank(p.routeId) && !one('moqui.security.UserAccount', { userId: p.routeId })) {
     return refuse('notFound', 'User not found')
@@ -1103,7 +1130,7 @@ const operations = {
   placeFromDevice: (p) => place(p, p.instanceId || null),
   myCallerIds, registerNode,
   // V3 (CallHandling.js): forwards, and the dialer's country code
-  forwardCheck, dialForward, homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
+  forwardCheck, dialForward, grants: (p) => ({ numberList: grantsOf(p.userId) }), homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig, trunkStatus, authFailure, capabilities, status, findTrunks, storeTrunk,
   deleteTrunk, findNumbers, storeNumber, deleteNumber, findGrants, grantCallerId, revokeCallerId, findLocations,
   storeLocation, deleteLocation, getPolicy, updatePolicy, findUserSettings, storeUserSetting, findAuthBlocks,
   clearAuthBlock,
