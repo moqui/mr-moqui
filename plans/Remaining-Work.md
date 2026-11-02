@@ -2,6 +2,8 @@
 
 Open items only, grouped by domain. Each item says what is missing and links to where the detail is; what was built, and when, is recorded in the linked plans and guides, not here.
 
+The data model is not stable until the first release. Pre-release data-model changes do not require migration plans.
+
 What is not ported on purpose (JSON-RPC, the Groovy and Java runners, the database drivers not in this tree, `service-group`, Swagger 2.0 and RAML, Hazelcast, the embedded SMTP server, vuet and `/vapps`) is in [Parity-Mapping, Excluded on purpose](Parity-Mapping.md#excluded-on-purpose); the non-SQL entity datasources (`ElasticDatasourceFactory`, OrientDB) are a proposal in [Future-Plans](Future-Plans.md). Differences from Java that are kept on purpose are in [Parity-Diffs](Parity-Diffs.md).
 
 ## Agents, Assist, A2A, MCP and the gateway
@@ -52,6 +54,13 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 | Pull | Scrape targets have no relabeling, extra labels, basic auth or service discovery, and OpenMetrics exemplars are ignored; checks are single HTTP requests (no TCP, DNS, certificate expiry or multi-step flows) from this server only; a check that calls an unsampled page of this same server loses its CLIENT child (the page's SERVER span decides the trace first) | `telemetry/scrape.rs`, `telemetry/mod.rs` |
 | Patterns, AI | Log patterns group the newest 1,000 matching lines (the documents page cap), and a pattern narrows the search by its constant words as phrases, which can match a little more than the pattern; Monitor › AI groups the newest 1,000 LLM calls, and spans carry no cost (System › LLM › Usage has it) | `report/patterns.rs`, `Monitor/AgentTraces.xml` |
 
+## Maps
+
+Initial design, not built: [Maps](Maps.md) owns the OpenLayers Tools app, shared full-screen and local-map interface,
+global/personal configuration, OpenFreeMap and ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance)
+include local postal-code coordinates using basic Geo data, Mantle record adapters and BOSS/HOME integration.
+Resource streaming is shared with Media; the LFS placement item below remains a dependency for filesystem git/LFS.
+
 ## Chat and presence
 
 Framework Comms extraction, bridges, voice and conferencing: [Comms-Framework](Comms-Framework.md), with dependencies
@@ -96,6 +105,7 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Storage | A `db` delta chain is read a level of bases per query; on Postgres a recursive CTE could read a cold chain in one | `resource/git/db.rs` |
 | Storage | Content blobs are in the database only (`ContentBlob.storageKind` `db`); a file system or S3-like backend behind the same store for the chunks | `resource/blob.rs` |
 | Storage | A `local` repository's object written through `git://` over 8 MiB is a loose object of its size (only a `db` repository keeps large objects as content blobs); keep large files in LFS | `resource/git/fs.rs` |
+| LFS storage placement | LFS payloads currently stay in Postgres content blobs even when git metadata is on the filesystem. Add filesystem-backed LFS payloads through ResourceFacade and the shared blob/provider storage; default payload placement to the repository's backend (`local` on disk, `db` in Postgres), with any override explicit. Reads, range streaming, authorization, garbage collection and backups must follow the actual payload store. No pre-release data migration is required. | [Git LFS](../docs/interfaces/Git-Hosting.md#large-files-git-lfs); [HOME Media design](../runtime/component/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks); `resource/blob.rs`, `resource/git/server/lfs.rs` |
 | LFS | gc of a `local` repository does not let go of LFS objects no kept file points to (only `db` gc sweeps LFS); a `remote` mirror does not fetch LFS objects; no transfer adapters other than basic (`git-lfs-transfer` over SSH, multipart) | `resource/git/server/lfs.rs` |
 
 ## Search
