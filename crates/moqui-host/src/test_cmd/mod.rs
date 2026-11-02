@@ -121,7 +121,8 @@ pub struct TestArgs {
     pub write_baseline: bool,
     /// `--skills`: run the skill retrieval sets of `test/skill-retrieval.json` instead of the specs.
     pub skills: bool,
-    /// `--serve [address]`: after the specs pass, serve the scratch database on this address until stopped.
+    /// `--serve [address]`: after the specs pass, serve the run's database (the scratch one, or the runtime's own with
+    /// `--db existing`) on this address until stopped.
     pub serve: Option<std::net::SocketAddr>,
     /// `--ready-file path`: with `--serve`, the server's URL is written here once it listens.
     pub ready_file: Option<PathBuf>,
@@ -228,11 +229,6 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
     if parsed.serve.is_some() {
         if parsed.db == DbMode::None {
             return Err(Error::new("--db none does not go with --serve"));
-        }
-        if parsed.db == DbMode::Existing {
-            return Err(Error::new(
-                "--serve runs on a scratch runtime: --db fresh or snapshot (a server on the existing database is ./moq run)",
-            ));
         }
         if parsed.agents || parsed.skills {
             return Err(Error::new(
@@ -688,6 +684,19 @@ fn run_with_database(
     started: Instant,
     serve_setup: Option<serve::Setup>,
 ) -> Result<(), Error> {
+    // Nothing to run on the runtime's own database: no test factory to boot and shut down, the server starts at once.
+    if let (true, DbMode::Existing, Some(address), Some(setup)) =
+        (components.is_empty(), args.db, args.serve, serve_setup.as_ref())
+    {
+        return serve::serve_existing(
+            runtime,
+            framework,
+            serve_only,
+            address,
+            args.ready_file.as_deref(),
+            setup,
+        );
+    }
     let fixture = fixture::open(runtime, framework, args.db, args.keep)?;
     for name in serve_only {
         if !fixture.factory.components().iter().any(|info| &info.name == name) {

@@ -213,11 +213,10 @@ fn serve_args_parse() {
     assert_eq!(parsed.serve, Some("0.0.0.0:18081".parse().unwrap()));
     let parsed = parse_test_args(&args(&["--serve", "18081"])).unwrap();
     assert_eq!(parsed.serve, Some("127.0.0.1:18081".parse().unwrap()));
+    // a runtime whose database is already in place (copied in, or loaded by `moqui load`) is served as it is
+    let parsed = parse_test_args(&args(&["--serve", "--db", "existing"])).unwrap();
+    assert_eq!(parsed.db, DbMode::Existing);
     for (bad, says) in [
-        (
-            &["--serve", "--db", "existing"][..],
-            "--serve runs on a scratch runtime",
-        ),
         (&["--db", "none", "--serve"][..], "--db none does not go with --serve"),
         (&["--serve", "--db", "none"][..], "--db none does not go with --serve"),
         (&["--ready-file", "r"][..], "--ready-file goes with --serve"),

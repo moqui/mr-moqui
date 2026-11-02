@@ -13,9 +13,11 @@
  */
 
 //! `moqui test --serve [address]` (plans/archive/ClientTestHarness.md 6): once the specs pass, the test factory shuts down and
-//! a server starts on the same scratch runtime and cluster, for client specs or a person to use. It serves until
-//! SIGINT or SIGTERM, or until its standard input closes when that is a pipe (the one `moqui test-client --serve`
-//! holds, so the server also stops when the client dies), then the scratch runtime goes unless `--keep`.
+//! a server starts on the same runtime and cluster (the scratch one, or with `--db existing` the runtime itself), for
+//! client specs or a person to use. With `--db existing` and no specs to run (each component named has none) no test
+//! factory boots: the server starts at once on the database as it is. It serves until SIGINT or SIGTERM, or until its standard input closes when that is
+//! a pipe (the one `moqui test-client --serve` holds, so the server also stops when the client dies), then a scratch
+//! runtime goes unless `--keep`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,9 +114,48 @@ pub(super) fn serve(
     ready_file: Option<&Path>,
     setup: &Setup,
 ) -> Result<(), Error> {
-    let stdin_closed = &setup.stdin_closed;
     let runtime = fixture.runtime_dir.clone();
+    let on_scratch = fixture.on_scratch;
     let scratch = Scratch(fixture.close_keeping_runtime());
+    serve_on(&runtime, framework, scratch, on_scratch, address, ready_file, setup)
+}
+
+/// `--serve --db existing` with no specs to run: the runtime's own database served as it is, with no test factory
+/// booted before the server. Each component named (`serve_only`) must be one the runtime loads.
+pub(super) fn serve_existing(
+    runtime: &Path,
+    framework: &Path,
+    serve_only: &[String],
+    address: std::net::SocketAddr,
+    ready_file: Option<&Path>,
+    setup: &Setup,
+) -> Result<(), Error> {
+    let runtime = std::fs::canonicalize(runtime)
+        .map_err(|err| Error::new(format!("could not resolve {}", runtime.display())).with_source(err))?;
+    let framework = std::fs::canonicalize(framework)
+        .map_err(|err| Error::new(format!("could not resolve {}", framework.display())).with_source(err))?;
+    let loaded =
+        moqui_core::context::discover_components(&runtime, &framework).map_err(|err| Error::new(err.to_string()))?;
+    if let Some(name) = serve_only
+        .iter()
+        .find(|name| !loaded.iter().any(|component| &&component.name == name))
+    {
+        return Err(super::not_loaded(name));
+    }
+    let _ = crate::logging::attach_files(&runtime, None);
+    serve_on(&runtime, &framework, Scratch(None), false, address, ready_file, setup)
+}
+
+fn serve_on(
+    runtime: &Path,
+    framework: &Path,
+    scratch: Scratch,
+    on_scratch: bool,
+    address: std::net::SocketAddr,
+    ready_file: Option<&Path>,
+    setup: &Setup,
+) -> Result<(), Error> {
+    let stdin_closed = &setup.stdin_closed;
     if stdin_closed.load(Ordering::Relaxed) {
         println!("Not serving: standard input closed");
         return Ok(());
@@ -129,7 +170,7 @@ pub(super) fn serve(
             moqui_lib::env::set_property(name, "0");
         }
     }
-    let server = crate::start_server(&runtime, framework, runtime.join("db/embedded"), address)?;
+    let server = crate::start_server(runtime, framework, runtime.join("db/embedded"), address)?;
     let url = format!("http://{}", server.address());
     println!("Serving {url} (Ctrl-C to stop)");
     if let Some(path) = ready_file {
@@ -149,7 +190,7 @@ pub(super) fn serve(
     if let Some(path) = ready_file {
         let _ = std::fs::remove_file(path);
     }
-    if scratch.0.is_none() {
+    if on_scratch && scratch.0.is_none() {
         println!("Test runtime kept: {}", runtime.display());
     }
     drop(scratch);

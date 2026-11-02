@@ -49,6 +49,8 @@ pub struct TestFixture {
     db: Option<EntityDb>,
     /// The scratch runtime to remove, when there is one.
     scratch: Option<PathBuf>,
+    /// Whether the run is on a scratch runtime (`fresh`, `snapshot`), removed or kept, rather than the runtime itself.
+    pub on_scratch: bool,
     pub runtime_dir: PathBuf,
     /// Where `moqui.log` is written: the runtime's own log directory, which outlives a scratch runtime.
     pub log_dir: Option<PathBuf>,
@@ -112,6 +114,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
             _search: search,
             pdf: Some(pdf),
             db: Some(db),
+            on_scratch: run_runtime != runtime,
             scratch,
             runtime_dir: run_runtime,
             log_dir,
