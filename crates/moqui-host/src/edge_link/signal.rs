@@ -130,10 +130,18 @@ fn kind(message: &TopicMessage) -> &str {
 
 /// On an edge node, what the local node `node` may send: its sockets' frames (`frame`, whose replies go back to
 /// `node` only, so `origin` must be `node`), the call services' media controls (`control`) and the SIP engine's
-/// (`sip`, E8). The rest (a reply, a relay or room frame of a media node) a local node has no business sending.
-pub(crate) fn edge_takes(node: &str) -> Take {
+/// (`sip`, E8). The rest (a reply, a relay or room frame of a media node) a local node has no business sending. Only
+/// while `linked` (the nodes linked now) is one: the media driver keys its rooms by call alone, so two local nodes'
+/// calls could meet in one room (plans/Edge-Node.md decision 1).
+pub(crate) fn edge_takes(node: &str, linked: impl Fn() -> usize + Send + Sync + 'static) -> Take {
     let node = node.to_string();
     std::sync::Arc::new(move |topic: &str, message: &TopicMessage| {
+        let count = linked();
+        if count != 1 {
+            return Err(format!(
+                "{count} local nodes are linked; calls go through an edge node of one local node only"
+            ));
+        }
         match kind(message) {
             "frame" => {
                 let origin = message.body.get("origin").and_then(serde_json::Value::as_str);

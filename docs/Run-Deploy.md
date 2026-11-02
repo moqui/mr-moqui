@@ -711,7 +711,7 @@ node's own names.
     pings them and revokes them. It shows the edge node's link key fingerprint, to compare with the one the local node
     shows when it pairs.
 - **The local node** needs no role and no open port. In System › Edge Node, enter the edge node's address and the code,
-  check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to
+  check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key`, `edge_node_pin` and `edge_node_id` (the edge node's instance id) to
   `runtime/.env` and brings the link up; unpairing removes them.
 - **Web access.** The wizard sets the local node's host names, or add each in System › Edge Clients, such as
   `erp.example.com`, and point its DNS at the edge node. In the office's DNS the same name can point at the local node. A name has a

@@ -283,6 +283,9 @@ the edge node is not a member of the local node's cluster:
   only to a socket that bound that leg of that call with its media on the edge node; the edge node takes from the
   local node only frames whose replies go back to it, and media controls. Run as the link's delegate user, each
   delegated or queued service refuses a call whose media is not on the edge node.
+- **Pinned, alone, not cascaded.** Pairing pins the edge node's instance id (`edge_node_id`); a link naming another,
+  this node's own or a cluster member's is refused. A call on the edge node does not cascade (`rtc_cascade_enabled`
+  leaves its legs there), and the edge node takes call messages only while one local node is linked.
 - **A clustered local node.** Only the member that holds the link has the route to the edge node. A frame or control
   for the edge node on another member is refused ("the edge link to .. is down"; a browser's frame gets `unavailable`),
   so a call with media on the edge node works only for sockets on the link's member. Put the local node's web access

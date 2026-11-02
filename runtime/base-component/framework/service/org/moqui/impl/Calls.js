@@ -1039,6 +1039,10 @@ function bindNode(session, leg, signalingNodeId) {
   if (!cascadeOn() || !signalingNodeId || signalingNodeId === session.mediaNodeId || leg.mediaNodePinned === 'Y') {
     return session.mediaNodeId
   }
+  // a call whose media is on the edge node does not cascade (plans/Edge-Node.md §5.4): the edge link carries no relay
+  // link between media nodes, so every leg's media stays on the edge node
+  const callNode = session.mediaNodeId ? one(MEDIA_NODE, { instanceId: session.mediaNodeId }) : null
+  if (callNode && callNode.edgeLinked === 'Y') return session.mediaNodeId
   const live = liveMediaNodes().some((n) => n.instanceId === signalingNodeId && n.draining !== 'Y')
   return live ? signalingNodeId : session.mediaNodeId
 }
@@ -1716,13 +1720,20 @@ function guestIceServers(p) {
 function registerNode(p) {
   const row = find(MEDIA_NODE).condition('instanceId', p.instanceId).one()
   const now = ec.user.nowTimestamp
+  // the edge link keeps only the edge node's own row (plans/Edge-Node.md §5.4): never a row another media node
+  // registered, and a media node's own heartbeat never takes an edge row over or ends it
+  const linked = row && row.edgeLinked === 'Y'
+  if (row && !!p.edgeLinked !== linked) {
+    ec.logger.warn(`Media node ${p.instanceId}: a ${p.edgeLinked ? 'link-kept' : 'registered'} heartbeat for a row the ${linked ? 'edge link keeps' : 'node registers'} is refused`)
+    return refuse('notAllowed', `Media node ${p.instanceId} is not ${p.edgeLinked ? "this node's edge node" : 'a node of this cluster'}`)
+  }
   if (p.stopping) {
     if (row) row.delete()
     return {}
   }
   if (row) {
     row.setFields({ mediaAddress: p.mediaAddress || row.mediaAddress, turnUrls: p.turnUrls || null, heartbeatDate: now,
-      draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
+      draining: p.draining ? 'Y' : 'N' }, true, null, null)
     if (p.startedDate) row.set('startedDate', p.startedDate)
     row.update()
   } else {

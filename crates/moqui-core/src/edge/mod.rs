@@ -49,6 +49,9 @@ pub const NODE_ROLE: &str = "node_role";
 pub const NODE_URL: &str = "edge_node_url";
 pub const NODE_KEY: &str = "edge_node_key";
 pub const NODE_PIN: &str = "edge_node_pin";
+/// The edge node's instance id, pinned at pairing beside its key (E7): the node its calls' media is on, which a link
+/// whose Hello names another id is refused for, so an edge node cannot take another media node's id.
+pub const NODE_ID: &str = "edge_node_id";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
 pub const LINK_KEY: &str = "edge_link_key";

@@ -377,6 +377,8 @@ struct Shared {
     /// The current up connection's generation, which the down connection's calls must name.
     current: Arc<AtomicU64>,
     up: Mutex<Option<LinkClient>>,
+    /// The edge node's pinned instance id (empty until a first link pins it, for a node paired before E7).
+    pinned: Mutex<String>,
 }
 
 impl Shared {
@@ -420,6 +422,7 @@ impl Dialer {
             }),
             current: Arc::new(AtomicU64::new(0)),
             up: Mutex::new(None),
+            pinned: Mutex::new(config.edge_id.clone()),
         });
         let (stop, stop_rx) = watch::channel(false);
         let timeout = config.connect_timeout;
@@ -518,6 +521,41 @@ pub(crate) async fn configure_on(
         Ok(Err(status)) => Err(format!("the edge node refused the setup: {}", status.message())),
         Err(_) => Err("the edge node did not answer the setup in time".to_string()),
     }
+}
+
+/// The edge node's instance id, from its Hello, before the link carries anything: the one pinned (pinned now when none
+/// was), not this node's own, and no live member of this node's cluster (plans/Edge-Node.md §5.4). An edge node that
+/// took another media node's id would get that node's call signaling and media row; it is refused, as a changed key is.
+async fn check_peer(config: &LocalConfig, shared: &Shared, seen: &str) -> Result<(), String> {
+    let pinned = lock(&shared.pinned).clone();
+    super::check_edge_id(&pinned, seen, &config.instance_id)?;
+    if let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) {
+        let id = seen.to_string();
+        let member = crate::worker::on_pool_without_authz(&factory, move |factory| {
+            if moqui_core::cluster::instance_id(factory).as_deref() == Some(id.as_str()) {
+                return Ok(true);
+            }
+            match factory.entity() {
+                Some(facade) => moqui_core::cluster::is_live_member(factory, &facade, &id),
+                None => Ok(false),
+            }
+        })
+        .await
+        .map_err(|err| format!("the edge node's instance id was not checked: {}", err.message()))?;
+        if member {
+            return Err(format!(
+                "the edge node names {seen}, which is this node or a live member of its cluster"
+            ));
+        }
+    }
+    if pinned.is_empty() {
+        *lock(&shared.pinned) = seen.to_string();
+        if let Some(on_pin) = &config.on_pin {
+            on_pin(seen);
+        }
+        tracing::info!("Edge link: the edge node's instance id {seen} is pinned");
+    }
+    Ok(())
 }
 
 /// How one attempt ended.
@@ -642,6 +680,9 @@ async fn link_once(
     // the connect phase gives way to a stop or a shutdown at once (no await in a branch: a watch's borrow is not Send)
     let connecting = async {
         let up = connect_up_with(&config, &prepared).await?;
+        check_peer(&config, &shared, &up.edge.instance_id)
+            .await
+            .map_err(LinkError::Refused)?;
         shared.current.store(up.generation, Ordering::Release);
         let down = connect_down(&config, &prepared, up.generation, &up.edge.instance_id, &shared.current).await?;
         Ok::<_, LinkError>((up, down))

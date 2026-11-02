@@ -554,13 +554,24 @@ feature("a new call's media goes to the edge node, whose row the edge link keeps
         const row = session(started.callSessionId)
         const edgeRow = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).one())
         const other = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).one())
+        // a media node's own heartbeat never takes the edge row, and the link never takes another node's row
+        const plainOnEdge = as(A, "register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "127.0.0.1:10009"})
+        const linkOnOther = as(A, "register#MediaNode", {instanceId: NODE, mediaAddress: "203.0.113.9:10000", edgeLinked: true})
+        const edgeAfter = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).one())
+        const otherAfter = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).one())
         as(A, "end#Call", {callSessionId: started.callSessionId})
         // unpairing removes the edge node's row
         sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, edgeLinked: true, stopping: true}))
         const gone = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).count())
-        return {started, row, edgeRow, other, gone}
+        return {started, row, edgeRow, other, gone, plainOnEdge, linkOnOther, edgeAfter, otherAfter}
     },
-    then({started, row, edgeRow, other, gone}) {
+    then({started, row, edgeRow, other, gone, plainOnEdge, linkOnOther, edgeAfter, otherAfter}) {
+        plainOnEdge.errors.includes("is not a node of this cluster")
+        linkOnOther.errors.includes("is not this node's edge node")
+        edgeAfter.edgeLinked == "Y"
+        edgeAfter.mediaAddress == "203.0.113.5:10000"
+        otherAfter.edgeLinked == "N"
+        otherAfter.mediaAddress == "127.0.0.1:10000"
         started.errors == ""
         edgeRow.edgeLinked == "Y"
         other.edgeLinked == "N"

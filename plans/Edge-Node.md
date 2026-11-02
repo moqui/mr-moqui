@@ -817,8 +817,21 @@ release.
 - **Hello.** New fields (additive): `Hello.media_address` (8), `turn_urls` (9) and `media_started_ms` (10), the edge
   node's while its media socket is up (`moqui_core::edge::media::set_advert` from `rtc::start`), and
   `HelloReply.turn_secret` (3). `EdgeInfo` keeps the edge node's `instance_id`, `media_address`, `turn_urls` and
-  `media_started_ms`; `get#LinkStatus` shows the address and URLs. The start time is the row's `startedDate`
+  `media_started_ms`; `get#LinkStatus` shows the address and URLs.
+- **No cascading.** `bindNode` keeps every leg of a call whose media node is the edge node there, also with
+  `rtc_cascade_enabled`: the link carries no relay links between media nodes (each end drops `relay` and `roomFrame`).
+- **One local node** (decision 1). The media driver keys rooms by call alone, so an edge node takes call messages
+  (frames, controls) from a local node only while exactly one is linked; with two, each is refused, logged. Rooms keyed
+  by node come with several local nodes per edge node. The start time is the row's `startedDate`
   (`register#MediaNode` takes it), so `expire#Recordings` fails a recording that began before an edge node restart.
+- **The edge node's id is pinned.** Everything below trusts the edge node's instance id, so pairing keeps it beside
+  its key, as `edge_node_id` in `runtime/.env` (`moqui_core::edge::NODE_ID`; unpairing removes it). A link whose Hello
+  names another id is refused (state Refused, "its instance id changed ..., so pair again"), and so is an id that is
+  this node's own or a live member of its cluster (`cluster::is_live_member`), checked before the link carries
+  anything (`dial.rs` `check_peer`). A node paired before E7 has no pinned id: its first link pins the id it names and
+  writes it to `.env` (trust on first use, on a link whose key was already pinned), rather than asking for a re-pair.
+  `register#MediaNode` never turns a row a media node registered into an `edgeLinked` one, nor the reverse (refused,
+  logged), so an edge node cannot take a media node's row or calls.
 - **The row.** The edge node registers no `CallMediaNode` (`rtc::start` skips the register loop on
   `edge::settings(factory).edge_node`). The local node's dialer writes it with `register#MediaNode` (new `edgeLinked`,
   a new `CallMediaNode.edgeLinked` field) as each link comes up and every `ping_every` (15 s) while it lasts, a task

@@ -1276,7 +1276,8 @@ impl Link for LinkService {
         }
         // the up connection is the generation; each message's own is not checked again. Only what this node may send
         // is taken, its frames' replies addressed to itself (E7)
-        let take = super::signal::edge_takes(node);
+        let server = Arc::clone(&self.server);
+        let take = super::signal::edge_takes(node, move || server.linked_nodes().len());
         let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }
