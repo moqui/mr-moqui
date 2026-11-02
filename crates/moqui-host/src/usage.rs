@@ -355,8 +355,10 @@ Options:
                                   Ctrl-C, SIGTERM, or the end of standard input when it is a pipe;
                                   then remove the scratch runtime unless --keep. With --db existing
                                   it serves the runtime's own database, for one whose cluster was
-                                  put in place beforehand (a copy of a loaded one). Not with --db
-                                  none. A component named with no specs is there to load.
+                                  put in place beforehand (a copy of a loaded one); with no specs to
+                                  run the server starts at once, with no test factory before it.
+                                  Not with --db none. A component named with no specs is there to
+                                  load.
   --ready-file path               With --serve: write the server's URL here once it listens.
   --coverage                      After the run, list the services of each component's service/*.xml
                                   files that no spec called, with the total.

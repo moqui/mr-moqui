@@ -684,6 +684,19 @@ fn run_with_database(
     started: Instant,
     serve_setup: Option<serve::Setup>,
 ) -> Result<(), Error> {
+    // Nothing to run on the runtime's own database: no test factory to boot and shut down, the server starts at once.
+    if let (true, DbMode::Existing, Some(address), Some(setup)) =
+        (components.is_empty(), args.db, args.serve, serve_setup.as_ref())
+    {
+        return serve::serve_existing(
+            runtime,
+            framework,
+            serve_only,
+            address,
+            args.ready_file.as_deref(),
+            setup,
+        );
+    }
     let fixture = fixture::open(runtime, framework, args.db, args.keep)?;
     for name in serve_only {
         if !fixture.factory.components().iter().any(|info| &info.name == name) {
