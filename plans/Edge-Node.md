@@ -795,8 +795,10 @@ release.
   connection from the address the edge node names: the source's block for failed sign-ins and its connection count
   (20 a source, 10,000 in all) apply as on its own ports, and it runs on the XMPP server's runtime. The TLS ends
   there with its own certificates, so SCRAM-SHA-256-PLUS has the session's exporter and FAST's `HT-SHA-256-EXPR`
-  works. The local node needs no XMPP listener of its own: it keeps both kinds' TLS settings whether or not it
-  listens. A node with no XMPP server answers the tunnel 404.
+  works. The local node needs no XMPP listener of its own: each kind's TLS is made when a listener or the first
+  tunnel needs it. A node with no XMPP server, or no TLS for that kind, answers the tunnel 404, which the edge node
+  counts as refused. The address is taken canonical (an IPv4-mapped one as IPv4). The limits are per source, so
+  the edge node must see clients' own addresses (no TCP load balancer in front of it without PROXY).
 - **moqui-xmpp.** `conn::serve_stream` serves any byte stream (`AsyncRead + AsyncWrite + Unpin + Send`);
   `serve_tcp` sets `TCP_NODELAY` and calls it. Each write is flushed, as a tunnel may buffer. C3b's s2s streams will
   run on the same.

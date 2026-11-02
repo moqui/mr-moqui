@@ -51,7 +51,8 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-
   `edge_xmpp_host`; `edge_xmpp_node` names the local node when more than one is linked. At most 256 tunneled XMPP
   connections at once.
 - The local node serves each as a connection from the client's address: its blocks for failed sign-ins and its
-  limits per source apply. The TLS ends there, with its certificates for the domain, so SCRAM-SHA-256-PLUS and FAST
+  limits per source apply. So the edge node must see the clients' own addresses: behind a TCP load balancer that
+  sends no PROXY header, every client would share one address, one per-source limit (20) and one sign-in block. The TLS ends there, with its certificates for the domain, so SCRAM-SHA-256-PLUS and FAST
   bound to the TLS session work as on its own ports. It needs no XMPP port of its own for the tunnel; Chat apps shows
   its own `xmpp_port` and `xmpp_tls_port`, so give them the edge node's numbers.
 - The SRV records name the edge node in public DNS, the local node in the office's.

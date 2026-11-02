@@ -70,14 +70,34 @@ pub struct XmppSlot {
     intake: Mutex<Option<Intake>>,
 }
 
-/// The TLS settings of both kinds of client connection and the server's runtime, kept whether or not this node
-/// listens itself, so a tunneled stream is served as a listener's connection would be.
+/// The TLS settings of both kinds of client connection and the server's runtime, so a tunneled stream is served as a
+/// listener's connection would be. Each kind's TLS is made when first needed, by a listener at start or by the first
+/// tunnel, so a node that serves only the WebSocket never reads `runtime/cert` for it.
 #[derive(Clone)]
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
 struct Intake {
-    starttls: Option<TlsAcceptor>,
-    direct: Option<TlsAcceptor>,
+    runtime_dir: Arc<std::path::Path>,
+    starttls: Arc<std::sync::OnceLock<Option<TlsAcceptor>>>,
+    direct: Arc<std::sync::OnceLock<Option<TlsAcceptor>>>,
     runtime: tokio::runtime::Handle,
+}
+
+impl Intake {
+    /// The TLS of `direct` or STARTTLS connections, made the first time; None, logged once, when it cannot be.
+    fn acceptor(&self, direct: bool) -> Option<TlsAcceptor> {
+        let cell = if direct { &self.direct } else { &self.starttls };
+        cell.get_or_init(|| match tls_acceptor(&self.runtime_dir, direct) {
+            Ok(acceptor) => Some(acceptor),
+            Err(err) => {
+                let kind = if direct { "direct TLS" } else { "STARTTLS" };
+                tracing::error!(
+                    "XMPP: {kind} connections are off, on this node's port and through an edge node: {err}"
+                );
+                None
+            }
+        })
+        .clone()
+    }
 }
 
 /// A connection counted against its source and the total; dropping it gives the place back.
@@ -271,18 +291,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     *lock(&slot.server) = Some(Arc::clone(&server));
     let runtime_dir = factory.runtime_dir().to_path_buf();
     let sources = Arc::clone(&slot.sources);
-    // both kinds' TLS, for the listeners and for streams an edge node tunnels here
-    let acceptor_of = |direct: bool| match tls_acceptor(&runtime_dir, direct) {
-        Ok(acceptor) => Some(acceptor),
-        Err(err) => {
-            let kind = if direct { "direct TLS" } else { "STARTTLS" };
-            tracing::error!("XMPP: {kind} is off, here and through an edge node: {err}");
-            None
-        }
-    };
+    // both kinds' TLS, made for a listener here or for the first stream an edge node tunnels here
     let intake = Intake {
-        starttls: acceptor_of(false),
-        direct: acceptor_of(true),
+        runtime_dir: Arc::from(runtime_dir.as_path()),
+        starttls: Arc::default(),
+        direct: Arc::default(),
         runtime: runtime.handle().clone(),
     };
     let mut addresses = (None, None);
@@ -302,7 +315,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
             .filter(|host| !host.is_empty())
             .unwrap_or_else(|| property("xmpp_host"));
         let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
-        let Some(acceptor) = (if direct { &intake.direct } else { &intake.starttls }).clone() else {
+        let Some(acceptor) = intake.acceptor(direct) else {
             tracing::error!("XMPP: {port_name} is off: it has no TLS settings");
             continue;
         };
@@ -396,10 +409,12 @@ async fn accept_loop(
     }
 }
 
-/// Whether this node's XMPP server runs, to take [`serve_tunneled`].
+/// Whether this node's XMPP server runs and has the TLS of `direct` (or STARTTLS) connections, to take
+/// [`serve_tunneled`] of that kind.
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
-pub(crate) fn running(factory: &ExecutionContextFactory) -> bool {
-    lock(&factory.extension(|_| XmppSlot::default()).intake).is_some()
+pub(crate) fn running(factory: &ExecutionContextFactory, direct: bool) -> bool {
+    let intake = lock(&factory.extension(|_| XmppSlot::default()).intake).clone();
+    intake.is_some_and(|intake| intake.acceptor(direct).is_some())
 }
 
 /// Serve a stream an edge node tunneled here (plans/Edge-Node.md §5.4) as a client connection from `client`, on the
@@ -416,9 +431,11 @@ where
     let (Some(server), Some(intake)) = (lock(&slot.server).clone(), lock(&slot.intake).clone()) else {
         return false;
     };
-    let Some(acceptor) = (if direct { intake.direct } else { intake.starttls }) else {
+    let Some(acceptor) = intake.acceptor(direct) else {
         return false;
     };
+    // as an address on a dual-stack listener: an IPv4-mapped one counts as the IPv4 address
+    let client = SocketAddr::new(client.ip().to_canonical(), client.port());
     if moqui_xmpp::conn::blocked(&server, client.ip()) {
         tracing::debug!("XMPP: a tunneled connection from {client} refused: blocked after failed sign-ins");
         return false;

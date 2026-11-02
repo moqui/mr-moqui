@@ -30,7 +30,7 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode>
 
 /// No XMPP server runs in this build.
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
-pub(crate) fn running(_factory: &ExecutionContextFactory) -> bool {
+pub(crate) fn running(_factory: &ExecutionContextFactory, _direct: bool) -> bool {
     false
 }
 

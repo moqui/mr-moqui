@@ -303,13 +303,18 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
             },
         },
         (TUNNEL_XMPP | TUNNEL_XMPPS, Some(web)) => {
-            match web.factory.upgrade().filter(|factory| crate::xmpp::running(factory)) {
-                None => return plain(404, "this node has no XMPP server"),
+            let direct = kind == TUNNEL_XMPPS;
+            match web
+                .factory
+                .upgrade()
+                .filter(|factory| crate::xmpp::running(factory, direct))
+            {
+                None => return plain(404, "this node has no XMPP server for this kind of connection"),
                 Some(factory) => match client {
                     Some(client) => Destination::Xmpp {
                         factory,
                         client,
-                        direct: kind == TUNNEL_XMPPS,
+                        direct,
                     },
                     None => return plain(400, "the edge node named no client"),
                 },
