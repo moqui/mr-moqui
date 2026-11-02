@@ -77,6 +77,30 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="PHONE_NUMBER_ROUTE"><index-field name="routeTypeEnumId"/><index-field name="routeId"/></index>
     </entity>
 
+    <entity entity-name="PhoneNumberFallback" package="moqui.call" use="configuration" cache="never">
+        <description>What the SIP engine of this node's edge node does with a call to the number while this node is away
+            (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8), derived from the number's route, the ring group's
+            fallback, the user's mobile and the box, and written again when they change (refresh#PhoneFallbacks, also
+            every minute while the edge link is up); the replicated set voiceFallbacks copies it to the edge node. A
+            number with nothing to fall back to has no row (the edge node answers 480 so the trunk's failover acts).
+            forwardNumber: an outside number to ring first (the user's mobile they ring with their calls and may forward
+            to, or a ring group's outside fallback), already checked against the fraud policy, for forwardSeconds;
+            voicemailFlag: then a message, with the box's greeting (greetingLocation, copied to the edge node through the
+            queue); the box itself is resolved again here when the message comes.</description>
+        <field name="phoneNumber" type="id" is-pk="true"/>
+        <field name="voiceTrunkId" type="id"/>
+        <field name="voicemailFlag" type="text-indicator"/>
+        <field name="greetingLocation" type="text-medium"/>
+        <field name="forwardNumber" type="text-short"/>
+        <field name="forwardSeconds" type="number-integer"/>
+        <field name="forwardMaxConcurrent" type="number-integer"><description>The most forwards of the number at once the
+            edge node makes: the user's limit of calls out at once (VoiceUserSetting, held to the policy's), a ring
+            group's the policy's per user</description></field>
+        <field name="forwardMaxPerDay" type="number-integer"><description>The most forwards of the number in a day: the
+            user's limit of calls a day, a ring group's the policy's for the deployment</description></field>
+        <relationship type="one-nofk" related="moqui.call.PhoneNumber" short-alias="number"/>
+    </entity>
+
     <entity entity-name="PhoneNumberUser" package="moqui.call" use="configuration" cache="never">
         <description>A caller-ID grant: the user may present this number on the calls they place, from fromDate until
             thruDate. Without a grant a user's call goes out with no number of theirs and is refused.</description>
@@ -187,6 +211,13 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="rtpPorts" type="text-short"/>
         <field name="startedDate" type="date-time"/>
         <field name="heartbeatDate" type="date-time"/>
+        <field name="sipDomain" type="text-medium"><description>The edge node's (E8): the realm its registrar
+            challenges phones with, from its Hello, which this node makes its phones' verifiers for</description></field>
+        <field name="registrarEnabled" type="text-indicator"><description>The edge node's (E8): Y when its registrar is on
+            (its sip_registrar_enabled)</description></field>
+        <field name="edgeLinked" type="text-indicator"><description>Y: the SIP engine of this node's edge node
+            (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the edge link keeps from its Hello and liveness, as
+            its CallMediaNode row; the engine registers none itself</description></field>
     </entity>
 
     <!-- ========== V2: voicemail (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/Voicemail.md) ========== -->
@@ -292,6 +323,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="lastSeenDate" type="date-time"/>
         <field name="revokedDate" type="date-time"/>
+        <field name="edgeDigestDate" type="date-time"><description>When the edge node's registrar last had a digest
+            answer of this phone checked here (check#SipDeviceDigest, E8): the edge node may store its bindings and place
+            its calls only shortly after, since it holds no verifier and cannot sign a phone in itself</description></field>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
         <relationship type="one" title="SipDevice" related="moqui.basic.StatusItem" short-alias="status">
             <key-map field-name="statusId"/></relationship>

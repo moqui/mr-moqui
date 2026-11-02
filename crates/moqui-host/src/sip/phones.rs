@@ -28,6 +28,8 @@
 //! - **Calls from a device** go to `receive#DeviceCall`, which places them as the device's user: to another user, or
 //!   to a number through `place#PhoneCall`'s policy (caller ID, fraud limits, emergency).
 //! - **Rotation and revocation**: `dropDevice` ends the device's bindings and hangs up its legs here.
+//! - **On an edge node** (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) no verifier is here: each answer is
+//!   checked on the local node (`check#SipDeviceDigest`), so phones sign in only while it is reachable.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
@@ -47,6 +49,8 @@ use super::leg::{LegCommand, LegMedia};
 use super::{call_service, number, text, Engine, Leg, RING_TIMEOUT};
 
 const AUTH_SERVICE: &str = "org.moqui.impl.SipDeviceServices.get#SipDeviceAuth";
+/// On an edge node, the local node's check of a phone's digest answer (E8).
+const CHECK_SERVICE: &str = "org.moqui.impl.SipDeviceServices.check#SipDeviceDigest";
 const STORE_SERVICE: &str = "org.moqui.impl.SipDeviceServices.store#SipRegistration";
 const RECEIVE_SERVICE: &str = "org.moqui.impl.SipDeviceServices.receive#DeviceCall";
 
@@ -134,6 +138,58 @@ impl DeviceDirectory for ServiceDirectory {
             verifiers,
         })
     }
+
+    /// On an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) the verifiers stay on the local node:
+    /// the answer is checked there (`check#SipDeviceDigest`, delegated), and this registrar keeps the nonces. While the
+    /// local node is away no phone signs in (503, not a failed attempt). Elsewhere as the default, against
+    /// `get#SipDeviceAuth`'s verifiers.
+    async fn verify(
+        &self,
+        username: &str,
+        check: &moqui_sip::digest::ResponseCheck,
+    ) -> Result<Option<(PhoneDevice, bool)>, String> {
+        let Some(factory) = self.factory.upgrade() else {
+            return Err("the server is stopping".to_string());
+        };
+        if !super::edge::is_edge(&factory) {
+            let Some(device) = self.device(username).await else {
+                return Ok(None);
+            };
+            let verifier = device
+                .verifiers
+                .iter()
+                .find(|(algorithm, _)| *algorithm == check.algorithm)
+                .map(|(_, ha1)| ha1.clone());
+            let matched = check.matches(verifier.as_deref());
+            return Ok(Some((device, matched)));
+        }
+        let (nc, cnonce) = check.qop_auth.clone().unzip();
+        let parameters = serde_json::json!({"username": username, "realm": self.realm,
+            "algorithm": check.algorithm.name(), "nonce": check.nonce, "nc": nc, "cnonce": cnonce,
+            "qop": check.qop_auth.as_ref().map(|_| "auth"), "ha2": check.ha2, "response": check.response});
+        // only the local node away is "cannot check now" (503, not counted); any other failure is a refusal
+        let out = match call_service(&factory, CHECK_SERVICE, parameters).await {
+            Ok(out) => out,
+            Err(err) if super::edge::is_offline(&err) => return Err(format!("the local node did not check it: {err}")),
+            Err(err) => {
+                tracing::warn!("SIP: the device {username:?}'s answer was refused by the local node: {err}");
+                return Ok(None);
+            }
+        };
+        let id = text(&out, "sipDeviceId");
+        if !super::flag(&out, "matched") || id.is_empty() {
+            return Ok(None);
+        }
+        let device = PhoneDevice {
+            id,
+            username: text(&out, "username"),
+            revision: number(&out, "credentialRevision")
+                .and_then(|n| u32::try_from(n).ok())
+                .unwrap_or(1),
+            verifiers: Vec::new(),
+        };
+        Ok(Some((device, true)))
+    }
 }
 
 /// The longest a phone rings for a call.
@@ -213,6 +269,7 @@ impl Engine {
                 media,
                 local: plain,
                 caller: String::new(),
+                dialed: String::new(),
                 answered: false,
                 device: Some(text(body, "sipDeviceId")),
                 srtp_local: Some(srtp),
@@ -333,6 +390,8 @@ impl Engine {
                     tracing::warn!("SIP device call {leg}: decided too late, the call was refused");
                     drop(media);
                     self.note_leg(&room, &leg, "failed", Some(480), "decided too late");
+                    // E8: nothing more goes out for it, a number it dialed included
+                    self.abandon_room(&room);
                     return;
                 }
                 self.legs.insert(
@@ -342,6 +401,7 @@ impl Engine {
                         media,
                         local,
                         caller: String::new(),
+                        dialed: String::new(),
                         answered: true,
                         device: Some(device),
                         srtp_local: None,

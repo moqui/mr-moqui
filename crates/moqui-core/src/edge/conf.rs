@@ -39,12 +39,15 @@ pub struct ReplicaSet {
     pub entities: Vec<ReplicaEntity>,
 }
 
-/// A delegated service (`<delegate service=".." allow-anonymous=".."/>`).
+/// A delegated service (`<delegate service=".." allow-anonymous=".." timeout-seconds=".."/>`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Delegate {
     /// A caller with no user may call it on the edge node when the edge node has no definition of the service to
     /// check (a webhook of a comms engine). With a definition, the definition's `authenticate` decides.
     pub allow_anonymous: bool,
+    /// How long the edge node waits for the local node's answer, when shorter than the link's answer timeout (60 s):
+    /// for a caller that cannot wait that long, as the SIP engine's routing of a call while it rings (E8).
+    pub timeout: Option<Duration>,
 }
 
 /// The `<edge>` conf of one factory.
@@ -131,9 +134,16 @@ impl EdgeSettings {
             let allow_anonymous = delegate
                 .attribute("allow-anonymous")
                 .is_some_and(|flag| flag.trim() == "true");
-            settings
-                .delegates
-                .insert(crate::service::call::canonical(service), Delegate { allow_anonymous });
+            let timeout = delegate
+                .attribute("timeout-seconds")
+                .and_then(|raw| delegate_timeout(service, raw.trim()));
+            settings.delegates.insert(
+                crate::service::call::canonical(service),
+                Delegate {
+                    allow_anonymous,
+                    timeout,
+                },
+            );
         }
         for kind in edge.named_iter("queue-kind") {
             let name = kind.attribute("name").unwrap_or_default().trim().to_string();
@@ -193,6 +203,23 @@ impl EdgeSettings {
             .retry_first
             .saturating_mul(1_u32 << attempt.saturating_sub(1).min(16));
         doubled.min(MAX_RETRY)
+    }
+}
+
+/// A delegate's `timeout-seconds`: none when empty; one that is not a positive number is logged and left out.
+fn delegate_timeout(service: &str, raw: &str) -> Option<Duration> {
+    if raw.is_empty() {
+        return None;
+    }
+    let seconds: Result<f64, _> = raw.parse();
+    match seconds {
+        Ok(seconds) if seconds.is_finite() && seconds > 0.0 => Some(Duration::from_secs_f64(seconds)),
+        _ => {
+            tracing::error!(
+                "edge delegate {service} timeout-seconds=\"{raw}\" is not a positive number; it is left out"
+            );
+            None
+        }
     }
 }
 

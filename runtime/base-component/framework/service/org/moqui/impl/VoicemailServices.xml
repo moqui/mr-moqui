@@ -276,11 +276,14 @@ along with this software (see the LICENSE.md file). If not, see
             and the email notice when the box has notifyEmail.</description>
         <in-parameters>
             <parameter name="voicemailBoxId" required="true"/>
-            <parameter name="tempPath" required="true"/>
+            <parameter name="tempPath"><description>The spooled file; or fromLocation</description></parameter>
+            <parameter name="fromLocation"><description>A message the edge node recorded, as this node's queue kept it
+                (receive#EdgeVoicemail, E8)</description></parameter>
             <parameter name="durationMs" type="Long"/>
             <parameter name="callSessionId"/>
             <parameter name="fromNumber"/>
             <parameter name="fromName"/>
+            <parameter name="receivedDate" type="Timestamp"><description>When the caller left it; now when empty</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="voicemailId"/>
@@ -294,13 +297,46 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal: moves the SIP engine's spooled message (tempPath, which must be under the runtime's
             tmp/voicemail) to contentLocation (under dbresource://moqui/call/voicemail/) and deletes the spooled file; an empty
             contentLocation only deletes it. byteSize is what was stored. A path outside the spool, or a location outside the
-            voicemail root, is refused.</description>
+            voicemail root, is refused. Or, on a local node, a message its edge node's SIP engine recorded
+            (fromLocation, where this node's queue kept the item's content, under dbresource://moqui/edge/content/in/;
+            E8), copied to contentLocation; the queue removes its copy.</description>
         <in-parameters>
-            <parameter name="tempPath" required="true"/>
+            <parameter name="tempPath"/>
+            <parameter name="fromLocation"/>
             <parameter name="contentLocation"/>
         </in-parameters>
         <out-parameters>
             <parameter name="byteSize" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <service verb="receive" noun="EdgeVoicemail" allow-remote="false">
+        <description>On a local node, the edge link's queue kind voicemail (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): a
+            message the SIP engine of its edge node recorded, the item's content. The payload names the number called
+            (toNumber), the caller (fromNumber, fromName), its length (durationMs) and when it came (receivedMs), and
+            callSessionId when this node had routed the call (its box is the one begin#Voicemail chose for it); with none,
+            or for a call whose media is not on the edge node, the box is the number's own again (the user's, or the
+            ring group's fallback box, made when there is none), whatever the edge node says. Then store#Voicemail, with
+            the owner's notices. Run only for the queue, as _edge_; a number with no box here is logged and the item
+            applied with no message.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
+        <out-parameters><parameter name="voicemailId"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('receiveEdge', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="PhoneVoicemailAudio" type="rust" location="moqui_core::service::call_media::get_phone_voicemail_audio"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (the SIP engine of this node's edge node, E8): the audio of a message it is to play over the
+            phone (audioLocation, from check#VoicemailPin's messageList), as audioBase64, only for a call (callSessionId)
+            whose caller gave that message's box's PIN (CallSession.voicemailAccessBoxId) and that has not ended; nothing
+            otherwise (notFound).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="audioLocation" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="audioBase64"/>
+            <parameter name="reasonCode"/>
         </out-parameters>
     </service>
 
@@ -347,11 +383,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="act" noun="PhoneVoicemail" authenticate="false" allow-remote="false">
         <description>Internal (the SIP engine, after an accepted PIN for voicemailBoxId): op delete (key 7: to the trash),
-            save (key 9: heard) or heard, on a message of that box.</description>
+            save (key 9: heard) or heard, on a message of that box. From the edge node's delegate user (E8), only on a
+            call (callSessionId) whose caller gave that box's PIN.</description>
         <in-parameters>
             <parameter name="voicemailBoxId" required="true"/>
             <parameter name="voicemailId" required="true"/>
             <parameter name="op" required="true"/>
+            <parameter name="callSessionId"/>
         </in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voicemail.js').execute('phoneAct', context))</script></actions>

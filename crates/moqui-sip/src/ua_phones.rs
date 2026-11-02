@@ -73,6 +73,28 @@ pub struct PhoneDevice {
 pub trait DeviceDirectory: Send + Sync {
     /// The active device with this username, or `None`.
     async fn device(&self, username: &str) -> Option<PhoneDevice>;
+
+    /// The active device with this username and whether `check`'s response is right for its verifier of the check's
+    /// algorithm; `None` when there is no such device. By default against [`DeviceDirectory::device`]'s verifiers; a
+    /// directory that holds none (an edge node's registrar, plans/Edge-Node.md §5.4 "Voice (SIP)") has the node that
+    /// holds them check it, and answers a device with no verifiers, or an error only when that node could not be
+    /// asked (it is away), which is no failed attempt of the phone's: answered 503. Any other failure is `Ok(None)`.
+    async fn verify(
+        &self,
+        username: &str,
+        check: &crate::digest::ResponseCheck,
+    ) -> Result<Option<(PhoneDevice, bool)>, String> {
+        let Some(device) = self.device(username).await else {
+            return Ok(None);
+        };
+        let verifier = device
+            .verifiers
+            .iter()
+            .find(|(algorithm, _)| *algorithm == check.algorithm)
+            .map(|(_, ha1)| ha1.clone());
+        let matched = check.matches(verifier.as_deref());
+        Ok(Some((device, matched)))
+    }
 }
 
 /// The registrar's switch and setup: `None` in [`UaConfig::registrar`](super::UaConfig::registrar) keeps it off.
@@ -386,22 +408,24 @@ impl Inner {
     ) -> (crate::digest::Verdict, Option<PhoneDevice>) {
         // a forged or foreign nonce fails whoever it names: the directory (a service call) is not asked for it
         let ours = lock(&self.nonces).answers_ours(auth);
-        let device = match self.phones.as_ref() {
-            Some(phones) if ours => phones
-                .directory
-                .device(&auth.username)
-                .await
-                .filter(|d| d.username == auth.username),
+        let check = crate::digest::ResponseCheck::of(auth, method);
+        let found = match (self.phones.as_ref(), &check) {
+            (Some(phones), Some(check)) if ours => match phones.directory.verify(&auth.username, check).await {
+                Ok(found) => found.filter(|(d, _)| d.username == auth.username),
+                Err(err) => {
+                    tracing::warn!("SIP: {:?}'s answer was not checked: {err}", auth.username);
+                    return (crate::digest::Verdict::Unavailable, None);
+                }
+            },
             _ => None,
         };
-        let verifier = device.as_ref().and_then(|d| {
-            d.verifiers
-                .iter()
-                .find(|(algorithm, _)| Some(*algorithm) == auth.algorithm)
-                .map(|(_, ha1)| ha1.clone())
-        });
-        let verdict = lock(&self.nonces).verify_ha1(auth, method, verifier.as_deref(), now_secs());
-        (verdict, device)
+        if let (None, Some(check)) = (&found, &check) {
+            // checked against a stand-in, so the time does not tell whether the username exists
+            let _ = check.matches(None);
+        }
+        let matched = found.as_ref().is_some_and(|(_, matched)| *matched);
+        let verdict = lock(&self.nonces).verify_checked(auth, matched, now_secs());
+        (verdict, found.map(|(device, _)| device))
     }
 
     /// The INVITEs to a device's bindings, the first answer winning.

@@ -268,6 +268,11 @@ the edge node is not a member of the local node's cluster:
   seconds while it lasts (`edgeLinked` Y), so a link down past the media nodes' grace (60 seconds) ends its calls with
   "media server lost", and unpairing removes it. New calls prefer that row to the local node's own media node, if it has
   one (office calls go through the edge node too; plans decision 6).
+- **Turning it off.** The Edge Node wizard's calls area (System › Edge Node, Discover) sets `edge_calls_enabled` in the
+  local node's `runtime/.env`. While it is `false` the link keeps the row as draining: new calls go to the local node's
+  own media nodes (none, and calls are unavailable), and calls already on the edge node go on, as the row stays live.
+  Unpairing removes the setting. The wizard's Test checks the row is live and first, and allocates on the edge node's
+  TURN with a credential `make#IceServers` gave ([TURN](TURN.md#on-an-edge-node)).
 - **Signaling.** The browsers' sockets stay on the local node (through web access from outside). A frame, reply or
   control for the edge node's instance id goes over the link (`Link.Signal` up, `LocalLink.Signal` down, one ordered
   stream each way per link) instead of the cluster's sender: `moqui_core::edge::signal`, the seam in

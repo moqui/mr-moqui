@@ -18,7 +18,7 @@
 
 use std::sync::{Arc, Weak};
 
-use moqui_core::context::{Error as CoreError, ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 
 /// Run `job` on a request worker, in a fresh context with no user and authorization on, and wait without blocking the
 /// async runtime. A job that logs a user in runs as that user; the login calls turn authorization off only while they
@@ -53,7 +53,8 @@ where
     F: FnOnce(&ExecutionContextFactory) -> Result<T, CoreError> + Send + 'static,
 {
     on_pool(factory, move |factory| {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let _authz =
+            moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
         job(factory)
     })
     .await

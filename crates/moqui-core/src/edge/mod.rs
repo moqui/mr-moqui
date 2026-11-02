@@ -22,13 +22,14 @@
 //! service facade's hand-off of delegated calls ([`delegate`]), the queue's rows, receipts and handlers ([`queue`]),
 //! and replication's change notes, batches and copies ([`replica`]). The host's link moves them. Attaching a local node
 //! (§5.7, E10) is [`setup`]: the edge node's offer, the local node's Configure, the local rows Apply writes and the
-//! Test step's round trips.
+//! Test step's round trips; its calls area, on the edge node as media node, is [`calls`].
 
 use std::sync::Arc;
 
 use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
 
+pub mod calls;
 pub mod conf;
 pub mod delegate;
 pub mod media;
@@ -119,6 +120,14 @@ pub struct EdgeInfo {
     pub turn_urls: Vec<String>,
     /// When its media socket started (epoch milliseconds), 0 when it is off (E7).
     pub media_started_ms: i64,
+    /// Its SIP engine's address for UDP and TCP, and for TLS; empty when off (E8). The local node keeps the edge
+    /// node's `SipNode` row from them.
+    pub sip_address: String,
+    pub sip_tls_address: String,
+    /// Its registrar's realm, and whether its registrar is on (E8): the local node's phones' verifiers are for that
+    /// realm, and its phones ring only with the registrar on.
+    pub sip_domain: String,
+    pub sip_registrar: bool,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.
@@ -204,9 +213,12 @@ pub struct DelegateCall {
     pub caller: serde_json::Value,
     /// An id for the call, in both nodes' logs.
     pub operation_id: String,
+    /// How long the edge node waits for the answer, when its conf entry sets one shorter than the link's (E8).
+    pub timeout: Option<std::time::Duration>,
 }
 
-/// The local node's answer to a [`DelegateCall`]: the service's result, or the errors it added.
+/// The local node's answer to a [`DelegateCall`]: the service's result, with the errors it added (a refusal's
+/// `reasonCode` comes back beside its error, as a call on the node itself returns both).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DelegateAnswer {
     pub result: serde_json::Value,
@@ -262,6 +274,13 @@ pub trait EdgeLink: Send + Sync {
     /// reaches it; what was reached, or why not. No credentials are sent.
     fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, Error> {
         let _ = (port, direct);
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a local node, the Test step's TURN check (§5.7, E10 calls): an allocation on the edge node's TURN at `url`
+    /// (a `turn:` URL over UDP) with `username` and `credential`, as a browser's, then a permission for the IP of `peer` (its media
+    /// address), and the allocation deleted; what was allocated, or why not.
+    fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, Error> {
+        let _ = (url, username, credential, peer);
         Err(Error::new(NOT_BUILT))
     }
 }

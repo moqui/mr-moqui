@@ -63,6 +63,14 @@ function voice(op, parameters) {
 }
 
 /** A refusal: an error for the user and a reason code for the caller. */
+/**
+ * Anyone, or the edge link's delegate user for a call whose media is on this node's edge node (Calls.js edgeAllowed;
+ * plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP engine routes only its own calls.
+ */
+function edgeAllowed(p) {
+  return ec.user.username !== '_edge_' || !!(ec.resource.script(CALLS).execute('edgeAllowed', p) || {}).allowed
+}
+
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
   return { reasonCode }
@@ -233,6 +241,7 @@ function inbound(p) {
 function route(p) {
   const session = p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
   if (!session || session.statusId === 'CssEnded') return { mode: 'end', reasonCode: 'callEnded' }
+  if (!edgeAllowed({ callSessionId: session.callSessionId, callLegId: p.callLegId })) return { mode: 'end', reasonCode: 'notAllowed' }
   const menu = p.ivrMenuId ? one(MENU, { ivrMenuId: p.ivrMenuId }) : null
   if (!menu) return { mode: 'end', reasonCode: 'notFound' }
   const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null

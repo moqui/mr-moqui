@@ -21,6 +21,7 @@ const PARTICIPANT = 'moqui.call.CallParticipant'
 const NUMBER = 'moqui.call.PhoneNumber'
 const CALLS = 'component://framework/service/org/moqui/impl/Calls.js'
 const CALL_HANDLING = 'component://framework/service/org/moqui/impl/CallHandling.js'
+const VOICE = 'component://framework/service/org/moqui/impl/Voice.js'
 
 /** Where the audio goes; store#VoicemailFile refuses any other place. */
 const ROOT = 'dbresource://moqui/call/voicemail'
@@ -72,6 +73,19 @@ const callRingSeconds = () => Math.max(10, Number(property('call_ring_seconds', 
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
   return { reasonCode }
+}
+
+/** The edge link's delegate user (plans/Edge-Node.md §5.4 "Voice (SIP)", E8). */
+const isEdgeCaller = () => ec.user.username === '_edge_'
+
+/** Anyone, or the edge node's delegate user for a call whose media is on the edge node (Calls.js edgeAllowed). */
+function edgeAllowed(p) {
+  return !isEdgeCaller() || !!(ec.resource.script(CALLS).execute('edgeAllowed', p) || {}).allowed
+}
+
+/** On a paired node, the numbers' fallbacks again, as a box's greeting changed (Voice.js); a failure is logged. */
+function fallbacksChanged() {
+  ec.resource.script(VOICE).execute('fallbackChanged', {})
 }
 
 function appRoot() {
@@ -194,6 +208,9 @@ function routing(p) {
 function begin(p) {
   const session = p.callSessionId ? one(SESSION, { callSessionId: p.callSessionId }) : null
   if (!session) return refuse('notFound', 'Call not found')
+  if (!edgeAllowed({ callSessionId: session.callSessionId, callLegId: p.callLegId })) {
+    return refuse('notAllowed', 'The edge node sends to voicemail only calls whose media is on it')
+  }
   const local = rows(PARTICIPANT, { callSessionId: session.callSessionId }).filter((x) => x.userId)
   if (p.reason === 'access') {
     if (local.length || session.statusId === 'CssEnded') return refuse('notFound', 'Call not found')
@@ -212,6 +229,12 @@ function begin(p) {
   if (!box) return refuse('noBox', 'This call has no voicemail box')
   const number = moved.phoneNumber || null
   const name = moved.displayName && moved.displayName !== number ? String(moved.displayName).replace(/ \(\+?[0-9]+\)$/, '') : null
+  // the box a message the edge node's engine records is stored in (receiveEdge, E8)
+  const moving = find(SESSION).condition('callSessionId', session.callSessionId).forUpdate(true).one()
+  if (moving && moving.voicemailBoxId !== box.voicemailBoxId) {
+    moving.set('voicemailBoxId', box.voicemailBoxId)
+    moving.update()
+  }
   return { mode: 'deposit', voicemailBoxId: box.voicemailBoxId, greetingLocation: box.greetingLocation || null,
     maxSeconds: maxSeconds(), fromNumber: number, fromName: name, hasPin: !blank(box.pinHash) }
 }
@@ -227,16 +250,18 @@ function store(p) {
     discardSpool(p.tempPath)
     return refuse('notFound', 'Voicemail box not found')
   }
+  if (blank(p.tempPath) && blank(p.fromLocation)) return refuse('noAudio', 'A voicemail needs its spooled file or its received copy')
   const voicemail = ec.entity.makeValue(VOICEMAIL)
   voicemail.setSequencedIdPrimary()
   const location = `${ROOT}/${box.voicemailBoxId}/${voicemail.voicemailId}.ogg`
   voicemail.setFields({ voicemailBoxId: box.voicemailBoxId, callSessionId: p.callSessionId || null,
-    fromNumber: p.fromNumber || null, fromName: p.fromName || null, receivedDate: ec.user.nowTimestamp,
+    fromNumber: p.fromNumber || null, fromName: p.fromName || null, receivedDate: p.receivedDate || ec.user.nowTimestamp,
     durationMs: Math.max(Number(p.durationMs) || 0, 0), folder: 'inbox', statusId: 'VmsStored' }, true, null, null)
   ec.message.pushErrors()
   try {
     const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.store#VoicemailFile')
-      .parameters({ tempPath: p.tempPath, contentLocation: location }).requireNewTransaction(true).disableAuthz().call() || {}
+      .parameters({ tempPath: blank(p.fromLocation) ? p.tempPath : null, fromLocation: p.fromLocation || null, contentLocation: location })
+      .requireNewTransaction(true).disableAuthz().call() || {}
     if (ec.message.hasError()) throw new Error(ec.message.errorsString)
     voicemail.setFields({ audioLocation: location, byteSize: out.byteSize || null }, true, null, null)
   } catch (err) {
@@ -251,6 +276,77 @@ function store(p) {
   roomNote(voicemail)
   received(box, voicemail)
   return { voicemailId: voicemail.voicemailId }
+}
+
+// ---------- messages the edge node recorded (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+
+/** The most ring groups a number's fallback is followed through (Voice.js MAX_GROUP_HOPS). */
+const MAX_GROUP_HOPS = 5
+
+/** A ring group's box, made with the defaults when it has none (CallHandling.js boxFor). */
+function groupBox(ringGroupId) {
+  let box = find(BOX).condition('ringGroupId', ringGroupId).one()
+  if (!box && one('moqui.call.RingGroup', { ringGroupId })) {
+    box = ec.entity.makeValue(BOX)
+    box.setSequencedIdPrimary()
+    box.setFields({ ringGroupId, attachAudio: 'N', attachTranscript: 'N' }, true, null, null)
+    box.create()
+  }
+  return box
+}
+
+/**
+ * The box a number's calls leave messages in when nothing here decided where the call went: the user's it rings (made
+ * when they have none; not for a disabled user), or its ring group's fallback box, followed through other groups; null
+ * for any other route (Voice.js fallbackOf gives the same).
+ */
+function boxOfRoute(phoneNumber) {
+  const number = blank(phoneNumber) ? null : one(NUMBER, { phoneNumber })
+  if (!number || blank(number.routeId)) return null
+  if (number.routeTypeEnumId === 'PnrUser') {
+    const account = one('moqui.security.UserAccount', { userId: number.routeId })
+    return account && account.disabled !== 'Y' ? boxOf(number.routeId, true) : null
+  }
+  if (number.routeTypeEnumId !== 'PnrRingGroup') return null
+  let groupId = number.routeId
+  for (let hop = 0; hop < MAX_GROUP_HOPS && groupId; hop++) {
+    const group = one('moqui.call.RingGroup', { ringGroupId: groupId })
+    if (!group) return null
+    if (group.fallbackTypeEnumId === 'RgfVoicemail') return groupBox(group.ringGroupId)
+    if (group.fallbackTypeEnumId !== 'RgfGroup') return null
+    groupId = group.fallbackId
+  }
+  return null
+}
+
+/**
+ * The queue kind voicemail (receive#EdgeVoicemail), as _edge_ only: a message the edge node's SIP engine recorded. Its
+ * box is the one begin#Voicemail chose for the call when this node routed it (the session's, its media on the edge
+ * node), else the called number's own again; never one the edge node names.
+ */
+function receiveEdge(p) {
+  if (!isEdgeCaller()) return refuse('notAllowed', 'Only the edge link queue stores a message the edge node recorded')
+  let item
+  try {
+    item = JSON.parse(p.payload || '{}')
+  } catch (err) {
+    return refuse('badRequest', 'The edge voicemail item is not JSON')
+  }
+  if (blank(p.contentLocation)) return refuse('badRequest', 'The edge voicemail item came without its audio')
+  const session = blank(item.callSessionId) ? null : one(SESSION, { callSessionId: item.callSessionId })
+  const routed = session && edgeAllowed({ callSessionId: session.callSessionId }) && !blank(session.voicemailBoxId)
+  const box = routed ? one(BOX, { voicemailBoxId: session.voicemailBoxId }) : boxOfRoute(item.toNumber)
+  if (!box) {
+    ec.logger.error(`Edge voicemail item ${p.queueItemId}: the number ${item.toNumber || '(none)'} has no voicemail box here, the message is dropped`)
+    return {}
+  }
+  const received = Number(item.receivedMs)
+  const out = store({ voicemailBoxId: box.voicemailBoxId, fromLocation: p.contentLocation,
+    durationMs: Math.max(Number(item.durationMs) || 0, 0), callSessionId: routed ? session.callSessionId : null,
+    fromNumber: blank(item.fromNumber) ? null : String(item.fromNumber).slice(0, 60),
+    fromName: blank(item.fromName) ? null : String(item.fromName).slice(0, 120),
+    receivedDate: received > 0 && received <= nowMs() + 60000 ? new Date(received) : null })
+  return { voicemailId: out.voicemailId || null }
 }
 
 /**
@@ -504,6 +600,10 @@ function burnCheck(pin) {
  * nothing of which boxes exist. Failures are counted per box (VoicemailBox.pin*) and per source (the caller's number).
  */
 function checkPin(p) {
+  // the edge node's engine (E8): only for a call whose media is on it, whose PIN then opens the box for that call
+  if (isEdgeCaller() && (blank(p.callSessionId) || !edgeAllowed({ callSessionId: p.callSessionId }))) {
+    return { accepted: false, blocked: false }
+  }
   const pin = String(p.pin || '')
   const sourceKey = 'source:' + (String(p.fromNumber || '').replace(/[^0-9+]/g, '') || 'unknown')
   let box = null
@@ -534,6 +634,12 @@ function checkPin(p) {
   }
   box.setFields({ pinFailureCount: 0, pinBlockedUntil: null }, true, null, null)
   box.update()
+  // the box this call opened: the only one whose messages it may play and act on from the edge node (E8)
+  const opened = blank(p.callSessionId) ? null : find(SESSION).condition('callSessionId', p.callSessionId).forUpdate(true).one()
+  if (opened && opened.voicemailAccessBoxId !== box.voicemailBoxId) {
+    opened.set('voicemailAccessBoxId', box.voicemailBoxId)
+    opened.update()
+  }
   const messageList = Array.from(find(VOICEMAIL).condition('voicemailBoxId', box.voicemailBoxId).condition('folder', 'inbox')
     .condition('heardDate', null).condition('statusId', 'VmsStored').orderBy('receivedDate').limit(50).list())
     .map((v) => ({ voicemailId: v.voicemailId, audioLocation: v.audioLocation, fromNumber: v.fromNumber || null,
@@ -545,6 +651,12 @@ function checkPin(p) {
 function phoneAct(p) {
   const voicemail = p.voicemailId ? one(VOICEMAIL, { voicemailId: p.voicemailId }) : null
   if (!voicemail || voicemail.voicemailBoxId !== p.voicemailBoxId) return refuse('notFound', 'Voicemail not found')
+  // the edge node's engine (E8): only on a call, its media on the edge node, whose caller gave this box's PIN
+  if (isEdgeCaller()) {
+    const session = blank(p.callSessionId) ? null : one(SESSION, { callSessionId: p.callSessionId })
+    if (!session || session.statusId === 'CssEnded' || session.voicemailAccessBoxId !== p.voicemailBoxId ||
+      !edgeAllowed({ callSessionId: session.callSessionId })) return refuse('notFound', 'Voicemail not found')
+  }
   if (p.op === 'delete') toTrash(voicemail)
   else if (p.op === 'save' || p.op === 'heard') markHeard(voicemail, true)
   else return refuse('badOp', 'Not a voicemail action: ' + p.op)
@@ -859,6 +971,7 @@ function storeGreeting(p) {
   box.setFields({ greetingLocation: kept, greetingContentType: converted || kind === 'ogg' ? 'audio/ogg' : 'audio/wav',
     greetingDurationMs: converted ? converted.durationMs || null : null }, true, null, null)
   box.update()
+  fallbacksChanged()
   return { box: settingsView(box), converted: !!converted }
 }
 
@@ -868,6 +981,7 @@ function deleteGreeting() {
   deleteLocation(box.greetingLocation)
   box.setFields({ greetingLocation: null, greetingContentType: null, greetingDurationMs: null }, true, null, null)
   box.update()
+  fallbacksChanged()
   return { box: settingsView(box) }
 }
 
@@ -878,7 +992,7 @@ function greeting() {
 }
 
 const operations = {
-  routing, begin, store, transcribe, notice, checkPin, phoneAct, findVoicemails, countUnheard, getVoicemail, audio, mark, remove,
+  routing, begin, store, receiveEdge, transcribe, notice, checkPin, phoneAct, findVoicemails, countUnheard, getVoicemail, audio, mark, remove,
   restore, emptyTrash, retryTranscript, expireTrash, expireItem, expirePinFailures, settings, updateSettings, setPin, storeGreeting, deleteGreeting,
   greeting,
 }

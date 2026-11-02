@@ -273,6 +273,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
+| `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
 | `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_xmpp_node` | empty | On an edge node, the ports whose connections go to a local node's XMPP server, STARTTLS (5222) and direct TLS (5223), the address they listen on (empty for every one) and the node (empty for the only one linked) |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
@@ -648,8 +649,9 @@ An edge node is a small server in the cloud in front of a local server, which di
 open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
 edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
 beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
-their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, and XMPP
-clients through its tunnel ports. Phones (SIP) do not go through it yet.
+their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
+clients through its tunnel ports, and phone calls (SIP trunks and outside phones), with a voicemail fallback while the
+local node is away.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
@@ -664,7 +666,10 @@ clients through its tunnel ports. Phones (SIP) do not go through it yet.
       accounts' mail goes out through the edge node; the chat bridges whose webhooks go to it; the PASS sites it
       serves, with their SSO callback; XMPP, this node's `xmpp_domain` through the edge node's tunnel ports (on by
       default when both are there; Next adds the domain to the passthrough names, as uploads and `/xmpp-websocket`
-      ride on web access). Calls and phones are listed as not available yet. A host name must be a public DNS name:
+      ride on web access); calls, new calls' media on the edge node's media node with its TURN (on by default when
+      it runs one, unless `edge_calls_enabled` is false here; office users in a call with each other then send media
+      to the cloud and back, with no cascading to a media node of this node's own, and one local node per edge node
+      takes calls). Phones are listed as not available yet. A host name must be a public DNS name:
       not an IP address, `localhost` or a name with one label.
    4. **Apply.** The whole setup is checked first, and nothing changes when any of it is not right. The edge node's
       part goes first (host names, mail domains, bridges, sites, the XMPP domain): it takes only this node's names, and refuses a name
@@ -673,23 +678,28 @@ clients through its tunnel ports. Phones (SIP) do not go through it yet.
       nothing changes on this node. Then it writes this node's part: an `EmailServer` `EDGE` with `smtpHost` `edge:`,
       `SYSTEM`'s `smtpHost` set to `edge:` when chosen, and the chosen accounts sending through it;
       `channels_public_url` (the edge node's address); `pass_edge_client`, `pass_client_edge_sites` and
-      `pass_client_edge_callback`. The host or server each mail row had is kept (`edgePriorSmtpHost`,
+      `pass_client_edge_callback`; `edge_calls_enabled`, and the edge node's media row written again with it (draining
+      while off), with a line each for its media address (public), the TURN secret its link handed this node, and the
+      row (live and first for new calls). The host or server each mail row had is kept (`edgePriorSmtpHost`,
       `edgePriorServerId`), and **unpairing puts it back**; mail for an `edge:` server while this node is not paired is
       not queued, but fails as retryable and stays in the Outbox. Every replicated set is sent whole again. An area
       turned off is left as it is. Then it lists the DNS records to set, each looked up live: MX, SPF, the DKIM key and DMARC for
       each mail domain, A and AAAA for each host name, and with XMPP `_xmpp-client._tcp` and `_xmpps-client._tcp`
-      for the XMPP domain, naming the edge node and its tunnel ports. Check again looks them up again. `_sips._tcp` and
+      for the XMPP domain, naming the edge node and its tunnel ports, and with calls A and AAAA for the host of its TURN
+      URLs when it is a name (`turn_public_host` there), naming its addresses or its media address. Check again looks them up again. `_sips._tcp` and
       `_xmpp-server._tcp` (federation) are listed for later. A line says when this node's `xmpp_port` or
       `xmpp_tls_port`, which Chat apps shows, differ from the edge node's ports.
    5. **Test.** The link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
       and the accounts' servers are on `edge:`, and the edge node can send: its DKIM key, or its Postfix relay
       answering), the webhooks, PASS, and XMPP (a client connection through each tunnel port reaches this node's XMPP
-      server, its TLS this node's own certificate, and the domain is one of its host names there), each a pass, fail
+      server, its TLS this node's own certificate, and the domain is one of its host names there), and calls (the edge
+      node's media row is live and first for new calls, `make#IceServers` signs its TURN URLs with its secret, and that
+      credential allocates on its TURN with a permission for its media address's IP), each a pass, fail
       or not-checked line, with round trips on the queue and no outside mail or provider. It runs once per visit;
       Test again runs it again. Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
 
-The status screen shows what is set up (host names, mail, chat, PASS, XMPP), with Set up again, which opens the wizard at
+The status screen shows what is set up (host names, mail, chat, PASS, XMPP, calls), with Set up again, which opens the wizard at
 Discover. Edge Clients shows what each node's setup sent. A page waits at most 3 s for the edge node's offer, and
 says when it is not answering. The offer is read fresh each time; the area names in the edge node's Hello are read at
 its start, so restart it after changing its mail, chat, PASS or XMPP settings. The sections below are what the wizard sets,
@@ -741,6 +751,16 @@ node's own names.
   calls' signaling over it, signs TURN credentials with the edge node's secret (told on the link,
   [TURN](interfaces/TURN.md#on-an-edge-node)) and stores the recordings the edge node queues
   ([Call-Recording](interfaces/Call-Recording.md)).
+- **Phones (SIP).** Set `sip_port` (5060) and `sip_tls_port` (5061), `sip_host` 0.0.0.0 and `sip_public_address` in the
+  edge node's `.env` (with `sip_registrar_enabled=true` for desk and soft phones outside the office), and open those
+  ports and `sip_rtp_ports` (UDP 20000-20999). Set up trunks and numbers on the local node as usual (System, Voice):
+  the edge node gets the trunks by replication and registers them, the local node keeps its SIP node's row from the
+  link, routes each call there, and stores its voicemail, which the edge node records and queues. Phones' passwords
+  stay on the local node, which checks each sign-in. While the local node is away a call is answered from its number's
+  fallback: the user's mobile (when they ring it with their calls) or a ring group's outside number, then a message
+  that arrives when the link is back; a number with neither gets 480, so set the trunk provider's failover number too.
+  The fallbacks are written as the numbers, greetings and boxes change, and every minute while the link is up
+  ([SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away)).
 - **SSH.** Set `edge_ssh_tunnel_port` on the edge node (and `edge_ssh_tunnel_host`, empty for every address). The edge
   node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
   local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than

@@ -34,6 +34,20 @@ pub struct Hello {
     /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
     #[prost(uint64, tag = "10")]
     pub media_started_ms: u64,
+    /// The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+    /// TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
+    /// from them, so its phone calls are routed to the edge node's engine.
+    #[prost(string, tag = "11")]
+    pub sip_address: ::prost::alloc::string::String,
+    #[prost(string, tag = "12")]
+    pub sip_tls_address: ::prost::alloc::string::String,
+    /// The edge node's SIP engine's realm (its sip_domain, else sip_public_address, else moqui), which its registrar
+    /// challenges phones with, and whether its registrar is on (sip_registrar_enabled): the local node makes its phones'
+    /// verifiers for that realm and rings them only with it on (E8).
+    #[prost(string, tag = "13")]
+    pub sip_domain: ::prost::alloc::string::String,
+    #[prost(bool, tag = "14")]
+    pub sip_registrar: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}
@@ -257,10 +271,14 @@ pub struct DelegateRequest {
     /// An id for the call, in both nodes' logs.
     #[prost(string, tag = "5")]
     pub operation_id: ::prost::alloc::string::String,
+    /// How long the edge node waits for the answer, in milliseconds (0: the link's own timeout). The local node does no
+    /// work past it, and rolls back a call that ran past it, so a call the edge node gave up on leaves nothing behind (E8).
+    #[prost(uint64, tag = "6")]
+    pub timeout_ms: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DelegateReply {
-    /// The service's result, a JSON object, when it added no errors.
+    /// The service's result, a JSON object; with errors, what it returned beside them (a refusal's reasonCode, E8).
     #[prost(string, tag = "1")]
     pub result_json: ::prost::alloc::string::String,
     /// The errors the service added, or why the local node refused the call.
@@ -395,8 +413,24 @@ pub struct XmppOffer {
     #[prost(bool, tag = "5")]
     pub needs_node: bool,
 }
-/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
-/// and SIP get theirs the same way when they are built.
+/// The edge node as media node of the local node's calls (E7), as its Hello advertises it: the media socket and TURN.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CallsOffer {
+    /// Its media socket is up.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// The address browsers send call media to (rtc_public_address, ip:port).
+    #[prost(string, tag = "2")]
+    pub media_address: ::prost::alloc::string::String,
+    /// Its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
+    #[prost(string, repeated, tag = "3")]
+    pub turn_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Other local nodes are linked too, so the edge node takes call messages from none of them (decision 1).
+    #[prost(bool, tag = "4")]
+    pub other_nodes: bool,
+}
+/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; SIP
+/// gets its own the same way when it is built.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Offer {
     #[prost(message, optional, tag = "1")]
@@ -407,7 +441,7 @@ pub struct Offer {
     pub chat: ::core::option::Option<ChatOffer>,
     #[prost(message, optional, tag = "4")]
     pub pass: ::core::option::Option<PassOffer>,
-    /// Areas not built on this edge node yet: calls, sip.
+    /// Areas not built on this edge node yet: sip (calls and xmpp before their areas).
     #[prost(string, repeated, tag = "5")]
     pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
@@ -419,6 +453,8 @@ pub struct Offer {
     pub node_hosts: ::prost::alloc::vec::Vec<HostSetting>,
     #[prost(message, optional, tag = "8")]
     pub xmpp: ::core::option::Option<XmppOffer>,
+    #[prost(message, optional, tag = "9")]
+    pub calls: ::core::option::Option<CallsOffer>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}

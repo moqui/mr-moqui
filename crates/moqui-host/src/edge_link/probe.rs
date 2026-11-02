@@ -19,6 +19,9 @@
 //! present this node's own certificate for the domain (pinned to the whole certificate, from `runtime/cert`): only
 //! this node's server has its key, so a handshake that completes is the proof it came back here. Nothing more is
 //! sent, so no credential crosses and no sign-in is counted.
+//!
+//! The calls check ([`turn_probe`], E10 calls) is an allocation on the edge node's TURN with the credential
+//! `make#IceServers` signed with the secret the link handed this node (`rtc/turn_probe.rs`, under the rtc feature).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,6 +43,16 @@ fn kind(direct: bool) -> &'static str {
     } else {
         "STARTTLS"
     }
+}
+
+/// The Test step's TURN check: a UDP allocation on the edge node's TURN at `url` with `username` and `credential`,
+/// a permission for its media address's IP `peer`, and the allocation deleted; blocking, a few seconds at most.
+///
+/// # Errors
+///
+/// Returns why: the URL is not TURN over UDP, no answer, or the allocation or the permission refused.
+pub fn turn_probe(url: &str, username: &str, credential: &str, peer: &str) -> Result<String, String> {
+    crate::rtc::turn_probe::probe(url, username, credential, peer)
 }
 
 /// Check that a client connection to the edge node's tunnel `port` (direct TLS when `direct`) reaches this node's

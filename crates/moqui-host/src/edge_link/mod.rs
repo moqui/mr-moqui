@@ -78,7 +78,7 @@ pub use dial::{connect_up, Dialer, UpLink};
 pub use down::{local_web, LocalWeb};
 pub(crate) use hook::{start, stopped};
 pub use pair::{check, new_key, pair, PairConfig, Paired};
-pub use probe::xmpp_probe;
+pub use probe::{turn_probe, xmpp_probe};
 pub(crate) use web::{Target, WebFront};
 
 /// The ALPN protocol of the link's up and down connections on the edge node's HTTPS port: the link key's certificate.
@@ -251,6 +251,10 @@ pub(crate) fn hello(
         media_address: String::new(),
         turn_urls: Vec::new(),
         media_started_ms: 0,
+        sip_address: String::new(),
+        sip_tls_address: String::new(),
+        sip_domain: String::new(),
+        sip_registrar: false,
     }
 }
 
@@ -269,6 +273,10 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         media_address: hello.media_address.clone(),
         turn_urls: hello.turn_urls.clone(),
         media_started_ms: i64::try_from(hello.media_started_ms).unwrap_or(0),
+        sip_address: hello.sip_address.clone(),
+        sip_tls_address: hello.sip_tls_address.clone(),
+        sip_domain: hello.sip_domain.clone(),
+        sip_registrar: hello.sip_registrar,
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }

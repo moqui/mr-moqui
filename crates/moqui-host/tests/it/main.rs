@@ -50,6 +50,8 @@ mod edge_chat;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;
+#[cfg(feature = "sip")]
+mod edge_sip;
 mod edge_setup;
 mod edge_web;
 mod edge_work;
