@@ -126,7 +126,7 @@ feature("Connect shows the answer step 1 kept in the session, and asks the edge 
 })
 
 // Discover's choices go in the session, never a URL (plans/Edge-Node.md §5.7); its transition needs no link.
-feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, adds the XMPP domain, and asks Apply again", {
+feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, adds the XMPP domain, takes calls alone, and asks Apply again", {
     when() {
         const test = ec.screen.makeTest().rootScreen(systemRoot).renderMode("qvt").withStaticData()
         const post = (parameters) => {
@@ -156,10 +156,12 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         // XMPP is this node's xmpp_domain: added to the passthrough names, or refused when there is none
         const xmppDomain = String(System.getProperty("xmpp_domain") || "").trim().toLowerCase()
         const xmpp = post({webOn: "Y", passthroughNames: "erp.example.com", xmppOn: "Y"})
+        // calls alone is a setup: the edge node's media node for new calls, nothing else
+        const calls = post({callsOn: "Y"})
         ec.web.sessionAttributes.remove("edgeSetup")
-        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp}
+        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls}
     },
-    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp}) {
+    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls}) {
         none.errors.includes("at least one area")
         none.kept == null
         noName.kept == null
@@ -173,6 +175,10 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         chosen.kept.chatOn == false
         chosen.kept.passSites.join(",") == "SITE1"
         chosen.kept.xmppOn == false
+        chosen.kept.callsOn == false
+        calls.errors == ""
+        calls.kept.callsOn == true
+        calls.kept.webOn == false
         xmppDomain ? xmpp.kept.xmppOn && xmpp.kept.passthroughNames.join(",") == "erp.example.com," + xmppDomain
             : xmpp.errors.includes("set xmpp_domain") && xmpp.kept == null
     }

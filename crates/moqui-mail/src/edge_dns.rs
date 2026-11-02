@@ -16,7 +16,7 @@
 //! local node behind an edge node needs, each looked up now with this crate's resolver ([`super::dns`]) and compared
 //! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, A and AAAA for each host name, and
 //! the XMPP domain's client SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`), which name the edge node and its
-//! tunnel ports.
+//! tunnel ports, and A and AAAA for each name in the edge node's TURN URLs (E10 calls).
 //! The expected values come from the edge node's offer, which the caller passes, so the check itself needs no link.
 //! One record that cannot be looked up is a row that says so; the others are still checked.
 
@@ -52,6 +52,11 @@ pub struct Expected {
     /// the edge node does not know).
     pub mta: String,
     pub xmpp: XmppExpected,
+    /// The host names of the edge node's TURN URLs (`turn_public_host` there), each checked for A and AAAA as the
+    /// host names are, against [`Expected::addresses`] and the address of its media node ([`Expected::media_ip`]).
+    pub turn_hosts: Vec<String>,
+    /// The address of the edge node's media node, which its TURN host defaults to.
+    pub media_ip: Option<IpAddr>,
 }
 
 /// The XMPP records: the local node's XMPP domain, whose client SRV records name the edge node and its tunnel ports
@@ -268,38 +273,34 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
         }
         rows.push(dmarc);
     }
-    let addresses: Vec<String> = expected.addresses.iter().map(IpAddr::to_string).collect();
-    for host in host_names.iter().map(|host| bare(host)).filter(|host| !host.is_empty()) {
-        let mut ips = row("A/AAAA", &host, addresses.join(", "));
-        match lookup.ips(&host) {
-            Ok(found) => {
-                ips.found = found.iter().map(IpAddr::to_string).collect::<Vec<_>>().join(", ");
-                // each family the edge node lists must have records, all of them its addresses; a family it does not
-                // list (IPv6, often) is not checked
-                let mut checked = false;
-                let mut ok = true;
-                for v6 in [false, true] {
-                    let family = |ip: &&IpAddr| ip.is_ipv6() == v6;
-                    let wanted: Vec<&IpAddr> = expected.addresses.iter().filter(family).collect();
-                    let have: Vec<&IpAddr> = found.iter().filter(family).collect();
-                    if wanted.is_empty() {
-                        if v6 && !have.is_empty() {
-                            ips.note = "AAAA records not checked: the edge node lists no IPv6 address".to_string();
-                        }
-                        continue;
-                    }
-                    checked = true;
-                    ok &= !have.is_empty() && have.iter().all(|ip| wanted.contains(ip));
-                }
-                ips.ok = checked && ok;
-                if expected.addresses.is_empty() {
-                    ips.note = "The edge node's addresses are not known: set edge_public_addresses there".to_string();
-                } else if !ips.ok && !found.is_empty() {
-                    ips.note = "An address that is not the edge node's, or a family it lists with none".to_string();
-                }
-            }
-            Err(err) => ips.note = err,
+    let hosts: Vec<String> = host_names
+        .iter()
+        .map(|host| bare(host))
+        .filter(|host| !host.is_empty())
+        .collect();
+    for host in &hosts {
+        rows.push(address_row(host, &expected.addresses, lookup));
+    }
+    // the TURN host of the edge node's URLs, when it is a name: the edge node's addresses, or its media node's
+    let mut turn_addresses = expected.addresses.clone();
+    if let Some(ip) = expected.media_ip.filter(|ip| !turn_addresses.contains(ip)) {
+        turn_addresses.push(ip);
+    }
+    let mut turn_hosts: Vec<String> = Vec::new();
+    for host in expected.turn_hosts.iter().map(|host| bare(host)) {
+        // an address needs no record, and a web host name of the same name has its row already
+        if !host.is_empty() && host.parse::<IpAddr>().is_err() && !turn_hosts.contains(&host) && !hosts.contains(&host)
+        {
+            turn_hosts.push(host);
         }
+    }
+    for host in turn_hosts {
+        let mut ips = address_row(&host, &turn_addresses, lookup);
+        ips.note = if ips.note.is_empty() {
+            "TURN for calls".to_string()
+        } else {
+            format!("TURN for calls; {}", ips.note)
+        };
         rows.push(ips);
     }
     let later = |name: String, note: &str| DnsRow {
@@ -331,6 +332,41 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
         ));
     }
     rows
+}
+
+/// The A and AAAA row of `host`: each family `addresses` lists must have records, all of them those addresses; a
+/// family it does not list (IPv6, often) is not checked.
+fn address_row(host: &str, addresses: &[IpAddr], lookup: &dyn Lookup) -> DnsRow {
+    let listed: Vec<String> = addresses.iter().map(IpAddr::to_string).collect();
+    let mut ips = row("A/AAAA", host, listed.join(", "));
+    match lookup.ips(host) {
+        Ok(found) => {
+            ips.found = found.iter().map(IpAddr::to_string).collect::<Vec<_>>().join(", ");
+            let mut checked = false;
+            let mut ok = true;
+            for v6 in [false, true] {
+                let family = |ip: &&IpAddr| ip.is_ipv6() == v6;
+                let wanted: Vec<&IpAddr> = addresses.iter().filter(family).collect();
+                let have: Vec<&IpAddr> = found.iter().filter(family).collect();
+                if wanted.is_empty() {
+                    if v6 && !have.is_empty() {
+                        ips.note = "AAAA records not checked: the edge node lists no IPv6 address".to_string();
+                    }
+                    continue;
+                }
+                checked = true;
+                ok &= !have.is_empty() && have.iter().all(|ip| wanted.contains(ip));
+            }
+            ips.ok = checked && ok;
+            if addresses.is_empty() {
+                ips.note = "The edge node's addresses are not known: set edge_public_addresses there".to_string();
+            } else if !ips.ok && !found.is_empty() {
+                ips.note = "An address that is not the edge node's, or a family it lists with none".to_string();
+            }
+        }
+        Err(err) => ips.note = err,
+    }
+    ips
 }
 
 /// The client SRV records of `domain`: each tunnel port that is on, every record naming one of the edge node's
@@ -442,6 +478,14 @@ pub(crate) fn check_edge_dns(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let domains = texts(parameters, "domains");
     let host_names = texts(parameters, "hostNames");
+    let turn_hosts = texts(parameters, "turnHosts");
+    // the media address is ip:port, or an address alone
+    let media_ip = text(parameters, "mediaAddress");
+    let media_ip: Option<IpAddr> = media_ip
+        .parse::<std::net::SocketAddr>()
+        .map(|address| address.ip())
+        .or_else(|_| media_ip.parse())
+        .ok();
     let mx_host = text(parameters, "mxHost");
     let mut addresses: Vec<IpAddr> = texts(parameters, "edgeAddresses")
         .iter()
@@ -449,7 +493,7 @@ pub(crate) fn check_edge_dns(
         .collect();
     // the edge node names no addresses: those of its MX host, its own name
     let mut address_note = String::new();
-    if addresses.is_empty() && !mx_host.is_empty() && !host_names.is_empty() {
+    if addresses.is_empty() && !mx_host.is_empty() && !(host_names.is_empty() && turn_hosts.is_empty()) {
         match super::dns::ips(&mx_host) {
             Ok(found) => addresses = found,
             Err(err) => address_note = err,
@@ -467,6 +511,8 @@ pub(crate) fn check_edge_dns(
             port: text(parameters, "xmppPort").parse().unwrap_or(0),
             tls_port: text(parameters, "xmppTlsPort").parse().unwrap_or(0),
         },
+        turn_hosts,
+        media_ip,
     };
     let rows = check(&domains, &host_names, &expected, &Resolver);
     let passed = rows.iter().all(|row| row.ok);

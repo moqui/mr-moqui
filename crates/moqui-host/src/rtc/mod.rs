@@ -42,6 +42,7 @@ pub(crate) mod media;
 pub(crate) mod recorder;
 mod tcp;
 mod turn;
+pub(crate) mod turn_probe;
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};

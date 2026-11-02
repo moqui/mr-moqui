@@ -20,8 +20,11 @@ along with this software (see the LICENSE.md file). If not, see
     records to set are checked live on each render (check#EdgeDns, with the edge node's MX host, addresses and DKIM key
     from its offer): MX, SPF, DKIM and DMARC for each mail domain, A and AAAA for each host name, and with XMPP the
     domain's _xmpp-client._tcp and _xmpps-client._tcp records naming the edge node (its public names, the host of
-    edge_node_url, its MX host) and its tunnel ports, expected and found; Check again looks them up again. XMPP writes
-    nothing on this node: apply#EdgeSetup sends xmpp_domain to the edge node. Next goes on to Test once Apply ran. -->
+    edge_node_url, its MX host) and its tunnel ports, and with calls A and AAAA for each name in the edge node's TURN
+    URLs (its addresses, or its media node's), expected and found; Check again looks them up again. XMPP writes
+    nothing on this node: apply#EdgeSetup sends xmpp_domain to the edge node. Calls write edge_calls_enabled in
+    runtime/.env and the edge node's CallMediaNode row (draining while off), with lines for the media address, the
+    TURN secret and the row. Next goes on to Test once Apply ran. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Apply" default-menu-index="4" menu-image="sym_o_published_with_changes" menu-image-type="icon">
 
@@ -37,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
                 systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
                 chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
                 passOn: !!choices.passOn, passSites: choices.passSites || [], passCallback: choices.passCallback || '',
-                xmppOn: !!choices.xmppOn}).call()
+                xmppOn: !!choices.xmppOn, callsOn: !!choices.callsOn}).call()
             if (ec.message.hasError()) return
             const lines = Array.from(out?.lineList || []).map((line) => ({area: line.area, ok: line.ok === true, text: line.text}))
             const configured = out?.configured === true
@@ -87,16 +90,18 @@ along with this software (see the LICENSE.md file). If not, see
             mailText: choices.mailOn ? list(choices.mailDomains) + (choices.systemMail ? '; ' + L('the system') + ', ' : '; ') + accountText : L('Off'),
             chatText: choices.chatOn ? ec.resource.expand('${n} bridges', '', {n: (choices.chatBridgeIds || []).length}) : L('Off'),
             passText: choices.passOn ? list(choices.passSites) + ' · ' + (choices.passCallback || '') : L('Off'),
-            xmppText: choices.xmppOn ? choices.xmppDomain || '' : L('Off')}
+            xmppText: choices.xmppOn ? choices.xmppDomain || '' : L('Off'),
+            callsText: choices.callsOn ? L("New calls on the edge node's media node") : L('Off')}
         let kept = null
         try { kept = JSON.parse(ec.web.sessionAttributes.edgeApplied || 'null') } catch (e) { kept = null }
         applied = !!kept?.configured
-        const areaNames = {web: L('Web access'), mail: L('Mail'), chat: L('Chat'), pass: L('PASS'), xmpp: L('XMPP'), link: L('Link')}
+        const areaNames = {web: L('Web access'), mail: L('Mail'), chat: L('Chat'), pass: L('PASS'), xmpp: L('XMPP'),
+            calls: L('Calls'), link: L('Link')}
         lineList = Array.from(kept?.lines || []).map((line) => ({areaText: areaNames[line.area] || line.area, text: line.text,
             stateLabel: line.ok ? L('Done') : L('Not done'), stateColor: line.ok ? 'positive' : 'negative'}))
         confirm = {applied: applied ? 'Y' : ''}
         // the DNS records, checked live: the edge node's MX host, addresses and key come from its offer; each a probe
-        if (!hostNames.length && !choices.mailOn && !choices.xmppOn) return
+        if (!hostNames.length && !choices.mailOn && !choices.xmppOn && !choices.callsOn) return
         ec.message.pushErrors()
         try {
             const offered = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
@@ -108,13 +113,19 @@ along with this software (see the LICENSE.md file). If not, see
                 const xmppHosts = Array.from(new Set(Array.from(offer.publicNames || []).concat([urlHost, offer.mail?.mxHost || ''])
                     .map((name) => String(name).trim().replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase())
                     .filter((name) => name && !name.includes(':') && !/^[0-9.]+$/.test(name))))
+                // the hosts of the edge node's TURN URLs (turn:host:port?transport=..); check#EdgeDns leaves out addresses
+                const turnHosts = choices.callsOn ? Array.from(offer.calls?.turnUrls || []).map((url) => {
+                    const authority = String(url).replace(/^turns?:/i, '').split('?')[0]
+                    return authority.startsWith('[') ? '' : authority.replace(/:\d*$/, '')
+                }).filter((host) => host) : []
                 const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeDns').parameters({
                     domains: choices.mailOn ? choices.mailDomains || [] : [], hostNames,
                     mxHost: offer.mail?.mxHost || '', edgeAddresses: offer.addresses || [],
                     dkimSelector: offer.mail?.dkimSelector || '', dkimRecord: offer.mail?.dkimRecord || '',
                     mailMta: offer.mail?.mta || '',
                     xmppDomain: choices.xmppOn ? choices.xmppDomain || '' : '', xmppHosts,
-                    xmppPort: offer.xmpp?.port || 0, xmppTlsPort: offer.xmpp?.tlsPort || 0}).call() || {}
+                    xmppPort: offer.xmpp?.port || 0, xmppTlsPort: offer.xmpp?.tlsPort || 0,
+                    turnHosts, mediaAddress: choices.callsOn ? offer.calls?.mediaAddress || '' : ''}).call() || {}
                 recordList = Array.from(out.recordList || []).map((record) => ({kind: record.kind, name: record.name,
                     expected: record.later ? '' : record.expected || '', found: record.found || (record.later ? '' : L('None')),
                     note: record.note || '',
@@ -175,10 +186,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="chatText"><default-field title="Chat"><display/></default-field></field>
                     <field name="passText"><default-field title="PASS"><display/></default-field></field>
                     <field name="xmppText"><default-field title="XMPP"><display/></default-field></field>
+                    <field name="callsText"><default-field title="Calls"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="webText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
-                        <field-ref name="xmppText"/>
+                        <field-row><field-ref name="xmppText"/><field-ref name="callsText"/></field-row>
                     </field-layout>
                 </form-single>
                 <section name="NotApplied" condition="!applied"><widgets>

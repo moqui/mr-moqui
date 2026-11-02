@@ -288,7 +288,9 @@ along with this software (see the LICENSE.md file). If not, see
             dkimSelector, dkimRecord), chat (webhooks, publicUrl), pass (available, clientId), xmpp (available, port and
             tlsPort, the tunnel ports edge_xmpp_port and edge_xmpp_tls_port, 0 while off, otherNode, when
             edge_xmpp_node names another local node, and needsNode, when it is empty and this node is not the only
-            one linked, so the tunnels go to none), notAvailable (areas not built yet: calls, sip), addresses (the
+            one linked, so the tunnels go to none), calls (available while its media node runs, mediaAddress, turnUrls,
+            otherNodes when other local nodes are linked too, so it takes call messages from none, and enabled, this
+            node's own edge_calls_enabled), notAvailable (areas not built yet: sip), addresses (the
             edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
         <out-parameters>
             <parameter name="offer" type="Map"/>
@@ -314,7 +316,11 @@ along with this software (see the LICENSE.md file). If not, see
             before any change when this node has no xmpp_domain or the edge node no tunnel port. Nothing is written
             locally for XMPP; lines say when this node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ
             from the edge node's ports, and when the tunnels go to another node or, with several linked and no
-            edge_xmpp_node, to none. An area turned
+            edge_xmpp_node, to none. Calls (callsOn, when the edge node's media node is offered; nothing is sent to it):
+            edge_calls_enabled true or false in runtime/.env, and the edge node's CallMediaNode row written again at once,
+            draining while it is false (the link keeps it so after that), so new calls have their media on the edge
+            node, or on this node's own media nodes while calls on the edge node go on; lines check the media address
+            (public), the TURN secret the link's Hello handed this node, and the row (live, preferred). An area turned
             off is left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
             Refused on an edge node; fails before any change when the edge node's offer cannot be read.</description>
         <in-parameters>
@@ -330,6 +336,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passSites" type="List"/>
             <parameter name="passCallback"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
+            <parameter name="callsOn" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="lineList" type="List"/>
@@ -347,7 +354,9 @@ along with this software (see the LICENSE.md file). If not, see
             AAAA naming the edge node's addresses (edgeAddresses, else those of mxHost; a family the edge node lists no
             address of is not checked); for xmppDomain, _xmpp-client._tcp (with xmppPort) and _xmpps-client._tcp (with
             xmppTlsPort), each record naming one of xmppHosts (the edge node's names, the first the one to set) and that
-            port; a port of 0 is off and its record not listed. recordList has kind, name, expected, found, ok and a
+            port; a port of 0 is off and its record not listed; for each of turnHosts that is a name and not one of
+            hostNames, A and AAAA naming edgeAddresses or the address of mediaAddress (noted TURN for calls). recordList
+            has kind, name, expected, found, ok and a
             note; _sips._tcp (each domain) and _xmpp-server._tcp (federation, C3b) are listed as later. In a build without
             the mail client's resolver (the imap feature) it fails, saying so.</description>
         <in-parameters>
@@ -364,6 +373,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="xmppHosts" type="List"/>
             <parameter name="xmppPort" type="Integer"/>
             <parameter name="xmppTlsPort" type="Integer"/>
+            <parameter name="turnHosts" type="List"><description>The hosts of the edge node's TURN URLs, when calls
+                go through it</description></parameter>
+            <parameter name="mediaAddress"><description>The edge node's media address (ip:port), which its TURN host
+                names by default</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="recordList" type="List"/>
@@ -382,7 +395,13 @@ along with this software (see the LICENSE.md file). If not, see
             settings name passSites and the edge node has mr-pass; with xmppOn, a client stream through each tunnel port
             the edge node has on (check xmpp for STARTTLS, xmpps for direct TLS; not checked when off) reaches this
             node's XMPP server, which must take tunneled connections of that kind, and xmpp_domain is one of this node's
-            host names there (xmppWeb); the TLS must present this node's own certificate for the domain. No outside
+            host names there (xmppWeb); the TLS must present this node's own certificate for the domain; with callsOn
+            (not checked while edge_calls_enabled is false), the edge node's CallMediaNode row is kept by the link,
+            live, with the Hello's media address and not draining, so Calls.js puts it first (callsNode),
+            make#IceServers gives a probe leg the edge node's TURN URLs with a credential signed with the secret its
+            link handed this node (iceServers), and that credential allocates on its TURN over UDP with a permission
+            to its media address, then the allocation is deleted (turn, up to 3 seconds; not checked without TURN or
+            a UDP listener). No outside
             mail or provider is needed; the round trips' answers are waited for up to 10 seconds, and the XMPP checks
             (up to 3 seconds for the offer and 5 for each port) run alongside. testList has check, label, ok, checked and message; passed is true when
             none failed.</description>
@@ -396,6 +415,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passOn" type="Boolean" default="false"/>
             <parameter name="passSites" type="List"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
+            <parameter name="callsOn" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="testList" type="List"/>

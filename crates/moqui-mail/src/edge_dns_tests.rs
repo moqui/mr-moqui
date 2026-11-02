@@ -64,7 +64,62 @@ fn expected() -> Expected {
         dkim_record: "v=DKIM1; k=rsa; p=ABC def".to_string(),
         mta: "moqui".to_string(),
         xmpp: XmppExpected::default(),
+        turn_hosts: Vec::new(),
+        media_ip: None,
     }
+}
+
+#[test]
+fn a_turn_host_name_points_at_the_edge_node_or_its_media_address() {
+    let turn = |hosts: &[&str]| Expected {
+        turn_hosts: hosts.iter().map(|host| (*host).to_string()).collect(),
+        media_ip: Some("198.51.100.20".parse().unwrap()),
+        ..expected()
+    };
+    let mut fixed = Fixed::default();
+    fixed
+        .ips
+        .insert("turn.example.net".into(), vec!["198.51.100.20".parse().unwrap()]);
+    fixed
+        .ips
+        .insert("relay.example.net".into(), vec!["203.0.113.5".parse().unwrap()]);
+    fixed
+        .ips
+        .insert("stale.example.net".into(), vec!["192.0.2.9".parse().unwrap()]);
+    let rows = check(
+        &[],
+        &["erp.example.com".to_string()],
+        &turn(&[
+            "Turn.Example.net.",
+            "relay.example.net",
+            "stale.example.net",
+            "203.0.113.5",
+            "erp.example.com",
+            "turn.example.net",
+        ]),
+        &fixed,
+    );
+    assert!(
+        ok_of(&rows, "A/AAAA", "turn.example.net"),
+        "the media address: {rows:?}"
+    );
+    assert!(ok_of(&rows, "A/AAAA", "relay.example.net"), "an edge address: {rows:?}");
+    assert!(!ok_of(&rows, "A/AAAA", "stale.example.net"), "{rows:?}");
+    let turn_rows: Vec<&DnsRow> = rows
+        .iter()
+        .filter(|row| row.note.starts_with("TURN for calls"))
+        .collect();
+    assert_eq!(
+        turn_rows.len(),
+        3,
+        "one row a name; an address and a web host name get none of their own: {rows:?}"
+    );
+    assert!(!rows.iter().any(|row| row.name == "203.0.113.5"), "{rows:?}");
+    assert_eq!(
+        rows.iter().filter(|row| row.name == "erp.example.com").count(),
+        1,
+        "{rows:?}"
+    );
 }
 
 fn ok_of(rows: &[DnsRow], kind: &str, name: &str) -> bool {

@@ -173,6 +173,35 @@ fn xmpp_tunnels_go_to_the_named_node_or_else_the_only_one_linked() {
 }
 
 #[test]
+fn the_calls_offer_reads_back_and_one_with_no_media_address_is_not_available() {
+    let calls = super::proto::CallsOffer {
+        available: true,
+        media_address: "203.0.113.5:10000".to_string(),
+        turn_urls: vec!["turn:203.0.113.5:3478?transport=udp".to_string()],
+        other_nodes: true,
+    };
+    let offer = super::offer::offer_of(super::proto::Offer {
+        calls: Some(calls.clone()),
+        ..super::proto::Offer::default()
+    });
+    assert!(offer.calls.available && offer.calls.other_nodes, "{:?}", offer.calls);
+    assert_eq!(offer.calls.media_address, "203.0.113.5:10000");
+    assert_eq!(offer.calls.turn_urls, calls.turn_urls);
+    let no_address = super::offer::offer_of(super::proto::Offer {
+        calls: Some(super::proto::CallsOffer {
+            media_address: String::new(),
+            ..calls
+        }),
+        ..super::proto::Offer::default()
+    });
+    assert!(!no_address.calls.available);
+    assert!(
+        !super::offer::offer_of(super::proto::Offer::default()).calls.available,
+        "an edge node from before the calls area"
+    );
+}
+
+#[test]
 fn the_edge_node_s_instance_id_is_the_pinned_one_and_never_this_node_s() {
     assert!(check_edge_id("", "edge-1", "local-1").is_ok(), "pinned on a first link");
     assert!(check_edge_id("edge-1", "edge-1", "local-1").is_ok());

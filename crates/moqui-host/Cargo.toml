@@ -58,7 +58,7 @@ llm = ["dep:moqui-llm"]
 # Calls (crates/moqui-rtc, plans/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
 # on /notws (src/notws/rtc.rs). The media socket starts only when rtc_media_port is set. In Maximal, Enterprise and
 # Debug; not Lite or Dev.
-rtc = ["axum", "dep:moqui-rtc"]
+rtc = ["axum", "dep:moqui-rtc", "dep:turn-client-proto"]
 # Local speech to text for call captions (Whisper on candle, plans/Comms-Framework.md §6.4): not built yet, off in every
 # package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
 speech-local = []
@@ -120,6 +120,9 @@ moqui-report = { workspace = true }
 moqui-collab = { workspace = true }
 # Calls: the SFU on str0m (crates/moqui-rtc), under the rtc feature.
 moqui-rtc = { workspace = true, optional = true }
+# The edge wizard's TURN check, a browser's allocation on the edge node's TURN (src/rtc/turn_probe.rs), under rtc: sans-IO,
+# on the stun-proto and turn-types that turn-server-proto already brings.
+turn-client-proto = { workspace = true, optional = true }
 # Phone calls: the SIP user agent and B2BUA (crates/moqui-sip), under the sip feature.
 moqui-sip = { workspace = true, optional = true }
 # Business messaging channels: the SMS adapter (crates/moqui-channels), under the channels feature.
