@@ -1147,7 +1147,9 @@ pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen
   cannot fit get one schema-constrained call when the model's `json-schema` verdict is yes.
 - **Sim steps.** `org.moqui.impl.SimServices.run#Steps` (`moqui_llm::approval::steps`) previews several service calls
   as one sim run, as the approval preview does: logged in as the calling user, each call under the sim fence and its
-  own authorization. In: `steps` (a list of `{serviceName, parameters}`), an optional `read` call, `readAfterEachStep`
+  own authorization. A caller with no user and authorization disabled (internal work, such as a service job) runs
+  them as the system, with no user and authorization disabled; with no user and authorization on, the call is refused.
+  In: `steps` (a list of `{serviceName, parameters}`), an optional `read` call, `readAfterEachStep`
   and a `label`. Out: `available` (false without the overlay; nothing ran), one entry per step with `ok`, `error`,
   `rows` (the preview's row shape, only what that step changed, `before` being the value before that step),
   `createdKeys` (`[{entity, key}]`, the sim's negative ids) and, with `readAfterEachStep`, `readResult`; and the

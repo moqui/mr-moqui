@@ -37,7 +37,7 @@ fn without_a_sim_overlay_nothing_runs() {
     let ran = run(
         context.factory(),
         &StepsRequest {
-            username: "nobody",
+            username: Some("nobody"),
             label: "a test",
             steps: &steps,
             read: None,
