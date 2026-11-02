@@ -883,12 +883,29 @@ public address. The client-server API (C6a) goes to the local node through web a
   `moqui-conf-3.xsd`): routing waits 7 s, under the user agent's 10 s for a call it rings, so the fallback still has
   time; no answer in time is named `local node offline` too. A delegated call's errors now come back with its result
   (a refusal's `reasonCode`, `DelegateReply.result_json`), as on the node itself, so the engine tells `answered` or
-  `stale` from a failure.
+  `stale` from a failure. **The deadline** (review fix): an entry's wait goes to the local node (new
+  `DelegateRequest.timeout_ms`, 6), counted from when it arrives, its time on the pool included; `delegate::run` starts
+  nothing past it (less 500 ms for the way back), and runs the call in a transaction it rolls back when the call ran
+  past it, so a late `receive#PhoneCall` leaves no ringing session and a late `receive#DeviceCall` no dial (its on-commit
+  `send#SipControl` never goes). On the engine, a call whose phone the user agent refused as decided too late is
+  given up: its other legs hang up, and a `dial` into its room is refused for 5 minutes (`abandon_room`). Not a check
+  for "no live inbound leg in the room": a browser's call out has none, and a device's dial may come before its
+  answer.
 - **The `SipNode` row.** The edge node registers none; its Hello names its SIP addresses (new `Hello.sip_address`
-  (11) and `sip_tls_address` (12), `moqui_core::edge::media::set_sip_advert`), and the local node's link keeps the row
+  (11) and `sip_tls_address` (12), and since the review its registrar's realm `sip_domain` (13) and switch
+  `sip_registrar` (14), `moqui_core::edge::media::set_sip_advert`), and the local node's link keeps the row (with new
+  `SipNode.sipDomain` and `registrarEnabled`)
   (`register#SipNode` `edgeLinked`, new `SipNode.edgeLinked`) beside the `CallMediaNode` row, every `ping_every`,
   refused for a row an engine registered and the reverse; written by `moqui_core::edge::calls::register_sip_row` under the media row's lock (`allow_row`, `forget_rows`), so unpairing removes it and no beat in flight writes it again. `voiceNodes()` then routes the edge
-  node's calls to it, and `send#SipControl` reaches it by E7's link route (`edge_takes` already takes `sip`).
+  node's calls to it, and `send#SipControl` reaches it by E7's link route (`edge_takes` already takes `sip`). It does
+  not depend on the media row's `draining` (the wizard's calls off, `edge_calls_enabled`): `voiceNodes()` takes the
+  edge node's SIP node with its media row draining, as its trunks and phones reach only it and their media is there
+  whatever browsers do; a browser that joins such a phone call has its media there too. An edge node with no media
+  port runs no SIP engine (it needs `rtc_media_port`), so there is no row and its trunks are not answered.
+- **Phones behind the edge node.** `SipDevices.js` reads the registrar's switch and realm from the edge node's live
+  `SipNode` row when there is one (`edgeSipNode`), else this node's properties: phones are made with verifiers for the
+  edge node's realm, `ring#SipDevices` and `receive#DeviceCall` follow its registrar switch, and the setup shown to the
+  user names its realm and ports.
 - **The `_edge_` checks.** Run as `_edge_`, `receive#PhoneCall` takes calls only for the edge node's own instance id;
   `note#PhoneLeg`, `begin#Voicemail`, `check#VoicemailPin`, `route#IvrCall`, `tick#QueueCall`, `expire#CallTransfer`
   and `refer#Call` only for a call (or leg) whose media node is `edgeLinked` (`Calls.js` `edgeAllowed`, beside E7's
@@ -900,14 +917,24 @@ public address. The client-server API (C6a) goes to the local node through web a
   split: `digest::ResponseCheck` (the answer, the nonce, nc, cnonce and H(method:uri)) and
   `NonceBook::verify_checked`, so the edge node keeps its nonces, counts and lifetimes and the local node only says
   whether the response is right for its HA1 (`check#SipDeviceDigest`, with the Rust `compute#SipDigestResponse`). The
-  HA1 never leaves the local node (decision 4); outside phones sign in only while it is reachable.
+  HA1 never leaves the local node (decision 4); outside phones sign in only while it is reachable. **Not replayable**
+  (review fix): from `_edge_`, `check#SipDeviceDigest` takes only the realm its registrar challenges with, and only an
+  answer whose nonce's time (moqui-sip's nonce format: 8 bytes of time, 8 random, a MAC under the edge node's key) is
+  at most 330 s old and not ahead of the local clock by more than 30 s, and whose (device, nonce, nc) was not taken
+  before (`claim#SipDigestNonce`, Rust, an in-memory set kept for the nonce's life). The phone's response covers the
+  nonce, so the edge node cannot change that time after the phone answered; an answer it kept cannot be sent again to
+  refresh `edgeDigestDate`. The local node holds no nonce key: a key of its own would add nothing here, as the edge node
+  sees each fresh answer anyway (it is the registrar), and minting nonces on the local node would make each challenge a
+  delegated call. The engine answers 503 (not a failed attempt) only when the check fails as `local node offline`;
+  any other failure is a refusal, counted (`ua_phones.rs`, `phones.rs`).
 - **Trunks replicated.** Set `voiceTrunks`: `VoiceTrunk` (the engine's fields, `authJson` among them, decrypted on the
   local node and encrypted at rest in the copy) and `VoicePolicy`. On an edge node the engine builds `get#EngineConfig`'s
   answer from the copy of the only active paired node (`sip/edge.rs` `config_of`, the `Voice.js` mapping), and loads it
   again when a batch of the set is applied (`replica::applied_count`, polled each second) or a `reload` control comes.
   Any node's engine whose trunks did not load at start tries again after 2 s, doubling to a minute.
 - **The fallback** (decision 4): a derived row per number, `moqui.call.PhoneNumberFallback` (number, trunk,
-  `voicemailFlag`, `greetingLocation`, `forwardNumber`, `forwardSeconds`), replicated as set `voiceFallbacks`. Chosen over
+  `voicemailFlag`, `greetingLocation`, `forwardNumber`, `forwardSeconds`, and since the review `forwardMaxConcurrent`
+  and `forwardMaxPerDay`), replicated as set `voiceFallbacks`. Chosen over
   replicating the raw rows (`PhoneNumber`, `RingGroup`, `CallHandlingSetting`, `VoicemailBox`, `VoiceUserSetting`): the
   edge node then needs none of the routing logic or the forward permission and fraud checks, and gets only the
   outcome; a raw `CallHandlingSetting` or `VoicemailBox` would carry more than it needs. `Voice.js` `fallbackOf`: a
@@ -921,13 +948,17 @@ public address. The client-server API (C6a) goes to the local node through web a
 - **While the local node is away.** `receive#PhoneCall` failing as `local node offline` (no link, or no answer in 7 s)
   makes the engine answer from the number's copy: refused 480 without one (404 for a number of another trunk); else the
   call rings in a room of its own (ids `edge-fallback-<uuid>`, whose notes go to no service), the forward is dialed
-  through the trunk it came on, from the number called, with the engine's own fraud checks, its answer answering the
+  through the trunk it came on, from the number called, with the engine's own checks (the destination's class, the
+  deployment's international and premium switches, the calls at once) and held per number to the row's limits at once
+  and a day (review fix: the user's `VoiceUserSetting` limits held to the policy's, a ring group's the policy's per user
+  at once and its calls a day; in memory on the edge node, so a restart starts the day again), its answer answering the
   caller; unanswered after its seconds, refused or with none, a message: the box's greeting (its copy here, else the
   default), the beep and the recording, with `*` opening nothing. A routed call whose `begin#Voicemail` finds the local
   node away midway takes a message the same way.
 - **Messages queued.** Every message an edge node records, routed or not, is a queue item, kind `voicemail` (edge to
   local), its audio the content, keyed by its spool file's name, under the conversation `voicemail:<number>`; the spool
-  goes once it is queued. The local node's `receive#EdgeVoicemail` (only as `_edge_`) stores it with `store#Voicemail`
+  goes once it is queued. What it is queued with is kept beside it first (`<file>.json`); one that does not queue is
+  tried again from 2 s doubling to 5 minutes, and the engine's start queues what the spool still holds (review fix). The local node's `receive#EdgeVoicemail` (only as `_edge_`) stores it with `store#Voicemail`
   (new `fromLocation`, only under `CONTENT_IN`, and `receivedDate`) and its notices: in the box `begin#Voicemail` chose
   for the call (new `CallSession.voicemailBoxId`) when the call's media is on the edge node, else the called number's
   own (the user's, made when none; the ring group's fallback box), never a box the edge node names.
@@ -935,7 +966,8 @@ public address. The client-server API (C6a) goes to the local node through web a
   the greeting and prompt roots) and kept at the same location; a saved message played by phone is fetched for its call
   (`get#PhoneVoicemailAudio`), never kept. The greetings the fallbacks name are queued to the edge node ahead (kind
   `callAudio`, local to edge, keyed by location, so each goes once; `store#EdgeCallAudio` keeps it at its location, only
-  under those roots).
+  under those roots). `queue::enqueue` now checks an idempotency key before it reads the content, so the minute's
+  refresh reads no greeting already queued.
 - **Conf.** MoquiEdgeConf.xml documents the SIP properties for `.env` (`sip_port`, `sip_tls_port`, `sip_host`,
   `sip_public_address`, `sip_registrar_enabled`), off until set.
 - **Test.** `tests/it/edge_sip.rs` (about 11 s): the edge node in a child process as E7's (`edge_call.rs`'s `EdgeNode`
@@ -949,6 +981,12 @@ public address. The client-server API (C6a) goes to the local node through web a
   the link-kept `SipNode`, `_edge_` refused for another node's call and taken for its own, the fallbacks (a mobile then
   a message, a group's outside number, none for a menu, rewritten only when changed), `receive#EdgeVoicemail` refused
   for another user and stored in the number's box, the digest checked and noted, a binding refused for another node.
+  Since the review: the test also makes a desk phone on the local node for the edge node's realm, registers it with the
+  edge node's registrar (its answer checked on the local node) and has it rung by a colleague's call through the edge
+  node; the spec checks another realm, a replayed answer and an old nonce refused, the next nonce count taken, the
+  forward limits on the rows, and a call taken while the edge node's media row drains; unit tests: the nonce claim
+  (`sip_credential_tests.rs`), the forward counts (`fallback_tests.rs`), a delegated call past its deadline not run
+  (`delegate_tests.rs`), and a 503 that does not count (`ua_phones_tests.rs`).
 - **Not done.** A real trunk and real desk phones through a deployed edge node are checked by hand. The fallback
   follows no call handling rules or schedules, and the test drives `refresh#PhoneFallbacks` itself (its dialer is not
   the link hook, so `edge_node_url` is not set) and no greeting crosses the queue there. The forward is checked by unit
@@ -1530,10 +1568,13 @@ Its actions are pause, resync and unpair.
   messages.
 - **Sensitive replicated data:** trunks' `authJson`, and bridge webhook secrets. SIP digest verifiers (HA1) are not
   replicated: the registrar delegates the digest check (decision 4), and since E8 the HA1 does not cross the link
-  either (`check#SipDeviceDigest`). The numbers' fallbacks carry the outside numbers calls forward to.
+  either (`check#SipDeviceDigest`). The numbers' fallbacks carry the outside numbers calls forward to, with the limits
+  the edge node holds those forwards to.
 - **What `_edge_` can do with SIP (E8):** route calls to its own node and act on its own calls, take a message for a
-  number, store a phone's binding or place its call only right after the local node checked that phone's answer, and
-  play or act on a box's messages only on a call that gave its PIN.
+  number, store a phone's binding or place its call only within a minute after the local node checked a fresh answer
+  of that phone (its nonce at most 330 s old, each nonce count once: a kept answer cannot be sent again), and play or
+  act on a box's messages only on a call that gave its PIN. A delegated call it gave up on is not run, or is rolled
+  back.
 - [Attack-Surface](../docs/security/Attack-Surface.md) gets the edge node's listeners and the link.
 
 ### 5.9 Operations

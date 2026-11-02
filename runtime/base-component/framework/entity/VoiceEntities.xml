@@ -93,6 +93,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="greetingLocation" type="text-medium"/>
         <field name="forwardNumber" type="text-short"/>
         <field name="forwardSeconds" type="number-integer"/>
+        <field name="forwardMaxConcurrent" type="number-integer"><description>The most forwards of the number at once the
+            edge node makes: the user's limit of calls out at once (VoiceUserSetting, held to the policy's), a ring
+            group's the policy's per user</description></field>
+        <field name="forwardMaxPerDay" type="number-integer"><description>The most forwards of the number in a day: the
+            user's limit of calls a day, a ring group's the policy's for the deployment</description></field>
         <relationship type="one-nofk" related="moqui.call.PhoneNumber" short-alias="number"/>
     </entity>
 
@@ -206,6 +211,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="rtpPorts" type="text-short"/>
         <field name="startedDate" type="date-time"/>
         <field name="heartbeatDate" type="date-time"/>
+        <field name="sipDomain" type="text-medium"><description>The edge node's (E8): the realm its registrar
+            challenges phones with, from its Hello, which this node makes its phones' verifiers for</description></field>
+        <field name="registrarEnabled" type="text-indicator"><description>The edge node's (E8): Y when its registrar is on
+            (its sip_registrar_enabled)</description></field>
         <field name="edgeLinked" type="text-indicator"><description>Y: the SIP engine of this node's edge node
             (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the edge link keeps from its Hello and liveness, as
             its CallMediaNode row; the engine registers none itself</description></field>

@@ -45,6 +45,41 @@ pub(crate) struct FallbackCall {
     forward: Option<String>,
     /// The forward answered: the call is the two legs' now.
     answered: bool,
+    /// The number called, whose forwards at once its forward counts in while it rings or talks.
+    counted: Option<String>,
+}
+
+/// The forwards the fallback made of one number: those going on, and when each of the last day began. They are held to
+/// the number's limits (from the local node's policy and the user's own, on its fallback row), as the forwards the local
+/// node makes count against them.
+#[derive(Default)]
+pub(crate) struct ForwardCount {
+    active: u64,
+    started: std::collections::VecDeque<std::time::Instant>,
+}
+
+/// A day, for the forwards a day.
+const DAY: Duration = Duration::from_secs(86_400);
+
+impl ForwardCount {
+    /// Takes one forward at `now` when the limits allow it: fewer than `at_once` going on, fewer than `a_day` begun in
+    /// the last day.
+    pub(crate) fn take(&mut self, at_once: u64, a_day: u64, now: std::time::Instant) -> bool {
+        while self.started.front().is_some_and(|at| now.duration_since(*at) >= DAY) {
+            self.started.pop_front();
+        }
+        if self.active >= at_once || self.started.len() as u64 >= a_day {
+            return false;
+        }
+        self.active += 1;
+        self.started.push_back(now);
+        true
+    }
+
+    /// One forward ended.
+    pub(crate) fn release(&mut self) {
+        self.active = self.active.saturating_sub(1);
+    }
 }
 
 /// The longest message, `voicemail_max_seconds` (10 to 600, 120 by default), as `Voicemail.js` reads it.
@@ -99,6 +134,7 @@ impl Engine {
                 trunk,
                 forward: None,
                 answered: false,
+                counted: None,
             },
         );
         if let Some(number) = forward {
@@ -115,18 +151,39 @@ impl Engine {
             return false;
         };
         let room = entry.room.clone();
+        let dialed = entry.dialed.clone();
+        let (at_once, a_day) = (call.fallback.forward_max_concurrent, call.fallback.forward_max_per_day);
+        if !self
+            .forward_counts
+            .entry(dialed.clone())
+            .or_default()
+            .take(at_once, a_day, std::time::Instant::now())
+        {
+            tracing::warn!(
+                "SIP fallback {room}: {dialed}'s forwards are at their limit ({at_once} at once, {a_day} a day)"
+            );
+            return false;
+        }
+        let Some(entry) = self.legs.get(leg) else { return false };
+        let Some(call) = self.fallbacks.get(leg) else {
+            return false;
+        };
         let out = format!("{room}-out");
         let body = serde_json::json!({"callSessionId": room, "callLegId": out, "voiceTrunkId": call.trunk,
             "toNumber": number, "fromNumber": entry.dialed});
         self.dial(&body);
         if !self.legs.contains_key(&out) {
             tracing::warn!("SIP fallback {room}: the forward to {number} was not dialed");
+            if let Some(count) = self.forward_counts.get_mut(&dialed) {
+                count.release();
+            }
             return false;
         }
         tracing::info!("SIP fallback {room}: forwarded to {number} for {seconds} s");
         self.forwards.insert(out.clone(), leg.to_string());
         if let Some(call) = self.fallbacks.get_mut(leg) {
             call.forward = Some(out);
+            call.counted = Some(dialed);
         }
         let (commands, leg) = (self.commands.clone(), leg.to_string());
         tokio::spawn(async move {
@@ -207,6 +264,7 @@ impl Engine {
             if let Some(call) = self.fallbacks.get_mut(&inbound) {
                 call.forward = None;
             }
+            self.release_forward(&inbound);
             if answered {
                 if let Some(room) = self.legs.get(&inbound).map(|entry| entry.room.clone()) {
                     self.end_leg(&inbound, &room);
@@ -216,6 +274,7 @@ impl Engine {
             }
             return;
         }
+        self.release_forward(leg);
         if let Some(call) = self.fallbacks.remove(leg) {
             if let Some(out) = call.forward {
                 self.forwards.remove(&out);
@@ -223,6 +282,16 @@ impl Engine {
                     self.ua.hangup(&out);
                 }
             }
+        }
+    }
+
+    /// The forward of the inbound `leg` no longer rings or talks: it no longer counts in its number's forwards at once.
+    fn release_forward(&mut self, leg: &str) {
+        let Some(number) = self.fallbacks.get_mut(leg).and_then(|call| call.counted.take()) else {
+            return;
+        };
+        if let Some(count) = self.forward_counts.get_mut(&number) {
+            count.release();
         }
     }
 
@@ -239,6 +308,7 @@ impl Engine {
         if self.legs.remove(&out).is_some() {
             self.ua.hangup(&out);
         }
+        self.release_forward(leg);
         tracing::info!("SIP fallback {leg}: the forward was not answered, the caller leaves a message");
         self.fallback_message(leg);
     }

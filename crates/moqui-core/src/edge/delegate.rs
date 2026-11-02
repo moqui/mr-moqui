@@ -26,6 +26,7 @@ use moqui_lib::object::Value;
 
 use super::{DelegateAnswer, DelegateCall, OFFLINE};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
+use crate::transaction::TransactionAttribute;
 
 /// The user a local node runs delegated calls and queued items as (framework/data/EdgeSetupData.xml).
 pub const EDGE_USERNAME: &str = "_edge_";
@@ -156,6 +157,20 @@ pub fn run(factory: &ExecutionContextFactory, call: &DelegateCall) -> DelegateAn
         );
         return refused(format!("{} is not a delegated service on this node", call.service));
     }
+    // the edge node waits only so long (E8: routing a call while it rings): no work starts past that, and work that
+    // ran past it is rolled back below, so a call the edge node gave up on leaves nothing behind (a ringing session, a
+    // dial)
+    let deadline = call
+        .timeout
+        .map(|budget| std::time::Instant::now() + budget.saturating_sub(DEADLINE_MARGIN));
+    let late = || deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    if late() {
+        tracing::warn!(
+            "Edge link: a delegated call of {} came past its deadline, not run",
+            call.service
+        );
+        return refused(format!("{OFFLINE}: the edge node stopped waiting for {}", call.service));
+    }
     if let Err(err) = crate::user::internal_login_user(EDGE_USERNAME) {
         tracing::error!("Edge link: the delegate user {EDGE_USERNAME} could not log in: {err}");
         return refused("this node's delegate user is not available".to_string());
@@ -166,11 +181,61 @@ pub fn run(factory: &ExecutionContextFactory, call: &DelegateCall) -> DelegateAn
         call.service,
         call.operation_id
     );
-    match crate::service::sync(&service, &parameters) {
+    let Some(budget) = call.timeout else {
+        return answer_of(crate::service::sync(&service, &parameters), &refused);
+    };
+    let Some(facade) = factory.entity() else {
+        return refused("this node has no entity facade".to_string());
+    };
+    let transactions = match facade.default_transactions() {
+        Ok(transactions) => transactions,
+        Err(err) => return refused(err.to_string()),
+    };
+    let mut outcome = None;
+    let ran = transactions.run(TransactionAttribute::UseOrBegin, Some(budget), || {
+        let called = crate::service::sync(&service, &parameters);
+        let failed = called.is_err()
+            || ExecutionContext::with_current(|ctx| !ctx.message().errors().is_empty()).unwrap_or(false);
+        let past = late();
+        outcome = Some(called);
+        if past {
+            Err(moqui_lib::error::Error::new("past the edge node's deadline"))
+        } else if failed {
+            Err(moqui_lib::error::Error::new("the delegated call failed"))
+        } else {
+            Ok(())
+        }
+    });
+    if late() {
+        tracing::warn!(
+            "Edge link: a delegated call of {} ran past its deadline and was rolled back (operation {})",
+            call.service,
+            call.operation_id
+        );
+        return refused(format!("{OFFLINE}: the edge node stopped waiting for {}", call.service));
+    }
+    match (outcome, ran) {
+        (Some(called), Ok(())) => answer_of(called, &refused),
+        // its errors rolled it back, and go back as they are
+        (Some(called @ Ok(_)), Err(_)) => answer_of(called, &refused),
+        (Some(Err(err)), Err(_)) => refused(err.message().to_string()),
+        (None, Err(err)) => refused(err.to_string()),
+        (None, Ok(())) => refused("the delegated call did not run".to_string()),
+    }
+}
+
+/// How much sooner than the edge node the local node gives up on a delegated call, for the answer's way back.
+const DEADLINE_MARGIN: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A service's answer to the edge node: its result with the errors it added (a refusal's reasonCode beside its
+/// error, E8, which a caller such as the SIP engine tells apart), or why it failed.
+fn answer_of(
+    called: Result<BTreeMap<String, Value>, Error>,
+    refused: &dyn Fn(String) -> DelegateAnswer,
+) -> DelegateAnswer {
+    match called {
         Ok(result) => {
             let errors = ExecutionContext::with_current(|ctx| ctx.message().errors().to_vec()).unwrap_or_default();
-            // the result goes with the errors too: a refusal names its reasonCode beside its error (E8), which a caller
-            // such as the SIP engine tells apart
             let object: serde_json::Map<String, serde_json::Value> = result
                 .iter()
                 .map(|(name, value)| (name.clone(), to_json(value)))

@@ -490,6 +490,8 @@ impl EdgeServer {
         {
             hello.sip_address = sip.sip_address;
             hello.sip_tls_address = sip.tls_address;
+            hello.sip_domain = sip.domain;
+            hello.sip_registrar = sip.registrar;
         }
         hello
     }
@@ -963,12 +965,20 @@ impl EdgeServer {
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
         let (node, send, generation) = self.only_link()?;
         let mut client = super::local_link_client(send);
+        // a conf entry may wait less than the link does (E8: routing a call that rings); the local node is told, and
+        // does no work past it
+        let wait = call.timeout.map_or(super::queue::ANSWER_TIMEOUT, |wait| {
+            wait.min(super::queue::ANSWER_TIMEOUT)
+        });
         let request = DelegateRequest {
             generation,
             service: call.service.clone(),
             parameters_json: call.parameters.to_string(),
             caller_json: call.caller.to_string(),
             operation_id: call.operation_id.clone(),
+            timeout_ms: call
+                .timeout
+                .map_or(0, |_| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
         };
         let started = Instant::now();
         let mut attributes = moqui_core::entity::document::Document::new();
@@ -976,10 +986,6 @@ impl EdgeServer {
             "moqui.artifact.name".to_string(),
             moqui_lib::object::Value::string(&call.service),
         );
-        // a conf entry may wait less than the link does (E8: routing a call that rings)
-        let wait = call.timeout.map_or(super::queue::ANSWER_TIMEOUT, |wait| {
-            wait.min(super::queue::ANSWER_TIMEOUT)
-        });
         let answered = tokio::time::timeout(wait, client.delegate(request)).await;
         self.telemetry.record_duration(
             "moqui.edgelink.delegate.duration",

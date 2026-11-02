@@ -189,11 +189,16 @@ function liveSipNodes() {
   return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS)
 }
 
-/** The nodes a phone call can go to: a live SIP engine with a live media node that takes calls. */
+/**
+ * The nodes a phone call can go to: a live SIP engine with a live media node that takes calls. The edge node's
+ * (plans/Edge-Node.md §5.4 "Voice (SIP)", E8) takes phone calls also while its media row drains (the wizard's calls
+ * off, edge_calls_enabled): its trunks and phones reach only it, and their media is there whatever the browsers do.
+ */
 function voiceNodes() {
-  const sip = new Set(liveSipNodes().map((n) => n.instanceId))
+  const sip = new Map(liveSipNodes().map((n) => [n.instanceId, n]))
   return Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', new Date(nowMs() - NODE_STALE_MS))
-    .orderBy('-heartbeatDate').list()).filter((n) => n.draining !== 'Y' && sip.has(n.instanceId))
+    .orderBy('-heartbeatDate').list()).filter((n) => sip.has(n.instanceId) &&
+      (n.draining !== 'Y' || (n.edgeLinked === 'Y' && sip.get(n.instanceId).edgeLinked === 'Y')))
 }
 
 function enabledTrunks() {
@@ -672,7 +677,8 @@ function registerNode(p) {
     if (row) row.delete()
     return {}
   }
-  const fields = { sipAddress: p.sipAddress || null, tlsAddress: p.tlsAddress || null, rtpPorts: p.rtpPorts || null, heartbeatDate: now }
+  const fields = { sipAddress: p.sipAddress || null, tlsAddress: p.tlsAddress || null, rtpPorts: p.rtpPorts || null, heartbeatDate: now,
+    sipDomain: p.sipDomain || null, registrarEnabled: p.registrarEnabled == null ? null : flag(p.registrarEnabled) }
   if (row) {
     row.setFields(fields, true, null, null)
     row.update()
@@ -697,7 +703,8 @@ function edgeAllowed(p) {
 
 const FALLBACK = 'moqui.call.PhoneNumberFallback'
 const BOX = 'moqui.call.VoicemailBox'
-const FALLBACK_FIELDS = ['voiceTrunkId', 'voicemailFlag', 'greetingLocation', 'forwardNumber', 'forwardSeconds']
+const FALLBACK_FIELDS = ['voiceTrunkId', 'voicemailFlag', 'greetingLocation', 'forwardNumber', 'forwardSeconds',
+  'forwardMaxConcurrent', 'forwardMaxPerDay']
 /** Where greetings are kept: only these are queued to the edge node. */
 const GREETING_ROOT = 'dbresource://moqui/call/voicemail/greeting/'
 /** Ring groups whose fallback is another group are followed this many times at most. */
@@ -724,7 +731,9 @@ function forwardRingSeconds() {
  * forwards to its outside number. The rules and schedules need this node, so they are not followed.
  */
 function fallbackOf(number) {
-  const out = { voiceTrunkId: number.voiceTrunkId || null, voicemailFlag: 'N', greetingLocation: null, forwardNumber: null, forwardSeconds: null }
+  const out = { voiceTrunkId: number.voiceTrunkId || null, voicemailFlag: 'N', greetingLocation: null, forwardNumber: null, forwardSeconds: null,
+    forwardMaxConcurrent: null, forwardMaxPerDay: null }
+  const pol = policy()
   if (blank(number.routeId)) return null
   if (number.routeTypeEnumId === 'PnrUser') {
     const userId = number.routeId
@@ -733,7 +742,14 @@ function fallbackOf(number) {
     const handling = one('moqui.call.CallHandlingSetting', { userId })
     if (handling && handling.ringMobile === 'Y' && !blank(handling.mobileNumber)) {
       const check = forwardCheck({ phoneNumber: handling.mobileNumber, userId })
-      if (check.allowed) Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds() })
+      // the user's limits on calls out at once and a day, as their own forwards count (dialForward), for the edge node to
+      // hold the number's forwards to
+      const setting = userSetting(userId)
+      const atOnce = blank(setting.maxConcurrent) ? pol.maxConcurrentPerUser : Math.min(Number(setting.maxConcurrent), pol.maxConcurrentPerUser)
+      const aDay = blank(setting.maxPerDay) ? pol.maxCallsPerUserPerDay : Math.min(Number(setting.maxPerDay), pol.maxCallsPerUserPerDay)
+      if (check.allowed && atOnce > 0 && aDay > 0) {
+        Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds(), forwardMaxConcurrent: atOnce, forwardMaxPerDay: aDay })
+      }
     }
     const box = find(BOX).condition('userId', userId).one()
     return Object.assign(out, { voicemailFlag: 'Y', greetingLocation: box?.greetingLocation || null })
@@ -749,7 +765,9 @@ function fallbackOf(number) {
     }
     if (group.fallbackTypeEnumId === 'RgfNumber') {
       const check = forwardCheck({ phoneNumber: group.fallbackId, byAdmin: true })
-      return check.allowed ? Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds() }) : null
+      // a ring group's fallback is the deployment's: its limits per user at once and its calls a day
+      return check.allowed ? Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds(),
+        forwardMaxConcurrent: pol.maxConcurrentPerUser, forwardMaxPerDay: pol.maxCallsPerDay }) : null
     }
     if (group.fallbackTypeEnumId !== 'RgfGroup') return null
     groupId = group.fallbackId

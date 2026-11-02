@@ -47,13 +47,31 @@ function isAdmin() {
   return !!ec.user.userId && ec.user.hasPermission('VoiceAdmin')
 }
 
-/** Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on). */
+/**
+ * The live SIP node of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
+ * its Hello with its realm and registrar switch; null when there is none. Its registrar is the phones'.
+ */
+function edgeSipNode() {
+  return rows(SIP_NODE).find((n) => n.edgeLinked === 'Y' && ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS) || null
+}
+
+/**
+ * Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on); behind an edge
+ * node, the edge node's (its row), whose registrar the phones use.
+ */
 function registrarOn() {
+  const edge = edgeSipNode()
+  if (edge) return edge.registrarEnabled === 'Y'
   return yes(property('sip_registrar_enabled').toLowerCase())
 }
 
-/** The realm of the verifiers and the domain phones register to, as the SIP engine takes it (moqui-host sip settings). */
+/**
+ * The realm of the verifiers and the domain phones register to, as the SIP engine takes it (moqui-host sip settings);
+ * behind an edge node, the realm its registrar challenges with (its row's sipDomain).
+ */
 function domain() {
+  const edge = edgeSipNode()
+  if (edge && !blank(edge.sipDomain)) return edge.sipDomain
   return property('sip_domain') || property('sip_public_address') || 'moqui'
 }
 
@@ -263,6 +281,8 @@ function edgeDigestFresh(device) {
  * this node: matched, with the device, when the response is right; matched false and nothing else when not.
  */
 function checkDigest(p) {
+  // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for
+  if (isEdgeCaller() && String(p.realm || '') !== domain()) return { matched: false }
   const auth = deviceAuth({ username: p.username, realm: p.realm })
   const verifier = (auth.verifierList || []).find((v) => String(v.algorithm).toUpperCase() === String(p.algorithm || '').toUpperCase())
   let expected = ''
@@ -273,6 +293,13 @@ function checkDigest(p) {
   }
   if (!expected || expected !== String(p.response || '').toLowerCase()) return { matched: false }
   if (isEdgeCaller()) {
+    // an answer the edge node kept, sent again (an old nonce, or a count taken before), signs nobody in
+    const fresh = ec.service.sync().name('org.moqui.impl.SipDeviceServices.claim#SipDigestNonce')
+      .parameters({ sipDeviceId: auth.sipDeviceId, nonce: p.nonce, nc: p.nc || null }).disableAuthz().call()?.fresh
+    if (!fresh) {
+      ec.logger.warn(`SIP device ${auth.sipDeviceId}: the edge node sent an answer with an old or used nonce, refused`)
+      return { matched: false }
+    }
     const device = find(DEVICE).condition('sipDeviceId', auth.sipDeviceId).forUpdate(true).one()
     if (device) {
       device.set('edgeDigestDate', ec.user.nowTimestamp)

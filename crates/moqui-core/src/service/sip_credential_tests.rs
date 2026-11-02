@@ -74,3 +74,33 @@ fn the_digest_response_is_rfc_2617_s_example() {
         Some(hex(&Sha256::digest(b"a:n:b")))
     );
 }
+
+/// An edge node's nonce (E8): its time read back, an old or future one refused, and an answer taken once.
+#[test]
+fn an_edge_node_s_answer_is_taken_once_and_only_while_its_nonce_is_fresh() {
+    use base64::Engine as _;
+    let nonce_at = |secs: u64| {
+        let mut bytes = secs.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&[7u8; 24]);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    };
+    assert_eq!(nonce_time(&nonce_at(1_000_000)), Some(1_000_000));
+    assert_eq!(nonce_time("not a nonce"), None);
+    let seen = std::sync::Mutex::new(std::collections::HashMap::new());
+    let now = 1_000_000;
+    assert!(claim(&seen, "D1|n|00000001", now - 10, now));
+    assert!(!claim(&seen, "D1|n|00000001", now - 10, now), "a repeat");
+    assert!(claim(&seen, "D1|n|00000002", now - 10, now), "the next count");
+    assert!(
+        !claim(&seen, "D1|old|00000001", now - NONCE_MAX_AGE_SECS - 1, now),
+        "too old"
+    );
+    assert!(
+        !claim(&seen, "D1|ahead|00000001", now + NONCE_SKEW_SECS + 1, now),
+        "ahead of this clock"
+    );
+    // kept until the nonce is too old anyway, then forgotten
+    assert!(!claim(&seen, "D1|n|00000001", now - 10, now + 300));
+    claim(&seen, "D2|x|1", now + 400, now + 400);
+    assert!(!moqui_lib::sync::lock(&seen).contains_key("D1|n|00000001"));
+}

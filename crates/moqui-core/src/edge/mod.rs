@@ -124,6 +124,10 @@ pub struct EdgeInfo {
     /// node's `SipNode` row from them.
     pub sip_address: String,
     pub sip_tls_address: String,
+    /// Its registrar's realm, and whether its registrar is on (E8): the local node's phones' verifiers are for that
+    /// realm, and its phones ring only with the registrar on.
+    pub sip_domain: String,
+    pub sip_registrar: bool,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.

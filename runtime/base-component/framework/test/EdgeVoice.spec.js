@@ -15,6 +15,28 @@ const MOBILE = "+15550169999"
 const SESSION = "moqui.call.CallSession"
 const BOX = "moqui.call.VoicemailBox"
 const CONTENT = "dbresource://moqui/edge/content/in/edge-voice-spec/"
+const EDGE_REALM = "edge-voice-spec.example.test"
+
+/** A nonce as the edge node's registrar makes them (moqui-sip NonceBook): base64url of its time and 24 more bytes. */
+function edgeNonce(secondsAgo, fill) {
+    const bytes = []
+    let time = Math.floor(Date.now() / 1000) - secondsAgo
+    const high = []
+    for (let i = 0; i < 8; i++) {
+        high.unshift(time % 256)
+        time = Math.floor(time / 256)
+    }
+    bytes.push(...high)
+    for (let i = 0; i < 24; i++) bytes.push(fill)
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    let out = ""
+    for (let i = 0; i < bytes.length; i += 3) {
+        const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0)
+        const chars = [n >> 18, (n >> 12) & 63, (n >> 6) & 63, n & 63].map((c) => alphabet[c])
+        out += chars.slice(0, i + 2 < bytes.length ? 4 : i + 1 < bytes.length ? 3 : 2).join("")
+    }
+    return out
+}
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -65,7 +87,8 @@ function make(entity, fields) {
 function nodesUp() {
     sys(() => {
         call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000", edgeLinked: true})
-        call("org.moqui.impl.VoiceServices.register#SipNode", {instanceId: EDGE_NODE, sipAddress: "203.0.113.5:5060", edgeLinked: true})
+        call("org.moqui.impl.VoiceServices.register#SipNode", {instanceId: EDGE_NODE, sipAddress: "203.0.113.5:5060", edgeLinked: true,
+            sipDomain: EDGE_REALM, registrarEnabled: true})
         call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: OTHER_NODE, mediaAddress: "127.0.0.1:10000"})
         call("org.moqui.impl.VoiceServices.register#SipNode", {instanceId: OTHER_NODE, sipAddress: "127.0.0.1:5060"})
     })
@@ -193,10 +216,32 @@ feature("each number's fallback: a user's mobile then a message, a ring group's 
         rows[USER_NUMBER].voiceTrunkId == trunkId
         rows[GROUP_NUMBER].voicemailFlag == "N"
         rows[GROUP_NUMBER].forwardNumber == "+15550168888"
+        // the limits the edge node holds the forwards to: the user's at once and a day (the policy's defaults), and
+        // the deployment's for a ring group
+        Number(rows[USER_NUMBER].forwardMaxConcurrent) == 2
+        Number(rows[USER_NUMBER].forwardMaxPerDay) == 100
+        Number(rows[GROUP_NUMBER].forwardMaxConcurrent) == 2
+        Number(rows[GROUP_NUMBER].forwardMaxPerDay) == 1000
         rows[MENU_NUMBER] == null
         Number(changed.writtenCount) == 1
         after.forwardNumber == null
         after.voicemailFlag == "Y"
+    }
+})
+
+feature("the edge node's SIP engine takes calls while its media row drains (calls off for browsers)", {
+    when() {
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
+            edgeLinked: true, draining: true}))
+        const taken = as("_edge_", "org.moqui.impl.VoiceServices.receive#PhoneCall", {voiceTrunkId: trunkId, toNumber: USER_NUMBER,
+            fromNumber: "+15557770002", instanceId: EDGE_NODE})
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
+            edgeLinked: true}))
+        return {taken}
+    },
+    then({taken}) {
+        taken.errors == ""
+        taken.callSessionId != null
     }
 })
 
@@ -230,17 +275,26 @@ feature("a message the edge node queued is stored in the number's box, only from
 
 feature("a phone's digest answer is checked here: matched, noted for the edge node, and a wrong one not", {
     when() {
-        const made = withProperty("sip_registrar_enabled", "true", () => as(A, "org.moqui.impl.SipDeviceServices.create#SipDevice", {name: "Edge spec phone"}))
+        // the phone is made for the edge node's realm, and its registrar is the edge node's
+        const made = as(A, "org.moqui.impl.SipDeviceServices.create#SipDevice", {name: "Edge spec phone"})
         const auth = as(null, "org.moqui.impl.SipDeviceServices.get#SipDeviceAuth", {username: made.username, realm: made.domain})
         const verifier = (auth.verifierList || []).find((v) => v.algorithm == "SHA-256")
         const ha2 = "0".repeat(64)
-        const answer = {username: made.username, realm: made.domain, algorithm: "SHA-256", nonce: "n1", nc: "00000001", cnonce: "c1", qop: "auth", ha2}
-        const response = as(null, "org.moqui.impl.SipDeviceServices.compute#SipDigestResponse",
-            {algorithm: "SHA-256", ha1: verifier.ha1, nonce: "n1", nc: "00000001", cnonce: "c1", qop: "auth", ha2}).response
-        const wrong = as("_edge_", "org.moqui.impl.SipDeviceServices.check#SipDeviceDigest", Object.assign({response: "f".repeat(64)}, answer))
+        const signed = (nonce, nc) => Object.assign({username: made.username, realm: made.domain, algorithm: "SHA-256", nonce, nc,
+            cnonce: "c1", qop: "auth", ha2}, {response: as(null, "org.moqui.impl.SipDeviceServices.compute#SipDigestResponse",
+            {algorithm: "SHA-256", ha1: verifier.ha1, nonce, nc, cnonce: "c1", qop: "auth", ha2}).response})
+        const nonce = edgeNonce(5, 7)
+        const answer = signed(nonce, "00000001")
+        const check = (fields) => as("_edge_", "org.moqui.impl.SipDeviceServices.check#SipDeviceDigest", fields)
+        const wrong = check(Object.assign({}, answer, {response: "f".repeat(64)}))
+        const otherRealm = check(Object.assign({}, answer, {realm: "moqui"}))
         const before = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", auth.sipDeviceId).one()).edgeDigestDate
-        const right = as("_edge_", "org.moqui.impl.SipDeviceServices.check#SipDeviceDigest", Object.assign({response}, answer))
+        const right = check(answer)
         const after = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", auth.sipDeviceId).one()).edgeDigestDate
+        // the same answer again, and a right one on a nonce made long ago: an answer the edge node kept signs nobody in
+        const replayed = check(answer)
+        const nextCount = check(signed(nonce, "00000002"))
+        const old = check(signed(edgeNonce(3600, 8), "00000001"))
         const elsewhere = as("_edge_", "org.moqui.impl.SipDeviceServices.store#SipRegistration", {change: "added",
             sipRegistrationId: "edge-voice-spec-reg", sipDeviceId: auth.sipDeviceId, instanceId: OTHER_NODE, credentialRevision: 1,
             expiresDate: Date.now() + 60000})
@@ -249,11 +303,17 @@ feature("a phone's digest answer is checked here: matched, noted for the edge no
             expiresDate: Date.now() + 60000})
         const kept = sys(() => ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "edge-voice-spec-reg").one())
         sys(() => ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "edge-voice-spec-reg").deleteAll())
-        return {made, wrong, before, right, after, auth, elsewhere, own, kept}
+        return {made, wrong, otherRealm, before, right, after, replayed, nextCount, old, auth, elsewhere, own, kept}
     },
-    then({made, wrong, before, right, after, auth, elsewhere, own, kept}) {
+    then({made, wrong, otherRealm, before, right, after, replayed, nextCount, old, auth, elsewhere, own, kept}) {
         made.errors == ""
+        made.domain == EDGE_REALM
+        made.registrarEnabled == true
         wrong.matched == false
+        otherRealm.matched == false
+        replayed.matched == false
+        nextCount.matched == true
+        old.matched == false
         wrong.sipDeviceId == null
         before == null
         right.matched == true

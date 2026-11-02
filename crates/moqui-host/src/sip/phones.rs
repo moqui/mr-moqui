@@ -167,9 +167,15 @@ impl DeviceDirectory for ServiceDirectory {
         let parameters = serde_json::json!({"username": username, "realm": self.realm,
             "algorithm": check.algorithm.name(), "nonce": check.nonce, "nc": nc, "cnonce": cnonce,
             "qop": check.qop_auth.as_ref().map(|_| "auth"), "ha2": check.ha2, "response": check.response});
-        let out = call_service(&factory, CHECK_SERVICE, parameters)
-            .await
-            .map_err(|err| format!("the local node did not check it: {err}"))?;
+        // only the local node away is "cannot check now" (503, not counted); any other failure is a refusal
+        let out = match call_service(&factory, CHECK_SERVICE, parameters).await {
+            Ok(out) => out,
+            Err(err) if super::edge::is_offline(&err) => return Err(format!("the local node did not check it: {err}")),
+            Err(err) => {
+                tracing::warn!("SIP: the device {username:?}'s answer was refused by the local node: {err}");
+                return Ok(None);
+            }
+        };
         let id = text(&out, "sipDeviceId");
         if !super::flag(&out, "matched") || id.is_empty() {
             return Ok(None);
@@ -384,6 +390,8 @@ impl Engine {
                     tracing::warn!("SIP device call {leg}: decided too late, the call was refused");
                     drop(media);
                     self.note_leg(&room, &leg, "failed", Some(480), "decided too late");
+                    // E8: nothing more goes out for it, a number it dialed included
+                    self.abandon_room(&room);
                     return;
                 }
                 self.legs.insert(

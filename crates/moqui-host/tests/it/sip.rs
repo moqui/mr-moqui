@@ -739,7 +739,13 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
 }
 
 /// The phone's REGISTER, unsigned or with its digest answer (V4).
-fn register_text(phone: SocketAddr, server: SocketAddr, user: &str, cseq: u32, auth: Option<&str>) -> String {
+pub(crate) fn register_text(
+    phone: SocketAddr,
+    server: SocketAddr,
+    user: &str,
+    cseq: u32,
+    auth: Option<&str>,
+) -> String {
     let auth = auth.map(|a| format!("Authorization: {a}\r\n")).unwrap_or_default();
     format!(
         "REGISTER sip:{server} SIP/2.0\r\nVia: SIP/2.0/UDP {phone};branch=z9hG4bK-reg{cseq};rport\r\nMax-Forwards: 70\r\n\

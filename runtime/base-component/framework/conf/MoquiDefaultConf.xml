@@ -1218,7 +1218,7 @@
             <entity name="moqui.call.VoicePolicy" fields="internationalEnabled,premiumEnabled,maxConcurrentCalls,authFailureLimit,authFailureWindowSeconds,authBlockSeconds,homeCountryCode,emergencyNumbers,premiumPrefixes"/>
         </replicate>
         <replicate set="voiceFallbacks">
-            <entity name="moqui.call.PhoneNumberFallback" fields="voiceTrunkId,voicemailFlag,greetingLocation,forwardNumber,forwardSeconds"/>
+            <entity name="moqui.call.PhoneNumberFallback" fields="voiceTrunkId,voicemailFlag,greetingLocation,forwardNumber,forwardSeconds,forwardMaxConcurrent,forwardMaxPerDay"/>
         </replicate>
     </edge>
 

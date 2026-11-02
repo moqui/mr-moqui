@@ -580,20 +580,30 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
   change arrives.
-- **Its node.** The edge node registers no `SipNode`: its link's Hello names its SIP addresses and the local node keeps
-  the row (`edgeLinked`), beside its media node's, so its calls go there and `send#SipControl` crosses the link.
+- **Its node.** The edge node registers no `SipNode`: its link's Hello names its SIP addresses, its registrar's realm
+  and switch, and the local node keeps the row (`edgeLinked`, `sipDomain`, `registrarEnabled`), beside its media
+  node's, so its calls go there and `send#SipControl` crosses the link. Phone calls go to it also while its media row
+  drains (the wizard's calls off), since its trunks and phones reach only it.
 - **Routing.** The engine's services run on the local node (delegated): `receive#PhoneCall` (which waits 7 s, under the
   user agent's 10 s), the leg and trunk notes, the IVR, queues and transfers, voicemail's begin, PIN and keys. Run as
-  the edge link's user `_edge_`, they act only for calls whose media is on that edge node.
-- **Phones outside.** The registrar is the edge node's, without the verifiers: each digest answer is checked on the
-  local node (`check#SipDeviceDigest`), which holds the HA1, and the edge node keeps the nonces and their counts. Phones
-  sign in only while the local node is reachable, and register again when it is back.
+  the edge link's user `_edge_`, they act only for calls whose media is on that edge node. The local node is told how
+  long the edge node waits, starts nothing past it and rolls back what ran past it, so a call the edge node gave up on
+  leaves no ringing session or dial; the engine hangs up, and dials nothing into, a call whose phone it refused as
+  decided too late.
+- **Phones outside.** The registrar is the edge node's, without the verifiers: phones are made on the local node with
+  verifiers for the edge node's realm (its `sip_domain`, which the local node reads from its `SipNode` row, as it does
+  its registrar switch), and each digest answer is checked on the local node (`check#SipDeviceDigest`), which holds the
+  HA1, while the edge node keeps the nonces and their counts. The local node takes an answer from the edge node only
+  for that realm, with a nonce at most 330 seconds old, and each nonce count once, so an answer the edge node kept
+  cannot be used again. Phones sign in only while the local node is reachable (503 while it is away, not counted as a
+  failed attempt), and register again when it is back.
 - **Audio.** A greeting or prompt the edge node does not have is fetched from the local node and kept; a saved message
   played by phone is fetched for the call that gave its PIN. Each box's greeting is copied to the edge node ahead, for
   the fallback.
 - **While the local node is away** (decision 4): a call is answered from its number's replicated fallback
   (`PhoneNumberFallback`, set `voiceFallbacks`): ring the number's outside fallback (the user's mobile when they ring it
-  with their calls and may forward to it, or a ring group's outside number) through the trunk the call came on, then
+  with their calls and may forward to it, or a ring group's outside number) through the trunk the call came on, held
+  per number to the user's limits at once and a day (a ring group's: the policy's), then
   take a message ([Voicemail](Voicemail.md#while-the-local-node-is-away)); a number with neither, and an IVR, queue or
   access number, gets 480, so the trunk's own failover can act. Call handling rules and schedules are not followed then.
 
@@ -668,7 +678,8 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   a queue, hears its music, and is answered by the queue's agent.
 - `cargo test -p moqui-host --test it edge_sip::` (about 11 s): the edge node in a child process with its SIP engine,
   registering the fake trunk set up on the local node, a call routed by the local node to voicemail and stored there,
-  and with the link down a call answered from the number's fallback whose message arrives once the link is back.
+  a desk phone made for the edge node's realm registering with its registrar and rung by a colleague's call, and with
+  the link down a call answered from the number's fallback whose message arrives once the link is back.
   `./moq test framework --spec EdgeVoice`: the link-kept `SipNode`, `_edge_`'s limits, the fallbacks, a queued message
   stored in the number's box, the digest checked on the local node. `cargo test -p moqui-host --lib sip::edge`,
   `sip::fallback`: the engine config from the copies, a fallback's fields, its message without phone access.

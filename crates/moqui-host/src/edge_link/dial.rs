@@ -287,7 +287,12 @@ impl LocalLink for LocalService {
             operation_id: request.operation_id,
             timeout: None,
         };
+        // the edge node's own wait (E8), counted from now: the time on the pool's queue is part of it
+        let received = std::time::Instant::now();
+        let budget = (request.timeout_ms > 0).then(|| Duration::from_millis(request.timeout_ms));
         let answer = crate::worker::on_pool(&factory, move |factory| {
+            let mut call = call;
+            call.timeout = budget.map(|budget| budget.saturating_sub(received.elapsed()));
             Ok(moqui_core::edge::delegate::run(factory, &call))
         })
         .await

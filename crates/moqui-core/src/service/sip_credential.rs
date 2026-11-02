@@ -33,7 +33,75 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, make_sip_credential)?;
     rust_service!(map, compute_sip_digest_response)?;
+    rust_service!(map, claim_sip_digest_nonce)?;
     Ok(())
+}
+
+/// The oldest an edge node's nonce may be when its answer is checked here: moqui-sip's nonce lifetime (300 s) and a
+/// little for the clocks.
+const NONCE_MAX_AGE_SECS: i64 = 330;
+/// How far ahead of this node's clock a nonce may say it was made.
+const NONCE_SKEW_SECS: i64 = 30;
+
+/// The answers (device, nonce, nonce count) checked here lately, each until its nonce is too old to be taken anyway.
+#[derive(Default)]
+struct SeenAnswers(std::sync::Mutex<std::collections::HashMap<String, i64>>);
+
+/// When an edge node's registrar issued `nonce` (epoch seconds): moqui-sip's `NonceBook::nonce` format, base64url of
+/// the time (8 bytes, big-endian), 8 random bytes and a MAC under the edge node's key, which this node does not hold.
+fn nonce_time(nonce: &str) -> Option<i64> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(nonce.trim())
+        .ok()?;
+    let time: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+    (bytes.len() == 32).then(|| i64::try_from(u64::from_be_bytes(time)).unwrap_or(i64::MAX))
+}
+
+/// Whether an answer may be taken now (`now_secs`): its nonce made at most [`NONCE_MAX_AGE_SECS`] ago and not ahead of
+/// this clock past [`NONCE_SKEW_SECS`], and the key (device, nonce, nonce count) not taken before; a taken key is kept
+/// until its nonce is too old anyway.
+fn claim(
+    seen: &std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    key: &str,
+    issued: i64,
+    now_secs: i64,
+) -> bool {
+    if issued > now_secs + NONCE_SKEW_SECS || now_secs - issued > NONCE_MAX_AGE_SECS {
+        return false;
+    }
+    let mut seen = moqui_lib::sync::lock(seen);
+    seen.retain(|_, until| *until > now_secs);
+    if seen.contains_key(key) {
+        return false;
+    }
+    seen.insert(key.to_string(), issued + NONCE_MAX_AGE_SECS + NONCE_SKEW_SECS);
+    true
+}
+
+/// `claim#SipDigestNonce` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): before a phone's answer that the edge node's
+/// registrar sent is taken here, its nonce's age and its first use. The response covers the nonce, so the edge node
+/// cannot change the time in it after the phone answered; refusing an old one and a repeated (`sipDeviceId`, `nonce`,
+/// `nc`) means an answer the edge node kept cannot be sent again later to sign the phone in. `fresh` false otherwise.
+fn claim_sip_digest_nonce(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let text = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|v| !is_empty(v))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let (device, nonce, nc) = (text("sipDeviceId"), text("nonce"), text("nc"));
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| LibError::new("claim#SipDigestNonce needs an execution context"))?;
+    let seen = factory.extension(|_| SeenAnswers::default());
+    let now = crate::user::now_millis() / 1000;
+    let fresh = !device.is_empty()
+        && nonce_time(&nonce).is_some_and(|issued| claim(&seen.0, &format!("{device}|{nonce}|{nc}"), issued, now));
+    Ok(BTreeMap::from([("fresh".to_string(), Value::Bool(fresh))]))
 }
 
 /// `compute#SipDigestResponse` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): the response a phone's digest answer must

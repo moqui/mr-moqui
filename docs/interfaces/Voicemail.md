@@ -164,7 +164,9 @@ While the local node is away the edge node takes the message itself, from the nu
 greeting (copied to the edge node ahead, else the default), the beep and the recording; `*` opens no phone access, and
 the access number is refused (480). The message waits on the edge node's queue, at most `queue-retention-days` (14),
 and arrives once, with its notices, when the link is back; its `receivedDate` is when the caller left it. A call the
-local node routed whose voicemail starts after it went away takes a message the same way.
+local node routed whose voicemail starts after it went away takes a message the same way. A message that cannot be
+queued at once is kept in the spool with its details and tried again, from 2 seconds doubling to 5 minutes, and the
+engine's next start queues what the spool still holds.
 
 ## Properties
 

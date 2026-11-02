@@ -41,7 +41,7 @@ use tokio::sync::watch;
 
 use crate::edge_call::{certs, field, wait_until, EdgeNode};
 use crate::rtc::{call, text};
-use crate::sip::{tone, values, Trunk};
+use crate::sip::{register_text, tone, values, Trunk};
 
 /// What the edge node's child process is given; set only for that child.
 const EDGE_ENV: &str = "MOQUI_EDGE_SIP_NODE";
@@ -49,6 +49,10 @@ const EDGE_TEST: &str = "edge_sip::edge_node_process";
 const NUMBER: &str = "+15551230000";
 const CALLER: &str = "+15557770000";
 const OFFLINE_CALLER: &str = "+15557771111";
+/// The edge node's registrar's realm, which the local node's phones' verifiers must be for.
+const EDGE_REALM: &str = "sip.edge.example.test";
+const DESK: &str = "edge.desk";
+const DESK_PASSWORD: &str = "Edge-desk-77!";
 
 /// The edge node's process: an edge node with call media and a SIP engine on its own database, until its stdin closes.
 #[test]
@@ -72,6 +76,8 @@ fn edge_node_process() {
             ("rtc_media_port", "0"),
             ("sip_port", "0"),
             ("sip_rtp_ports", "42600-42699"),
+            ("sip_registrar_enabled", "true"),
+            ("sip_domain", EDGE_REALM),
         ],
         &[("cert/default.crt", cert), ("cert/default.key", key)],
     );
@@ -326,6 +332,82 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         );
         assert!(!field("moqui.call.CallSession", "callSessionId", &call_id, "voicemailBoxId").is_empty());
     }
+
+    // a desk phone outside the office: made on the local node for the edge node's realm, registered with the edge
+    // node's registrar (its answer checked on the local node), and rung by a colleague's call through the edge node
+    let desk_phone = Trunk::new();
+    let (desk_id, device) = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let created = call(
+            "org.moqui.impl.UserServices.create#UserAccount",
+            &[
+                ("username", Value::string(DESK)),
+                ("newPassword", Value::string(DESK_PASSWORD)),
+                ("newPasswordVerify", Value::string(DESK_PASSWORD)),
+                ("userFullName", Value::string("Edge Desk")),
+            ],
+        );
+        moqui_core::user::internal_login_user(DESK).unwrap();
+        let device = call(
+            "org.moqui.impl.SipDeviceServices.create#SipDevice",
+            &[("name", Value::string("Home desk"))],
+        );
+        (text(&created, "userId"), device)
+    };
+    assert_eq!(text(&device, "domain"), EDGE_REALM, "the edge node's realm: {device:?}");
+    assert_eq!(
+        device.get("registrarEnabled"),
+        Some(&Value::Bool(true)),
+        "the edge node's registrar"
+    );
+    let (user, password) = (text(&device, "username"), text(&device, "password"));
+    let at = desk_phone.addr();
+    desk_phone.send(&register_text(at, sip_at, &user, 1, None), sip_at);
+    let challenge = desk_phone.response(401);
+    let challenges: Vec<moqui_sip::digest::Challenge> = values(&challenge.headers, "WWW-Authenticate")
+        .iter()
+        .filter_map(|v| moqui_sip::digest::Challenge::parse(v))
+        .collect();
+    let credentials = moqui_sip::digest::Credentials {
+        username: user.clone(),
+        password,
+        algorithms: vec![moqui_sip::digest::Algorithm::Sha256],
+        ..Default::default()
+    };
+    let chosen = moqui_sip::digest::choose(&challenges, &credentials).expect("a SHA-256 challenge");
+    assert_eq!(chosen.realm, EDGE_REALM);
+    let auth = moqui_sip::digest::answer(&credentials, chosen, "REGISTER", &format!("sip:{sip_at}"), "c1").unwrap();
+    desk_phone.send(&register_text(at, sip_at, &user, 2, Some(&auth)), sip_at);
+    desk_phone.response(200);
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user(DESK).unwrap();
+        wait_until(
+            Duration::from_secs(5),
+            "the desk phone's binding kept on the local node",
+            || {
+                let listed = call("org.moqui.impl.SipDeviceServices.find#SipDevices", &[]);
+                matches!(listed.get("deviceList"), Some(Value::List(list)) if list.iter().any(|d| matches!(d,
+                Value::Map(m) if matches!(m.get("registrationList"), Some(Value::List(r)) if !r.is_empty()))))
+            },
+        );
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        let started = call(
+            "org.moqui.impl.CallServices.start#Call",
+            &[("calleeUserIdList", Value::List(vec![Value::string(&desk_id)]))],
+        );
+        assert!(!text(&started, "callSessionId").is_empty(), "{started:?}");
+    }
+    let (invite, from) = desk_phone.request("INVITE");
+    assert!(
+        invite.uri.to_string().contains(&user),
+        "the edge node rings the desk phone: {}",
+        invite.uri
+    );
+    assert_eq!(from, sip_at, "over the flow it registered on");
+    desk_phone.reply(&invite, from, 603, "", "");
 
     // the link down: the local node is away; the edge node answers from the number's fallback
     dialer.stop();

@@ -77,8 +77,8 @@ pub trait DeviceDirectory: Send + Sync {
     /// The active device with this username and whether `check`'s response is right for its verifier of the check's
     /// algorithm; `None` when there is no such device. By default against [`DeviceDirectory::device`]'s verifiers; a
     /// directory that holds none (an edge node's registrar, plans/Edge-Node.md §5.4 "Voice (SIP)") has the node that
-    /// holds them check it, and answers a device with no verifiers, or an error when that node could not be asked,
-    /// which is no failed attempt of the phone's.
+    /// holds them check it, and answers a device with no verifiers, or an error only when that node could not be
+    /// asked (it is away), which is no failed attempt of the phone's: answered 503. Any other failure is `Ok(None)`.
     async fn verify(
         &self,
         username: &str,

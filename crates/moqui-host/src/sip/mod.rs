@@ -88,6 +88,8 @@ const AUTH_FAILURE_SERVICE: &str = "org.moqui.impl.VoiceServices.record#AuthFail
 const REGISTER_SERVICE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
 /// How often the node registers itself.
 const REGISTER_EVERY: Duration = Duration::from_secs(20);
+/// How long a call given up (decided too late) takes no dial.
+const ABANDONED_FOR: Duration = Duration::from_secs(300);
 /// How long an outbound call rings before it is canceled.
 const RING_TIMEOUT: Duration = Duration::from_secs(60);
 /// The usual CA bundle, for TLS to trunks when `sip_tls_ca_file` is empty.
@@ -491,6 +493,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         next_loop: 0,
         fallbacks: HashMap::new(),
         forwards: HashMap::new(),
+        abandoned: HashMap::new(),
+        forward_counts: HashMap::new(),
     };
     runtime.spawn(engine.run(events, commands));
     let stop = Arc::new(AtomicBool::new(false));
@@ -520,6 +524,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             Some(moqui_core::edge::media::SipAdvert {
                 sip_address: address("sipAddress"),
                 tls_address: address("tlsAddress"),
+                domain: settings.domain.clone(),
+                registrar: settings.registrar.is_some(),
             }),
         );
         None
@@ -738,6 +744,12 @@ struct Engine {
     /// each forward's outbound leg with its inbound one.
     fallbacks: HashMap<String, fallback::FallbackCall>,
     forwards: HashMap<String, String>,
+    /// E8: the rooms of calls whose phone the user agent refused because the services decided too late, each with
+    /// when: a dial into one is refused, and what was dialed into it is hung up, so no number is rung for a caller who
+    /// is gone.
+    abandoned: HashMap<String, Instant>,
+    /// E8: the forwards the fallback made, by number: those going on, and when each of the last day began.
+    forward_counts: HashMap<String, fallback::ForwardCount>,
 }
 
 /// The ring timers of the inbound legs (V3): a leg has at most one that counts, the one armed last, so a timer a later step
@@ -848,6 +860,8 @@ impl Engine {
         }
         if self.edge {
             self.watch_trunks();
+            // E8: messages that did not queue before the process stopped
+            edge::requeue_spool(&self.factory);
         }
         loop {
             tokio::select! {
@@ -1235,6 +1249,7 @@ impl Engine {
                     tracing::warn!("SIP call {leg}: decided too late, the call was refused");
                     drop(media);
                     self.note_leg(room, leg, "failed", Some(480), "decided too late");
+                    self.abandon_room(room);
                     return false;
                 }
                 self.legs.insert(
@@ -1457,10 +1472,33 @@ impl Engine {
         }
     }
 
+    /// A call whose phone was refused as decided too late (E8): its other legs here hang up, and no dial goes into it
+    /// for a while.
+    fn abandon_room(&mut self, room: &str) {
+        let now = Instant::now();
+        self.abandoned.retain(|_, at| now.duration_since(*at) < ABANDONED_FOR);
+        self.abandoned.insert(room.to_string(), now);
+        let legs: Vec<String> = self
+            .legs
+            .iter()
+            .filter(|(_, entry)| entry.room == room)
+            .map(|(leg, _)| leg.clone())
+            .collect();
+        for leg in legs {
+            tracing::warn!("SIP leg {leg}: its call was given up, hung up");
+            self.end_leg(&leg, room);
+        }
+    }
+
     /// An outbound call the services placed, checked again here before it goes to a trunk.
     fn dial(&mut self, body: &Json) {
         let room = text(body, "callSessionId");
         let leg = text(body, "callLegId");
+        if self.abandoned.get(&room).is_some_and(|at| at.elapsed() < ABANDONED_FOR) {
+            tracing::warn!("SIP call {leg} refused: its call was given up");
+            self.note_leg(&room, &leg, "failed", Some(480), "the call was given up");
+            return;
+        }
         let trunk_id = text(body, "voiceTrunkId");
         let emergency = flag(body, "emergency");
         let refuse = |engine: &Engine, why: &str| {

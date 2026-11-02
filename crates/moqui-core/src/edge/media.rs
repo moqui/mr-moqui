@@ -61,6 +61,10 @@ pub struct SipAdvert {
     pub sip_address: String,
     /// For TLS, `host:port`; empty when off.
     pub tls_address: String,
+    /// The realm its registrar challenges phones with (`sip_domain`, else `sip_public_address`, else `moqui`).
+    pub domain: String,
+    /// Its registrar is on (`sip_registrar_enabled`).
+    pub registrar: bool,
 }
 
 #[derive(Default)]

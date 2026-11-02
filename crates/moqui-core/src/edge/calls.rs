@@ -141,6 +141,8 @@ pub fn register_sip_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
         ("instanceId".to_string(), Value::string(&edge.instance_id)),
         ("sipAddress".to_string(), Value::string(&edge.sip_address)),
         ("tlsAddress".to_string(), Value::string(&edge.sip_tls_address)),
+        ("sipDomain".to_string(), Value::string(&edge.sip_domain)),
+        ("registrarEnabled".to_string(), Value::Bool(edge.sip_registrar)),
         ("edgeLinked".to_string(), Value::Bool(true)),
         ("stopping".to_string(), Value::Bool(stopping)),
     ]);

@@ -41,6 +41,13 @@ pub struct Hello {
     pub sip_address: ::prost::alloc::string::String,
     #[prost(string, tag = "12")]
     pub sip_tls_address: ::prost::alloc::string::String,
+    /// The edge node's SIP engine's realm (its sip_domain, else sip_public_address, else moqui), which its registrar
+    /// challenges phones with, and whether its registrar is on (sip_registrar_enabled): the local node makes its phones'
+    /// verifiers for that realm and rings them only with it on (E8).
+    #[prost(string, tag = "13")]
+    pub sip_domain: ::prost::alloc::string::String,
+    #[prost(bool, tag = "14")]
+    pub sip_registrar: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}
@@ -264,6 +271,10 @@ pub struct DelegateRequest {
     /// An id for the call, in both nodes' logs.
     #[prost(string, tag = "5")]
     pub operation_id: ::prost::alloc::string::String,
+    /// How long the edge node waits for the answer, in milliseconds (0: the link's own timeout). The local node does no
+    /// work past it, and rolls back a call that ran past it, so a call the edge node gave up on leaves nothing behind (E8).
+    #[prost(uint64, tag = "6")]
+    pub timeout_ms: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DelegateReply {

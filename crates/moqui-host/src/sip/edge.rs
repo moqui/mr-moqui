@@ -256,6 +256,10 @@ pub(crate) struct Fallback {
     /// Ring this outside number first, for `forward_seconds`.
     pub forward: Option<String>,
     pub forward_seconds: u64,
+    /// The most forwards of the number at once, and in a day (the local policy's and the user's limits); 0 forwards
+    /// none.
+    pub forward_max_concurrent: u64,
+    pub forward_max_per_day: u64,
     /// The trunk of the number, which a forward goes out through.
     pub trunk: Option<String>,
 }
@@ -272,6 +276,8 @@ pub(crate) fn fallback_from(fields: &Json) -> Option<Fallback> {
             .unwrap_or(30)
             .clamp(10, 120),
         trunk: text("voiceTrunkId"),
+        forward_max_concurrent: field_text(fields, "forwardMaxConcurrent").parse().unwrap_or(0),
+        forward_max_per_day: field_text(fields, "forwardMaxPerDay").parse().unwrap_or(0),
     };
     (fallback.voicemail || fallback.forward.is_some()).then_some(fallback)
 }
@@ -300,10 +306,77 @@ pub(crate) async fn fallback_of(factory: &Arc<ExecutionContextFactory>, to: &str
     }
 }
 
+/// The file beside a spool file that keeps what its message is queued with, until it is queued.
+fn sidecar(path: &Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".json");
+    std::path::PathBuf::from(name)
+}
+
+/// The first wait before a message that did not queue is tried again, doubled each time up to [`QUEUE_RETRY_MAX`].
+const QUEUE_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(2);
+const QUEUE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Queues a message the engine recorded (`path`, its spool file) to the local node, with `payload` (the number called,
 /// the caller, its length, when, and the call when the local node routed it), keyed by its spool file's name so a retry
-/// is the same item; the spool file goes once it is queued. One that cannot be queued is logged and its file kept.
+/// is the same item. What it is queued with is kept beside it first (`<file>.json`), so a message that does not queue
+/// now, or whose process stops before, is not lost: it is tried again with a backoff from 2 s to 5 minutes while the
+/// engine runs, and [`requeue_spool`] queues it at the next start. The spool file and its sidecar go once it is queued.
 pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path: &Path, payload: Json) {
+    if let Err(err) = std::fs::write(sidecar(path), payload.to_string()) {
+        tracing::error!(
+            "SIP voicemail: {}'s details were not kept beside it: {err}",
+            path.display()
+        );
+    }
+    let weak = Arc::downgrade(factory);
+    let mut wait = QUEUE_RETRY_FIRST;
+    loop {
+        let Some(factory) = weak.upgrade() else { return };
+        match queue_once(&factory, path, &payload).await {
+            Ok(()) => return,
+            Err(err) => tracing::error!(
+                "SIP voicemail: the message {} was not queued for the local node, tried again in {wait:?}: {err}",
+                path.display()
+            ),
+        }
+        drop(factory);
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(QUEUE_RETRY_MAX);
+    }
+}
+
+/// At the engine's start on an edge node: the messages left in the spool with their details (they did not queue before
+/// the process stopped) are queued now, each on its own.
+pub(crate) fn requeue_spool(factory: &Arc<ExecutionContextFactory>) {
+    let spool = factory.runtime_dir().join(super::voicemail::SPOOL);
+    let Ok(entries) = std::fs::read_dir(&spool) else { return };
+    for entry in entries.flatten() {
+        let side = entry.path();
+        if side.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let file = side.with_extension("");
+        let payload: Option<Json> = std::fs::read_to_string(&side)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        match payload {
+            Some(payload) if file.is_file() => {
+                tracing::info!("SIP voicemail: {} was left in the spool, queued now", file.display());
+                let factory = Arc::clone(factory);
+                tokio::spawn(async move { queue_voicemail(&factory, &file, payload).await });
+            }
+            _ => tracing::error!(
+                "SIP voicemail: {} has no message or its details do not read, left",
+                side.display()
+            ),
+        }
+    }
+}
+
+/// One try of [`queue_voicemail`]: queued, and the spool file and its sidecar removed.
+async fn queue_once(factory: &Arc<ExecutionContextFactory>, path: &Path, payload: &Json) -> Result<(), String> {
+    let payload = payload.clone();
     let file = path.to_path_buf();
     let shown = path.display().to_string();
     let queued = on_pool(factory, move |factory| {
@@ -329,15 +402,14 @@ pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path
         Ok(queued.queue_item_id)
     })
     .await;
-    match queued {
-        Ok(item) => {
-            tracing::info!("SIP voicemail: the message is queued for the local node (item {item})");
-            if let Err(err) = std::fs::remove_file(path) {
-                tracing::debug!("SIP voicemail: {shown} not removed: {err}");
-            }
+    let item = queued?;
+    tracing::info!("SIP voicemail: the message is queued for the local node (item {item})");
+    for file in [path.to_path_buf(), sidecar(path)] {
+        if let Err(err) = std::fs::remove_file(&file) {
+            tracing::debug!("SIP voicemail: {shown}: {} not removed: {err}", file.display());
         }
-        Err(err) => tracing::error!("SIP voicemail: the message {shown} was not queued for the local node: {err}"),
     }
+    Ok(())
 }
 
 /// Runs a delegated service in the current context, its errors taken out of it: its answer, or what went wrong.

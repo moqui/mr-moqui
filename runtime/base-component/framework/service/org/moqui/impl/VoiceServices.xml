@@ -135,6 +135,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="tlsAddress"/>
             <parameter name="rtpPorts"/>
             <parameter name="stopping" type="Boolean" default="false"/>
+            <parameter name="sipDomain"><description>The edge node's realm (E8)</description></parameter>
+            <parameter name="registrarEnabled" type="Boolean"><description>The edge node's registrar is on (E8)</description></parameter>
             <parameter name="edgeLinked" type="Boolean" default="false"><description>The row of this node's edge node,
                 kept by the edge link from its Hello and liveness (plans/Edge-Node.md §5.4, E8). Never a row an engine
                 registered, nor the reverse (refused, notAllowed).</description></parameter>

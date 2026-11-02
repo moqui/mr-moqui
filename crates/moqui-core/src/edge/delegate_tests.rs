@@ -93,3 +93,33 @@ fn an_edge_node_sends_a_delegated_call_to_the_link_before_any_link_is_started() 
     // no link, or a link with no local node: offline either way, never run here (where it is not even defined)
     assert!(err.message().starts_with(OFFLINE), "{}", err.message());
 }
+
+/// E8: a call the edge node stopped waiting for is not run here (a ringing session or a dial for a caller gone).
+#[test]
+fn a_delegated_call_past_its_deadline_is_not_run() {
+    let ctx = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><edge><delegate service="a.B.call#Late" timeout-seconds="0.1"/></edge></moqui-conf>"#,
+    );
+    let settings = super::super::conf::settings_as(ctx.factory(), false);
+    assert_eq!(
+        settings.delegate("a.B.call#Late").and_then(|d| d.timeout),
+        Some(std::time::Duration::from_millis(100))
+    );
+    let call = DelegateCall {
+        service: "a.B.call#Late".to_string(),
+        parameters: serde_json::json!({"voiceTrunkId": "T1", "status": "ok"}),
+        caller: serde_json::json!({}),
+        operation_id: "op-late".to_string(),
+        timeout: Some(std::time::Duration::from_millis(100)),
+    };
+    let answer = run(ctx.factory(), &call);
+    assert_eq!(answer.result, serde_json::Value::Null);
+    assert!(
+        answer
+            .errors
+            .iter()
+            .any(|error| error.starts_with(OFFLINE) && error.contains("stopped waiting")),
+        "{:?}",
+        answer.errors
+    );
+}

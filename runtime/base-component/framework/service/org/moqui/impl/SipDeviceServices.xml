@@ -153,8 +153,11 @@ along with this software (see the LICENSE.md file). If not, see
             (HA1) never leave this node. The edge node keeps the nonce and its counts; it sends the response and what it
             is computed from besides the HA1 (nonce, nc, cnonce, qop, ha2 = H(method:uri)). matched with the device's
             sipDeviceId, username and credentialRevision when the answer is right for an active device; matched false
-            and nothing else when it is not, or there is no such device. A match from the edge node's delegate user is
-            noted (SipDevice.edgeDigestDate), which its store#SipRegistration and receive#DeviceCall need.</description>
+            and nothing else when it is not, or there is no such device. From the edge node's delegate user only for the
+            realm its registrar challenges with (its SipNode row's sipDomain), and only an answer whose nonce is fresh
+            and whose nonce count was not taken before (claim#SipDigestNonce), so an answer it kept cannot be sent
+            again; a match is noted (SipDevice.edgeDigestDate), which its store#SipRegistration and receive#DeviceCall
+            need.</description>
         <in-parameters>
             <parameter name="username" required="true"/>
             <parameter name="realm"/>
@@ -190,6 +193,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ha2" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="response"/></out-parameters>
+    </service>
+
+    <service verb="claim" noun="SipDigestNonce" type="rust" location="moqui_core::service::sip_credential::claim_sip_digest_nonce"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (check#SipDeviceDigest for the edge node, E8): whether an answer the edge node's registrar
+            sent may be taken now: its nonce made at most 330 seconds ago by this node's clock (the time is in the nonce,
+            which the phone's response covers) and not ahead of it, and this device, nonce and nonce count not taken
+            before (kept in memory for the nonce's life).</description>
+        <in-parameters>
+            <parameter name="sipDeviceId" required="true"/>
+            <parameter name="nonce" required="true"/>
+            <parameter name="nc"/>
+        </in-parameters>
+        <out-parameters><parameter name="fresh" type="Boolean"/></out-parameters>
     </service>
 
     <service verb="store" noun="SipRegistration" authenticate="false" allow-remote="false">

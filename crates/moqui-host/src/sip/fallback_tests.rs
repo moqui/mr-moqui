@@ -43,3 +43,18 @@ fn the_fallback_s_message_is_a_deposit_without_phone_access() {
         matches!(machine.on(Event::Digit('*')).as_slice(), [Action::Play { says, .. }] if says == &vec![Say::EnterPin])
     );
 }
+
+#[test]
+fn a_number_s_forwards_are_held_to_its_limits_at_once_and_a_day() {
+    let mut count = ForwardCount::default();
+    let start = std::time::Instant::now();
+    assert!(count.take(2, 3, start));
+    assert!(count.take(2, 3, start));
+    assert!(!count.take(2, 3, start), "two at once");
+    count.release();
+    assert!(count.take(2, 3, start));
+    count.release();
+    assert!(!count.take(2, 3, start), "three a day");
+    assert!(count.take(2, 3, start + DAY), "a day later");
+    assert!(!ForwardCount::default().take(0, 10, start), "no limit forwards none");
+}
