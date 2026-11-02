@@ -744,7 +744,8 @@ fn rank(candidates: Vec<ArtifactRow>, text: &str, limit: usize) -> Vec<ArtifactR
     let mut scored: Vec<(u32, ArtifactRow)> = candidates
         .into_iter()
         .filter_map(|artifact| {
-            if artifact.id == text || artifact.name == text {
+            // a full name; a bare one (a subscreens item's, a transition's) is only a short name, so the kinds decide
+            if artifact.id == text || (artifact.name == text && artifact.name != artifact.short_name) {
                 return Some((0, artifact));
             }
             if artifact.short_name == text {

@@ -42,11 +42,7 @@ pub fn period_range(period: &str, offset: &str, basis: &str) -> Result<(Value, V
     let basis = if basis.trim().is_empty() {
         Timestamp::now().to_zoned(zone.clone()).date()
     } else if let Ok(millis) = basis.trim().parse::<i64>() {
-        // a Date or Timestamp parameter reaches a script as epoch millis
-        Timestamp::from_millisecond(millis)
-            .map_err(|_| Error::new(format!("period date {basis} is out of range")))?
-            .to_zoned(zone.clone())
-            .date()
+        millis_date(millis, &zone).ok_or_else(|| Error::new(format!("period date {basis} is out of range")))?
     } else {
         basis
             .trim()
@@ -55,6 +51,17 @@ pub fn period_range(period: &str, offset: &str, basis: &str) -> Result<(Value, V
     };
     let (from, thru) = range_dates(period, offset, basis)?;
     Ok((stamp(from, &zone)?, stamp(thru, &zone)?))
+}
+
+/// The date of epoch millis, as a Date or Timestamp parameter reaches a script. A Date is the millis of its midnight in
+/// UTC (`moqui_lib::object`), which in a zone west of UTC is the day before, so millis on a UTC midnight are taken as
+/// that date; any other instant is dated in `zone`.
+fn millis_date(millis: i64, zone: &TimeZone) -> Option<Date> {
+    let instant = Timestamp::from_millisecond(millis).ok()?;
+    if millis.rem_euclid(86_400_000) == 0 {
+        return Some(instant.to_zoned(TimeZone::UTC).date());
+    }
+    Some(instant.to_zoned(zone.clone()).date())
 }
 
 /// The session time zone, else the server's, as Java's `ec.user.getCalendarSafe()`.
@@ -279,5 +286,14 @@ mod tests {
         assert!(matches!(from, Value::Timestamp(_)) && matches!(thru, Value::Timestamp(_)));
         assert!(period_range("day", "x", "").is_err());
         assert!(period_range("day", "0", "14/10/2026").is_err());
+    }
+
+    #[test]
+    fn a_dates_millis_keep_its_day_west_of_utc() {
+        let chicago = TimeZone::get("America/Chicago").unwrap();
+        // 2026-11-01 as a Date parameter: its UTC midnight, which is Oct 31 in Chicago
+        assert_eq!(millis_date(1_793_491_200_000, &chicago), Some("2026-11-01".parse().unwrap()));
+        // a Timestamp at another instant is dated in the zone: 2026-11-01T03:00Z is Oct 31 at 22:00 in Chicago
+        assert_eq!(millis_date(1_793_502_000_000, &chicago), Some("2026-10-31".parse().unwrap()));
     }
 }

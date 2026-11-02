@@ -735,11 +735,16 @@ mod tests {
             .map(|found| found.to_id)
             .collect();
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(used, [Some("entity:fp.picklist.PicklistBatch".to_string())]);
+        // the entity-auto call resolves to the service derived from the entity
+        assert_eq!(used, [Some("service:update#fp.picklist.PicklistBatch".to_string())]);
+        let derived = index.describe("service:update#fp.picklist.PicklistBatch").expect("derived");
+        assert_eq!(derived.origin, "derived");
+        assert_eq!(derived.parent.as_deref(), Some("entity:fp.picklist.PicklistBatch"));
         assert!(index.describe("entity:moqui.olap.JavaOnlyFact").is_some());
+        // the framework's entity is used by the component's view, from its member
         assert!(index
             .refs("entity:moqui.olap.JavaOnlyFact", Direction::In)
             .iter()
-            .any(|found| found.from == "entity:fp.picklist.BatchFact"),);
+            .any(|found| found.from == "view-member:fp.picklist.BatchFact@F"));
     }
 }
