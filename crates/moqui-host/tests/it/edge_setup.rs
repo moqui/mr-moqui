@@ -17,16 +17,19 @@
 //! so the wizard's link calls are the dialer's (`offer`, `configure`) and the rest is called as the services call it.
 //!
 //! - Discover: the edge node's offer has its mail (the MTA in moqui, its MX host and DKIM record), chat, PASS, its
-//!   public addresses, and calls, SIP and XMPP as not available.
+//!   XMPP tunnel ports, its public addresses, and calls and SIP as not available.
 //! - Configure: this node's host names are applied on the edge node, a name another node holds is refused, a name of
 //!   this node not listed is removed, and a request that is not input is refused whole.
 //! - Apply: the EDGE mail server with `edge:`, SYSTEM's and a hosted account's mail through it, and the chat and PASS
 //!   settings written into the test runtime's own `.env`, never the repository's.
-//! - DNS: `check#EdgeDns` against fixed records, one host pointing elsewhere.
+//! - DNS: `check#EdgeDns` against fixed records, one host pointing elsewhere, and the XMPP client SRV records.
 //! - Test: `test#EdgeSetup`'s round trips on the queue answer for mail in, mail out and webhooks.
 //! - The wizard: with the dialer behind the services (the process's one edge link slot holds the edge node's hook, and
 //!   `node_role` is a process property, so both are set for the local node for that part), the Discover, Apply and
-//!   Test steps and the status render, Discover's choices are kept, Apply applies, and the test passes.
+//!   Test steps and the status render, Discover's choices are kept, Apply applies, and the test passes. Then the XMPP
+//!   area: Discover offers it for this node's `xmpp_domain` and adds the domain to the passthrough names, Apply sends
+//!   it (the edge node keeps it and has the name), and Test probes the tunnel ports (this node runs no XMPP server, so
+//!   those fail, saying so) and finds the name.
 
 #![cfg(all(
     unix,
@@ -47,7 +50,7 @@ use moqui_core::edge::{
     PairResult, PairingCode, HOST_PASSTHROUGH, HOST_TERMINATE,
 };
 use moqui_core::entity::EntityFacade;
-use moqui_host::edge_link::{local_web, pair, Backoff, Dialer, LocalConfig, PairConfig};
+use moqui_host::edge_link::{local_web, pair, xmpp_probe, Backoff, Dialer, LocalConfig, PairConfig};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 use rustls::pki_types::CertificateDer;
@@ -216,6 +219,7 @@ fn has_recipient(edge: &Gate, address: &str) -> bool {
 struct DialerLink {
     dialer: Arc<Dialer>,
     runtime: tokio::runtime::Handle,
+    factory: Arc<moqui_core::context::ExecutionContextFactory>,
 }
 
 fn not_here() -> LibError {
@@ -264,6 +268,16 @@ impl EdgeLink for DialerLink {
             .block_on(self.dialer.configure(setup))
             .map_err(LibError::new)
     }
+    fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, LibError> {
+        self.runtime
+            .block_on(xmpp_probe(
+                Arc::clone(&self.factory),
+                self.dialer.status().url,
+                port,
+                direct,
+            ))
+            .map_err(LibError::new)
+    }
 }
 
 /// The process as the local node for the wizard: the dialer behind the services and no `node_role`; put back as the
@@ -271,10 +285,11 @@ impl EdgeLink for DialerLink {
 struct LocalRole;
 
 impl LocalRole {
-    fn take(dialer: &Arc<Dialer>, runtime: &tokio::runtime::Handle) -> Self {
+    fn take(dialer: &Arc<Dialer>, runtime: &tokio::runtime::Handle, local: &Gate) -> Self {
         moqui_core::edge::install_edge_link(Arc::new(DialerLink {
             dialer: Arc::clone(dialer),
             runtime: runtime.clone(),
+            factory: Arc::clone(local.server.factory()),
         }));
         moqui_lib::env::clear_property("node_role");
         Self
@@ -405,6 +420,101 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
     );
 }
 
+/// The XMPP area of the wizard on the local node, for its `xmpp_domain` (set as a property after the servers started,
+/// so the local node runs no XMPP server).
+fn xmpp_area(local: &Gate, edge: &Gate) {
+    moqui_lib::env::set_property("xmpp_domain", "chat.example.com".to_string());
+    let factory = Arc::clone(local.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let screens = moqui_core::screen::ScreenTest::new(&factory)
+        .root_screen("component://tools/screen/System.xml")
+        .render_mode("html");
+    let show = |path: &str, texts: &[&str]| {
+        let page = screens.test_render(path, BTreeMap::new(), None);
+        let text = page.text();
+        assert!(page.error_messages.is_empty(), "{path}: {:?}", page.error_messages);
+        for wanted in texts {
+            assert!(text.contains(wanted), "{path} has no {wanted}: {text}");
+        }
+    };
+    let post = |path: &str, fields: &[(&str, Value)]| {
+        let parameters: BTreeMap<String, Value> = fields
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        screens
+            .test_render(path, parameters, Some("post"))
+            .error_messages
+            .join(" | ")
+    };
+    show(
+        "EdgeNode/Pair/Discover",
+        &["XMPP clients of chat.example.com come through", "Tunnel ports"],
+    );
+    let chosen = post(
+        "EdgeNode/Pair/Discover/chooseSetup",
+        &[
+            ("webOn", Value::string("Y")),
+            ("passthroughNames", Value::string("erp.example.com")),
+            ("xmppOn", Value::string("Y")),
+        ],
+    );
+    assert_eq!(chosen, "");
+    show(
+        "EdgeNode/Pair/Apply",
+        &[
+            "erp.example.com, chat.example.com (passthrough)",
+            "_xmpp-client._tcp.chat.example.com",
+            "_xmpp-server._tcp.chat.example.com",
+        ],
+    );
+    assert_eq!(post("EdgeNode/Pair/Apply/applySetup", &[]), "");
+    show(
+        "EdgeNode/Pair/Apply",
+        &["XMPP clients of chat.example.com come through the edge node"],
+    );
+    // the edge node's host table, read as rows: its services' link is the dialer here
+    let edge_host = || {
+        let key = ("hostName", "chat.example.com");
+        (
+            field(edge, "moqui.edge.EdgeHost", key, "pairedNodeId"),
+            field(edge, "moqui.edge.EdgeHost", key, "modeEnumId"),
+        )
+    };
+    assert_eq!(edge_host(), (NODE.to_string(), HOST_PASSTHROUGH.to_string()));
+    let kept = field(edge, "moqui.edge.EdgeClient", ("pairedNodeId", NODE), "setupJson");
+    assert!(kept.contains(r#""xmppDomain":"chat.example.com""#), "{kept}");
+    // Test: the tunnels are probed, and this node runs no XMPP server, so they fail saying so; the name is there
+    let tested = call(
+        local,
+        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        &[("xmppOn", Value::Bool(true))],
+    );
+    let tests: BTreeMap<String, BTreeMap<String, String>> = list(tested.get("testList"))
+        .into_iter()
+        .map(|row| (row["check"].clone(), row))
+        .collect();
+    for check in ["xmpp", "xmpps"] {
+        assert_eq!(tests[check]["ok"], "false", "{tests:?}");
+        assert!(tests[check]["message"].contains("does not take"), "{tests:?}");
+    }
+    assert_eq!(tests["xmppWeb"]["ok"], "true", "{tests:?}");
+    show("EdgeNode/Status", &["chat.example.com through ports"]);
+    // with no xmpp_domain, nothing is changed
+    moqui_lib::env::clear_property("xmpp_domain");
+    let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
+    let refused = moqui_core::service::sync("org.moqui.impl.EdgeServices.apply#EdgeSetup", &parameters);
+    let errors =
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default();
+    assert!(
+        refused.is_err() || errors.iter().any(|error| error.contains("no XMPP server")),
+        "{refused:?} {errors:?}"
+    );
+    assert_eq!(edge_host().0, NODE, "nothing changed");
+}
+
 #[test]
 fn a_local_node_is_attached_from_the_wizard() {
     if !crate::common::own_process() {
@@ -444,6 +554,7 @@ fn a_local_node_is_attached_from_the_wizard() {
 
     let edge_port = crate::common::free_port();
     let edge_port_text = edge_port.to_string();
+    let (xmpp_port, xmpp_tls_port) = (crate::common::free_port(), crate::common::free_port());
     let edge = crate::common::start_second_with(
         "edge-setup-edge",
         EDGE_CONF,
@@ -456,6 +567,9 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("edge_mail_bounce_domain", "bounce.example.net"),
             ("channels_webhooks_enabled", "true"),
             ("edge_public_addresses", "203.0.113.5, not-an-address"),
+            ("edge_xmpp_port", &xmpp_port.to_string()),
+            ("edge_xmpp_tls_port", &xmpp_tls_port.to_string()),
+            ("edge_xmpp_host", "127.0.0.1"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -491,7 +605,8 @@ fn a_local_node_is_attached_from_the_wizard() {
     let paired = rt.block_on(pair(&pairing)).unwrap();
     assert!(
         paired.edge.capabilities.iter().any(|area| area == "mail")
-            && paired.edge.capabilities.iter().any(|area| area == "chat"),
+            && paired.edge.capabilities.iter().any(|area| area == "chat")
+            && paired.edge.capabilities.iter().any(|area| area == "xmpp"),
         "the Hello names the areas: {:?}",
         paired.edge.capabilities
     );
@@ -526,7 +641,15 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(offer.chat.webhooks);
     assert!(!offer.pass.available, "no mr-pass in the test runtime");
     assert_eq!(offer.pass.client_id, "edge");
-    assert_eq!(offer.not_available, ["calls", "sip", "xmpp"]);
+    assert_eq!(offer.not_available, ["calls", "sip"]);
+    assert!(
+        offer.xmpp.available
+            && offer.xmpp.port == xmpp_port
+            && offer.xmpp.tls_port == xmpp_tls_port
+            && !offer.xmpp.other_node,
+        "the tunnel ports: {:?}",
+        offer.xmpp
+    );
     assert_eq!(offer.addresses, ["203.0.113.5"], "a bad address is left out");
     assert_eq!(
         offer.node_hosts.len(),
@@ -546,6 +669,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         mail_domains: vec!["example.com".to_string()],
         chat_bridge_ids: vec![BRIDGE.to_string()],
         pass_sites: vec!["SITE1".to_string()],
+        xmpp_domain: "Chat.Example.com".to_string(),
     };
     let configured = rt.block_on(dialer.configure(&setup)).unwrap();
     let errors: BTreeMap<&str, &str> = configured
@@ -574,6 +698,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         kept.contains("example.com") && kept.contains(BRIDGE) && kept.contains("SITE1"),
         "{kept}"
     );
+    assert!(kept.contains(r#""xmppDomain":"chat.example.com""#), "{kept}");
     let clients = list(call(&edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]).get("clientList"));
     let ours = clients.iter().find(|row| row["pairedNodeId"] == NODE).unwrap();
     assert!(
@@ -587,6 +712,11 @@ fn a_local_node_is_attached_from_the_wizard() {
         ..EdgeSetup::default()
     }));
     assert!(refused.unwrap_err().contains("not a mail domain"));
+    let refused = rt.block_on(dialer.configure(&EdgeSetup {
+        xmpp_domain: "localhost".to_string(),
+        ..EdgeSetup::default()
+    }));
+    assert!(refused.unwrap_err().contains("not an XMPP domain"));
     assert_eq!(
         hosts(&edge).get("erp.example.com").map(|(node, _)| node.as_str()),
         Some(NODE),
@@ -702,6 +832,20 @@ fn a_local_node_is_attached_from_the_wizard() {
     records.fix_txt("_dmarc.example.com", "v=DMARC1; p=quarantine").unwrap();
     records.fix_ips("erp.example.com", &["203.0.113.5".parse().unwrap()]);
     records.fix_ips("old.example.com", &["198.51.100.7".parse().unwrap()]);
+    let srv = |port: u16, target: &str| moqui_mail::dns::Srv {
+        priority: 0,
+        weight: 5,
+        port,
+        target: target.to_string(),
+    };
+    records.fix_srv(
+        "_xmpp-client._tcp.chat.example.com",
+        &[srv(xmpp_port, "edge.example.net")],
+    );
+    records.fix_srv(
+        "_xmpps-client._tcp.chat.example.com",
+        &[srv(xmpp_tls_port, "office.example.com")],
+    );
     let dns = call(
         &local,
         "org.moqui.impl.EdgeServices.check#EdgeDns",
@@ -716,6 +860,10 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("dkimSelector", Value::string(&offer.mail.dkim_selector)),
             ("dkimRecord", Value::string(&offer.mail.dkim_record)),
             ("mailMta", Value::string(&offer.mail.mta)),
+            ("xmppDomain", Value::string("chat.example.com")),
+            ("xmppHosts", Value::List(vec![Value::string("edge.example.net")])),
+            ("xmppPort", Value::I64(i64::from(offer.xmpp.port))),
+            ("xmppTlsPort", Value::I64(i64::from(offer.xmpp.tls_port))),
         ],
     );
     let rows = list(dns.get("recordList"));
@@ -731,6 +879,11 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(ok("DMARC", "_dmarc.example.com"), "{rows:?}");
     assert!(ok("A/AAAA", "erp.example.com"));
     assert!(!ok("A/AAAA", "old.example.com"));
+    assert!(ok("SRV", "_xmpp-client._tcp.chat.example.com"), "{rows:?}");
+    assert!(
+        !ok("SRV", "_xmpps-client._tcp.chat.example.com"),
+        "a record past the edge node"
+    );
     assert_eq!(dns["passed"], Value::Bool(false));
 
     // Test: round trips on the queue, once the edge node has the copies they check
@@ -797,8 +950,9 @@ fn a_local_node_is_attached_from_the_wizard() {
 
     // the wizard, with the dialer behind the local node's services and this process's role the local node's
     {
-        let _role = LocalRole::take(&dialer, rt.handle());
+        let _role = LocalRole::take(&dialer, rt.handle(), &local);
         walk_the_wizard(&local, &sales);
+        xmpp_area(&local, &edge);
     }
     assert_eq!(server("SYSTEM"), "edge:", "the wizard's Apply");
     restore(&local);

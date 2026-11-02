@@ -45,8 +45,9 @@ pub const EDGE_SMTP_HOST: &str = "edge:";
 pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
 /// The most names of each kind a Configure carries.
 pub const MAX_NAMES: usize = 64;
-/// The areas an edge node does not offer yet (E7 to E9).
-pub const NOT_AVAILABLE: [&str; 3] = ["calls", "sip", "xmpp"];
+/// The areas an edge node does not offer yet (E7, E8). Each gets an offer of its own when it is built, as XMPP has
+/// ([`XmppOffer`]).
+pub const NOT_AVAILABLE: [&str; 2] = ["calls", "sip"];
 
 const SERVER: &str = "moqui.basic.email.EmailServer";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
@@ -86,6 +87,19 @@ pub struct PassOffer {
     pub client_id: String,
 }
 
+/// The edge node's XMPP tunnel (E9): its ports that pipe clients down the link to this node's XMPP server.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct XmppOffer {
+    /// A tunnel port is on.
+    pub available: bool,
+    /// `edge_xmpp_port` (STARTTLS); 0 while off.
+    pub port: u16,
+    /// `edge_xmpp_tls_port` (direct TLS); 0 while off.
+    pub tls_port: u16,
+    /// `edge_xmpp_node` names another local node, so the tunnels do not come here.
+    pub other_node: bool,
+}
+
 /// What an edge node offers a local node.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeOffer {
@@ -96,7 +110,8 @@ pub struct EdgeOffer {
     pub mail: MailOffer,
     pub chat: ChatOffer,
     pub pass: PassOffer,
-    /// Areas not built yet: calls, sip, xmpp.
+    pub xmpp: XmppOffer,
+    /// Areas not built yet: calls, sip.
     pub not_available: Vec<String>,
     /// The edge node's public addresses, when it names them (`edge_public_addresses`).
     pub addresses: Vec<String>,
@@ -113,6 +128,9 @@ pub struct EdgeSetup {
     pub mail_domains: Vec<String>,
     pub chat_bridge_ids: Vec<String>,
     pub pass_sites: Vec<String>,
+    /// The local node's XMPP domain (`xmpp_domain`), when its clients come through the edge node's tunnel ports;
+    /// empty when not. Its `rooms.` and `upload.` names are the domain's and are not sent.
+    pub xmpp_domain: String,
 }
 
 /// A host name of a Configure, and why the edge node did not take it (empty when it did).
@@ -200,8 +218,8 @@ pub fn valid_id(id: &str) -> bool {
 }
 
 /// A Configure as the edge node takes it: everything from a local node is input from any client (§5.8). Names and
-/// domains are normalized, lists capped at [`MAX_NAMES`], duplicates dropped. A bad domain, id or mode is refused
-/// whole; a bad host name is kept, for its own error in the answer.
+/// domains are normalized, lists capped at [`MAX_NAMES`], duplicates dropped. A bad domain (the XMPP domain by
+/// [`check_host_name`]), id or mode is refused whole; a bad host name is kept, for its own error in the answer.
 ///
 /// # Errors
 ///
@@ -264,12 +282,22 @@ pub fn check_setup(setup: &EdgeSetup) -> Result<EdgeSetup, Error> {
         }
         Ok(out)
     };
+    let xmpp_domain = match setup.xmpp_domain.trim() {
+        "" => String::new(),
+        domain => check_host_name(domain).map_err(|why| {
+            Error::new(format!(
+                "{} is not an XMPP domain: {why}",
+                domain.chars().take(80).collect::<String>()
+            ))
+        })?,
+    };
     Ok(EdgeSetup {
         hosts,
         set_hosts: setup.set_hosts,
         mail_domains,
         chat_bridge_ids: ids("chat bridge", &setup.chat_bridge_ids)?,
         pass_sites: ids("PASS site", &setup.pass_sites)?,
+        xmpp_domain,
     })
 }
 
@@ -301,7 +329,7 @@ pub struct PassChoice {
 /// One thing Apply did, or could not do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SetupLine {
-    /// web, mail, chat, pass or link.
+    /// web, mail, chat, pass, xmpp or link.
     pub area: String,
     pub ok: bool,
     pub text: String,

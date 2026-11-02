@@ -126,7 +126,7 @@ feature("Connect shows the answer step 1 kept in the session, and asks the edge 
 })
 
 // Discover's choices go in the session, never a URL (plans/Edge-Node.md §5.7); its transition needs no link.
-feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, and asks Apply again", {
+feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, adds the XMPP domain, and asks Apply again", {
     when() {
         const test = ec.screen.makeTest().rootScreen(systemRoot).renderMode("qvt").withStaticData()
         const post = (parameters) => {
@@ -153,10 +153,13 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
             passCallback: "https://forum.example.com/account/Sso"
         })
         const appliedAfter = ec.web.sessionAttributes.edgeApplied || null
+        // XMPP is this node's xmpp_domain: added to the passthrough names, or refused when there is none
+        const xmppDomain = String(System.getProperty("xmpp_domain") || "").trim().toLowerCase()
+        const xmpp = post({webOn: "Y", passthroughNames: "erp.example.com", xmppOn: "Y"})
         ec.web.sessionAttributes.remove("edgeSetup")
-        return {none, noName, local, chosen, appliedAfter}
+        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp}
     },
-    then({none, noName, local, chosen, appliedAfter}) {
+    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp}) {
         none.errors.includes("at least one area")
         none.kept == null
         noName.kept == null
@@ -169,6 +172,9 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         chosen.kept.emailAccountIds.join(",") == "A1,A2"
         chosen.kept.chatOn == false
         chosen.kept.passSites.join(",") == "SITE1"
+        chosen.kept.xmppOn == false
+        xmppDomain ? xmpp.kept.xmppOn && xmpp.kept.passthroughNames.join(",") == "erp.example.com," + xmppDomain
+            : xmpp.errors.includes("set xmpp_domain") && xmpp.kept == null
     }
 })
 

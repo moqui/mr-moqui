@@ -20,7 +20,8 @@
 //!
 //! Ann is tokio-xmpp over the direct TLS tunnel (SCRAM-SHA-256-PLUS with the local node's tls-exporter, so the TLS is
 //! the local node's); Ben is a raw stream over the STARTTLS tunnel, SASL2 with SCRAM-PLUS and Bind 2. Ann writes to
-//! Ben, he answers, and the chat is on the local node. With the link down both ports are refused.
+//! Ben, he answers, and the chat is on the local node. The wizard's Test step's probe (`xmpp_probe`, §5.7, E10)
+//! reaches the local node's server through both ports. With the link down both ports are refused, and so is the probe.
 
 #![cfg(all(
     unix,
@@ -38,7 +39,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use futures_util::StreamExt as _;
 use moqui_core::edge::LinkState;
-use moqui_host::edge_link::{local_web, Backoff, Dialer, LocalConfig};
+use moqui_host::edge_link::{local_web, xmpp_probe, Backoff, Dialer, LocalConfig};
 use moqui_lib::object::Value;
 use moqui_xmpp::framing::{Frame, StreamReader};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -195,6 +196,13 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
     wait_until(Duration::from_secs(5), "the down connection", || down(&edge, "local-x"));
 
     let factory = Arc::clone(local.server.factory());
+    // the wizard's Test step: a client stream through each tunnel port comes back to this node's server
+    for (port, direct) in [(tunnel_port, false), (tunnel_tls_port, true)] {
+        let reached = rt
+            .block_on(xmpp_probe(Arc::clone(&factory), url.clone(), port, direct))
+            .unwrap_or_else(|why| panic!("the probe (direct {direct}): {why}"));
+        assert!(reached.contains("moqui.local"), "{reached}");
+    }
     let password = |username: &str| {
         as_user(&factory, username, || {
             get(
@@ -308,6 +316,8 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
         )),
         "the direct TLS tunnel answered with the link down"
     );
+    let probe = rt.block_on(xmpp_probe(Arc::clone(&factory), url.clone(), tunnel_port, false));
+    assert!(probe.is_err(), "the probe with the link down: {probe:?}");
     drop(edge);
     assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
 }

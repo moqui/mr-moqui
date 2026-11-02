@@ -59,6 +59,10 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-
 - `/xmpp-websocket` and uploads (`xmpp_upload_url`, `https://<domain>`) ride on web access: the XMPP domain must be
   one of the node's host names on the edge node. In terminate mode the WebSocket has no exporter, so clients sign in
   with SCRAM-SHA-256 there.
+- The Edge Node wizard on the local node sets this up: Discover offers XMPP when the edge node has a tunnel port and
+  this node an `xmpp_domain`, and adds the domain to the passthrough names; Apply sends the domain to the edge node
+  and checks `_xmpp-client._tcp` and `_xmpps-client._tcp` against the edge node's name and ports; Test opens a client
+  stream through each tunnel port, which must reach this node's server, sending no credentials.
 - While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
 - Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
   the local node is away ([plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3).

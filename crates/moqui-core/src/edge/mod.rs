@@ -243,6 +243,13 @@ pub trait EdgeLink: Send + Sync {
         let _ = setup;
         Err(Error::new(NOT_BUILT))
     }
+    /// On a local node, the Test step's XMPP check (§5.7, E10): this node's XMPP server takes tunneled connections of
+    /// the kind (direct TLS when `direct`, else STARTTLS), and a client stream opened to the edge node's tunnel `port`
+    /// reaches it; what was reached, or why not. No credentials are sent.
+    fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, Error> {
+        let _ = (port, direct);
+        Err(Error::new(NOT_BUILT))
+    }
 }
 
 static LINK: InstallSlot<dyn EdgeLink> = InstallSlot::new();

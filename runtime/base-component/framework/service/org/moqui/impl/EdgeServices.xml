@@ -282,9 +282,10 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>On a paired local node: what its edge node offers it now, asked on the link. offer has publicNames
             and hostModes (web access), mail (available, mta moqui or postfix, listener, mxHost, bounceDomain,
-            dkimSelector, dkimRecord), chat (webhooks, publicUrl), pass (available, clientId), notAvailable (areas not
-            built yet: calls, sip, xmpp), addresses (the edge node's public addresses, when it names them) and nodeHosts
-            (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
+            dkimSelector, dkimRecord), chat (webhooks, publicUrl), pass (available, clientId), xmpp (available, port and
+            tlsPort, the tunnel ports edge_xmpp_port and edge_xmpp_tls_port, 0 while off, and otherNode, when
+            edge_xmpp_node names another local node), notAvailable (areas not built yet: calls, sip), addresses (the
+            edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
         <out-parameters>
             <parameter name="offer" type="Map"/>
             <parameter name="edgeUrl"/>
@@ -302,8 +303,13 @@ along with this software (see the LICENSE.md file). If not, see
             server each replaced is kept (edgePriorSmtpHost, edgePriorServerId) and put back when the node unpairs. Chat:
             channels_public_url in runtime/.env, the edge node's address. PASS: pass_edge_client and
             pass_client_(id)_sites and _callback in runtime/.env. Web: hostList (hostName, modeEnumId) is this node's
-            whole list of names on the edge node; a name another node holds is refused there. An area turned off is
-            left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
+            whole list of names on the edge node; a name another node holds is refused there. XMPP (xmppOn): this node's
+            xmpp_domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
+            passthrough when not listed, as uploads (https://domain) and /xmpp-websocket ride on web access; with web
+            access off the edge node must have the name already. Refused before any change when this node has no
+            xmpp_domain or the edge node no tunnel port. Nothing is written locally for XMPP; a line says when this
+            node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ from the edge node's ports. An area turned
+            off is left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
             Refused on an edge node; fails before any change when the edge node's offer cannot be read.</description>
         <in-parameters>
             <parameter name="webOn" type="Boolean" default="false"/>
@@ -317,6 +323,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passOn" type="Boolean" default="false"/>
             <parameter name="passSites" type="List"/>
             <parameter name="passCallback"/>
+            <parameter name="xmppOn" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="lineList" type="List"/>
@@ -332,8 +339,10 @@ along with this software (see the LICENSE.md file). If not, see
             needs mxHost's own SPF record, or a network with one of its addresses), the
             DKIM key at (dkimSelector)._domainkey.(domain) matching dkimRecord, and DMARC; for each of hostNames, A and
             AAAA naming the edge node's addresses (edgeAddresses, else those of mxHost; a family the edge node lists no
-            address of is not checked). recordList has kind, name,
-            expected, found, ok and a note; _sips._tcp and the XMPP SRV records are listed as later. In a build without
+            address of is not checked); for xmppDomain, _xmpp-client._tcp (with xmppPort) and _xmpps-client._tcp (with
+            xmppTlsPort), each record naming one of xmppHosts (the edge node's names, the first the one to set) and that
+            port; a port of 0 is off and its record not listed. recordList has kind, name, expected, found, ok and a
+            note; _sips._tcp (each domain) and _xmpp-server._tcp (federation, C3b) are listed as later. In a build without
             the mail client's resolver (the imap feature) it fails, saying so.</description>
         <in-parameters>
             <parameter name="domains" type="List"/>
@@ -344,6 +353,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="dkimRecord"/>
             <parameter name="mailMta"><description>The edge node's MTA, moqui or postfix: with postfix Rspamd's key
                 signs, which the edge node does not know, so only that a DKIM record is there is checked</description></parameter>
+            <parameter name="xmppDomain"><description>This node's xmpp_domain when its clients come through the edge
+                node; empty for no XMPP records</description></parameter>
+            <parameter name="xmppHosts" type="List"/>
+            <parameter name="xmppPort" type="Integer"/>
+            <parameter name="xmppTlsPort" type="Integer"/>
         </in-parameters>
         <out-parameters>
             <parameter name="recordList" type="List"/>
@@ -359,8 +373,11 @@ along with this software (see the LICENSE.md file). If not, see
             node's mail and can send it (its DKIM key with the MTA in moqui, its Postfix relay answering), with the EDGE
             server, SYSTEM's (with systemMail) and the servers of emailAccountIds on edge:; with chatOn, one in which it
             checks that it takes the webhooks of chatBridgeIds (not checked with none); with passOn, the PASS client
-            settings name passSites and the edge node has mr-pass. No outside mail or provider is needed; the answers
-            are waited for up to 10 seconds. testList has check, label, ok, checked and message; passed is true when
+            settings name passSites and the edge node has mr-pass; with xmppOn, a client stream through each tunnel port
+            the edge node has on (check xmpp for STARTTLS, xmpps for direct TLS; not checked when off) reaches this
+            node's XMPP server, which must take tunneled connections of that kind, and xmpp_domain is one of this node's
+            host names there (xmppWeb). No outside mail or provider is needed; the answers are waited for up to 10
+            seconds. testList has check, label, ok, checked and message; passed is true when
             none failed.</description>
         <in-parameters>
             <parameter name="mailOn" type="Boolean" default="false"/>
@@ -371,6 +388,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="chatBridgeIds" type="List"/>
             <parameter name="passOn" type="Boolean" default="false"/>
             <parameter name="passSites" type="List"/>
+            <parameter name="xmppOn" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="testList" type="List"/>

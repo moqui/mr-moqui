@@ -22,13 +22,15 @@
 use std::net::IpAddr;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::edge::setup::{self, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer};
+use moqui_core::edge::setup::{
+    self, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, XmppOffer,
+};
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
 
 use super::proto::{
     ChatOffer as ProtoChat, ConfigureReply, ConfigureRequest, HostSetting, MailOffer as ProtoMail, Offer,
-    PassOffer as ProtoPass, WebOffer,
+    PassOffer as ProtoPass, WebOffer, XmppOffer as ProtoXmpp, XmppSetup,
 };
 use super::{hosts, store, EdgeConfig};
 
@@ -114,13 +116,20 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             available: factory.components().iter().any(|component| component.name == "mr-pass"),
             client_id: moqui_core::pass_authority::DEFAULT_EDGE_CLIENT.to_string(),
         }),
+        xmpp: Some(ProtoXmpp {
+            available: config.xmpp_tunnel.is_some() || config.xmpp_tls_tunnel.is_some(),
+            port: config.xmpp_tunnel.map_or(0, |address| u32::from(address.port())),
+            tls_port: config.xmpp_tls_tunnel.map_or(0, |address| u32::from(address.port())),
+            other_node: false,
+        }),
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
         node_hosts: Vec::new(),
     }
 }
 
-/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat and pass when they are set up.
+/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat, pass and xmpp when they are
+/// set up.
 pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let offer = base_offer(factory, config);
     let mut areas = vec!["web".to_string()];
@@ -132,6 +141,9 @@ pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> V
     }
     if offer.pass.as_ref().is_some_and(|pass| pass.available) {
         areas.push("pass".to_string());
+    }
+    if offer.xmpp.as_ref().is_some_and(|xmpp| xmpp.available) {
+        areas.push("xmpp".to_string());
     }
     areas
 }
@@ -148,6 +160,9 @@ fn host_setting(host: &EdgeHostInfo) -> HostSetting {
 pub(crate) fn offer(factory: &ExecutionContextFactory, config: &EdgeConfig, node: &str) -> Result<Offer, Error> {
     let mut offer = base_offer(factory, config);
     offer.node_hosts = hosts::list(factory, Some(node))?.iter().map(host_setting).collect();
+    if let Some(xmpp) = offer.xmpp.as_mut() {
+        xmpp.other_node = !config.xmpp_tunnel_node.is_empty() && config.xmpp_tunnel_node != node;
+    }
     Ok(offer)
 }
 
@@ -157,7 +172,7 @@ const HELD: &str = "another local node has this name";
 const OWN: &str = "the edge node answers for this name itself";
 
 /// The host part of an http(s) address, lower case.
-fn url_host(url: &str) -> Option<String> {
+pub(crate) fn url_host(url: &str) -> Option<String> {
     let rest = url.trim().split_once("://")?.1;
     let authority = rest.split(['/', '?', '#']).next()?;
     let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
@@ -271,10 +286,19 @@ pub(crate) fn configure(
         "mailDomains": checked.mail_domains,
         "chatBridgeIds": checked.chat_bridge_ids,
         "passSites": checked.pass_sites,
+        "xmppDomain": checked.xmpp_domain,
     });
+    if !checked.xmpp_domain.is_empty() && !config.xmpp_tunnel_node.is_empty() && config.xmpp_tunnel_node != node {
+        tracing::warn!(
+            "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node names {}, so its clients are not \
+             tunneled there",
+            checked.xmpp_domain,
+            config.xmpp_tunnel_node
+        );
+    }
     store::save_setup(factory, node, &kept_setup.to_string())?;
     tracing::info!(
-        "Edge node: local node {node} set up: {} host names, {} mail domains, {} chat bridges, {} PASS sites",
+        "Edge node: local node {node} set up: {} host names, {} mail domains, {} chat bridges, {} PASS sites, XMPP {}",
         if checked.set_hosts {
             checked.hosts.len().to_string()
         } else {
@@ -282,7 +306,12 @@ pub(crate) fn configure(
         },
         checked.mail_domains.len(),
         checked.chat_bridge_ids.len(),
-        checked.pass_sites.len()
+        checked.pass_sites.len(),
+        if checked.xmpp_domain.is_empty() {
+            "off"
+        } else {
+            checked.xmpp_domain.as_str()
+        }
     );
     Ok(ConfigureReply {
         offer: Some(offer(factory, config, node)?),
@@ -314,6 +343,7 @@ fn setup_of(request: ConfigureRequest) -> EdgeSetup {
         mail_domains: request.mail_domains,
         chat_bridge_ids: request.chat_bridge_ids,
         pass_sites: request.pass_sites,
+        xmpp_domain: request.xmpp.map(|xmpp| xmpp.domain).unwrap_or_default(),
     }
 }
 
@@ -325,6 +355,9 @@ pub(crate) fn request_of(setup: &EdgeSetup) -> ConfigureRequest {
         chat_bridge_ids: setup.chat_bridge_ids.clone(),
         pass_sites: setup.pass_sites.clone(),
         set_hosts: setup.set_hosts,
+        xmpp: (!setup.xmpp_domain.is_empty()).then(|| XmppSetup {
+            domain: setup.xmpp_domain.clone(),
+        }),
     }
 }
 
@@ -334,6 +367,9 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
     let mail = offer.mail.unwrap_or_default();
     let chat = offer.chat.unwrap_or_default();
     let pass = offer.pass.unwrap_or_default();
+    let xmpp = offer.xmpp.unwrap_or_default();
+    // a port that is not one (0, or past u16 from a newer peer) is off
+    let port = |port: u32| u16::try_from(port).unwrap_or(0);
     EdgeOffer {
         public_names: web.public_names,
         host_modes: web.modes,
@@ -353,6 +389,12 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
         pass: PassOffer {
             available: pass.available,
             client_id: pass.client_id,
+        },
+        xmpp: XmppOffer {
+            available: xmpp.available,
+            port: port(xmpp.port),
+            tls_port: port(xmpp.tls_port),
+            other_node: xmpp.other_node,
         },
         not_available: offer.not_available,
         addresses: offer.addresses,

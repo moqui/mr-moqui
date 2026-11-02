@@ -16,8 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     end to end, each with a pass or fail line (org.moqui.impl.EdgeServices.test#EdgeSetup): the link is up; mail in
     (the edge node takes mail for the first chosen account's address, and its answer comes back on the queue as
     inbound mail does) and mail out (it takes this node's mail, through the EDGE mail server); chat (it takes the
-    chosen bridges' webhooks); PASS (the client settings are there and the edge node has mr-pass). No outside mail or
-    provider is needed. A check with nothing to check (no account, no bridge) says it was not checked. The test runs
+    chosen bridges' webhooks); PASS (the client settings are there and the edge node has mr-pass); XMPP (a client
+    stream through each of the edge node's tunnel ports reaches this node's XMPP server, and the domain is one of this
+    node's host names there, for uploads). No outside mail or provider is needed. A check with nothing to check (no account, no bridge) says it was not checked. The test runs
     once when the step first shows after Apply, and its result is kept in the session, so a failed Finish shows the
     same result without asking the edge node again; Test again runs it again. Finish goes to the status when the test
     passed, or with "Continue anyway", and forgets the wizard's choices. -->
@@ -72,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
                     mailOn: !!choices.mailOn, mailAddress: account?.emailAddress || '',
                     systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
                     chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
-                    passOn: !!choices.passOn, passSites: choices.passSites || []}).call() || {}
+                    passOn: !!choices.passOn, passSites: choices.passSites || [], xmppOn: !!choices.xmppOn}).call() || {}
                 if (ec.message.hasError()) testError = ec.message.getErrorsString()
                 out = {passed: tested.passed === true, testList: Array.from(tested.testList || []).map((test) =>
                     ({label: test.label, message: test.message, ok: test.ok === true, checked: test.checked !== false}))}
