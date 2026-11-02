@@ -35,7 +35,7 @@
 //!   change notes are `moqui_core::edge`, the delivery loops [`queue`] and [`replicate`].
 //! - **Web access** (§5.3). The edge node answers for the paired nodes' public host names ([`hosts`]). A terminate
 //!   host's requests go down the link as HTTP/2, WebSockets as extended CONNECT ([`web`]); a passthrough host's
-//!   connection, before any TLS, and the SSH tunnel port's go down as byte tunnels ([`tunnel`]).
+//!   connection, before any TLS, and the SSH and XMPP tunnel ports' go down as byte tunnels ([`tunnel`]).
 //! - **Generations.** Each new up connection bumps the local node's link generation on the edge node; the connections of
 //!   an older one are closed and their calls refused, so a stale connection cannot answer or acknowledge.
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
@@ -99,14 +99,19 @@ pub(crate) const CLIENT_HEADER: &str = "x-moqui-edge-client";
 pub(crate) const PROTO_HEADER: &str = "x-moqui-edge-proto";
 /// The `:protocol` of an extended CONNECT (RFC 8441) that opens a byte tunnel down the link.
 pub(crate) const TUNNEL_PROTOCOL: &str = "moqui-tunnel";
-/// The request header that names a tunnel's kind: [`TUNNEL_HTTPS`] or [`TUNNEL_SSH`]. The local node picks the
-/// listener; the edge node never names an address.
+/// The request header that names a tunnel's kind: [`TUNNEL_HTTPS`], [`TUNNEL_SSH`], [`TUNNEL_XMPP`] or
+/// [`TUNNEL_XMPPS`]. The local node picks the listener; the edge node never names an address.
 pub(crate) const TUNNEL_HEADER: &str = "x-moqui-tunnel";
 /// A passthrough connection: a PROXY v2 header with the client's address, then the client's TLS, which the local node
 /// ends with its own certificate.
 pub(crate) const TUNNEL_HTTPS: &str = "https";
 /// A connection to the edge node's SSH tunnel port, piped to the local node's SSH server.
 pub(crate) const TUNNEL_SSH: &str = "ssh";
+/// A connection to the edge node's XMPP port (`edge_xmpp_port`, 5222): an XMPP client stream with STARTTLS, which the
+/// local node's XMPP server serves and ends the TLS of.
+pub(crate) const TUNNEL_XMPP: &str = "xmpp";
+/// A connection to the edge node's direct TLS XMPP port (`edge_xmpp_tls_port`, 5223, XEP-0368), likewise.
+pub(crate) const TUNNEL_XMPPS: &str = "xmpps";
 
 /// The `:authority` of the link's gRPC requests. The connection is already the right one, so it only has to be a
 /// valid URI.
@@ -364,6 +369,12 @@ pub struct EdgeConfig {
     pub ssh_tunnel: Option<std::net::SocketAddr>,
     /// The paired node the SSH tunnel goes to (`edge_ssh_tunnel_node`); empty for the only paired node.
     pub ssh_tunnel_node: String,
+    /// The ports that pipe XMPP clients down a link: STARTTLS (`edge_xmpp_port`) and direct TLS
+    /// (`edge_xmpp_tls_port`), both on `edge_xmpp_host`; each none when empty.
+    pub xmpp_tunnel: Option<std::net::SocketAddr>,
+    pub xmpp_tls_tunnel: Option<std::net::SocketAddr>,
+    /// The paired node the XMPP tunnels go to (`edge_xmpp_node`); empty for the only paired node.
+    pub xmpp_tunnel_node: String,
     /// The page a terminate host answers with while its node's link is down (`edge_offline_page`, else the default).
     pub offline_page: std::sync::Arc<str>,
     /// How long opening a tunnel or forwarding a request head down a link may take.
@@ -388,35 +399,38 @@ impl EdgeConfig {
             pairing_calls: 4,
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
-            ssh_tunnel: ssh_tunnel(),
+            ssh_tunnel: tunnel_bind("edge_ssh_tunnel_port", "edge_ssh_tunnel_host", "the SSH tunnel"),
             ssh_tunnel_node: moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_node")
                 .trim()
                 .to_string(),
+            xmpp_tunnel: tunnel_bind("edge_xmpp_port", "edge_xmpp_host", "the XMPP tunnel"),
+            xmpp_tls_tunnel: tunnel_bind("edge_xmpp_tls_port", "edge_xmpp_host", "the XMPP direct TLS tunnel"),
+            xmpp_tunnel_node: moqui_lib::env::get_prop_or_env("edge_xmpp_node").trim().to_string(),
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
         }
     }
 }
 
-/// `edge_ssh_tunnel_port` on `edge_ssh_tunnel_host` (default all addresses), none when the port is empty or not a
-/// port.
-fn ssh_tunnel() -> Option<std::net::SocketAddr> {
-    let port = moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_port");
+/// A tunnel port's address: the port property on the host property (default all addresses), none when the port is
+/// empty, or not a port, or the host not an IP address (logged as `what` being off).
+fn tunnel_bind(port_name: &str, host_name: &str, what: &str) -> Option<std::net::SocketAddr> {
+    let port = moqui_lib::env::get_prop_or_env(port_name);
     let port = port.trim();
     if port.is_empty() {
         return None;
     }
     let Ok(port) = port.parse::<u16>() else {
-        tracing::error!("edge_ssh_tunnel_port {port} is not a port; the SSH tunnel is off");
+        tracing::error!("{port_name} {port} is not a port; {what} is off");
         return None;
     };
-    let host = moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_host");
+    let host = moqui_lib::env::get_prop_or_env(host_name);
     let ip = match host.trim() {
         "" => std::net::IpAddr::from([0, 0, 0, 0]),
         host => match host.parse() {
             Ok(ip) => ip,
             Err(_) => {
-                tracing::error!("edge_ssh_tunnel_host {host} is not an IP address; the SSH tunnel is off");
+                tracing::error!("{host_name} {host} is not an IP address; {what} is off");
                 return None;
             }
         },

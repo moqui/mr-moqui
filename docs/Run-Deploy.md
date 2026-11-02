@@ -261,6 +261,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `xmpp_upload_seconds` | `300` | The longest a PUT to an upload slot may take |
 | `xmpp_turn_enabled`, `xmpp_turn_per_hour` | `false`, `30` | External services (XEP-0215): TURN credentials for XMPP apps' calls, never to an external user, at most so many a user an hour |
 | `xmpp_scram_decoy_key` | generated | Derives the SCRAM salts of names that are no user's, so they stay the same across restarts and nodes |
+| `xmpp_s2s_port` | empty | Server to server (5269, federation, C3b): not built, nothing listens on it yet |
 | `call_forward_max_hops`, `call_forward_ring_seconds` | `5`, `30` | The most forwards one phone call takes (a user's rules, a ring group's fallback; 1 to 10), and how long a forward to an outside number rings before the call goes on (10 to 120) ([SIP, Call handling](interfaces/SIP.md#call-handling)) |
 | `call_queue_tick_seconds`, `call_transfer_ring_seconds` | `5`, `30` | How often the SIP engine checks each call waiting in a queue (offers, the wait limit, the caller's place; 1 to 30), and how long a blind transfer's target rings before the caller goes to their voicemail (10 to 120) ([SIP, Queues](interfaces/SIP.md#queues), [Transfer and merge](interfaces/SIP.md#transfer-and-merge)) |
 | `call_hold_music_location`, `call_queue_prompt_location` | empty | Hold music for calls on hold and in queues without their own (WAV or Ogg Opus, looped; empty: a tone pattern; use only audio you may use), and a folder of `0.wav` to `9.wav` that speaks a queue caller's place (empty: pips) ([SIP, Queues](interfaces/SIP.md#queues)) |
@@ -273,6 +274,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
+| `edge_xmpp_port`, `edge_xmpp_tls_port`, `edge_xmpp_host`, `edge_xmpp_node` | empty | On an edge node, the ports whose connections go to a local node's XMPP server, STARTTLS (5222) and direct TLS (5223), the address they listen on (empty for every one) and the node (empty for the only one linked) |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
 | `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
 | `edge_mail_mta` | `moqui` in MoquiEdgeConf.xml, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
@@ -730,6 +732,14 @@ node's own names.
   node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
   local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than
   one linked node, `edge_ssh_tunnel_node` names the one.
+- **XMPP.** Set `edge_xmpp_port` (5222) and `edge_xmpp_tls_port` (5223) on the edge node (and `edge_xmpp_host`), and
+  `xmpp_domain` on the local node, not the edge node, which starts no XMPP server. The edge node's web protection
+  admits each connection, and it goes down the link to the local node's XMPP server, which ends the TLS with its
+  certificates for the domain, so channel binding (SCRAM-SHA-256-PLUS) works. The local node needs no XMPP port of
+  its own for this; give any it has the same numbers, which Chat apps shows. `_xmpp-client._tcp` and
+  `_xmpps-client._tcp` name the edge node in public DNS. Uploads and `/xmpp-websocket` go through web access, so the
+  XMPP domain is one of the node's host names. While the link is down clients cannot connect, and retry
+  ([XMPP](interfaces/XMPP.md#behind-an-edge-node)).
 - **Work over the link** (the `<edge>` conf element, the same on both nodes; [plan](../plans/Edge-Node.md) §5.2). A
   service listed in `delegate` runs on the local node when called on the edge node, as the user `_EDGE_`, whose grants
   (the `EDGE_DELEGATE` artifact group) must cover it; it fails at once while the link is down. A `queue-kind` names the

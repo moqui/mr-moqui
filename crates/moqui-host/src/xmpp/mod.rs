@@ -27,6 +27,10 @@
 //!   user, logged in by username (`internal_login_user`, which refuses a disabled account), or as internal work.
 //! - **Pushes.** A subscription to the notification bus's `notification-message` topic, as `/notws` has, hands every
 //!   chat push to the session registry, which keeps the ones for its users.
+//! - **Behind an edge node** (plans/Edge-Node.md §5.4, E9). An edge node starts no XMPP server of its own; its tunnel
+//!   ports (`edge_xmpp_port`, `edge_xmpp_tls_port`) pipe each client down the link, and [`serve_tunneled`] serves the
+//!   stream here as a connection from the client the edge node names, with this node's certificates and TLS, so
+//!   channel binding keeps its exporter. This node needs no listener of its own for that.
 
 pub(crate) mod upload;
 pub(crate) mod ws;
@@ -60,8 +64,20 @@ pub struct XmppSlot {
     pub server: Mutex<Option<Arc<Server>>>,
     /// The STARTTLS and direct TLS listeners' addresses.
     pub addresses: Mutex<(Option<SocketAddr>, Option<SocketAddr>)>,
-    /// The open connections by source, TCP and WebSocket.
+    /// The open connections by source, TCP, WebSocket and tunneled.
     sources: Sources,
+    /// What a stream tunneled from an edge node is served with, while the server runs.
+    intake: Mutex<Option<Intake>>,
+}
+
+/// The TLS settings of both kinds of client connection and the server's runtime, kept whether or not this node
+/// listens itself, so a tunneled stream is served as a listener's connection would be.
+#[derive(Clone)]
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+struct Intake {
+    starttls: Option<TlsAcceptor>,
+    direct: Option<TlsAcceptor>,
+    runtime: tokio::runtime::Handle,
 }
 
 /// A connection counted against its source and the total; dropping it gives the place back.
@@ -116,7 +132,9 @@ pub(crate) struct XmppNode {
 impl Drop for XmppNode {
     fn drop(&mut self) {
         if let Some(factory) = self.factory.upgrade() {
-            *lock(&factory.extension(|_| XmppSlot::default()).server) = None;
+            let slot = factory.extension(|_| XmppSlot::default());
+            *lock(&slot.server) = None;
+            *lock(&slot.intake) = None;
         }
     }
 }
@@ -200,8 +218,19 @@ pub(crate) fn routes(
     }
 }
 
-/// Start the listeners and the subscription when `xmpp_domain` is set.
+/// Start the listeners and the subscription when `xmpp_domain` is set. Never on an edge node, whose client ports
+/// tunnel to its local node (checked for this factory, as a test runs both ends in one process).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
+    if property("xmpp_domain").is_empty() {
+        return None;
+    }
+    if moqui_core::edge::settings(factory).edge_node {
+        tracing::warn!(
+            "XMPP: xmpp_domain is set on an edge node (node_role=edge), which starts no XMPP server: \
+             edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node"
+        );
+        return None;
+    }
     let config = config()?;
     // the services read these: the bookmarks' room JIDs, the URLs of files sent to XMPP clients
     moqui_lib::env::set_property("xmpp_rooms_domain", config.rooms_domain.clone());
@@ -242,6 +271,20 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     *lock(&slot.server) = Some(Arc::clone(&server));
     let runtime_dir = factory.runtime_dir().to_path_buf();
     let sources = Arc::clone(&slot.sources);
+    // both kinds' TLS, for the listeners and for streams an edge node tunnels here
+    let acceptor_of = |direct: bool| match tls_acceptor(&runtime_dir, direct) {
+        Ok(acceptor) => Some(acceptor),
+        Err(err) => {
+            let kind = if direct { "direct TLS" } else { "STARTTLS" };
+            tracing::error!("XMPP: {kind} is off, here and through an edge node: {err}");
+            None
+        }
+    };
+    let intake = Intake {
+        starttls: acceptor_of(false),
+        direct: acceptor_of(true),
+        runtime: runtime.handle().clone(),
+    };
     let mut addresses = (None, None);
     for (port_name, host_name, direct) in [
         ("xmpp_port", "xmpp_host", false),
@@ -259,12 +302,9 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
             .filter(|host| !host.is_empty())
             .unwrap_or_else(|| property("xmpp_host"));
         let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
-        let acceptor = match tls_acceptor(&runtime_dir, direct) {
-            Ok(acceptor) => acceptor,
-            Err(err) => {
-                tracing::error!("XMPP: {port_name} is off: {err}");
-                continue;
-            }
+        let Some(acceptor) = (if direct { &intake.direct } else { &intake.starttls }).clone() else {
+            tracing::error!("XMPP: {port_name} is off: it has no TLS settings");
+            continue;
         };
         let bind = match (host.as_str(), port).to_socket_addrs().map(|mut found| found.next()) {
             Ok(Some(bind)) => bind,
@@ -300,6 +340,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
         ));
     }
     *lock(&slot.addresses) = addresses;
+    *lock(&slot.intake) = Some(intake);
     tracing::info!("XMPP for {} started", server.config.domain);
     Some(XmppNode {
         _runtime: runtime,
@@ -353,6 +394,44 @@ async fn accept_loop(
             drop(admitted);
         });
     }
+}
+
+/// Whether this node's XMPP server runs, to take [`serve_tunneled`].
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn running(factory: &ExecutionContextFactory) -> bool {
+    lock(&factory.extension(|_| XmppSlot::default()).intake).is_some()
+}
+
+/// Serve a stream an edge node tunneled here (plans/Edge-Node.md §5.4) as a client connection from `client`, on the
+/// server's runtime: STARTTLS first, or TLS at once when `direct`. The client's address is the one the edge node
+/// names, so a source blocked for failed sign-ins is refused and the connection is counted against it, as at
+/// [`accept_loop`]. False when it was not taken (the server stopped, that kind has no TLS settings, the source is
+/// blocked or has too many open); the stream is then dropped, which closes it.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn serve_tunneled<S>(factory: &ExecutionContextFactory, stream: S, client: SocketAddr, direct: bool) -> bool
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let slot = factory.extension(|_| XmppSlot::default());
+    let (Some(server), Some(intake)) = (lock(&slot.server).clone(), lock(&slot.intake).clone()) else {
+        return false;
+    };
+    let Some(acceptor) = (if direct { intake.direct } else { intake.starttls }) else {
+        return false;
+    };
+    if moqui_xmpp::conn::blocked(&server, client.ip()) {
+        tracing::debug!("XMPP: a tunneled connection from {client} refused: blocked after failed sign-ins");
+        return false;
+    }
+    let Some(admitted) = admit(&slot.sources, client.ip()) else {
+        tracing::debug!("XMPP: a tunneled connection from {client} refused: too many are open from there or in all");
+        return false;
+    };
+    intake.runtime.spawn(async move {
+        moqui_xmpp::conn::serve_stream(server, stream, client, acceptor, direct).await;
+        drop(admitted);
+    });
+    true
 }
 
 /// The session's service calls, on a request worker.

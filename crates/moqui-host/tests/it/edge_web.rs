@@ -52,8 +52,8 @@ const LOCAL_CONF: &str = r#"<webapp-list><webapp name="webroot"><web-protection 
 const EDGE_CONF: &str = r#"<webapp-list><webapp name="webroot" client-ip-header="X-Forwarded-For" trusted-proxies="127.0.0.1"/></webapp-list>"#;
 
 /// A test certificate authority, and certificates (PEM) it signed.
-struct Authority {
-    root: CertificateDer<'static>,
+pub(crate) struct Authority {
+    pub(crate) root: CertificateDer<'static>,
     issuer: rcgen::Issuer<'static, rcgen::KeyPair>,
 }
 
@@ -67,7 +67,7 @@ fn pem(label: &str, der: &[u8]) -> String {
     format!("-----BEGIN {label}-----\n{}\n-----END {label}-----\n", lines.join("\n"))
 }
 
-fn authority() -> Authority {
+pub(crate) fn authority() -> Authority {
     let key = rcgen::KeyPair::generate().unwrap();
     let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -82,7 +82,7 @@ fn authority() -> Authority {
 }
 
 /// A certificate and key (PEM) for `names`.
-fn issue(authority: &Authority, names: &[&str]) -> (String, String) {
+pub(crate) fn issue(authority: &Authority, names: &[&str]) -> (String, String) {
     let key = rcgen::KeyPair::generate().unwrap();
     let names: Vec<String> = names.iter().map(|name| (*name).to_string()).collect();
     let cert = rcgen::CertificateParams::new(names)
@@ -93,7 +93,7 @@ fn issue(authority: &Authority, names: &[&str]) -> (String, String) {
 }
 
 /// An EdgeServices service on the edge node, as an administrator.
-fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTreeMap<String, Value>, String> {
+pub(crate) fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTreeMap<String, Value>, String> {
     let factory = gate.server.factory();
     let context = factory.new_context();
     let _entered = context.enter();
@@ -115,7 +115,7 @@ fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTr
 }
 
 /// Pair `node` with the edge node: its key and the edge node's pin.
-fn pair_node(
+pub(crate) fn pair_node(
     rt: &tokio::runtime::Runtime,
     edge: &Gate,
     url: &str,
@@ -130,7 +130,7 @@ fn pair_node(
 }
 
 /// Whether the edge node has `node`'s down connection.
-fn down(edge: &Gate, node: &str) -> bool {
+pub(crate) fn down(edge: &Gate, node: &str) -> bool {
     let out = call(edge, "get#EdgeClients", &[]).unwrap();
     let Some(Value::List(list)) = out.get("clientList") else {
         panic!("clientList: {out:?}")
@@ -141,7 +141,7 @@ fn down(edge: &Gate, node: &str) -> bool {
     })
 }
 
-fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
+pub(crate) fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     let started = Instant::now();
     while !check() {
         assert!(started.elapsed() < limit, "{what}");
@@ -149,7 +149,7 @@ fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     }
 }
 
-fn wait_status(dialer: &Dialer, limit: Duration, what: &str, check: impl Fn(&LinkStatus) -> bool) {
+pub(crate) fn wait_status(dialer: &Dialer, limit: Duration, what: &str, check: impl Fn(&LinkStatus) -> bool) {
     let started = Instant::now();
     loop {
         let status = dialer.status();

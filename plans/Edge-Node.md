@@ -1,6 +1,6 @@
 # Edge Node
 
-Status 2026-11-02: E0–E4, E5a, E5b, E6 and E10 built; E7–E9 (calls, SIP, XMPP) and E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
+Status 2026-11-02: E0–E4, E5a, E5b, E6, E9 and E10 built; E7, E8 (calls, SIP) and E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
 its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
 access. Mail crosses the link, with the MTA in moqui on the edge node by default (E5b) or Postfix and Rspamd beside it
@@ -12,7 +12,8 @@ built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As b
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
 built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
-(E5b)"), E6's in §5.4 ("As built (E6)"), and E10's, the wizard's Discover, Apply and Test, in
+(E5b)"), E6's in §5.4 ("As built (E6)"), E9's, the XMPP tunnel with the design of C3b's and C6b's split, in §5.4
+("As built (E9)"), and E10's, the wizard's Discover, Apply and Test, in
 [§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)"). A real local node attached through the wizard on a
 served Maximal build, with real DNS, is pending.
 
@@ -326,7 +327,7 @@ There are four ways, and each comms area uses some of them:
 | Way | Direction | While the local node is away | Used for |
 |---|---|---|---|
 | **Delegate** | Edge node to local: a synchronous gRPC call of a named service | Fails at once with "local node offline" | Call routing (`VoiceServices.receive#PhoneCall`), registrar checks, call media events and captions, PASS authority calls; XMPP stanzas under C3b |
-| **Queue** | Either way: durable and ordered, delivered at least once and applied once by receipt | Waits on the edge node (a setting, 14 days by default, with a size cap) | Inbound mail, SMS, MMS and other bridge events, voicemail and recordings, delivery reports |
+| **Queue** | Either way: durable and ordered, delivered at least once and applied once by receipt | Waits on the edge node (a setting, 14 days by default, with a size cap) | Inbound mail, SMS, MMS and other bridge events, voicemail and recordings, delivery reports; XMPP stanzas both ways and Matrix transactions in, under C3b and C6b (§5.4) |
 | **Replicate** | Local to edge node; read-only on the edge node; driven by commits, with a cursor and a full resync | The edge node answers from its copy | Recipient addresses; trunk config (`get#EngineConfig`, with `authJson`); each phone number's fallback (voicemail box, greeting, outside number); bridge webhook secrets; PASS site info and, later, cached public pages |
 | **Tunnel** | Raw bytes, edge node to local (TLS passthrough, SSH, XMPP) or local to edge node (SMTP submission) | Refused, or the offline page | Web access in passthrough, SSH, XMPP until C3b |
 
@@ -514,7 +515,8 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   is at most 64 KiB (rustls's own buffer limit comes first). The down connection takes 1024 streams, of which tunnels
   and forwarded WebSockets take at most 768 per node, so the link's calls and plain requests keep room; past that a new
   one is refused. Its windows adapt to the link, and the local node's own body limits apply.
-- **Metrics.** `moqui.edgelink.forwards`, `moqui.edgelink.tunnels` (by kind: https, ssh, websocket),
+- **Metrics.** `moqui.edgelink.forwards`, `moqui.edgelink.tunnels` (by kind: https, ssh, websocket; E9 adds xmpp,
+  xmpps),
   `moqui.edgelink.offline`, `moqui.edgelink.refused` and the gauge `moqui.edgelink.tunnels.active`.
 - **Tests.** `tests/it/edge_web.rs` runs both ends as real servers in one process: the local node starts first, then
   the edge node with `node_role=edge`. In both modes it checks an app page, a `/notws` socket, a DAV PROPFIND and git's
@@ -780,8 +782,78 @@ release.
 - First, tunnel 5222 and 5223 to the local node, with `/xmpp-websocket` over web access.
   - The local node holds the certificates for the domain, `rooms.` and `upload.`.
   - Clients cannot connect while the local node is away. They retry, and their messages wait in MAM as today.
-- C3b's s2s belongs on the edge node, with stanzas to local users queued while the local node is away. Plan C3b with
-  this split.
+- C3b's s2s belongs on the edge node, with stanzas to local users queued while the local node is away (the split
+  below).
+
+**As built (E9).**
+- **Tunnel ports.** `edge_xmpp_port` (STARTTLS, 5222) and `edge_xmpp_tls_port` (direct TLS, 5223) on
+  `edge_xmpp_host`, each off while empty, pipe each connection down a tunnel of kind `xmpp` or `xmpps`, after the
+  edge node's web protection admits it, as the SSH tunnel does (`edge_link/tunnel.rs`, one listener loop for all
+  three). The node is `edge_xmpp_node`, or the only one linked. At most 256 XMPP tunnels at once, both ports
+  together; they count toward the link's 768 tunnels and WebSockets too.
+- **The local node** (`edge_link/down.rs`, `xmpp::serve_tunneled`) serves the stream in process as a client
+  connection from the address the edge node names: the source's block for failed sign-ins and its connection count
+  (20 a source, 10,000 in all) apply as on its own ports, and it runs on the XMPP server's runtime. The TLS ends
+  there with its own certificates, so SCRAM-SHA-256-PLUS has the session's exporter and FAST's `HT-SHA-256-EXPR`
+  works. The local node needs no XMPP listener of its own: it keeps both kinds' TLS settings whether or not it
+  listens. A node with no XMPP server answers the tunnel 404.
+- **moqui-xmpp.** `conn::serve_stream` serves any byte stream (`AsyncRead + AsyncWrite + Unpin + Send`);
+  `serve_tcp` sets `TCP_NODELAY` and calls it. Each write is flushed, as a tunnel may buffer. C3b's s2s streams will
+  run on the same.
+- **No XMPP server on an edge node.** `xmpp::start` checks the factory's role (`edge::settings(factory).edge_node`)
+  and logs a warning when `xmpp_domain` is set there.
+- **Settings the operator keeps in step.** Chat apps (`get#ClientSettings`) shows the local node's `xmpp_port` and
+  `xmpp_tls_port`; give the edge node's tunnel ports the same numbers (5222, 5223), so what it shows works inside
+  and outside. The SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`) name the edge node in public DNS and the
+  local node in the office's. Uploads (`xmpp_upload_url`, `https://<domain>` by default) and `/xmpp-websocket` ride
+  on web access, so the XMPP domain must be an `EdgeHost` of the node; in terminate mode the WebSocket has no
+  exporter, so it signs in with SCRAM-SHA-256 without `-PLUS`.
+- **Tests.** `tests/it/edge_xmpp.rs` (two servers in one process, about 4 s): the edge node inherits the process's
+  `xmpp_domain` and starts no XMPP server; before the link the STARTTLS port answers nothing; a tokio-xmpp client
+  over the direct TLS port (SCRAM-SHA-256-PLUS) and a raw client over the STARTTLS port (STARTTLS, then SASL2 with
+  SCRAM-PLUS and Bind 2) sign in through the edge node and trade direct messages, which are in the local node's
+  direct room; with the link down both ports are refused. `down_tests.rs`: both kinds refused on a node with no XMPP
+  server.
+- **Not done.** A real client (Conversations) through a deployed edge node is checked by hand. The wizard's XMPP
+  area (§5.7) is E10's completion.
+
+**XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](Comms-Framework.md) §4.3).
+- **On the edge node:** the 5269 listener (`xmpp_s2s_port`, documented and off; nothing listens yet) and the
+  outbound s2s streams, with its own certificate for the XMPP domain (and `rooms.`); SASL EXTERNAL with the remote's
+  certificate checked by WebPKI for its domain, and dialback (XEP-0220) as the fallback, with its dialback secret and
+  the remote's `_xmpp-server._tcp` lookups; the RFC 6120 domain checks (a stanza's `from` is the authenticated domain,
+  its `to` is ours), the stanza size and depth limits, and per-domain limits. All of it answers whether the local node
+  is up or not. The s2s code is moqui-xmpp's, over `conn::serve_stream`'s byte streams.
+- **Replicated** (local to edge node): which local JIDs exist (users, and rooms with federation on, §4.4), so a
+  stanza to anyone else is refused at the edge node (`service-unavailable`), the local node away or not.
+- **Inbound, queued:** messages and subscription presence to a local JID go on the queue (kind `xmppIn`: the
+  stanza and the domain it was authenticated as), with the conversation key the local bare JID, so each user's and
+  each room's stanzas keep their order and one busy room does not hold back the others. The local node's handler
+  (`XmppServices.receive#RemoteStanza`, granted to `_EDGE_`) routes it as from a remote sender.
+- **Inbound, delegated:** an iq to a local JID (disco, MUC, PEP) is delegated and answered over the s2s stream;
+  while the local node is away it is answered `recipient-unavailable` (type wait). Ephemeral presence (available,
+  unavailable, a MUC join) is not kept: a join is refused the same way.
+- **Outbound:** the local node's stanzas to remote JIDs (moqui-xmpp's `Outbound`, so XEP-0357 push too) go up on the
+  queue (kind `xmppOut`, conversation key the remote bare JID), and the edge node sends them on its s2s stream to
+  that domain, trying again while the remote is unreachable; one that cannot be sent in time comes back as an error
+  stanza on `xmppIn` to its sender. Through the edge node rather than dialed from the local node: one s2s identity
+  (one certificate, one dialback secret), and an office network that lets out only 443 still federates.
+- **While the local node is away:** remote servers' messages to local users wait on the edge node and arrive in
+  order, once; iqs and joins are refused as above; dialback checks are still answered; nothing is sent out, as the
+  local node is the source. Clients are tunneled as today and cannot connect.
+- **Without an edge node** the same code runs in one process: inbound to the session registry, outbound straight to
+  the s2s streams.
+
+**Matrix federation (C6b) with an edge node.** The federation endpoint (`/_matrix/federation/`, `/_matrix/key/`, on
+443 with `.well-known` delegation, or 8448) is the edge node's own, served there, never forwarded. It checks each
+request's X-Matrix signature against the origin's keys (fetched and cached on the edge node), and each transaction's
+PDUs (hashes, signatures) and EDUs, then queues them (kind `matrixTxn`, conversation key the room id) and answers 200.
+The local node keeps the room DAG, the auth rules, state resolution and the private signing key. Key queries
+(`/_matrix/key/v2/server`) are answered from a copy: the local node signs its key response with a validity of days
+and replicates it, so the edge node answers while it is away. Backfill, state, `make_join` and `send_join` need the
+local node and are delegated, failing while it is away. Outbound federation requests are signed on the local node,
+which needs the private key, and dialed from there (HTTPS out), or sent through the edge node when C6b wants one
+public address. The client-server API (C6a) goes to the local node through web access.
 
 **Voice (SIP).**
 - **On the edge node.** It runs the SIP listeners and RTP, with `sip_public_address` set to its fixed address. Trunks
@@ -1207,7 +1279,7 @@ Its actions are pause, resync and unpair.
 | **E6** | Chat bridges and SMS through the edge node | An SMS sent while the local node is away is delivered after. MMS media is served by the edge node. Met in `tests/it/edge_chat.rs`, with a fake Telnyx; a real Telnyx round trip is pending |
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
-| **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |
+| **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node. Built. Tested in `tests/it/edge_xmpp.rs`: clients over the STARTTLS and direct TLS tunnel ports sign in with SCRAM-SHA-256-PLUS and chat on the local node; refused with the link down. C3b's and C6b's split is designed in §5.4. Not tested: a real client through a deployed edge node |
 | **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
@@ -1221,12 +1293,12 @@ When it is built (done in E10 unless marked):
 - **Run-Deploy:** a topology row and a section, "A local server with an edge node"; the new properties; the PASS
   section's transport. Done.
 - **Guides:** Attack-Surface (done); Mail-Inbound, the edge node as the gateway, then the MTA in moqui (done); SMS and
-  Chat-Bridges, the webhook URL on the edge node and MMS (done); SIP, WebRTC and TURN, the edge node as edge and media
-  node (not yet: with E7 and E8).
+  Chat-Bridges, the webhook URL on the edge node and MMS (done); XMPP, the tunnel ports (done in E9); SIP, WebRTC and
+  TURN, the edge node as edge and media node (not yet: with E7 and E8).
 - **mr-pass:** `docs/Deployment.md`, the edge node as PASS server. Done.
 - **Plans:**
   - Comms-Framework: C3b's and C6's split between edge node and local node. Its line "this plan adds no new mail
-    features" should point here for the MTA and filtering work. Done.
+    features" should point here for the MTA and filtering work. Done; the split made concrete in E9 (§5.4).
   - The two mr-pass plan sentences in §5.5. Done in E4 (`design-shop.md` §13.1 and `implementation-forum.md`'s
     "Local and remote" row now name gRPC, direct or on an edge node's link).
 

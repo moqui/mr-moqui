@@ -144,8 +144,8 @@ pub(crate) fn start(
         Some((server, acceptor)) => {
             let loading = Arc::clone(&server);
             tokio::spawn(async move { loading.load_hosts().await });
-            if let Some(bind) = server.config().ssh_tunnel {
-                super::tunnel::listen_ssh(&server, bind, guard);
+            for port in super::tunnel::ports(server.config()) {
+                super::tunnel::listen(&server, port, Arc::clone(&guard));
             }
             Started {
                 acceptor: Some(acceptor),
