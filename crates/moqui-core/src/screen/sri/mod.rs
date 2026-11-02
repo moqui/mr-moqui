@@ -21,6 +21,7 @@
 //! `makeFormListMultiMap`, `getFormListHeaderValues`, `getFormFieldValues`, form-list aggregation
 //! (`group-by`, `sub-list`, `show-total`), and saved finds.
 
+mod appearance;
 mod fields;
 mod forms;
 mod layout;
@@ -43,6 +44,7 @@ use super::render::RenderState;
 use crate::context::Error;
 use crate::web;
 
+pub(crate) use appearance::{appearance_policy_for_user, is_appearance_key};
 pub use fields::{
     context_value, field_validation, field_validation_rules, get_field_entity_value, get_field_value,
     get_field_value_class, get_field_value_plain_string, get_field_value_string, get_field_value_string_for,

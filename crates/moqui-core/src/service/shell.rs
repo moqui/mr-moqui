@@ -37,6 +37,7 @@ pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, get_shell_counts)?;
+    rust_service!(map, get_appearance_policy)?;
     rust_service!(map, publish_shell_counts)?;
     Ok(())
 }
@@ -126,6 +127,20 @@ fn text(parameters: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .filter(|value| !is_empty(value))
         .map(to_plain_string)
         .filter(|text| !text.trim().is_empty())
+}
+
+/// `get#AppearancePolicy`: the appearance policy of the current user's Quasar theme, as JSON. The shell sends it to
+/// the page; the preference facade checks it before an appearance preference is written.
+fn get_appearance_policy(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let user_id = crate::user::current_user_id().ok().flatten();
+    let policy = crate::screen::sri::appearance_policy_for_user(user_id.as_deref());
+    Ok(BTreeMap::from([(
+        "policy".to_string(),
+        Value::string(policy.as_json()),
+    )]))
 }
 
 /// `get#ShellCounts`: the counts of `userId`, the current user when it is empty. Out: `counts`, null when there are

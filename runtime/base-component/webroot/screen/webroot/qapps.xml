@@ -74,7 +74,6 @@ along with this software (see the LICENSE.md file). If not, see
                 if (sri.getShellProviders('notificationTopics').apps.some((app) => app.name === startPref)) startApp = startPref
             } catch (e) { ec.logger.warn('Start app ' + startPref + ' not checked: ' + e) }
         }
-        const density = (ec.user.userId && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'
         const logoList = sri.getThemeValues('STRT_HEADER_LOGO')
         const titleList = sri.getThemeValues('STRT_HEADER_TITLE')
         // STRT_AVATAR_URL is a template with the characters ${userId}. Do not expand it here: the browser replaces the user id.
@@ -91,6 +90,25 @@ along with this software (see the LICENSE.md file). If not, see
             'THEME_PRIMARY_COLOR', 'THEME_PRIMARY_COLOR_DARK', 'THEME_COLOR_OVERRIDES', 'THEME_MOTION', 'THEME_LINE_HEIGHT', 'THEME_LINKS_UNDERLINE', 'THEME_RADIUS']
         const appearanceValues = {}
         for (const key of appearanceKeys) { const value = ec.user.userId ? ec.user.getPreference(key) : null; if (value) appearanceValues[key] = String(value) }
+        // The user appearance policy of the theme (plans/Themes.md, Appearance policy): the controls it locks are left out of the
+        // page, so the shell applies the theme's own values; a preference it locks is refused by ec.user.setPreference too.
+        let appearancePolicy = { appearance: true, mode: '', scheme: true, accent: false, fonts: true, sizes: true, motion: true, density: true, colors: true }
+        try {
+            const policyText = ec.service.sync().name('org.moqui.impl.ShellServices.get#AppearancePolicy').disableAuthz().call().policy
+            if (policyText) appearancePolicy = Object.assign(appearancePolicy, JSON.parse(policyText))
+        } catch (e) { ec.logger.error('Appearance policy not read: ' + e) }
+        if (!appearancePolicy.appearance) {
+            for (const key of appearanceKeys) delete appearanceValues[key]
+        } else {
+            if (appearancePolicy.scheme === false) delete appearanceValues.THEME_COLOR_SCHEME
+            if (appearancePolicy.accent === false) { delete appearanceValues.THEME_PRIMARY_COLOR; delete appearanceValues.THEME_PRIMARY_COLOR_DARK }
+            if (appearancePolicy.fonts === false) { delete appearanceValues.THEME_FONT_BODY; delete appearanceValues.THEME_FONT_HEADING; delete appearanceValues.THEME_FONT_MONO }
+            if (appearancePolicy.sizes === false) { delete appearanceValues.THEME_SIZE_SMALL; delete appearanceValues.THEME_SIZE_LARGE }
+            if (appearancePolicy.motion === false) { delete appearanceValues.THEME_MOTION; delete appearanceValues.THEME_LINE_HEIGHT; delete appearanceValues.THEME_LINKS_UNDERLINE; delete appearanceValues.THEME_RADIUS }
+            if (appearancePolicy.colors === false) delete appearanceValues.THEME_COLOR_OVERRIDES
+        }
+        const density = appearancePolicy.density === false ? 'comfortable' :
+            ((ec.user.userId && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable')
         const textHash = (text) => { let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0; return hash.toString(36) }
         const colorSchemes = []
         const schemeRows = ec.entity.find('moqui.screen.ScreenColorScheme').condition('screenThemeId', sri.getCurrentThemeId())
@@ -149,13 +167,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (font && font.stylesheet && !appearanceLinks.some((link) => link.href === font.stylesheet))
                 appearanceLinks.push({ id: 'm-font-' + role, href: font.stylesheet })
         }
-        const darkPref = ec.user.getPreference('QUASAR_DARK')
+        const darkPref = appearancePolicy.mode || ec.user.getPreference('QUASAR_DARK')
         qvtConfig = {
             pageTraceId: ec.context.sharedMap.telemetryPageTraceId || '', rum: rumSettings,
             sessionToken: ec.web.sessionToken, appHost: ec.web.getHostName(true), appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
             userId: ec.user.userId, username: ec.user.username, userFullName: (ec.user.userAccount && ec.user.userAccount.userFullName) || '',
             locale: localeTag, timeZone: ec.user.timeZone, quasarLang: quasarLang.replace(/-([a-zA-Z])/g, (m, ch) => ch.toUpperCase()),
-            darkMode: darkPref == 'auto' ? 'auto' : darkPref == 'true', leftOpen: ec.user.getPreference('QUASAR_LEFT_OPEN') == 'true',
+            darkMode: darkPref == 'auto' ? 'auto' : darkPref == 'true' || darkPref == 'dark', leftOpen: ec.user.getPreference('QUASAR_LEFT_OPEN') == 'true',
             leftMini: ec.user.getPreference('QUASAR_LEFT_MINI') == 'true',
             density: density, startApp: startApp,
             notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
@@ -166,7 +184,8 @@ along with this software (see the LICENSE.md file). If not, see
             // Assist (js/WebrootAssist.js): the agents are built and on, and the user may use them (AgentUse); else the drawer makes no request
             assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
             userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
-            appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, defaultSchemeId: defaultSchemeId, links: appearanceLinks },
+            appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, defaultSchemeId: defaultSchemeId,
+                links: appearanceLinks, policy: appearancePolicy },
             preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
             avatarUrl: avatarList.length ? String(avatarList[0]) : '',
             qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },

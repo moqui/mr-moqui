@@ -13,8 +13,10 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Theme (System): the look of the current screen theme, for a corporate branding without code. The resources are the
-    ScreenThemeResource rows of the theme: the shell's logo (STRT_HEADER_LOGO, the top left corner), its title and footer items,
-    and the STRT_DEFAULT_COLOR_SCHEME, the color scheme a user gets without an own choice (the THEME_COLOR_SCHEME preference). The
+    ScreenThemeResource rows of the theme: the shell's logo (STRT_HEADER_LOGO, the top left corner), its title and footer items, the
+    STRT_DEFAULT_COLOR_SCHEME, the color scheme a user gets without an own choice (the THEME_COLOR_SCHEME preference), and the
+    STRT_APPEARANCE_POLICY, the user appearance policy (JSON: what the user may override, and a forced mode; plans/Themes.md,
+    Appearance policy). The
     color schemes are the theme's ScreenColorScheme rows, with a ScreenColorSchemeColor per mode (light, dark) and token (the
     names of webroot/screen/webroot/css/WebrootVue.qvt.css without their prefix: primary, page-bg, panel-bg, header-bg, ...); the
     colorSchemeCss transition of the webroot apps screen sends them as one style sheet (webroot/screen/webroot/js/README.md,
@@ -131,11 +133,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <widgets>
         <label type="h5" text="Theme" style="q-mt-none q-mb-sm"/>
-        <label type="p" text="The look of the theme ${themeId}: its resources (the logo, the title, the footer, the default color scheme), its color schemes and their colors. A change shows on the next page load; a user's own choice of a scheme or accent color (Appearance in the account menu) wins over the theme's default." style="text-caption m-muted q-mb-md"/>
+        <label type="p" text="The look of the theme ${themeId}: its resources (the logo, the title, the footer, the default color scheme), its color schemes and their colors. A change shows on the next page load; a user's own choice of a scheme wins over the theme's default, and the user's accent too when the appearance policy allows it." style="text-caption m-muted q-mb-md"/>
         <container-row>
             <row-col lg="6" md="12">
                 <container-box><box-header title="Resources"/><box-body>
-                    <label type="p" text="One row per resource of the theme. The default color scheme (type Default Color Scheme, a scheme id such as SLATE) is the scheme every user gets without an own choice." style="text-caption m-muted q-mb-sm"/>
+                    <label type="p" text="One row per resource of the theme. The default color scheme (type Default Color Scheme, a scheme id such as SLATE) is the scheme every user gets without an own choice. The user appearance policy (type User Appearance Policy) is JSON such as {&quot;appearance&quot;: false, &quot;mode&quot;: &quot;dark&quot;} for a station whose look is fixed, or {&quot;scheme&quot;: false} to lock one group of controls; the accent is the scheme's primary unless the policy sets &quot;accent&quot;: true, and the other controls are allowed when absent." style="text-caption m-muted q-mb-sm"/>
                     <container-dialog id="CreateResourceDialog" button-text="New Resource">
                         <form-single name="CreateThemeResource" transition="createThemeResource">
                             <field name="screenThemeId"><default-field><hidden default-value="${themeId}"/></default-field></field>
@@ -202,7 +204,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </form-list>
                 </box-body></container-box>
                 <container-box><box-header title="Scheme colors"/><box-body>
-                    <label type="p" text="The colors of the theme's schemes, one row per mode and token. The token names are the ones of the style sheet without their prefix (primary, page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, ...); a CSS color value (#hex, rgb(), hsl(), oklch(), ...)." style="text-caption m-muted q-mb-sm"/>
+                    <label type="p" text="The colors of the theme's schemes, one row per mode and token. The token names are the ones of the style sheet without their prefix (primary, page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, ...); a #hex value shows as a swatch that opens the color picker, and any other CSS color (rgb(), hsl(), oklch(), var()) shows in the CSS value field." style="text-caption m-muted q-mb-sm"/>
                     <container-dialog id="CreateColorDialog" button-text="New Color">
                         <form-single name="CreateSchemeColor" transition="createSchemeColor">
                             <field name="colorSchemeId"><default-field title="Scheme">
@@ -211,7 +213,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 <drop-down><list-options list="colorModeOptions" key="${enumId}" text="${description}"/></drop-down></default-field></field>
                             <field name="colorName"><default-field title="Token">
                                 <drop-down><list-options list="tokenOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
-                            <field name="colorValue"><default-field title="Value"><text-line size="30"/></default-field></field>
+                            <field name="colorValue"><default-field title="Value"><text-line input-type="color" size="30"/></default-field></field>
                             <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                         </form-single>
                     </container-dialog>
@@ -219,7 +221,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="colorSchemeId"><default-field title="Scheme"><display/></default-field></field>
                         <field name="colorModeEnumId"><default-field title="Mode"><display field="colorModeEnum.description"/></default-field></field>
                         <field name="colorName"><default-field title="Token"><display/></default-field></field>
-                        <field name="colorValue"><default-field title="Value"><text-line size="25"/></default-field></field>
+                        <field name="colorValue"><conditional-field condition="colorValue &amp;&amp; colorValue.startsWith('#')" title="Color"><text-line input-type="color" size="10"/></conditional-field><default-field title="CSS value"><text-line size="25"/></default-field></field>
                         <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
                         <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
                         <field name="delete">

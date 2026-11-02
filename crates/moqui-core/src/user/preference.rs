@@ -132,6 +132,13 @@ pub fn set_preference(key: &str, value: Option<&str>) -> Result<(), Error> {
             "Cannot set preference with key {key}, no user logged in."
         )));
     };
+    // The theme's appearance policy decides what the user may change (plans/Themes.md, Appearance policy); the
+    // server checks it here so a request that does not go through the Appearance dialog is refused too.
+    if crate::screen::sri::is_appearance_key(key) {
+        if let Some(reason) = crate::screen::sri::appearance_policy_for_user(Some(&user_id)).denial(key) {
+            return Err(Error::new(reason));
+        }
+    }
     let _authz = without_authz();
     let facade = entity_facade()?;
     let mut row = facade.make_value(USER_PREFERENCE)?;

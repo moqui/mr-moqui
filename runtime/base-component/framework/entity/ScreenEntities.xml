@@ -156,6 +156,9 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- The theme's default color scheme (a ScreenColorScheme id of the theme): the scheme a user gets without an own
                 THEME_COLOR_SCHEME preference, so a corporate look is the theme's default (webroot/screen/webroot/js/README.md, Appearance). -->
             <moqui.basic.Enumeration description="Default Color Scheme (a ScreenColorScheme id of the theme)" enumId="STRT_DEFAULT_COLOR_SCHEME" enumTypeId="ScreenThemeResourceType"/>
+            <!-- The user appearance policy (JSON: appearance, mode, scheme, accent, fonts, sizes, motion, density, colors): what the
+                user may change in Appearance and the mode the theme forces (plans/Themes.md, Appearance policy); absent is permissive. -->
+            <moqui.basic.Enumeration description="User Appearance Policy (JSON: appearance, mode, scheme, accent, fonts, sizes, motion, density, colors)" enumId="STRT_APPEARANCE_POLICY" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="HTML Body CSS Class" enumId="STRT_BODY_CLASS" enumTypeId="ScreenThemeResourceType"/>
             <moqui.basic.Enumeration description="Theme Preview Screenshot" enumId="STRT_SCREENSHOT" enumTypeId="ScreenThemeResourceType"/>
             <!-- The suite shell of /qapps (m-qapps-root): an app suite such as IronStone BOSS names its screens and its counts service

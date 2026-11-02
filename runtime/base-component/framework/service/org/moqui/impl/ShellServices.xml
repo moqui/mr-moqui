@@ -32,6 +32,15 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="userId"><description>Default the current user</description></parameter></in-parameters>
         <out-parameters><parameter name="counts" type="Map"/></out-parameters>
     </service>
+    <service verb="get" noun="AppearancePolicy" type="rust" location="moqui_core::service::shell::get_appearance_policy" transaction="ignore">
+        <description>The appearance policy of the current user's Quasar theme, as JSON: what the user may change in
+            Appearance and the mode the theme forces (plans/Themes.md, Appearance policy). It reads the
+            STRT_APPEARANCE_POLICY resource of the theme found as a render finds it (the user's, a group's, the type's
+            enumCode, a DEFAULT theme of the type; DEFAULT_QUASAR when there is none). A missing resource allows the
+            controls except the accent, which the scheme sets; a resource that is not JSON is logged and locks the appearance controls. The shell sends the policy to the
+            page, and the preference facade refuses a locked preference.</description>
+        <out-parameters><parameter name="policy" type="String"/></out-parameters>
+    </service>
     <service verb="publish" noun="ShellCounts" type="rust" location="moqui_core::service::shell::publish_shell_counts"
             authenticate="false" transaction="ignore">
         <description>Send each user their shell counts (get#ShellCounts) as a NotificationMessage on the topic shellCounts:

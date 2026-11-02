@@ -413,15 +413,18 @@ the whole page; the sizes here are for the small and large text alone.
 | Preference | Values | Applied as |
 |---|---|---|
 | `QUASAR_DARK` | `true`, `false`, `auto` | `$q.dark.set` |
-| `THEME_COLOR_SCHEME` | a `ScreenColorScheme` id of the theme | the style sheet `/apps/colorSchemeCss?colorSchemeId=…&v=…` linked as `m-color-scheme`; none for a scheme without colors (the theme's own) |
+| `THEME_COLOR_SCHEME` | a `ScreenColorScheme` id of the theme | the scheme's CSS inlined from the page config as `m-color-scheme-style` (the `/apps/colorSchemeCss?colorSchemeId=…&v=…` sheet is the same), so switching applies at once; none for a scheme without colors (the theme's own). Without the user's choice the theme's default scheme (`STRT_DEFAULT_COLOR_SCHEME`) is effective |
 | `THEME_FONT_BODY`, `THEME_FONT_HEADING`, `THEME_FONT_MONO` | a `ScreenFontOption` id | `--m-font-body`, `--m-font-heading`, `--m-font-mono` on the html element, and the font's style sheet linked as `m-font-<role>` |
 | `THEME_SIZE_SMALL`, `THEME_SIZE_LARGE` | `0.9`, `1`, `1.1`, `1.25`, `1.4` | `--m-fs-small-scale` (table text, captions, chips, code) and `--m-fs-large-scale` (headings) |
-| `THEME_PRIMARY_COLOR` | a CSS color (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored) | `--q-primary` on the body, `!important`, over the scheme and the Quasar brand; the dark link color is mixed from it |
+| `THEME_PRIMARY_COLOR`, `THEME_PRIMARY_COLOR_DARK` | a CSS color each (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored), one for light and one for dark; only when the theme policy sets `accent: true`, else the scheme's `primary` is the theme's | `--q-primary` per mode in the `m-accent` style sheet, `!important`, over the scheme and the Quasar brand; in dark mode the link color is mixed from the dark accent |
+| `THEME_COLOR_OVERRIDES` | a JSON `{name: {light, dark}}` of scheme token names (a CSS color each) | the same `--q-*`/`--m-*` tokens the scheme uses, in the `m-scheme-colors` style sheet after the scheme's; in dark mode `page-bg` and `panel-bg` also set Quasar's `--q-dark-page` and `--q-dark` |
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
 | `THEME_RADIUS` | `square`, `round` | the body class `m-radius-square` or `m-radius-round` |
 | `SHELL_DENSITY` | `comfortable`, `compact` | see Preferences |
+
+**The theme's appearance policy.** A theme may hold a `STRT_APPEARANCE_POLICY` resource: JSON with `appearance` (default true), an optional forced `mode` (`light`, `dark`, `auto`), and `scheme`, `accent`, `fonts`, `sizes`, `motion`, `density` and `colors` booleans. The accent is locked unless the policy sets `accent: true`, so the scheme's primary colors are the theme's by default. `appearance: false` hides the account menu's Appearance item and dark/light toggle (and BOSS Preferences' Appearance box) and refuses every `THEME_*`, `QUASAR_DARK` and `SHELL_DENSITY` write; a forced mode hides the mode control. The other false values lock their group of controls. `config.appearance.policy` carries the normalized policy to the page, a locked user value is left out of `config.appearance.values`, and `moqui.appearanceAllowed(key)` hides and ignores it. The server refuses a locked key in `ec.user.setPreference`, so the preference routes cannot bypass it. A policy that is not JSON locks the controls; no policy is permissive. See [Themes](../../plans/Themes.md#appearance-policy).
 
 **Tokens.** `../css/WebrootVue.qvt.css` starts with them. The fonts, sizes and line height are on `:root`. The colors are on the
 body for light (`body:not(.body--dark)`) and dark (`body.body--dark`):
@@ -439,8 +442,9 @@ and token name without its prefix (`primary`, `page-bg`, ...).
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
-- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm and High Contrast for `DEFAULT_QUASAR`.
+- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal, Graphite and OpenStep (the NeXTSTEP/OpenStep look, with a charcoal dark mode) for `DEFAULT_QUASAR`.
 - The fonts are `ScreenFontOption` rows: a sans, serif or mono kind, a `font-family` stack and an optional style sheet.
+- The user's per-color overrides are edited in BOSS Preferences › Appearance (the Accent, Surfaces, Text, Lines and Brand colors sections); the framework's Appearance dialog keeps the scheme and the accent colors.
 
 **At page load:**
 - The pre-actions of `qapps.xml` fill `config.appearance`.

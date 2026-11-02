@@ -21,7 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                ec.user.setPreference(preferenceKey, preferenceValue)
+                try { ec.user.setPreference(preferenceKey, preferenceValue) }
+                catch (e) { ec.web.sendJsonError(400, String(e.message || e)) }
             }
             ]]></script></actions>
         <default-response type="none"/>
@@ -30,7 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                ec.user.setPreference(preferenceKey, preferenceValue)
+                try { ec.user.setPreference(preferenceKey, preferenceValue) }
+                catch (e) { ec.web.sendJsonError(400, String(e.message || e)) }
             }
             ]]></script></actions>
         <default-response type="screen-last"/>

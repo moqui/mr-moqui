@@ -59,6 +59,7 @@
     };
     moqui.applyPreference = (key, value) => {
         if (!key) return;
+        if (!moqui.appearanceAllowed(key)) { console.info("The theme does not allow the " + key + " preference, ignored"); return; }
         const text = value === null || value === undefined ? null : String(value);
         const config = qvt.config || moqui.config;
         if (config) {
@@ -95,6 +96,28 @@
         ["colorSchemes", "fonts"].forEach((name) => { if (!Array.isArray(appearance[name])) appearance[name] = []; });
         if (!moqui.isPlainObject(appearance.values)) appearance.values = {};
         return appearance;
+    };
+    // The theme's user appearance policy (config.appearance.policy, a STRT_APPEARANCE_POLICY resource): what the user may
+    // change in Appearance, and the mode the theme forces (plans/Themes.md, Appearance policy). Absent is permissive. The
+    // server refuses a locked preference; this is what hides its control and keeps a stale value from being applied.
+    moqui.appearancePolicy = () => {
+        const appearance = appearanceConfig();
+        return moqui.isPlainObject(appearance.policy) ? appearance.policy : {};
+    };
+    moqui.isAppearanceKey = (key) => key === "QUASAR_DARK" || key === "SHELL_DENSITY" || String(key || "").startsWith("THEME_");
+    moqui.appearanceAllowed = (key) => {
+        if (!moqui.isAppearanceKey(key)) return true;
+        const policy = moqui.appearancePolicy();
+        if (policy.appearance === false) return false;
+        if (key === "QUASAR_DARK") return !policy.mode;
+        if (key === "SHELL_DENSITY") return policy.density !== false;
+        if (key === "THEME_COLOR_SCHEME") return policy.scheme !== false;
+        if (key === "THEME_PRIMARY_COLOR" || key === "THEME_PRIMARY_COLOR_DARK") return policy.accent !== false;
+        if (key === "THEME_FONT_BODY" || key === "THEME_FONT_HEADING" || key === "THEME_FONT_MONO") return policy.fonts !== false;
+        if (key === "THEME_SIZE_SMALL" || key === "THEME_SIZE_LARGE") return policy.sizes !== false;
+        if (key === "THEME_MOTION" || key === "THEME_LINE_HEIGHT" || key === "THEME_LINKS_UNDERLINE" || key === "THEME_RADIUS") return policy.motion !== false;
+        if (key === "THEME_COLOR_OVERRIDES") return policy.colors !== false;
+        return true;
     };
     const setStyleLink = (id, href) => {
         const doc = root.document;
@@ -194,6 +217,7 @@
     moqui.colorSchemeHref = (scheme) => scheme && scheme.custom ?
         (moqui.appRootPath || "") + "/apps/colorSchemeCss?colorSchemeId=" + encodeURIComponent(scheme.id) + "&v=" + encodeURIComponent(scheme.version || "") : null;
     moqui.applyAppearance = (key, value) => {
+        if (!moqui.appearanceAllowed(key)) return;
         const doc = root.document;
         const html = doc && doc.documentElement, body = doc && doc.body;
         const appearance = appearanceConfig();
@@ -8260,10 +8284,10 @@
         template:
             '<m-dialog :model-value="$root.appearanceShow" @update:model-value="$root.appearanceShow = $event" id="m-appearance" :title="labels.appearance" width="560">' +
                 '<div class="q-gutter-y-md">' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.appearanceMode}}</div>' +
+                    '<div v-if="modeAllowed"><div class="text-subtitle2 q-mb-xs">{{labels.appearanceMode}}</div>' +
                         '<q-btn-toggle :model-value="darkMode" @update:model-value="setDark" no-caps unelevated toggle-color="primary" class="m-appearance-toggle" ' +
                             ':options="[{label:labels.modeLight,value:false,icon:\'light_mode\'},{label:labels.modeDark,value:true,icon:\'dark_mode\'},{label:labels.modeAuto,value:\'auto\',icon:\'brightness_auto\'}]"></q-btn-toggle></div>' +
-                    '<div v-if="schemes.length"><div class="text-subtitle2 q-mb-xs">{{labels.colorScheme}}</div>' +
+                    '<div v-if="schemes.length && schemeAllowed"><div class="text-subtitle2 q-mb-xs">{{labels.colorScheme}}</div>' +
                         '<div class="m-appearance-schemes">' +
                             '<button v-for="scheme in schemes" :key="scheme.id" type="button" class="m-appearance-scheme" :class="{\'m-appearance-scheme--on\': scheme.id === schemeId}" ' +
                                     ':aria-pressed="scheme.id === schemeId ? \'true\' : \'false\'" @click="set(\'THEME_COLOR_SCHEME\', scheme.id)">' +
@@ -8273,35 +8297,35 @@
                                 '<span class="m-appearance-scheme-label">{{scheme.description}}</span>' +
                             '</button>' +
                         '</div></div>' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.accentColor}}</div>' +
+                    '<div v-if="accentAllowed"><div class="text-subtitle2 q-mb-xs">{{labels.accentColor}}</div>' +
                         '<div class="row items-center q-gutter-x-sm q-mb-xs"><span class="text-caption" style="min-width:44px;">{{labels.modeLight}}</span>' +
                             '<input type="color" class="m-appearance-color" :value="accentInputLight" @change="set(\'THEME_PRIMARY_COLOR\', $event.target.value)" :aria-label="labels.accentColor + \' (\' + labels.modeLight + \')\'\">' +
                             '<q-btn v-if="value(\'THEME_PRIMARY_COLOR\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR\', \'\')"></q-btn></div>' +
                         '<div class="row items-center q-gutter-x-sm"><span class="text-caption" style="min-width:44px;">{{labels.modeDark}}</span>' +
                             '<input type="color" class="m-appearance-color" :value="accentInputDark" @change="set(\'THEME_PRIMARY_COLOR_DARK\', $event.target.value)" :aria-label="labels.accentColor + \' (\' + labels.modeDark + \')\'\">' +
                             '<q-btn v-if="value(\'THEME_PRIMARY_COLOR_DARK\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR_DARK\', \'\')"></q-btn></div></div>' +
-                    '<div v-if="fonts.length"><div class="text-subtitle2 q-mb-xs">{{labels.fonts}}</div>' +
+                    '<div v-if="fonts.length && fontsAllowed"><div class="text-subtitle2 q-mb-xs">{{labels.fonts}}</div>' +
                         '<div class="row q-col-gutter-sm">' +
                             '<div v-for="role in fontRoles" :key="role.key" class="col-12 col-sm-4">' +
                                 '<q-select dense outlined emit-value map-options :label="role.label" :options="role.options" :model-value="value(role.key)" @update:model-value="set(role.key, $event)">' +
                                     '<template v-slot:option="scope"><q-item v-bind="scope.itemProps"><q-item-section :style="{fontFamily: scope.opt.family || null}">{{scope.opt.label}}</q-item-section></q-item></template>' +
                                 '</q-select></div>' +
                         '</div></div>' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.textSize}}</div>' +
+                    '<div v-if="sizesAllowed"><div class="text-subtitle2 q-mb-xs">{{labels.textSize}}</div>' +
                         '<div v-for="size in sizeRoles" :key="size.key" class="q-mb-xs"><div class="text-caption">{{size.label}}</div>' +
                             '<q-btn-toggle :model-value="value(size.key) || \'1\'" @update:model-value="set(size.key, $event === \'1\' ? \'\' : $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="sizeOptions"></q-btn-toggle></div></div>' +
                     '<div class="row q-col-gutter-md">' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.density}}</div>' +
+                        '<div v-if="densityAllowed" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.density}}</div>' +
                             '<q-btn-toggle :model-value="density" @update:model-value="setDensity" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.densityComfortable,value:\'comfortable\'},{label:labels.densityCompact,value:\'compact\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.corners}}</div>' +
+                        '<div v-if="motionAllowed" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.corners}}</div>' +
                             '<q-btn-toggle :model-value="value(\'THEME_RADIUS\')" @update:model-value="set(\'THEME_RADIUS\', $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.cornersDefault,value:\'\'},{label:labels.cornersSquare,value:\'square\'},{label:labels.cornersRound,value:\'round\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.motion}}</div>' +
+                        '<div v-if="motionAllowed" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.motion}}</div>' +
                             '<q-btn-toggle :model-value="value(\'THEME_MOTION\')" @update:model-value="set(\'THEME_MOTION\', $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.motionAuto,value:\'\'},{label:labels.motionReduce,value:\'reduce\'},{label:labels.motionFull,value:\'full\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.readability}}</div>' +
+                        '<div v-if="motionAllowed" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.readability}}</div>' +
                             '<q-toggle dense :label="labels.lineRelaxed" :model-value="value(\'THEME_LINE_HEIGHT\') === \'relaxed\'" @update:model-value="set(\'THEME_LINE_HEIGHT\', $event ? \'relaxed\' : \'\')"></q-toggle><br>' +
                             '<q-toggle dense :label="labels.linksUnderline" :model-value="value(\'THEME_LINKS_UNDERLINE\') === \'true\'" @update:model-value="set(\'THEME_LINKS_UNDERLINE\', $event ? \'true\' : \'\')"></q-toggle></div>' +
                     '</div>' +
@@ -8317,16 +8341,32 @@
             schemeId() { this.version; return this.value("THEME_COLOR_SCHEME") || this.appearance.defaultSchemeId || (this.schemes[0] && this.schemes[0].id) || ""; },
             darkMode() { this.version; return this.$q.dark.mode; },
             density() { this.version; const config = qvt.config || moqui.config || {}; return config.density === "compact" ? "compact" : "comfortable"; },
+            modeAllowed() { return moqui.appearanceAllowed("QUASAR_DARK"); },
+            schemeAllowed() { return moqui.appearanceAllowed("THEME_COLOR_SCHEME"); },
+            accentAllowed() { return moqui.appearanceAllowed("THEME_PRIMARY_COLOR"); },
+            fontsAllowed() { return moqui.appearanceAllowed("THEME_FONT_BODY"); },
+            sizesAllowed() { return moqui.appearanceAllowed("THEME_SIZE_SMALL"); },
+            motionAllowed() { return moqui.appearanceAllowed("THEME_MOTION"); },
+            densityAllowed() { return moqui.appearanceAllowed("SHELL_DENSITY"); },
+            // one per mode, independent: the user's own color, else the effective scheme's color for that mode, else the
+            // current mode's primary (only when it is the mode of the input), else the Quasar default. The computed --q-primary
+            // is the current mode's, so it never answers for the other mode.
             accentInputLight() {
                 const color = this.value("THEME_PRIMARY_COLOR");
                 if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+                const scheme = this.schemes.find((s) => s.id === this.schemeId);
+                const light = scheme && scheme.light && scheme.light.primary;
+                if (/^#[0-9a-fA-F]{6}$/.test(light)) return light;
                 const doc = root.document;
-                const current = doc && root.getComputedStyle ? root.getComputedStyle(doc.body).getPropertyValue("--q-primary").trim() : "";
+                const current = doc && root.getComputedStyle && !this.darkMode ? root.getComputedStyle(doc.body).getPropertyValue("--q-primary").trim() : "";
                 return /^#[0-9a-fA-F]{6}$/.test(current) ? current : "#1976d2";
             },
             accentInputDark() {
                 const color = this.value("THEME_PRIMARY_COLOR_DARK");
                 if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+                const scheme = this.schemes.find((s) => s.id === this.schemeId);
+                const dark = scheme && scheme.dark && scheme.dark.primary;
+                if (/^#[0-9a-fA-F]{6}$/.test(dark)) return dark;
                 return this.accentInputLight;  // no own dark accent: start from the light one
             },
             fontRoles() {
@@ -8349,12 +8389,13 @@
                 this.version++;
             },
             setDark(mode) {
+                if (!moqui.appearanceAllowed("QUASAR_DARK")) return;
                 this.$q.dark.set(mode);
                 this.$root.setPreference("QUASAR_DARK", mode === "auto" ? "auto" : mode ? "true" : "false");
                 this.version++;
             },
             setDensity(value) { this.set("SHELL_DENSITY", value); },
-            reset() { moqui.appearanceKeys.forEach((key) => { if (this.appearance.values[key]) this.set(key, ""); }); }
+            reset() { moqui.appearanceKeys.forEach((key) => { if (this.appearance.values[key] && moqui.appearanceAllowed(key)) this.set(key, ""); }); }
         }
     });
 
@@ -8490,13 +8531,14 @@
         "                    <q-item-section avatar><q-icon name=\"terminal\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.terminal}}</q-item-section>\n" +
         "                </q-item>\n" +
-        "                <q-item tag=\"label\" clickable>\n" +
+        "                <q-item v-if=\"darkModeAllowed\" tag=\"label\" clickable>\n" +
         "                    <q-item-section avatar><q-icon name=\"dark_mode\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.switchDarkLight}}</q-item-section>\n" +
         "                    <q-item-section side><q-toggle dense :model-value=\"$q.dark.isActive\" @update:model-value=\"switchDarkLight()\"></q-toggle></q-item-section>\n" +
         "                </q-item>\n" +
-        // the Appearance dialog: mode, color scheme, fonts, text sizes and the rest (m-appearance-dialog)
-        "                <q-item id=\"m-account-appearance\" clickable v-close-popup @click=\"appearanceShow = true\">\n" +
+        // the Appearance dialog: mode, color scheme, fonts, text sizes and the rest (m-appearance-dialog); hidden when the
+        // theme's appearance policy leaves the user nothing to change
+        "                <q-item v-if=\"appearanceMenuAllowed\" id=\"m-account-appearance\" clickable v-close-popup @click=\"appearanceShow = true\">\n" +
         "                    <q-item-section avatar><q-icon name=\"palette\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.appearance}}…</q-item-section>\n" +
         "                </q-item>\n" +
@@ -8908,6 +8950,7 @@
                     .catch(moqui.handleAjaxError);
             },
             switchDarkLight() {
+                if (!moqui.appearanceAllowed("QUASAR_DARK")) return;
                 this.$q.dark.toggle();
                 this.setPreference("QUASAR_DARK", this.$q.dark.isActive ? "true" : "false");
             },
@@ -9079,6 +9122,12 @@
             },
             currentLinkUrl() { const search = this.currentSearch; return this.currentLinkPath + (search.length > 0 ? "?" + search : ""); },
             basePathSize() { return this.basePath.split("/").length - this.appRootPath.split("/").length; },
+            // the theme's appearance policy: the dark/light toggle and the Appearance dialog are hidden when it locks them
+            darkModeAllowed() { return moqui.appearanceAllowed("QUASAR_DARK"); },
+            appearanceMenuAllowed() {
+                return moqui.appearancePolicy().appearance !== false && ["THEME_COLOR_SCHEME", "THEME_PRIMARY_COLOR", "THEME_FONT_BODY",
+                    "THEME_SIZE_SMALL", "THEME_MOTION", "SHELL_DENSITY", "QUASAR_DARK"].some((key) => moqui.appearanceAllowed(key));
+            },
             // the first menu entry the breadcrumbs show: past the apps root, and past the current app's root, whose title is in the
             // header (outside an app, as on the AppList, the trail starts below the apps root)
             breadcrumbStart() { return this.basePathSize + (this.currentApp ? 1 : 0); },

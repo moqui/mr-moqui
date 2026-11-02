@@ -307,6 +307,48 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="GRAPHITE" colorModeEnumId="SCM_DARK" colorName="link" colorValue="#b0bec5"/>
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="GRAPHITE" colorModeEnumId="SCM_DARK" colorName="negative-text" colorValue="#ef9a9a"/>
 
+    <!-- OpenStep: the NeXTSTEP/OpenStep look in light mode (a grey desktop, white document panels, a charcoal title bar and
+         white selected rows with black text), with a charcoal dark mode for screens that did not exist in NeXTSTEP. The extra
+         CSS bevels the window boxes and buttons, gives the title bar its edge, and keeps selected rows and active items white. -->
+    <moqui.screen.ScreenColorScheme colorSchemeId="OPENSTEP" screenThemeId="DEFAULT_QUASAR" sequenceNum="11" description="OpenStep"
+            extraCss="#top { font-weight:600; letter-spacing:.01em; } body:not(.body--dark) #top, body.body--dark #top { border-bottom:1px solid rgba(0,0,0,.55); box-shadow:inset 0 1px 0 rgba(255,255,255,.18); } body :is(.m-container-box &gt; .q-card, .q-card.m-board-card) { border:1px solid var(--m-border); box-shadow:2px 2px 0 rgba(0,0,0,.18); } body.body--dark :is(.m-container-box &gt; .q-card, .q-card.m-board-card) { box-shadow:2px 2px 0 rgba(0,0,0,.5); } body .q-btn:not(.q-btn--round) { border-radius:0 !important; } body .q-btn--round { border-radius:0 !important; } body .q-btn--flat:not(.m-link) { background:color-mix(in srgb, var(--m-text) 10%, var(--m-panel-bg)) !important; border:1px solid var(--m-border) !important; box-shadow:inset 1px 1px 0 rgba(255,255,255,.55), inset -1px -1px 0 rgba(0,0,0,.28), 1px 1px 0 rgba(0,0,0,.18) !important; } body .q-btn:not(.q-btn--flat):not(.q-btn--round) { border:1px solid var(--m-border) !important; box-shadow:inset 1px 1px 0 rgba(255,255,255,.55), inset -1px -1px 0 rgba(0,0,0,.28), 1px 1px 0 rgba(0,0,0,.18) !important; } body .q-btn--outline:not(.q-btn--round) { background:color-mix(in srgb, var(--m-text) 10%, var(--m-panel-bg)) !important; } body.body--dark .q-btn--flat:not(.m-link) { box-shadow:inset 1px 1px 0 rgba(255,255,255,.22), inset -1px -1px 0 rgba(0,0,0,.5), 1px 1px 0 rgba(0,0,0,.45) !important; } body.body--dark .q-btn:not(.q-btn--flat):not(.q-btn--round) { box-shadow:inset 1px 1px 0 rgba(255,255,255,.22), inset -1px -1px 0 rgba(0,0,0,.5), 1px 1px 0 rgba(0,0,0,.45) !important; } body .q-table .tbody .tr.selected .td { background:#ffffff !important; color:#000000 !important; } body .q-table .tbody .tr.selected .td:after { content:none !important; } body :is(.q-item.q-item--active, .q-item.q-router-link--active) { background:#ffffff !important; color:#000000 !important; } body .q-tree__node--selected > .q-tree__node-header { background:#ffffff !important; color:#000000 !important; } body .m-board-card--selected { background:#ffffff !important; color:#000000 !important; border-color:#000000 !important; box-shadow:0 0 0 1px #000000 !important; } body .m-drawer > .q-item.m-drawer-on-path { background:#ffffff !important; color:#000000 !important; } body .m-drawer > .q-item.m-drawer-current { background:#ffffff !important; color:#000000 !important; box-shadow:inset 3px 0 0 #000000 !important; } body #top .q-btn { background:transparent !important; border:0 !important; box-shadow:none !important; } body #top #m-search { color:var(--m-text) !important; background:color-mix(in srgb, var(--m-text) 10%, var(--m-panel-bg)) !important; border:1px solid var(--m-border) !important; box-shadow:inset 1px 1px 0 rgba(255,255,255,.55), inset -1px -1px 0 rgba(0,0,0,.28), 1px 1px 0 rgba(0,0,0,.18) !important; } body.body--dark #top #m-search { box-shadow:inset 1px 1px 0 rgba(255,255,255,.22), inset -1px -1px 0 rgba(0,0,0,.5), 1px 1px 0 rgba(0,0,0,.45) !important; } body .q-btn.text-primary:not(.bg-primary) { color:var(--m-text) !important; } body .q-btn.m-btn-tonal:not(.text-negative):not(.text-positive):not(.text-warning):not(.text-info):not(.text-secondary):not(.text-accent):not(.text-grey) { color:var(--m-text) !important; background:color-mix(in srgb, var(--m-text) 10%, var(--m-panel-bg)) !important; } body.body--dark .q-btn.bg-primary { color:#111111 !important; }"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="primary" colorValue="#5f5f5f"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="secondary" colorValue="#7a7a7a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="accent" colorValue="#8a6d3b"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="positive" colorValue="#3d7a3f"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="negative" colorValue="#a8322d"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="info" colorValue="#2f5b91"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="warning" colorValue="#a86a12"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="page-bg" colorValue="#8f94a8"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="panel-bg" colorValue="#f3f3f5"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="header-bg" colorValue="#4a4b57"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="header-fg" colorValue="#f5f5f7"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="drawer-bg" colorValue="#b0b4c4"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="text" colorValue="#141419"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="text-muted" colorValue="#4b4d57"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="link" colorValue="#1f4e79"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="negative-text" colorValue="#7a1f1a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="border" colorValue="#6a6c78"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_LIGHT" colorName="divider" colorValue="#9698a4"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="primary" colorValue="#9a9a9a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="secondary" colorValue="#b0b0b0"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="accent" colorValue="#b08a5a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="positive" colorValue="#5a9e5e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="negative" colorValue="#c25a52"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="info" colorValue="#5d8ab8"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="warning" colorValue="#c08a3e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="page-bg" colorValue="#1b1b20"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="panel-bg" colorValue="#2a2a31"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="header-bg" colorValue="#3a3a43"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="header-fg" colorValue="#f0f0f3"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="drawer-bg" colorValue="#232328"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="text" colorValue="#ececef"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="text-muted" colorValue="#a8a8b0"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="link" colorValue="#9dc3e6"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="negative-text" colorValue="#ffb4a8"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="border" colorValue="#686870"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="OPENSTEP" colorModeEnumId="SCM_DARK" colorName="divider" colorValue="#484850"/>
+
     <!-- Fonts a user may choose (THEME_FONT_BODY, THEME_FONT_HEADING, THEME_FONT_MONO); without a choice the style sheet's Roboto
          and system mono stacks. The web fonts load from Google Fonts, as the theme's Roboto does. -->
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_SANS" fontKindEnumId="SFK_SANS" sequenceNum="1" description="System"

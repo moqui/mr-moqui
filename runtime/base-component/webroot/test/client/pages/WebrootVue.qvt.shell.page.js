@@ -541,13 +541,25 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         moqui.applyPreference("THEME_PRIMARY_COLOR_DARK", "");
         assert.equal(document.getElementById("m-accent"), null, "no accent colors, the style sheet is gone");
         assert.ok(moqui.isCssColor("oklch(0.6 0.15 250)") && moqui.isCssColor("rgb(10, 20, 30)") && !moqui.isCssColor("var(--x)"));
+        // the per-color overrides of the scheme (THEME_COLOR_OVERRIDES): the same tokens the scheme's sheet uses (a brand color
+        // --q-* !important, the rest --m-*; in dark mode page-bg and panel-bg also --q-dark-page and --q-dark), in a sheet after
+        // the scheme's so the user's colors win
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", JSON.stringify({ "page-bg": { light: "#111213" }, secondary: { dark: "#222324" } }));
+        assert.equal(document.getElementById("m-scheme-colors").textContent,
+            "body:not(.body--dark){--m-page-bg:#111213;}" +
+            "body.body--dark{--q-secondary:#222324 !important;}");
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", JSON.stringify({ "panel-bg": { dark: "#333435" } }));
+        assert.equal(document.getElementById("m-scheme-colors").textContent,
+            "body.body--dark{--m-panel-bg:#333435; --q-dark:#333435 !important;}");
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", "not json");
+        assert.equal(document.getElementById("m-scheme-colors"), null, "a preference that is not JSON is ignored");
         moqui.applyPreference("THEME_MOTION", "reduce");
         moqui.applyPreference("THEME_LINKS_UNDERLINE", "true");
         moqui.applyPreference("THEME_RADIUS", "");
         assert.deepEqual([...document.body.classList].filter((name) => name.startsWith("m-")).sort(), ["m-links-underline", "m-motion-reduce"]);
         assert.deepEqual(qvt.config.appearance.values, { THEME_COLOR_SCHEME: "DEFAULT", THEME_SIZE_LARGE: "1.25", THEME_FONT_MONO: "SYSTEM_MONO",
-            THEME_SIZE_SMALL: "1.1", THEME_LINE_HEIGHT: "relaxed", THEME_PRIMARY_COLOR: "red; background:url(x)", THEME_MOTION: "reduce",
-            THEME_LINKS_UNDERLINE: "true" }, "the values are what the user saved, a bad color kept but not applied, the cleared dark accent gone");
+            THEME_SIZE_SMALL: "1.1", THEME_LINE_HEIGHT: "relaxed", THEME_PRIMARY_COLOR: "red; background:url(x)", THEME_COLOR_OVERRIDES: "not json",
+            THEME_MOTION: "reduce", THEME_LINKS_UNDERLINE: "true" }, "the values are what the user saved, a bad color kept but not applied, the cleared dark accent gone");
         // QUASAR_DARK auto follows the system
         let dark = null;
         moqui.webrootVue = { $q: { dark: { set: (value) => { dark = value; } } } };
@@ -565,6 +577,33 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         ["--q-primary", "--m-accent-dark-link"].forEach((name) => document.body.style.removeProperty(name));
         ["m-radius-square", "m-radius-round", "m-links-underline", "m-motion-reduce", "m-motion-full"].forEach((name) => document.body.classList.remove(name));
         ["m-accent", "m-scheme-colors", "m-color-scheme-style"].forEach((id) => { const el = document.getElementById(id); if (el) el.remove(); });
+    }
+});
+
+test("the theme's appearance policy: a locked preference is not applied and a forced mode hides its control", () => {
+    const savedConfig = qvt.config;
+    qvt.config = { preferences: {}, appearance: { values: {}, policy: { appearance: true, mode: "dark", scheme: false, accent: false,
+        colors: false, fonts: true, sizes: true, motion: true, density: true } } };
+    try {
+        assert.equal(moqui.appearanceAllowed("QUASAR_DARK"), false, "a forced mode locks the mode");
+        assert.equal(moqui.appearanceAllowed("THEME_COLOR_SCHEME"), false);
+        assert.equal(moqui.appearanceAllowed("THEME_PRIMARY_COLOR"), false);
+        assert.equal(moqui.appearanceAllowed("THEME_COLOR_OVERRIDES"), false);
+        assert.equal(moqui.appearanceAllowed("THEME_FONT_BODY"), true);
+        assert.equal(moqui.appearanceAllowed("SHELL_DENSITY"), true);
+        assert.equal(moqui.appearanceAllowed("SHELL_START_APP"), true, "not an appearance preference");
+        moqui.applyPreference("THEME_PRIMARY_COLOR", "#123456");
+        assert.equal(qvt.config.appearance.values.THEME_PRIMARY_COLOR, undefined, "a locked preference is not kept");
+        moqui.applyPreference("THEME_FONT_BODY", "INTER");
+        assert.equal(qvt.config.appearance.values.THEME_FONT_BODY, "INTER", "an allowed preference is kept");
+        // appearance false locks every appearance preference, including the mode and density; other preferences stay
+        qvt.config.appearance.policy = { appearance: false };
+        assert.equal(moqui.appearanceAllowed("THEME_FONT_BODY"), false);
+        assert.equal(moqui.appearanceAllowed("QUASAR_DARK"), false);
+        assert.equal(moqui.appearanceAllowed("SHELL_DENSITY"), false);
+        assert.equal(moqui.appearanceAllowed("SHELL_START_APP"), true);
+    } finally {
+        qvt.config = savedConfig;
     }
 });
 
