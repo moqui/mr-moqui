@@ -15,6 +15,9 @@ own their application contexts. No pre-release data migration plan is required.
   Its BSD-2-Clause license permits distribution with MR Moqui; preserve notices for it and its dependencies.
 - Offer **OpenFreeMap** as an initial hosted basemap option, plus **self-hosted PMTiles through ResourceFacade**.
   These are independently selectable configurations; an installation can operate with only local resources.
+- Add **Overture** as an optional regional data source: Places and Buildings first, then regional address lookup
+  after coverage and matching are evaluated. OpenFreeMap remains the initial hosted basemap; Overture is not a
+  prerequisite for Maps, self-hosted archives or the postal-code fallback (§4.3).
 - Provide a full-screen map browser and a reusable local-map dialog for an address, party, facility, asset,
   shipment endpoint or another permitted location. Both use the same map component and source configuration.
 - Support installation-wide metadata/defaults and personal map preferences, saved views and permitted layers.
@@ -146,7 +149,7 @@ Proposed schema, refined during implementation rather than duplicated in each ap
 | MapLayer | Provider/resource reference, format, CRS, tile grid, bounds/zoom, style and asset references, source edition/revision and visibility policy. Dynamic layers name a registered access-checking adapter. |
 | MapProfile | Basemap plus compatible defaults/layers, region/extent, display preferences, external-access policy and permitted user overrides. One installation default; consumers may select another authorized profile. |
 | User preferences and saved views | Use UserPreference for small personal defaults; a proposed MapSavedView stores named extent/projection/layer selections with user ownership. Personal collections use existing resource sharing rather than a new ACL system. |
-| Dataset/import metadata | Source, license, edition/checksum, coverage, import status/counts and activation history for postal data and archives. Reuse DataSource and resource revisions where applicable. |
+| Dataset/import metadata | Source, license, edition/checksum, coverage, import status/counts and activation history for postal data, optional Overture extracts and derived archives. Retain schema version and upstream attribution/provenance. Reuse DataSource and resource revisions where applicable. |
 
 Precedence: installation policy constrains all choices; consumer profile supplies context; allowed personal
 preferences override defaults; an explicit dialog target overrides the initial viewport. Removed or inaccessible
@@ -159,6 +162,49 @@ source grants, attribution, postal dataset availability and optional geocoder. A
 map/search requests while retaining local maps and postal lookup. Public basemap requests may be direct to the
 provider when configured; explain that its server sees the requested area and client connection. A proxy is an
 explicit provider option, not a claim of complete location privacy.
+
+### 4.3 Optional Overture data
+
+Use Overture as an additional source for local search and geographic overlays, with operator-selected regions and
+themes. Keep OpenFreeMap as the initial hosted basemap and the existing PMTiles profile as the self-hosted option.
+Overture imports do not automatically create Mantle parties/facilities or replace user-maintained record locations.
+
+| Order | Scope | Use and boundary |
+| --- | --- | --- |
+| O1 — Places and Buildings | Regional place records and building footprints | Places supplies named destinations/categories for search and saved-place selection; Buildings supplies contextual footprints around homes and facilities. Keep imported reference data separate from private household/business records, with explicit links when useful. Footprints do not establish legal property boundaries. |
+| O2 — regional address lookup | Optional address-point extract and local matching index | Follow O1 with evaluation of the target region's coverage, fields and position quality. Implement parsing, normalization, candidate ranking and ambiguity handling through the shared provider interface; the dataset alone is not a geocoder service. Keep Census/GeoNames postal lookup as the lightweight fallback. |
+
+**Access and rendering.** Overture publishes monthly releases of GeoParquet data, with a STAC catalog for discovering
+release assets. Import only the selected themes/region and needed properties; preserve originals and derived files
+through ResourceFacade. Serve modest overlays as GeoJSON and larger ones as generated MVT/PMTiles with a controlled
+layer schema and style. Index Places for local search without loading a global dataset into basic Geo tables.
+Overture's supplied PMTiles are for data inspection: its documentation advises against production use and gives no
+stable layer/property/zoom or availability contract. They can help evaluate a region, but production overlays use
+our validated, versioned outputs from source data. [Catalog and tile limitations](https://docs.overturemaps.org/getting-data/cloud-sources/)
+
+**Licensing.** Record terms and attribution by theme and contributing source for the selected release. Places
+includes CDLA-Permissive-2.0, Apache-2.0 and CC0 sources; Buildings is distributed under ODbL; Addresses has varied
+source licenses. Do not apply one blanket Overture license. Carry source notices into displayed layers, search
+results and distributed extracts/tiles as required, and account for ODbL obligations when publishing derived
+databases. A newly encountered license or changed terms requires review before activating the affected source.
+[Overture attribution and licensing](https://docs.overturemaps.org/attribution/)
+
+**Versions and identity.** Discover updates through the catalog but pin each import to an explicit release and
+schema version. Stage, validate and compare coverage/counts/schema/licenses before activation; an incompatible or
+incomplete update leaves the previous edition active. Activate matching indexes and tiles together, invalidate
+revision-keyed caches and retain rollback/provenance. Update schedules are optional; map browsing does not require
+live catalog access. Changelogs and bridge files can assist reconciliation, but removals or identity changes must
+not delete linked Mantle records or overwrite user-confirmed coordinates. Keep internal IDs plus an external
+reference containing theme/type, feature or GERS ID and source edition. GERS stability varies; it is not a promise
+that an identifier never changes. [GERS identity and change behavior](https://docs.overturemaps.org/gers/stability/)
+
+**Address limitations.** At the November 2026 research date, Addresses remains alpha, has partial coverage in some
+countries including the US, and may lack postal codes. Points can represent entrances, building/parcel centers or
+road positions. Address IDs are not stable enough for the GERS registry. O2 therefore needs its own reconciliation
+and region-quality checks, and must retain the precision/source rules in §6 rather than label every match exact or
+derive a supposedly complete postal-code directory from incomplete address points.
+[Addresses guide](https://docs.overturemaps.org/guides/addresses/),
+[Places guide](https://docs.overturemaps.org/guides/places/)
 
 ## 5. ResourceFacade and tile streaming
 
@@ -229,6 +275,7 @@ point, delivery entrance and mailing address can differ; preserve their purpose 
 | Other national datasets | Register country-specific import adapters for openly licensed or operator-supplied postal datasets, with explicit CRS, code granularity, update source and terms. For example, Ordnance Survey Code-Point Open provides postcode locations for Great Britain; evaluate its format and attribution for a national adapter. A non-WGS84 source needs a verified transformation before use. |
 | US Census geocoder | Optional address-level provider, separate from downloads: returns coordinates calculated along address ranges in supported US territories. Do not label these rooftop/entrance positions. |
 | Self-hosted Nominatim / Photon | Candidates for full address/place search and reverse geocoding. Photon also supplies autocomplete. Configure independently of basemap choice; operating these services is optional. |
+| Optional Overture Addresses | Later regional import and local matching provider after Places/Buildings (§4.3, O2). Evaluate coverage, source precision and identifier changes; it supplements the postal fallback and is not an initial address-resolution dependency. |
 
 Sources: [USPS Addresses](https://developers.usps.com/addressesv3),
 [USPS City State Product](https://postalpro.usps.com/address-quality/city-state-product),
@@ -286,6 +333,7 @@ for streaming, bounded processing and shared use by browser, TUI, imports and AP
 | Provider adapters | Typed Rust clients for geocoding/normalization, timeouts, quotas, cancellation and allowed caching; configuration and authorization services remain the public boundary. Use existing outbound HTTP/simulation infrastructure. Avoid separate JS proxies per app. |
 | Archive metadata and optional tile extraction | Validate PMTiles headers/indexes and read metadata through ResourceFacade; a later Z/X/Y endpoint can extract a tile without loading the archive. Evaluate the [Rust pmtiles crate](https://docs.rs/pmtiles/latest/pmtiles/) against the facade's range-reader contract before choosing it. No server decoder is required just to stream the original archive. |
 | Geometry/import jobs | Later, shared coordinate validation, extent calculation, reprojection, simplification and large-file normalization to GeoJSON/vector tiles. Evaluate Rust libraries and license/build costs against actual formats; no mandatory GDAL/PROJ or PostGIS dependency in the initial delivery. |
+| Optional Overture ingestion | Bounded regional GeoParquet reads, schema/provenance validation, Places indexing, Buildings overlays and release reconciliation; later address candidate matching. Evaluate Rust Parquet/geometry tooling and prepared-data import options before adding dependencies. ResourceFacade owns input/derived storage; reuse or integrate tile-generation tooling rather than requiring a new Rust cartography engine. |
 | Spatial data queries | Begin with bounded, indexed latitude/longitude queries and domain scope filters. Add spatial indexes/PostGIS or dynamic vector tiles when dataset size/query needs justify them; no unbounded download of all parties/assets to the client. |
 
 Follow [Rust practices](../docs/dev/Practices-Rust.md) and [crate seams](Crate-Split.md): reuse existing lower-level
@@ -329,6 +377,8 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 | P2 — local data and archives | ResourceFacade PMTiles on all four backends, packaged local styles/fonts/icons, US Census postal fallback and an international GeoNames import path, provenance/precision and dataset refresh. Local browsing and postal lookup work with external requests disabled. |
 | P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. |
 | P4 — richer GIS | Configured WMS/WMTS/WFS and additional imports/editing, COG/raster controls, advanced CRS workflows, large-data processing and optional detailed dashboard drill-downs. Prioritize concrete household/business scenarios. |
+| Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. |
+| Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. |
 | Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds and offline mobile packages. Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
 
 Focused implementation checks should cover:
@@ -346,6 +396,10 @@ Focused implementation checks should cover:
   provider failures and no external call merely from opening a locally resolvable address dialog.
 - One full-screen browser flow and the same selected location in the shared dialog, keyboard/phone/TUI behavior,
   source attribution, failed-layer isolation and a generic framework-only installation without Mantle.
+- For optional Overture imports, use small regional fixtures to check Places/Buildings display and attribution,
+  pinned schema/release handling, failed-update rollback, removed/changed external IDs and preservation of linked
+  private records. O2 additionally checks incomplete address/postcode coverage, precision and ambiguous matches;
+  refreshed indexes/tiles must agree on their active edition, with no production dependency on inspection tiles.
 
 These are planned checks, not tests run for this document. Keep normal fixtures/specs well below the slow-test
 threshold; real-provider, whole-dataset or load scenarios require explicit opt-in and user permission when slow.
