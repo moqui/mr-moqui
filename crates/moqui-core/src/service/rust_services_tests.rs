@@ -32,6 +32,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::chat::get_external_users",
         "moqui_core::service::chat::push_signal",
         "moqui_core::service::chat_bridge::check_bridge_token",
+        "moqui_core::service::chat_bridge::edge::apply_edge_webhook",
+        "moqui_core::service::chat_bridge::edge::store_edge_media",
         "moqui_core::service::chat_bridge::get_bridge_capabilities",
         "moqui_core::service::chat_bridge::get_local_actors",
         "moqui_core::service::chat_bridge::run_bridge_deliveries",

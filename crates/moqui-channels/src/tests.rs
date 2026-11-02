@@ -1258,3 +1258,41 @@ fn ec_revoke(bed: &Bed, user: &str) {
     );
     assert_eq!(out_text(&out, "revokedCount"), "1", "{out:?}");
 }
+
+#[test]
+fn an_edge_node_keys_a_webhook_by_its_event_and_their_number() {
+    let request = |body: Json| WebhookRequest {
+        method: "POST".to_string(),
+        headers: vec![("telnyx-signature-ed25519".to_string(), "c2lnbmF0dXJl".to_string())],
+        body: body.to_string().into_bytes(),
+        client_ip: "198.51.100.7".to_string(),
+        now_millis: now(),
+    };
+    let text = json!({"data": {"event_type": "message.received", "id": "ev-9",
+        "payload": {"from": {"phone_number": THEIRS}, "to": [{"phone_number": OURS}]}}});
+    let key = crate::webhook::event_key(&request(text)).unwrap();
+    assert_eq!(key.event_id, "ev-9");
+    assert_eq!(key.conversation.as_deref(), Some(THEIRS));
+    // a receipt: ordered by the number it went to
+    let receipt = json!({"data": {"event_type": "message.finalized", "id": "ev-10",
+        "payload": {"to": [{"phone_number": THEIRS, "status": "delivered"}]}}});
+    let key = crate::webhook::event_key(&request(receipt)).unwrap();
+    assert_eq!(
+        (key.event_id.as_str(), key.conversation.as_deref()),
+        ("ev-10", Some(THEIRS))
+    );
+    // no event id: a hash of the body, the same on the provider's retry (whose signature differs); not JSON: none
+    let key = crate::webhook::event_key(&request(json!({"data": {}}))).unwrap();
+    assert!(
+        key.event_id.starts_with("sha256:") && key.event_id.len() == 71,
+        "{}",
+        key.event_id
+    );
+    assert_eq!(key.conversation, None);
+    let mut retried = request(json!({"data": {}}));
+    retried.headers = vec![("telnyx-signature-ed25519".to_string(), "b3RoZXI=".to_string())];
+    assert_eq!(crate::webhook::event_key(&retried).unwrap().event_id, key.event_id);
+    let mut bad = request(json!({}));
+    bad.body = b"not json".to_vec();
+    assert!(crate::webhook::event_key(&bad).is_none());
+}

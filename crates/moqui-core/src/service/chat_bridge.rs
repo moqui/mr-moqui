@@ -65,6 +65,7 @@ pub(in crate::service) fn register(
     rust_service!(map, get_bridge_capabilities)?;
     rust_service!(map, check_bridge_token)?;
     web::register(map)?;
+    edge::register(map)?;
     Ok(())
 }
 
@@ -175,6 +176,18 @@ pub enum DeliveryOutcome {
     Failed { reason_code: String, error: String },
     /// The attempt may or may not have reached the network, and it cannot tell.
     Uncertain { error: String },
+    /// Not sent: something it needs is not ready yet (its files are on their way to the edge node). Tried again after
+    /// `retry_after_ms`, and the attempt is not counted.
+    Wait { error: String, retry_after_ms: i64 },
+}
+
+/// What [`ChatBridgeAdapter::webhook_event_id`] names of a verified webhook request.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WebhookEventKey {
+    /// The network's id of the event; a repeat of the event has the same.
+    pub event_id: String,
+    /// What the event is ordered with (their number), when it has one.
+    pub conversation: Option<String>,
 }
 
 /// A network adapter. See the module notes.
@@ -208,6 +221,22 @@ pub trait ChatBridgeAdapter: Send + Sync {
     fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
         let _ = (bridge, request);
         Some(WebhookResponse::not_signed())
+    }
+    /// The network's id of the event a request [`Self::verify_webhook`] passed, and what orders it with others (their
+    /// number), for an edge node that queues it for its local node (plans/Edge-Node.md §5.4): the id is the queue
+    /// item's idempotency key, so a repeat is dropped. None when the request names no event; the default names none,
+    /// and an edge node then refuses the request.
+    fn webhook_event_id(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookEventKey> {
+        let _ = (bridge, request);
+        None
+    }
+    /// The work of [`Self::webhook`] after its signature and replay checks: what a local node does with a request its
+    /// edge node verified and queued, with the transport-verified mark set (`apply#EdgeWebhook`). A 2xx answer is
+    /// applied; 409, 429 and 503 wait for another try, not counted; any other is a refusal of the item. The default
+    /// applies nothing (501).
+    fn apply_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
+        let _ = (bridge, request);
+        WebhookResponse::text(501, "this network's webhooks are not applied from a queue")
     }
     /// The bytes of a file a message from the network names (`ChatBridgeServices.store#BridgeMedia`), up to
     /// `max_bytes`. The default fetches nothing.
@@ -571,6 +600,12 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let state = worker(factory);
     if state.started.swap(true, Ordering::SeqCst) {
         return;
+    }
+    if let Some(facade) = factory.entity() {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        fill_webhook_keys(&facade);
     }
     let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
@@ -1173,6 +1208,25 @@ fn deliver_head(
             )?;
             Step::Done
         }
+        DeliveryOutcome::Wait { error, retry_after_ms } => {
+            force_new(facade, DELIVERY, || {
+                // the attempt goes back: only while the row is still this attempt's (see finish)
+                facade
+                    .find(DELIVERY)?
+                    .eq("chatBridgeDeliveryId", Value::string(&delivery_id))
+                    .eq("statusEnumId", Value::string(PENDING))
+                    .eq("attemptCount", Value::I64(attempt))
+                    .disable_authz()
+                    .update_all([
+                        ("attemptCount".to_string(), Value::I64(attempts)),
+                        ("lastErrorText".to_string(), Value::string(&error)),
+                        ("nextAttemptDate".to_string(), stamp(now + retry_after_ms.max(1_000))),
+                        ("leaseOwner".to_string(), Value::Null),
+                        ("leaseExpiresDate".to_string(), Value::Null),
+                    ])
+            })?;
+            Step::Retry
+        }
         DeliveryOutcome::Uncertain { error } => {
             finish(
                 facade,
@@ -1476,7 +1530,14 @@ fn push_state(room_id: &str, seq: i64) {
 mod web;
 pub use web::{
     media, media_token_valid, media_url, replay_finish, replay_take, replay_window_ms, webhook, FetchedMedia,
-    MediaFile, Replay, WebhookRequest, WebhookResponse,
+    MediaFile, Replay, WebhookRequest, WebhookResponse, WEBHOOK_MARK,
+};
+
+#[path = "chat_bridge_edge.rs"]
+mod edge;
+pub use edge::{
+    fill_webhook_keys, media_urls, sweep_edge_media, MediaUrls, KIND_MEDIA, KIND_WEBHOOK, MEDIA_RETRY_MILLIS,
+    REPLICA_SET,
 };
 
 #[cfg(test)]

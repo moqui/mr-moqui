@@ -205,4 +205,23 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="appliedDate" type="date-time"/>
         <relationship type="one" related="moqui.edge.EdgeClient"/>
     </entity>
+
+    <entity entity-name="EdgeMedia" package="moqui.edge" use="transactional" cache="never">
+        <description>On an edge node, a file of a message its local node sends by address (an MMS picture), put here
+            with the send (the queue kind chatMedia), so the network fetches it from the edge node at
+            /channels/{chatBridgeId}/media/{token} (plans/Edge-Node.md §5.4, E6). edgeMediaId is the SHA-256 (hex) of
+            the token, which the local node makes and only it and the network know; location is the file, under
+            dbresource://moqui/edge/media/. Served until expireDate (channels_media_minutes after it came), then
+            removed with its file.</description>
+        <field name="edgeMediaId" type="id-long" is-pk="true"/>
+        <field name="pairedNodeId" type="id"/>
+        <field name="chatBridgeId" type="id"/>
+        <field name="location" type="text-medium"/>
+        <field name="contentType" type="text-short"/>
+        <field name="fileName" type="text-medium"/>
+        <field name="fileSize" type="number-integer"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="createdDate" type="date-time"/>
+        <index name="EDGE_MEDIA_EXPIRE"><index-field name="expireDate"/></index>
+    </entity>
 </entities>

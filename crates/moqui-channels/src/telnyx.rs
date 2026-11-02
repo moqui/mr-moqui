@@ -38,8 +38,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use moqui_core::service::chat_bridge::{
-    media_url, BridgeInfo, Capabilities, ChatBridgeAdapter, DeliveryKind, DeliveryOutcome, DeliveryRequest,
-    FetchedMedia, WebhookRequest, WebhookResponse,
+    media_urls, BridgeInfo, Capabilities, ChatBridgeAdapter, DeliveryKind, DeliveryOutcome, DeliveryRequest,
+    FetchedMedia, MediaUrls, WebhookEventKey, WebhookRequest, WebhookResponse, MEDIA_RETRY_MILLIS,
 };
 use moqui_lib::http::RestClient;
 use moqui_lib::object::Value;
@@ -293,7 +293,10 @@ impl ChatBridgeAdapter for TelnyxSms {
         let outcome = self.send(bridge, request, &config, &ours, &theirs);
         // not sent (refused here or by the provider, or to be tried again): its place in the day's count goes back
         if let Some(parameters) = reserved {
-            if matches!(outcome, DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. }) {
+            if matches!(
+                outcome,
+                DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. } | DeliveryOutcome::Wait { .. }
+            ) {
                 if let Err(error) = crate::call("org.moqui.impl.SmsServices.release#SmsSend", parameters) {
                     tracing::warn!(
                         "a text of bridge {} was not taken off the day's count: {error}",
@@ -311,6 +314,14 @@ impl ChatBridgeAdapter for TelnyxSms {
 
     fn verify_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookResponse> {
         crate::webhook::verify(bridge, &Config::of(&bridge.config), request)
+    }
+
+    fn webhook_event_id(&self, _bridge: &BridgeInfo, request: &WebhookRequest) -> Option<WebhookEventKey> {
+        crate::webhook::event_key(request)
+    }
+
+    fn apply_webhook(&self, bridge: &BridgeInfo, request: &WebhookRequest) -> WebhookResponse {
+        crate::webhook::apply(bridge, &Config::of(&bridge.config), request)
     }
 
     fn fetch_media(&self, bridge: &BridgeInfo, url: &str, max_bytes: u64) -> Result<FetchedMedia, String> {
@@ -349,18 +360,18 @@ impl TelnyxSms {
             );
         }
         let now = jiff::Timestamp::now().as_millisecond();
-        let mut media_urls = Vec::new();
-        for file in &request.attachments {
-            match media_url(&bridge.chat_bridge_id, &file.chat_attachment_id, now) {
-                Some(url) => media_urls.push(url),
-                None => {
-                    return failed(
-                        "mediaUnreachable",
-                        "Files go by address: set channels_public_url (and channels_media_key)",
-                    )
+        // by address, the edge node's on a paired local node: not sent until the files are there
+        let media_urls = match media_urls(&bridge.chat_bridge_id, request, now) {
+            MediaUrls::Ready(urls) => urls,
+            // not counted: the files are on their way to the edge node
+            MediaUrls::Wait(error) => {
+                return DeliveryOutcome::Wait {
+                    error,
+                    retry_after_ms: MEDIA_RETRY_MILLIS,
                 }
             }
-        }
+            MediaUrls::Unreachable(error) => return failed("mediaUnreachable", error),
+        };
         if text.trim().is_empty() && media_urls.is_empty() {
             return failed("empty", "A text has words or a file");
         }

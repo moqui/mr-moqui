@@ -1,16 +1,18 @@
 # Edge Node
 
-Status 2026-11-01: E0–E4 and E5a built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct;
+Status 2026-11-01: E0–E4, E5a and E6 built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct;
 the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches its
 authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
 access. Mail crosses the link with Postfix and Rspamd beside the edge node (E5a); its manual check at a large
-provider is pending. Every question in [§8](#8-decisions) is
+provider is pending. Chat bridges' webhooks and MMS files go through the edge node (E6); a real Telnyx round trip is
+pending. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
 built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
-[§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2.
+[§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2; what E6 built is in §5.4
+("As built (E6)").
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -635,6 +637,72 @@ release.
   for `channels_media_minutes`.
 - Channels that only connect outward need no edge node: Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway.
 
+**As built (E6).**
+- **Kinds and set.** In MoquiDefaultConf.xml beside mail's: queue kinds `chatWebhook` (edge to local,
+  `ChatBridgeServices.apply#EdgeWebhook`) and `chatMedia` (local to edge, `store#EdgeMedia`), and the replicated set
+  `chatBridges`: `ChatBridge` `typeEnumId`, `adapterName`, `statusId` and two new fields, `webhookPublicKey` and
+  `webhookToleranceSeconds`. The edge node never gets `configJson`, so the provider's API key stays on the local node.
+  Telnyx signs with Ed25519, so what the edge node needs is a public key, not a secret. `store#Bridge` copies
+  `configJson`'s `publicKey` and `webhookToleranceSeconds` to the fields. For a bridge saved before E6,
+  `chat_bridge::fill_webhook_keys` does it when the delivery worker starts, and logs an error for an SMS bridge with no
+  key. The status is replicated as it is: the replica copies entity fields only, so it cannot carry a derived disabled
+  flag, and a note is taken on any write to the row anyway, so leaving `statusId` out would not save the
+  connected/not-connected writes. The handlers are Rust in moqui-core (`service/chat_bridge_edge.rs`), granted to
+  `_EDGE_`, and each refuses to run on the other role.
+- **The seam.** `ChatBridgeAdapter` has two more methods: `webhook_event_id`, the event id and their number of a
+  verified request, and `apply_webhook`, the work after the checks. Telnyx's `webhook` is now verify, replay, then
+  `apply_webhook`. A node that is not an edge node works as before, except that Telnyx answers a server failure
+  (`receive#Sms` or `note#DeliveryReceipt` erroring, or a failed outcome other than a refusal) 503 instead of 500, and a
+  text `ingest#Event` refuses for what it is (unknown bridge, bad token or transaction id, batch too large, a local
+  identity) 422. The provider retries either way.
+- **In.** On `node_role=edge`, `/channels/{id}/webhook` reads the bridge from the replica. An unknown bridge, or one
+  that more than one paired node has, gets 401 as before; so does one whose copy has no key, logged as an error naming
+  it. The edge node checks the signature with the adapter's `verify_webhook`, with the bridge's own tolerance, and a
+  disabled bridge then gets 503. It queues the raw request: method, headers without cookies or credentials, the body
+  in base64, the client address and the time it came. The idempotency key is the provider's event id (Telnyx
+  `/data/id`, else the SHA-256 of the body, which a retry sends unchanged), so a repeat is answered 200 `duplicate` and
+  queued once. The conversation key is the bridge and their number. The answer is 200 once the item commits, and 503
+  when it cannot be queued. The local node's `apply#EdgeWebhook` runs only for the queue: the user must be `_edge_` and
+  the item's receipt must be there. It rebuilds the request, with the time it came as its clock, sets `WEBHOOK_MARK`
+  and calls `apply_webhook`, with no second signature check. `ingest#Event`'s transaction id (the event id) still makes
+  a redelivery do nothing. A 2xx answer applies the item. A bridge disabled here, a database that cannot be read, or
+  409, 429 or 503 (a server failure) answers `retryLater`, and the item waits, not counted, to the end of the
+  retention period. A refusal of the data (422, 400), a panic, a bridge not on the local node and a malformed item are
+  counted errors, retried with the queue's backoff up to `queue-max-attempts`.
+- **MMS out.** On a paired local node (`edge_node_url` set, the edge link built in and installed) whose conf lists
+  `chatMedia`, `chat_bridge::media_urls` (which Telnyx's send now calls) puts each file of a send on the edge node. A
+  Lite or Dev build has no link, so it sends by its own address. It queues the `ChatAttachment`'s file as a `chatMedia`
+  item's content, in a transaction of its own. While the link is up it waits up to 2 s for every item to be delivered.
+  Otherwise the send is a new `DeliveryOutcome::Wait`: the attempt is given back and the send is tried again after
+  5 s, so a waiting MMS never fails for attempts and the worker is not held while the link is down. The provider
+  never fetches an address the edge node does not have yet. A failed item makes the send fail (`mediaUnreachable`).
+  The token is an HMAC under the local node's `channels_media_key` of the delivery's idempotency key, the file and a
+  window of half `channels_media_minutes`. So an attempt within that window names the same item, and a later one
+  sends the file again and gets an address with at least half its life left. The address is under the local node's
+  `channels_public_url`, which on a paired node names the edge node, the same host as the webhook URL. The edge node
+  keeps the file as `moqui.edge.EdgeMedia` (the token's SHA-256, node, bridge, file under
+  `dbresource://moqui/edge/media/`, expiry after the local node's minutes, at most its own `channels_media_minutes`).
+  A file over `channels_edge_media_max_bytes` (5 MiB), or past `channels_edge_media_node_megabytes` (256) of the
+  node's files, is refused, logged and counted. It serves `/channels/{id}/media/{token}` only for that bridge, of an
+  active paired node, until the expiry. The files that ran out are removed by the link's retention pass, by each new
+  file, and when asked for, each in a transaction of its own. Inbound MMS stays local (`store#BridgeMedia` fetches
+  from the provider).
+- **The queue's order.** Items go one at a time per conversation key, and `chatMedia` has a key per file, so it never
+  waits behind a mail message's key. A delivery round does send its due heads one after another, so a file can wait
+  for a large mail upload in the same round: seconds, and the send then waits, not counted.
+- **Conf.** MoquiEdgeConf.xml sets `channels_webhooks_enabled=true`. On the local node, `channels_public_url` is the
+  edge node's address.
+- **Test.** `tests/it/edge_chat.rs` (about 5 s). With the link down, a Telnyx-signed text to the edge node gets 200
+  and is queued, its repeat is dropped, and a bad signature is refused there. When the link is back, the text is taken
+  once on the local node (`receive#Sms` and `ingest#Event`, one `ChatEventExternal`). A disabled bridge gets 503 at the
+  edge node; a bridge with no key in its copy 401; one saved with only `configJson` gets its key from
+  `fill_webhook_keys`. An MMS sent through the Telnyx adapter to a fake Telnyx waits for its file, then carries the
+  edge node's address. The edge node serves that address for its bridge only, and refuses it, and removes it, once it
+  ran out. A file over the edge node's limit is refused there while the send waits. An MMS while the link is down
+  waits, not failed, and goes when it is back. The retention sweep removes files that ran out. The replicated copy has
+  no API key.
+- **Not done.** A real Telnyx round trip is checked by hand, as E5a's DMARC check is.
+
 **XMPP.**
 - First, tunnel 5222 and 5223 to the local node, with `/xmpp-websocket` over web access.
   - The local node holds the certificates for the domain, `rooms.` and `upload.`.
@@ -987,7 +1055,7 @@ Its actions are pause, resync and unpair.
 | **E4** | mr-pass on gRPC: the adapters, the PassApi refactor, `PassAuthority`, the direct and link channels; REST kept | The local/remote compatibility tests pass over gRPC direct, gRPC on the link, and REST. REST on Lite stays a supported, tested mode |
 | **E5a** | Mail through the edge node, with Postfix and Rspamd beside it: the recipient list, LMTP into the edge node queue, outbound submission, delivery reports | MX at the edge node. Mail sent while the local node is down arrives after. Unknown recipients are refused while it is down. Outbound mail is DKIM-signed and passes DMARC at a large provider. Bounces reach the Outbox |
 | **E5b** | The MTA in moqui: port 25, SPF, DKIM, DMARC and ARC, DKIM signing, the MX delivery queue, DSNs, TLS policy; Rspamd still external, over HTTP. The same checks on internal mail. Becomes the default | E5a's cases pass with no Postfix. Internal mail carries verified DKIM and `Authentication-Results` |
-| **E6** | Chat bridges and SMS through the edge node | An SMS sent while the local node is away is delivered after. MMS media is served by the edge node |
+| **E6** | Chat bridges and SMS through the edge node | An SMS sent while the local node is away is delivered after. MMS media is served by the edge node. Met in `tests/it/edge_chat.rs`, with a fake Telnyx; a real Telnyx round trip is pending |
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |

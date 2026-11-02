@@ -546,6 +546,29 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <!-- ========== Through an edge node (plans/Edge-Node.md §5.4, E6): the handlers of the link's queue kinds
+        chatWebhook and chatMedia (MoquiDefaultConf.xml edge), granted to _EDGE_ in EdgeSetupData.xml ========== -->
+    <service verb="apply" noun="EdgeWebhook" type="rust" location="moqui_core::service::chat_bridge::edge::apply_edge_webhook"
+            allow-remote="false">
+        <description>On a local node, the queue kind chatWebhook: a network's webhook request its edge node checked (the
+            signature, with the replicated chatBridges set) and queued by the network's event id. The payload is the
+            request (method, headers, body in base64, client address, the time it came); the bridge's adapter applies
+            it (ChatBridgeAdapter::apply_webhook, the SMS adapter's receive#Sms and note#DeliveryReceipt) with the
+            transport-verified mark set, without checking the signature again. A bridge disabled here, a database that
+            cannot be read, or the adapter's 409, 429 or 503 answers retryLater; a bridge not here, a malformed item or
+            any other refusal is an error, counted. Refused on an edge node.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+    <service verb="store" noun="EdgeMedia" type="rust" location="moqui_core::service::chat_bridge::edge::store_edge_media"
+            allow-remote="false">
+        <description>On an edge node, the queue kind chatMedia: a file of a message its local node sends by address (an
+            MMS picture), the item's content, kept as a moqui.edge.EdgeMedia row by the hash of the token the local node
+            made (payload chatBridgeId, tokenHash, contentType, fileName, minutes) and served at
+            /channels/{chatBridgeId}/media/{token} for minutes (the local node's channels_media_minutes); the files
+            that ran out are removed. Refused on a local node.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+
     <!-- ========== Delivery state ========== -->
 
     <service verb="get" noun="EventDeliveries" allow-remote="false">
@@ -777,7 +800,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="store" noun="Bridge">
         <description>Make or change a chat bridge (ChatBridgeAdmin): name, typeEnumId, adapterName (empty: the network's code),
-            configJson (JSON; its secrets are kept encrypted; empty keeps the old), inboundToken (its hash is kept; empty keeps the
+            configJson (JSON; its secrets are kept encrypted; empty keeps the old; its publicKey is also kept as
+            webhookPublicKey, its webhookToleranceSeconds as webhookToleranceSeconds), inboundToken (its hash is kept; empty keeps the
             old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.</description>
         <in-parameters>
             <parameter name="chatBridgeId"/>
@@ -807,7 +831,15 @@ along with this software (see the LICENSE.md file). If not, see
             if (name) row.set('name', name)
             if (typeEnumId) row.set('typeEnumId', typeEnumId)
             if (adapterName != null) row.set('adapterName', adapterName || null)
-            if (configJson) row.set('configJson', configJson)
+            if (configJson) {
+                row.set('configJson', configJson)
+                // the webhook's public key, which an edge node's replicated copy checks signatures with (not secret)
+                const config = JSON.parse(configJson)
+                const publicKey = config && typeof config === 'object' ? config.publicKey : null
+                const tolerance = config && typeof config === 'object' ? Number(config.webhookToleranceSeconds) : NaN
+                row.set('webhookPublicKey', typeof publicKey === 'string' && publicKey.trim() ? publicKey.trim() : null)
+                row.set('webhookToleranceSeconds', tolerance > 0 ? Math.floor(tolerance) : null)
+            }
             if (sendsPerMinute != null) row.set('sendsPerMinute', sendsPerMinute > 0 ? sendsPerMinute : null)
             if (inboundToken) row.set('inboundTokenHash', ec.service.sync().name('org.moqui.impl.ChatBridgeServices.check#BridgeToken')
                     .parameters({token: inboundToken, hashOnly: true}).call().tokenHash)

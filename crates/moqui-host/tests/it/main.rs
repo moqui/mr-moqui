@@ -45,6 +45,7 @@ mod collab;
 mod component_load;
 mod create_or_update_race;
 mod devaide;
+mod edge_chat;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;
