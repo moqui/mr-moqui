@@ -16,7 +16,8 @@
 //! local node behind an edge node needs, each looked up now with this crate's resolver ([`super::dns`]) and compared
 //! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, A and AAAA for each host name, and
 //! the XMPP domain's client SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`), which name the edge node and its
-//! tunnel ports, and A and AAAA for each name in the edge node's TURN URLs (E10 calls).
+//! tunnel ports, A and AAAA for each name in the edge node's TURN URLs (E10 calls), and the SIP domain's SRV records
+//! (`_sips._tcp`, `_sip._udp`, `_sip._tcp`), which name the edge node and its SIP ports (E10 phones).
 //! The expected values come from the edge node's offer, which the caller passes, so the check itself needs no link.
 //! One record that cannot be looked up is a row that says so; the others are still checked.
 
@@ -37,7 +38,7 @@ pub struct DnsRow {
     pub found: String,
     pub ok: bool,
     pub note: String,
-    /// A record of an area not built yet, listed for later and not checked.
+    /// A record listed and not checked: of an area not built yet, or one with nothing to check.
     pub later: bool,
 }
 
@@ -57,6 +58,21 @@ pub struct Expected {
     pub turn_hosts: Vec<String>,
     /// The address of the edge node's media node, which its TURN host defaults to.
     pub media_ip: Option<IpAddr>,
+    pub sip: SipExpected,
+}
+
+/// The SIP records: the edge node's SIP domain (its `sip_domain`, the realm phones register to), whose SRV records
+/// (RFC 3263) name the edge node and its SIP ports (plans/Edge-Node.md §5.4 "Voice (SIP)", E8). None when `domain`
+/// is empty; a port of 0 is off, and its records are not listed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SipExpected {
+    pub domain: String,
+    /// The edge node's names an SRV target may be; the first is the one to set.
+    pub hosts: Vec<String>,
+    /// The port of its SIP address for UDP and TCP, for `_sip._udp` and `_sip._tcp`.
+    pub port: u16,
+    /// The port of its SIP address for TLS, for `_sips._tcp`.
+    pub tls_port: u16,
 }
 
 /// The XMPP records: the local node's XMPP domain, whose client SRV records name the edge node and its tunnel ports
@@ -320,18 +336,44 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
             "For federation with other XMPP servers (C3b), not available yet",
         ));
     }
-    // the records of the areas not built yet, listed for later
-    for domain in domains
-        .iter()
-        .map(|domain| bare(domain))
-        .filter(|domain| !domain.is_empty())
-    {
-        rows.push(later(
-            format!("_sips._tcp.{domain}"),
-            "For phones through the edge node, not available yet",
-        ));
+    let sip_domain = bare(&expected.sip.domain);
+    if !sip_domain.is_empty() {
+        rows.extend(sip_rows(&sip_domain, &expected.sip, lookup));
     }
     rows
+}
+
+/// The SRV records of the SIP domain: `_sips._tcp` with the TLS port, `_sip._udp` and `_sip._tcp` with the other, each
+/// port that is on. A domain that is no DNS name (an address, or `moqui`, the realm when `sip_domain` is not set) has
+/// none to check; a row says so.
+fn sip_rows(domain: &str, sip: &SipExpected, lookup: &dyn Lookup) -> Vec<DnsRow> {
+    if domain.parse::<IpAddr>().is_ok() || !domain.contains('.') {
+        return vec![DnsRow {
+            kind: "SRV".to_string(),
+            name: domain.to_string(),
+            ok: true,
+            note: "The edge node's SIP domain is no DNS name, so phones and trunks reach it by its address: set \
+                   sip_domain there for SRV records"
+                .to_string(),
+            later: true,
+            ..DnsRow::default()
+        }];
+    }
+    let hosts: Vec<String> = sip
+        .hosts
+        .iter()
+        .map(|host| bare(host))
+        .filter(|host| !host.is_empty())
+        .collect();
+    [
+        ("_sips._tcp", sip.tls_port, "Phones over TLS", "TLS"),
+        ("_sip._udp", sip.port, "Phones over UDP", "UDP"),
+        ("_sip._tcp", sip.port, "Phones over TCP", "TCP"),
+    ]
+    .into_iter()
+    .filter(|(_, port, _, _)| *port != 0)
+    .map(|(service, port, who, kind)| srv_row(&format!("{service}.{domain}"), port, &hosts, (who, kind), lookup))
+    .collect()
 }
 
 /// The A and AAAA row of `host`: each family `addresses` lists must have records, all of them those addresses; a
@@ -378,50 +420,57 @@ fn xmpp_rows(domain: &str, xmpp: &XmppExpected, lookup: &dyn Lookup) -> Vec<DnsR
         .map(|host| bare(host))
         .filter(|host| !host.is_empty())
         .collect();
+    [
+        ("_xmpp-client._tcp", xmpp.port, "XMPP clients (STARTTLS)", "STARTTLS"),
+        (
+            "_xmpps-client._tcp",
+            xmpp.tls_port,
+            "XMPP clients (direct TLS)",
+            "direct TLS",
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, port, _, _)| *port != 0)
+    .map(|(service, port, who, kind)| srv_row(&format!("{service}.{domain}"), port, &hosts, (who, kind), lookup))
+    .collect()
+}
+
+/// The SRV row of `name`: every record must name one of the edge node's `hosts` and `port` (a record pointing
+/// elsewhere would send some clients past the edge node). `who` says whose record it is (`XMPP clients (STARTTLS)`),
+/// and `kind` the port's kind (`STARTTLS`).
+fn srv_row(name: &str, port: u16, hosts: &[String], (who, kind): (&str, &str), lookup: &dyn Lookup) -> DnsRow {
     let target = hosts.first().map_or("(the edge node's host name)", String::as_str);
-    let mut rows = Vec::new();
-    for (service, port, kind) in [
-        ("_xmpp-client._tcp", xmpp.port, "STARTTLS"),
-        ("_xmpps-client._tcp", xmpp.tls_port, "direct TLS"),
-    ] {
-        if port == 0 {
-            continue;
-        }
-        let name = format!("{service}.{domain}");
-        let mut srv = row("SRV", &name, format!("0 5 {port} {target}"));
-        match lookup.srv(&name) {
-            Ok(records) => {
-                srv.found = records
-                    .iter()
-                    .map(|record| {
-                        format!(
-                            "{} {} {} {}",
-                            record.priority,
-                            record.weight,
-                            record.port,
-                            bare(&record.target)
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let names_edge =
-                    |record: &super::dns::Srv| record.port == port && hosts.contains(&bare(&record.target));
-                srv.ok = !records.is_empty() && records.iter().all(names_edge);
-                if !srv.ok && !records.is_empty() {
-                    srv.note = if records.iter().any(names_edge) {
-                        format!("A record that is not the edge node's: XMPP clients ({kind}) may go past it")
-                    } else {
-                        format!("Point it at the edge node, port {port} ({kind})")
-                    };
-                } else if records.is_empty() {
-                    srv.note = format!("XMPP clients ({kind}) find the edge node by this record");
-                }
+    let mut srv = row("SRV", name, format!("0 5 {port} {target}"));
+    match lookup.srv(name) {
+        Ok(records) => {
+            srv.found = records
+                .iter()
+                .map(|record| {
+                    format!(
+                        "{} {} {} {}",
+                        record.priority,
+                        record.weight,
+                        record.port,
+                        bare(&record.target)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let names_edge = |record: &super::dns::Srv| record.port == port && hosts.contains(&bare(&record.target));
+            srv.ok = !records.is_empty() && records.iter().all(names_edge);
+            if !srv.ok && !records.is_empty() {
+                srv.note = if records.iter().any(names_edge) {
+                    format!("A record that is not the edge node's: {who} may go past it")
+                } else {
+                    format!("Point it at the edge node, port {port} ({kind})")
+                };
+            } else if records.is_empty() {
+                srv.note = format!("{who} find the edge node by this record");
             }
-            Err(err) => srv.note = err,
         }
-        rows.push(srv);
+        Err(err) => srv.note = err,
     }
-    rows
+    srv
 }
 
 /// The lookups a check makes: [`super::dns`]'s, or a test's.
@@ -513,6 +562,12 @@ pub(crate) fn check_edge_dns(
         },
         turn_hosts,
         media_ip,
+        sip: SipExpected {
+            domain: text(parameters, "sipDomain"),
+            hosts: texts(parameters, "sipHosts"),
+            port: text(parameters, "sipPort").parse().unwrap_or(0),
+            tls_port: text(parameters, "sipTlsPort").parse().unwrap_or(0),
+        },
     };
     let rows = check(&domains, &host_names, &expected, &Resolver);
     let passed = rows.iter().all(|row| row.ok);

@@ -374,10 +374,13 @@ impl EdgeLink for Hook {
                 }
             }
         });
-        // the wizard's calls choice goes too: a node paired again starts with calls on its edge node, as E7 does
+        // the wizard's calls and phones choices go too: a node paired again starts with both on its edge node, as E7
+        // and E8 do
         let calls = moqui_core::edge::calls::CALLS_ENABLED;
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls])?;
-        for name in [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls] {
+        let sip = moqui_core::edge::sip::SIP_ENABLED;
+        let names = [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls, sip];
+        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &names)?;
+        for name in names {
             moqui_lib::env::clear_property(name);
         }
         // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for

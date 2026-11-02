@@ -31,7 +31,7 @@ message Hello {
   uint32 link_version = 2;
   // The features compiled in that the other end may use: rtc, sip, xmpp, inbound-smtp, channels.
   repeated string features = 3;
-  // The edge node's: the areas it offers, by name (web, mail, chat, pass); GetOffer has the details.
+  // The edge node's: the areas it offers, by name (web, mail, chat, pass, xmpp, calls, sip); GetOffer has the details.
   repeated string capabilities = 4;
   // The edge node's: the public host names it answers for.
   repeated string public_names = 5;
@@ -315,14 +315,41 @@ message CallsOffer {
   bool other_nodes = 4;
 }
 
-// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; SIP
-// gets its own the same way when it is built.
+// A trunk the edge node's SIP engine loaded from its copy of the asking node's replicated set voiceTrunks (E8).
+message SipTrunk {
+  string voice_trunk_id = 1;
+  string name = 2;
+  // loaded (no answer yet), registered, ok (a trunk that does not register answered OPTIONS), failed or unregistered.
+  string state = 3;
+  // Why it failed; empty otherwise.
+  string error = 4;
+}
+
+// The edge node's SIP engine (E8): its addresses, registrar and the trunks it registers for its local node.
+message SipOffer {
+  // Its SIP engine runs.
+  bool available = 1;
+  // Its SIP address for UDP and TCP, and for TLS (host:port), empty when that listener is off: as its Hello's.
+  string sip_address = 2;
+  string tls_address = 3;
+  // The realm its registrar challenges phones with (sip_domain), and whether the registrar is on.
+  string domain = 4;
+  bool registrar = 5;
+  // The trunks its engine has loaded now, with their state.
+  repeated SipTrunk trunks = 6;
+  // The asking node's numbers with a fallback in its copy of the set voiceFallbacks.
+  uint32 fallbacks = 7;
+  // Other local nodes are active too, so the engine reads no node's copies: no trunks and no fallback (decision 1).
+  bool other_nodes = 8;
+}
+
+// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own.
 message Offer {
   WebOffer web = 1;
   MailOffer mail = 2;
   ChatOffer chat = 3;
   PassOffer pass = 4;
-  // Areas not built on this edge node yet: sip (calls and xmpp before their areas).
+  // Areas not built on this edge node yet: none now (sip, calls and xmpp before their areas).
   repeated string not_available = 5;
   // The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
   // when not set, and then the addresses of its web host name are expected.
@@ -331,6 +358,7 @@ message Offer {
   repeated HostSetting node_hosts = 7;
   XmppOffer xmpp = 8;
   CallsOffer calls = 9;
+  SipOffer sip = 10;
 }
 
 message OfferRequest {}

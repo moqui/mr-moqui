@@ -1,6 +1,7 @@
 # Edge Node
 
-Status 2026-11-02: E0–E4, E5a, E5b, E6, E7, E8, E9 and E10 built; E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
+Status 2026-11-02: E0–E10 built, the wizard with its phones area last; E11 not yet. The manual checks below are
+pending. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
 its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
 access. Mail crosses the link, with the MTA in moqui on the edge node by default (E5b) or Postfix and Rspamd beside it
@@ -16,7 +17,7 @@ built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); 
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
 (E5b)"), E6's in §5.4 ("As built (E6)"), E7's in §5.4 ("As built (E7)"), E8's in §5.4 ("As built (E8)"), E9's, the XMPP tunnel with the design of C3b's and C6b's split, in §5.4
 ("As built (E9)"), and E10's, the wizard's Discover, Apply and Test, in
-[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", its XMPP area in "As built (E10, XMPP)" and its calls area in "As built (E10, calls)"). A real local node attached through the wizard on a
+[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", its XMPP area in "As built (E10, XMPP)", its calls area in "As built (E10, calls)" and its phones area in "As built (E10, phones)"). A real local node attached through the wizard on a
 served Maximal build, with real DNS, is pending.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
@@ -992,7 +993,7 @@ public address. The client-server API (C6a) goes to the local node through web a
   follows no call handling rules or schedules, and the test drives `refresh#PhoneFallbacks` itself (its dialer is not
   the link hook, so `edge_node_url` is not set) and no greeting crosses the queue there. The forward is checked by unit
   and engine code only, not end to end. Several local nodes per edge node (decision 1): the copies and the queue use the
-  only paired node. The wizard's SIP area (§5.7) is E10's.
+  only paired node. The wizard's SIP area is E10's (§5.7, "As built (E10, phones)").
 
 **Calls (WebRTC).**
 - The edge node is a media node of the local node's calls.
@@ -1366,7 +1367,7 @@ Its actions are pause, resync and unpair.
   up), and a new RPC `Link.GetOffer` (additive) answers a structured `Offer`: web access (its public names and the
   modes), mail (moqui or postfix, the listener on, the MX host `smtp_hostname`, the bounce domain, and with the MTA in
   moqui its DKIM selector and record), chat (webhooks on, the public URL), PASS (mr-pass loaded, the client id `edge`),
-  SIP as not available (XMPP and calls since their areas, below), its public addresses (a new property, `edge_public_addresses`) and the asking
+  SIP as not available (XMPP, calls and SIP since their areas, below), its public addresses (a new property, `edge_public_addresses`) and the asking
   node's host names. The offer is asked on the link, never on the pairing connection, so it is always fresh: the wizard
   and Status read it with `get#EdgeOffer`. Code: `edge_link/offer.rs`; `moqui_core::edge::setup` holds the types.
 - **Configure.** A new RPC `Link.Configure` (additive): the local node's host names with their modes (`set_hosts`: the
@@ -1388,7 +1389,7 @@ Its actions are pause, resync and unpair.
   - **Discover** (`Pair/Discover.xml`): the offer as a form, each area on or off: passthrough and terminate host names
     (this node's `webapp_http_host` and its names there now), mail (the hosted and shared accounts' domains, the
     system's mail, the accounts), chat (the bridges), PASS (the sites, from `mantle.public.PublicSite` when Mantle is
-    there, else typed, and the SSO callback). Phones are listed as not available yet (XMPP and calls have their areas, below). The choices go in
+    there, else typed, and the SSO callback). Phones were listed as not available (XMPP, calls and phones have their areas since, below). The choices go in
     the session (`edgeSetup`), never a URL.
   - **Apply** (`Pair/Apply.xml`, `apply#EdgeSetup`): Apply (a button on the step; the wizard's Next then needs it done,
     and a new choice in Discover clears it, so a changed setup is applied again before Test) checks the whole setup
@@ -1409,7 +1410,7 @@ Its actions are pause, resync and unpair.
     network with one of its addresses, or `include:` it, noted as needing its own SPF record), the DKIM key (the `p=`
     compared; under Postfix only that a record is there), DMARC, and A and AAAA against `edge_public_addresses`, else
     the MX host's addresses, a family the edge node lists none of not checked; each expected and found, with Check
-    again. `_sips._tcp` is listed for later (the XMPP SRV records are checked, below).
+    again. `_sips._tcp` was listed for later (the XMPP SRV records are checked, below, and the SIP ones since E10 phones).
   - **Test** (`Pair/Test.xml`, `test#EdgeSetup`, modeled on MailAccounts' Test with Continue anyway): the link (state
     and round trip), and round trips on the queue (a new kind, `edgeEcho`, `receive#EdgeEcho`, granted to `_EDGE_`;
     at most 20 a minute per node on the edge node): mail in (the edge node finds the first chosen account's address,
@@ -1424,9 +1425,9 @@ Its actions are pause, resync and unpair.
 - **Deviations.** Each area's host names are two lists (passthrough, terminate), not one row per name. Turning an
   area off leaves what an earlier Apply set; there is no undo (calls are the exception: off is a setting of its own,
   below). The mail-out test is a queue round trip, not a message
-  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone and
-  monitoring are not in the form (E8 and §5.9 are not built); calls have their area since E7 ("As built (E10,
-  calls)"). XMPP's domain is not chosen in the form but is the
+  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Monitoring is not
+  in the form (§5.9 is not built); calls and phones have their areas ("As built (E10, calls)", "As built (E10,
+  phones)"), each off by a local setting of its own. XMPP's domain is not chosen in the form but is the
   node's `xmpp_domain`, and Apply writes nothing local for it; its probe goes to the host of `edge_node_url`, not to the SRV target.
 - **Tests.** `tests/it/edge_setup.rs` (about 4 s): the offer read, Configure applied (a name another node holds
   refused, the edge node's own names and their subdomains, an IP address, `localhost` and a one-label name refused, a
@@ -1443,7 +1444,7 @@ Its actions are pause, resync and unpair.
 **As built (E10, XMPP).** The wizard's XMPP area, on E9's tunnel.
 - **Offer.** `Offer.xmpp` (field 8, `XmppOffer`): on (a tunnel port is), `edge_xmpp_port` and `edge_xmpp_tls_port`
   (0 while off), and `other_node` when `edge_xmpp_node` names another node. Hello's areas add `xmpp` when a port is
-  on; `setup::NOT_AVAILABLE` was calls and SIP (SIP alone since the calls area). Each area is a message of its own, so calls and SIP add theirs the same
+  on; `setup::NOT_AVAILABLE` was calls and SIP (SIP alone since the calls area, none since the phones area). Each area is a message of its own, so calls and SIP add theirs the same
   way (Offer from 9, ConfigureRequest from 7).
 - **Configure.** `ConfigureRequest.xmpp` (field 6, `XmppSetup`): the local node's XMPP domain, checked by
   `check_setup` as a host name (not an IP address, one label or `localhost`; a bad one refuses the request whole) and
@@ -1463,7 +1464,7 @@ Its actions are pause, resync and unpair.
   domain), each port that is on: every record must name one of the edge node's names (its public names, the host of
   `edge_node_url`, its MX host) and the tunnel port. `Lookup::srv` is hickory's SRV lookup (`dns::srv`), with fixed
   records (`Records::fix_srv`) as TXT has. `_xmpp-server._tcp` is listed for later, as federation's (C3b);
-  `_sips._tcp` stays listed for later (E8).
+  `_sips._tcp` stayed listed for later until the phones area, which checks it.
 - **Test.** `test#EdgeSetup` (`xmppOn`) calls `EdgeLink::xmpp_probe` for each port that is on (host
   `edge_link/probe.rs`): this node's server must take tunneled connections of the kind (`xmpp::running`), then a
   client connection to the edge node's port (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its
@@ -1485,7 +1486,8 @@ Its actions are pause, resync and unpair.
   address and TURN URLs (what `rtc::start` advertises, `edge::media::advert`, the same as E7's Hello fields), and
   `other_nodes` when another local node is linked too, so the edge node takes call messages from none (decision 1).
   Hello's areas name `calls` while the media socket is up, as the Hello is made (`accept.rs` `hello`), not only as
-  read at start, since the media socket can come up after the link. `setup::NOT_AVAILABLE` is `["sip"]`.
+  read at start, since the media socket can come up after the link. `setup::NOT_AVAILABLE` was `["sip"]` until the
+  phones area.
   `ConfigureRequest` field 7 is not used: the edge node needs nothing from the local node for calls.
 - **What calls off means.** E7 keeps the edge node's `CallMediaNode` row from the link and `Calls.js`
   `liveMediaNodes` puts it first whenever paired. The choice is a local setting, `edge_calls_enabled` in
@@ -1543,6 +1545,75 @@ Its actions are pause, resync and unpair.
   `EdgeScreens.spec.js`: Discover takes calls alone.
 - **Not done.** Real browsers through a deployed edge node's TURN, with a real `turn_public_host` in DNS, are to be
   checked by hand. The TURN check uses UDP only; a TURN with only TCP or TLS listeners is not checked.
+
+**As built (E10, phones).** The wizard's phones area, on E8's SIP on the edge node (§5.4, "As built (E8)").
+- **Offer.** `Offer.sip` (field 10, `SipOffer`, additive): on while the edge node's SIP engine runs, its SIP addresses
+  (UDP/TCP and TLS), its realm (`sip_domain`) and registrar switch, as its Hello's fields 11 to 14 (the engine's
+  `SipAdvert`); the trunks its engine has loaded, each with its state (`SipTrunk`: `loaded` until it answers, then
+  `registered`, `ok`, `failed` with why, or `unregistered`; the engine keeps them per factory as it loads and as each
+  answers, `moqui_core::edge::media::set_sip_trunks`, `note_sip_trunk`); the asking node's numbers with a fallback in
+  its copy of `voiceFallbacks`; and `other_nodes` when another local node is active, since the engine reads the copies
+  of the only active node and so loads none then (decision 1). Hello's areas name `sip` while the engine runs, as the
+  Hello is made (`accept.rs`), as calls do. `setup::NOT_AVAILABLE` is empty. `ConfigureRequest` field 8 is not used:
+  the edge node needs nothing from the local node for phones.
+- **What phones off means.** A local setting, `edge_sip_enabled` in `runtime/.env` (on unless `false`, `n`, `no`, `0`
+  or `off`; unpairing removes it, so a pair again starts on, as E8 does), core `edge/sip.rs`. While it is off:
+  - the link's replication sender holds back `voiceTrunks` and `voiceFallbacks` (`sip::withheld`): their full send has
+    no records (only its end, which removes the edge node's copy) and their changes are dropped, so the edge node's
+    engine loads again with no trunks (its trunks stop registering and their calls are not taken) and answers no
+    number from a fallback; the sender sends both sets whole again when the setting changes (read each pass, at most
+    2 s), so a hand edit of `.env` also takes;
+  - the edge node's link-kept `SipNode` row stays (removing it would end its calls), but `Voice.js` `voiceNodes`
+    leaves it out, so no new call goes to its engine; `SipDevices.js` `edgeSipNode` is none, so phones made here get
+    this node's realm and registrar switch, and `check#SipDeviceDigest` from `_edge_` matches nothing, so its
+    registrar signs no phone in;
+  - the link's minute's `refresh#PhoneFallbacks` (and its greetings for the edge node) does not run.
+  Off at the edge node itself (no SIP engine) is its `.env`; the local setting needs no change there.
+- **Discover** offers phones when the edge node's SIP engine runs, on by default unless `edge_sip_enabled` is off,
+  showing its addresses, the registrar and the trunks loaded; below the form, this node's enabled trunks with their
+  numbers (the trunks are what `voiceTrunks` replicates, so this is a statement of what goes) and how many of each
+  trunk's numbers have a fallback, with each trunk's state on the edge node, the registrar's realm, and the fallback
+  summary, with notes: outside phones cannot register while this node is away (decision 4), and the fallback follows
+  no call-handling rules or schedules; a number with none gets 480. A warning when other local nodes are active. The
+  form posts `sipOffered` only when it showed the choice, as calls do, and phones alone is a setup.
+- **Apply** (`sipOn`, tri-state as `callsOn`: left out, `edge_sip_enabled` is left as it is; true with no SIP engine
+  offered is a failed line): the setting written, both sets sent whole again (empty while off), then a line each
+  (core `edge/sip.rs` `apply`): each set's replication (its cursor, the epoch's start and the last batch
+  acknowledged, and the changes waiting), other local nodes active (failed), the row (`row_check`: there,
+  `edgeLinked`, a heartbeat within 60 s, the Hello's addresses; while off, that it stays but takes no new call); with
+  phones on, the realm (phones made here get verifiers for the edge node's realm; a failed line counts active phones
+  made for another, which must have their passwords set again) or the registrar off, and the fallback coverage (how
+  many of the numbers on enabled trunks have a fallback; the others get 480 while this node is away). Nothing goes
+  to the edge node.
+- **DNS.** `check#EdgeDns` takes `sipDomain` (the offer's realm), `sipHosts` (the edge node's names, as the XMPP
+  records' targets), `sipPort` and `sipTlsPort` (from the offer's addresses): `_sips._tcp` for the TLS port,
+  `_sip._udp` and `_sip._tcp` for the other, each port that is on, every record naming one of the names and the port
+  (`edge_dns.rs` `sip_rows`, sharing `srv_row` with XMPP's). A realm that is no DNS name (an address, or `moqui`) has a
+  row saying so instead. The `_sips._tcp` row per mail domain is gone.
+- **Test** (`sipOn`; not checked while `edge_sip_enabled` is off): `sipNode`, the row live with the Hello's
+  addresses; `sipTrunks`, every enabled trunk of this node in the offer's loaded trunks and none failed (not checked
+  with no trunk); `sipFallbacks`, the edge node's copy holds as many fallbacks as this node has, with nothing of the
+  set waiting or due (`fallback_check`). No SIP OPTIONS ping: the edge node's engine answers OPTIONS from its trunks
+  only, and a stranger's not at all.
+- **Status** shows phones: the trunks and phones through the edge node at its SIP addresses, its registrar, and from
+  the offer the trunks loaded and the numbers with a fallback, while the link-kept row is live; off by
+  `edge_sip_enabled`; or not live.
+- **Tests.** `edge_setup.rs` (about 7.5 s now): the edge node runs a SIP engine in the test's process (the process's
+  one, on loopback; the local node, started first, has none); the offer, its realm and registrar, `sip` in the Hello,
+  `other_nodes` while the other node is active, and the SIP SRV records against fixed ones; the phones walk: with the
+  other node revoked, a trunk and two numbers (one with a fallback) set up on the local node replicate and the edge
+  node's engine loads the trunk; Discover shows it with its numbers, the fallback summary and the notes; phones alone
+  chosen; Apply (the setting, every line passing); Test's three checks passing; `get#VoiceCapabilities` active;
+  Status; phones off (both copies emptied, the engine without the trunk, the row kept, Test not checking, no voice
+  node so capabilities inactive with `noSipServer`, Status saying so) and on again (the trunk loaded again). Unit:
+  `edge/sip_tests.rs` (the setting and the sets it holds back, the row check, the trunk and fallback checks, a link
+  with no SIP engine), `edge_link/tests.rs` (the offer's conversion), `edge_dns_tests.rs` (the SIP SRV rows, a realm
+  that is no DNS name), `setup_tests.rs` (no area not available). `EdgeScreens.spec.js`: Discover takes phones alone,
+  and not unoffered.
+- **Not done.** A real trunk and real phones through a deployed edge node, with real SRV records, are to be checked by
+  hand. `check#SipDeviceDigest` refusing the edge node's answers while phones are off is not covered by a test (the
+  spec engine cannot set a process property). The trunk states in the offer are the user agent's: a trunk that does
+  not register stays `loaded` until its first OPTIONS ping is answered (or failed three times).
 
 ### 5.8 Security
 
@@ -1607,7 +1678,7 @@ Its actions are pause, resync and unpair.
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node. Built. Met in `tests/it/edge_call.rs` with str0m stand-ins (the outside one relayed by the edge node's TURN); real browsers over the internet are pending |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later. Built. Tested in `tests/it/edge_sip.rs`: a fake trunk registered from the edge node's copy, a call routed by the local node to voicemail and stored there, and with the link down a call answered from the number's fallback whose message arrives after the link is back. Not tested: a real trunk and phones through a deployed edge node, the fallback's forward end to end |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node. Built. Tested in `tests/it/edge_xmpp.rs`: clients over the STARTTLS and direct TLS tunnel ports sign in with SCRAM-SHA-256-PLUS and chat on the local node; refused with the link down. C3b's and C6b's split is designed in §5.4. Not tested: a real client through a deployed edge node |
-| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port) and the calls area on E7's media node (calls off a local setting that keeps the edge node's row draining; Test allocates on its TURN with a credential make#IceServers signed); SIP comes with E8. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records; the XMPP probe also in `edge_xmpp.rs`; the TURN check also against the embedded TURN in `rtc/turn_probe_tests.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
+| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port) and the calls area on E7's media node (calls off a local setting that keeps the edge node's row draining; Test allocates on its TURN with a credential make#IceServers signed) and the phones area on E8's SIP (phones off a local setting that sends the trunks and fallbacks empty and gives the edge node's SIP row no new call; Test finds the trunks loaded and the fallbacks there). Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records, with the edge node's media node and SIP engine in the same process; the XMPP probe also in `edge_xmpp.rs`; the TURN check also against the embedded TURN in `rtc/turn_probe_tests.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS, real trunks and phones through it |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
 | **E12** (planned before E11) | The all-in-one node ([§10](#10-all-in-one-node-e12)): routing by owner in delegate, mail in and chat webhooks; rooms keyed by node and call; XMPP tunnel ports beside the server's own XMPP server; exclusive ownership checks; the role | A server with its own users, mail accounts, chat bridge, calls and XMPP domain pairs with a local node that has no listening port. The server's own names, mail, webhooks and calls stay on the server while the node's go over the link, both at once. Mail to recipients on both sides is delivered once to each side. A name, address or bridge both sides claim is refused, with an error naming it. The node's queued items arrive after it returns. Unpairing leaves the server's own services working. Tested on two servers in one process, as `edge_setup.rs` is |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
@@ -1617,12 +1688,12 @@ first two.
 
 ## 7. Documents to change
 
-When it is built (done in E10 unless marked):
+When it is built (done in E10 unless marked; all done):
 - **Run-Deploy:** a topology row and a section, "A local server with an edge node"; the new properties; the PASS
   section's transport. Done.
 - **Guides:** Attack-Surface (done); Mail-Inbound, the edge node as the gateway, then the MTA in moqui (done); SMS and
   Chat-Bridges, the webhook URL on the edge node and MMS (done); XMPP, the tunnel ports (done in E9); WebRTC, TURN and
-  Call-Recording, the edge node as media node (done in E7); SIP and Voicemail, the edge node as SIP edge and its fallback (done in E8).
+  Call-Recording, the edge node as media node (done in E7); SIP and Voicemail, the edge node as SIP edge and its fallback (done in E8; the wizard's phones area in SIP, done in E10).
 - **mr-pass:** `docs/Deployment.md`, the edge node as PASS server. Done.
 - **Plans:**
   - Comms-Framework: C3b's and C6's split between edge node and local node. Its line "this plan adds no new mail

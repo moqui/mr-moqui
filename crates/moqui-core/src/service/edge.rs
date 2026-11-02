@@ -538,6 +538,38 @@ fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
                 ("enabled", Value::Bool(crate::edge::calls::calls_enabled())),
             ]),
         ),
+        (
+            "sip",
+            map(vec![
+                ("available", Value::Bool(offer.sip.available)),
+                ("sipAddress", Value::string(&offer.sip.sip_address)),
+                ("tlsAddress", Value::string(&offer.sip.tls_address)),
+                ("domain", Value::string(&offer.sip.domain)),
+                ("registrar", Value::Bool(offer.sip.registrar)),
+                (
+                    "trunks",
+                    Value::List(
+                        offer
+                            .sip
+                            .trunks
+                            .iter()
+                            .map(|trunk| {
+                                map(vec![
+                                    ("voiceTrunkId", Value::string(&trunk.voice_trunk_id)),
+                                    ("name", Value::string(&trunk.name)),
+                                    ("state", Value::string(&trunk.state)),
+                                    ("error", Value::string(&trunk.error)),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
+                ("fallbacks", count(offer.sip.fallbacks)),
+                ("otherNodes", Value::Bool(offer.sip.other_nodes)),
+                // this node's own setting (edge_sip_enabled), for Discover's default and Status
+                ("enabled", Value::Bool(crate::edge::sip::sip_enabled())),
+            ]),
+        ),
         ("notAvailable", strings(&offer.not_available)),
         ("addresses", strings(&offer.addresses)),
         (
@@ -721,7 +753,8 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
 /// edge node has its part, a local step that fails does not stop the others. XMPP writes nothing here: the domain is
 /// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]). Calls send nothing to
 /// the edge node: with its media node offered, `callsOn` is this node's `edge_calls_enabled`
-/// ([`crate::edge::calls::apply`]).
+/// ([`crate::edge::calls::apply`]). Phones neither: with its SIP engine offered, `sipOn` is this node's
+/// `edge_sip_enabled` ([`crate::edge::sip::apply`]), which holds the trunks and fallbacks back while off.
 fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
     let factory = current_factory()?;
@@ -854,6 +887,24 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
             "The edge node runs no media node (rtc_media_port), so calls stay on this node's own media nodes",
         ));
     }
+    // phones the same way: sipOn given (Discover passes it only when it offered phones), and the edge node's SIP
+    // engine offered; absent leaves edge_sip_enabled as it is
+    let sip = optional_flag(parameters, "sipOn");
+    if let (Some(on), true) = (sip, answer.offer.sip.available) {
+        lines.extend(crate::edge::sip::apply(
+            facade,
+            &env_file,
+            on,
+            &status.peer,
+            &answer.offer.sip,
+        ));
+    } else if sip == Some(true) {
+        lines.push(SetupLine::new(
+            "sip",
+            false,
+            "The edge node runs no SIP engine (sip_port, sip_tls_port), so this node's trunks do not go through it",
+        ));
+    }
     let sets = match crate::edge::replica::replica(facade) {
         Some(replica) => {
             replica.resync_all();
@@ -896,7 +947,8 @@ struct TestLine {
 /// Postfix relay); for chat, it takes the bridges' webhooks; for PASS, the client settings are there and the edge
 /// node has mr-pass; for XMPP, a client stream through each of the edge node's tunnel ports reaches this node's XMPP
 /// server ([`crate::edge::EdgeLink::xmpp_probe`]) and the domain is one of this node's host names there; for calls,
-/// the edge node's media node row and its TURN ([`calls_tests`]). No outside mail or provider is needed. A check with
+/// the edge node's media node row and its TURN ([`calls_tests`]); for phones, the edge node's SIP node row, its
+/// engine's trunks and its copy of the fallbacks ([`sip_tests`]). No outside mail or provider is needed. A check with
 /// nothing to check is "not checked".
 fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{start_echo, wait_echo, EchoCheck};
@@ -1028,6 +1080,9 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
         }));
     }
     tests.extend(calls_lines);
+    if flag(parameters, "sipOn") {
+        tests.extend(sip_tests(facade, link.as_ref().ok()));
+    }
     if let Some(probe) = turn_probe {
         tests.push(probe.join().unwrap_or_else(|_| TestLine {
             check: "turn",
@@ -1211,6 +1266,70 @@ fn calls_tests(
         }
     });
     (lines, Some(probe))
+}
+
+/// The Test step's phones lines (plans/Edge-Node.md §5.7, E10 phones): the edge node's `SipNode` row is live with its
+/// Hello's addresses (`sipNode`, [`crate::edge::sip::row_check`]), its engine has loaded this node's enabled trunks,
+/// none failed (`sipTrunks`), and its copy holds each number's fallback with nothing waiting (`sipFallbacks`). Not
+/// checked while `edge_sip_enabled` is off. No SIP request is sent: the edge node's engine answers OPTIONS only from
+/// its trunks.
+fn sip_tests(facade: &EntityFacade, link: Option<&std::sync::Arc<dyn crate::edge::EdgeLink>>) -> Vec<TestLine> {
+    let line = |check: &'static str, label: &'static str, ok: Option<bool>, message: String| TestLine {
+        check,
+        label,
+        ok,
+        message,
+    };
+    let Some(link) = link else {
+        return vec![line(
+            "sipNode",
+            "Phones",
+            Some(false),
+            crate::edge::NOT_BUILT.to_string(),
+        )];
+    };
+    let status = link.status();
+    let edge = match crate::edge::sip::linked_sip_node(&status) {
+        Ok(edge) => edge,
+        Err(why) => return vec![line("sipNode", "Phones", Some(false), why)],
+    };
+    if !crate::edge::sip::sip_enabled() {
+        let message = format!(
+            "Not checked: phones are off here ({}), so this node's trunks do not go through the edge node",
+            crate::edge::sip::SIP_ENABLED
+        );
+        return vec![line("sipNode", "Phones", None, message)];
+    }
+    let (ok, message) = match crate::edge::sip::sip_row(facade, &edge.instance_id) {
+        Ok(row) => crate::edge::sip::row_check(row.as_ref(), edge, crate::user::now_millis()),
+        Err(err) => (false, format!("The edge node's SIP node row was not read: {err}")),
+    };
+    let mut lines = vec![line("sipNode", "Phones", Some(ok), message)];
+    let offer = match link.offer() {
+        Ok(offer) => offer,
+        Err(err) => {
+            let message = format!("The edge node's offer was not read: {err}");
+            lines.push(line("sipTrunks", "Trunks", Some(false), message));
+            return lines;
+        }
+    };
+    let (ok, message) = match crate::edge::sip::local_trunks(facade) {
+        Ok(local) => crate::edge::sip::trunk_check(&local, &offer.sip),
+        Err(err) => (Some(false), format!("This node's trunks were not read: {err}")),
+    };
+    lines.push(line("sipTrunks", "Trunks", ok, message));
+    let set = crate::edge::replica::replica(facade).and_then(|replica| {
+        replica
+            .status()
+            .into_iter()
+            .find(|set| set.name == crate::edge::sip::FALLBACKS_SET)
+    });
+    let (ok, message) = match crate::edge::sip::coverage(facade) {
+        Ok(coverage) => crate::edge::sip::fallback_check(coverage.fallbacks, &offer.sip, set.as_ref()),
+        Err(err) => (false, format!("This node's fallbacks were not read: {err}")),
+    };
+    lines.push(line("sipFallbacks", "Voicemail fallback", Some(ok), message));
+    lines
 }
 
 /// The address of a hosted or shared account here, for the mail-in check when none was chosen.

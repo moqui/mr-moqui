@@ -21,7 +21,9 @@ along with this software (see the LICENSE.md file). If not, see
     E10): what this node uses the edge node for: its host names there (get#EdgeOffer nodeHosts, while the link is up),
     the system's and the accounts' mail through the EDGE mail server, the chat address (channels_public_url), the
     PASS client's sites, XMPP (xmpp_domain through the edge node's tunnel ports, while the link is up) and calls (new
-    calls on the edge node's media node while its link-kept row is live, or off by edge_calls_enabled), with Set up
+    calls on the edge node's media node while its link-kept row is live, or off by edge_calls_enabled) and phones
+    (the trunks and phones through the edge node's SIP engine while its link-kept SipNode row is live, with its
+    trunks loaded and the numbers with a fallback, or off by edge_sip_enabled), with Set up
     again, which opens the wizard at Discover. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -109,6 +111,8 @@ along with this software (see the LICENSE.md file). If not, see
         if (paired) {
             let hostsText = L('Not known while the link is down')
             let xmppText = hostsText
+            // the edge node's SIP engine as its offer says it now (E10 phones): its trunks and the fallbacks it holds
+            let sipOffer = null
             const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
             if (state === 'linked') {
                 ec.message.pushErrors()
@@ -118,6 +122,7 @@ along with this software (see the LICENSE.md file). If not, see
                         const names = Array.from(offer.nodeHosts || []).map((host) => host.hostName +
                             ' (' + (host.modeEnumId === 'EdgeHostTerminate' ? L('terminate') : L('passthrough')) + ')')
                         hostsText = names.length ? names.join(', ') : L('None')
+                        sipOffer = offer.sip || null
                         const xmpp = offer.xmpp || {}
                         const ports = [xmpp.port, xmpp.tlsPort].filter((port) => port).join(', ')
                         // through the edge node: its tunnel ports come here, and the domain is a host name of this node there
@@ -146,6 +151,17 @@ along with this software (see the LICENSE.md file). If not, see
                 : liveRow ? ec.resource.expand('New calls on the edge node at ${address}', '', {address: link.mediaAddress}) +
                     (Array.from(link.turnUrls || []).length ? ', ' + L('with its TURN') : ', ' + L('no TURN'))
                 : L('Not live: the link keeps the edge node as media node while it is up')
+            // phones (E8, E10 phones): the edge node's SipNode row the link keeps, live, and this node's choice
+            const sipOff = ['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_sip_enabled') || '').trim().toLowerCase())
+            const sipRow = Array.from(ec.entity.find('moqui.call.SipNode').condition('edgeLinked', 'Y')
+                .condition('heartbeatDate', '>=', new Date(Date.now() - 60000)).useCache(false).disableAuthz().list())[0]
+            const sipText = sipOff ? L('Off: the edge node gets no trunks or fallbacks, and its SIP engine takes no new call')
+                : sipRow ? ec.resource.expand('Trunks and phones through the edge node at ${address}', '',
+                        {address: [sipRow.sipAddress, sipRow.tlsAddress].filter((address) => address).join(', ')}) +
+                    ', ' + (sipRow.registrarEnabled === 'Y' ? L('registrar on') : L('registrar off')) +
+                    (sipOffer ? ', ' + ec.resource.expand('${trunks} trunks loaded there, ${fallbacks} numbers with a fallback', '',
+                        {trunks: Array.from(sipOffer.trunks || []).length, fallbacks: sipOffer.fallbacks || 0}) : '')
+                : L('Not live: the edge node runs no SIP engine, or the link is down')
             const system = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', 'SYSTEM').disableAuthz().one()
             const accounts = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailServerId', 'EDGE').disableAuthz().count()
             const systemEdge = system?.smtpHost === 'edge:'
@@ -157,7 +173,7 @@ along with this software (see the LICENSE.md file). If not, see
                     (accounts ? ec.resource.expand('${n} accounts', '', {n: accounts}) : '') + ' ' + L('through the edge node') : L('Not through the edge node'),
                 chatText: chatUrl ? chatUrl + '/channels/(bridge)/webhook' : L('Not set'),
                 passText: sites ? ec.resource.expand('${sites}, as PASS client ${client}', '', {sites, client}) : L('Not set'),
-                xmppText, callsText}
+                xmppText, callsText, sipText}
         }
     ]]></script></actions>
     <widgets>
@@ -250,10 +266,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="passText"><default-field title="PASS sites"><display/></default-field></field>
                     <field name="xmppText"><default-field title="XMPP" tooltip="Outside XMPP clients through the edge node's tunnel ports"><display/></default-field></field>
                     <field name="callsText"><default-field title="Calls" tooltip="Where new calls have their media: the edge node's media node, with its TURN for outside browsers"><display/></default-field></field>
+                    <field name="sipText"><default-field title="Phones" tooltip="This node's trunks register from the edge node's SIP engine, and outside phones register to its registrar"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="hostsText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
                         <field-row><field-ref name="xmppText"/><field-ref name="callsText"/></field-row>
+                        <field-row><field-ref name="sipText"/></field-row>
                     </field-layout>
                 </form-single>
             </box-body></container-box>

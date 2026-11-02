@@ -202,6 +202,66 @@ fn the_calls_offer_reads_back_and_one_with_no_media_address_is_not_available() {
 }
 
 #[test]
+fn the_sip_offer_reads_back_and_one_with_no_address_is_not_available() {
+    let sip = super::proto::SipOffer {
+        available: true,
+        sip_address: "203.0.113.5:5060".to_string(),
+        tls_address: "203.0.113.5:5061".to_string(),
+        domain: "sip.example.com".to_string(),
+        registrar: true,
+        trunks: vec![super::proto::SipTrunk {
+            voice_trunk_id: "T1".to_string(),
+            name: "Main".to_string(),
+            state: "failed".to_string(),
+            error: "403 Forbidden".to_string(),
+        }],
+        fallbacks: 3,
+        other_nodes: true,
+    };
+    let offer = super::offer::offer_of(super::proto::Offer {
+        sip: Some(sip.clone()),
+        ..super::proto::Offer::default()
+    });
+    assert!(
+        offer.sip.available && offer.sip.registrar && offer.sip.other_nodes,
+        "{:?}",
+        offer.sip
+    );
+    assert_eq!(
+        (
+            offer.sip.sip_address.as_str(),
+            offer.sip.tls_address.as_str(),
+            offer.sip.domain.as_str()
+        ),
+        ("203.0.113.5:5060", "203.0.113.5:5061", "sip.example.com")
+    );
+    assert_eq!(offer.sip.fallbacks, 3);
+    let trunk = &offer.sip.trunks[0];
+    assert_eq!(
+        (
+            trunk.voice_trunk_id.as_str(),
+            trunk.name.as_str(),
+            trunk.state.as_str(),
+            trunk.error.as_str()
+        ),
+        ("T1", "Main", "failed", "403 Forbidden")
+    );
+    let no_address = super::offer::offer_of(super::proto::Offer {
+        sip: Some(super::proto::SipOffer {
+            sip_address: String::new(),
+            tls_address: String::new(),
+            ..sip
+        }),
+        ..super::proto::Offer::default()
+    });
+    assert!(!no_address.sip.available);
+    assert!(
+        !super::offer::offer_of(super::proto::Offer::default()).sip.available,
+        "an edge node from before the phones area"
+    );
+}
+
+#[test]
 fn the_edge_node_s_instance_id_is_the_pinned_one_and_never_this_node_s() {
     assert!(check_edge_id("", "edge-1", "local-1").is_ok(), "pinned on a first link");
     assert!(check_edge_id("edge-1", "edge-1", "local-1").is_ok());

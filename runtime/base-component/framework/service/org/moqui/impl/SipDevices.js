@@ -48,10 +48,18 @@ function isAdmin() {
 }
 
 /**
+ * Whether phones go through this node's edge node: on unless edge_sip_enabled is false, n, no, 0 or off (the wizard's
+ * phones area, plans/Edge-Node.md §5.7 "As built (E10, phones)"; moqui_core::edge::sip::sip_enabled).
+ */
+const edgeSipEnabled = () => !['false', 'n', 'no', '0', 'off'].includes(property('edge_sip_enabled').toLowerCase())
+
+/**
  * The live SIP node of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
- * its Hello with its realm and registrar switch; null when there is none. Its registrar is the phones'.
+ * its Hello with its realm and registrar switch; null when there is none, or phones are off (edge_sip_enabled). Its
+ * registrar is the phones'.
  */
 function edgeSipNode() {
+  if (!edgeSipEnabled()) return null
   return rows(SIP_NODE).find((n) => n.edgeLinked === 'Y' && ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS) || null
 }
 
@@ -281,8 +289,9 @@ function edgeDigestFresh(device) {
  * this node: matched, with the device, when the response is right; matched false and nothing else when not.
  */
 function checkDigest(p) {
-  // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for
-  if (isEdgeCaller() && String(p.realm || '') !== domain()) return { matched: false }
+  // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for, and
+  // none while phones are off (edge_sip_enabled, E10 phones)
+  if (isEdgeCaller() && (!edgeSipEnabled() || String(p.realm || '') !== domain())) return { matched: false }
   const auth = deviceAuth({ username: p.username, realm: p.realm })
   const verifier = (auth.verifierList || []).find((v) => String(v.algorithm).toUpperCase() === String(p.algorithm || '').toUpperCase())
   let expected = ''

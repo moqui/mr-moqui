@@ -126,7 +126,10 @@ fn a_configure_is_normalized_and_one_that_is_not_input_is_refused() {
         "",
         "no XMPP domain is XMPP not chosen"
     );
-    assert_eq!(NOT_AVAILABLE, ["sip"], "calls and XMPP have areas of their own");
+    assert!(
+        NOT_AVAILABLE.is_empty(),
+        "calls, XMPP and phones have areas of their own"
+    );
 }
 
 #[test]

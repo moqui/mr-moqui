@@ -811,14 +811,16 @@ fn run_internal(
 /// again every `every`, from the link's liveness, so they go stale (and their calls end, `expire#Calls`) only when
 /// the link has been down past the nodes' grace. An edge node with no media, or no SIP engine, has that row removed.
 /// With this node's `edge_calls_enabled` off the media row is draining, read again each time, so the wizard's choice
-/// holds (E10 calls). The phone numbers' fallbacks are written at the start and every [`REFRESH_EVERY`] (E8).
+/// holds (E10 calls). The phone numbers' fallbacks are written at the start and every [`REFRESH_EVERY`] (E8), while
+/// this node's `edge_sip_enabled` is on (E10 phones).
 async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration) {
     let media_stopping = edge.media_address.is_empty();
     let sip_stopping = media_stopping || (edge.sip_address.is_empty() && edge.sip_tls_address.is_empty());
     let mut refreshed: Option<std::time::Instant> = None;
     loop {
         let row = edge.clone();
-        let refresh = refreshed.is_none_or(|at| at.elapsed() >= REFRESH_EVERY);
+        // the fallbacks (and their greetings) only while phones go through the edge node (E10 phones)
+        let refresh = refreshed.is_none_or(|at| at.elapsed() >= REFRESH_EVERY) && moqui_core::edge::sip::sip_enabled();
         let kept = crate::worker::on_pool(&factory, move |_| {
             let media = moqui_core::edge::calls::register_row(&row, media_stopping);
             let sip = moqui_core::edge::calls::register_sip_row(&row, sip_stopping);

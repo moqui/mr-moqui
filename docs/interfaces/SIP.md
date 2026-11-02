@@ -580,6 +580,15 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
   change arrives.
+- **The wizard** (System › Edge Node, plans/Edge-Node.md §5.7 "As built (E10, phones)"). Discover shows the edge
+  node's SIP engine, the local trunks and their numbers that go through it, its registrar and how many numbers have a
+  fallback. Apply writes `edge_sip_enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
+  it). Off, the local node sends `voiceTrunks` and `voiceFallbacks` empty, so the edge node's engine registers no trunk
+  and answers no number from a fallback; the edge node's `SipNode` row stays but takes no new call, and its registrar
+  signs no phone in. Test checks the row, that the edge node's engine loaded every enabled trunk (its offer lists them
+  with their state) and that its copy holds every fallback. The DNS step checks the SRV records of the edge node's
+  `sip_domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and
+  ports.
 - **Its node.** The edge node registers no `SipNode`: its link's Hello names its SIP addresses, its registrar's realm
   and switch, and the local node keeps the row (`edgeLinked`, `sipDomain`, `registrarEnabled`), beside its media
   node's, so its calls go there and `send#SipControl` crosses the link. Phone calls go to it also while its media row

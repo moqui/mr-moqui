@@ -45,9 +45,9 @@ pub const EDGE_SMTP_HOST: &str = "edge:";
 pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
 /// The most names of each kind a Configure carries.
 pub const MAX_NAMES: usize = 64;
-/// The areas an edge node does not offer yet (E8). Each gets an offer of its own when it is built, as XMPP and calls
-/// have ([`XmppOffer`], [`CallsOffer`]).
-pub const NOT_AVAILABLE: [&str; 1] = ["sip"];
+/// The areas an edge node does not offer yet: none since phones have their area ([`SipOffer`]), as XMPP and calls
+/// have ([`XmppOffer`], [`CallsOffer`]). An area added later and not built yet is listed here.
+pub const NOT_AVAILABLE: [&str; 0] = [];
 
 const SERVER: &str = "moqui.basic.email.EmailServer";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
@@ -117,6 +117,26 @@ pub struct CallsOffer {
     pub other_nodes: bool,
 }
 
+/// The edge node's SIP engine (E8): its addresses, its registrar, the trunks it loaded from the asking node's copy and
+/// the fallbacks it holds for that node (plans/Edge-Node.md §5.7, E10 phones).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SipOffer {
+    /// Its SIP engine runs.
+    pub available: bool,
+    /// For UDP and TCP, and for TLS, `host:port`; empty when that listener is off.
+    pub sip_address: String,
+    pub tls_address: String,
+    /// The realm its registrar challenges phones with (`sip_domain`), and whether the registrar is on.
+    pub domain: String,
+    pub registrar: bool,
+    /// The trunks its engine has loaded now, with their state.
+    pub trunks: Vec<super::media::SipTrunkState>,
+    /// The asking node's numbers with a fallback in its copy of `voiceFallbacks`.
+    pub fallbacks: u64,
+    /// Other local nodes are active too, so its engine reads no node's copies (decision 1).
+    pub other_nodes: bool,
+}
+
 /// What an edge node offers a local node.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeOffer {
@@ -129,7 +149,8 @@ pub struct EdgeOffer {
     pub pass: PassOffer,
     pub xmpp: XmppOffer,
     pub calls: CallsOffer,
-    /// Areas not built yet: sip.
+    pub sip: SipOffer,
+    /// Areas not built yet: none now.
     pub not_available: Vec<String>,
     /// The edge node's public addresses, when it names them (`edge_public_addresses`).
     pub addresses: Vec<String>,
@@ -347,7 +368,7 @@ pub struct PassChoice {
 /// One thing Apply did, or could not do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SetupLine {
-    /// web, mail, chat, pass, xmpp, calls or link.
+    /// web, mail, chat, pass, xmpp, calls, sip or link.
     pub area: String,
     pub ok: bool,
     pub text: String,

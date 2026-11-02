@@ -11,7 +11,7 @@ pub struct Hello {
     /// The features compiled in that the other end may use: rtc, sip, xmpp, inbound-smtp, channels.
     #[prost(string, repeated, tag = "3")]
     pub features: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// The edge node's: the areas it offers, by name (web, mail, chat, pass); GetOffer has the details.
+    /// The edge node's: the areas it offers, by name (web, mail, chat, pass, xmpp, calls, sip); GetOffer has the details.
     #[prost(string, repeated, tag = "4")]
     pub capabilities: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's: the public host names it answers for.
@@ -429,8 +429,47 @@ pub struct CallsOffer {
     #[prost(bool, tag = "4")]
     pub other_nodes: bool,
 }
-/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; SIP
-/// gets its own the same way when it is built.
+/// A trunk the edge node's SIP engine loaded from its copy of the asking node's replicated set voiceTrunks (E8).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SipTrunk {
+    #[prost(string, tag = "1")]
+    pub voice_trunk_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// loaded (no answer yet), registered, ok (a trunk that does not register answered OPTIONS), failed or unregistered.
+    #[prost(string, tag = "3")]
+    pub state: ::prost::alloc::string::String,
+    /// Why it failed; empty otherwise.
+    #[prost(string, tag = "4")]
+    pub error: ::prost::alloc::string::String,
+}
+/// The edge node's SIP engine (E8): its addresses, registrar and the trunks it registers for its local node.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SipOffer {
+    /// Its SIP engine runs.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// Its SIP address for UDP and TCP, and for TLS (host:port), empty when that listener is off: as its Hello's.
+    #[prost(string, tag = "2")]
+    pub sip_address: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub tls_address: ::prost::alloc::string::String,
+    /// The realm its registrar challenges phones with (sip_domain), and whether the registrar is on.
+    #[prost(string, tag = "4")]
+    pub domain: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub registrar: bool,
+    /// The trunks its engine has loaded now, with their state.
+    #[prost(message, repeated, tag = "6")]
+    pub trunks: ::prost::alloc::vec::Vec<SipTrunk>,
+    /// The asking node's numbers with a fallback in its copy of the set voiceFallbacks.
+    #[prost(uint32, tag = "7")]
+    pub fallbacks: u32,
+    /// Other local nodes are active too, so the engine reads no node's copies: no trunks and no fallback (decision 1).
+    #[prost(bool, tag = "8")]
+    pub other_nodes: bool,
+}
+/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Offer {
     #[prost(message, optional, tag = "1")]
@@ -441,7 +480,7 @@ pub struct Offer {
     pub chat: ::core::option::Option<ChatOffer>,
     #[prost(message, optional, tag = "4")]
     pub pass: ::core::option::Option<PassOffer>,
-    /// Areas not built on this edge node yet: sip (calls and xmpp before their areas).
+    /// Areas not built on this edge node yet: none now (sip, calls and xmpp before their areas).
     #[prost(string, repeated, tag = "5")]
     pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
@@ -455,6 +494,8 @@ pub struct Offer {
     pub xmpp: ::core::option::Option<XmppOffer>,
     #[prost(message, optional, tag = "9")]
     pub calls: ::core::option::Option<CallsOffer>,
+    #[prost(message, optional, tag = "10")]
+    pub sip: ::core::option::Option<SipOffer>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}

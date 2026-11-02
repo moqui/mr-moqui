@@ -37,6 +37,7 @@ pub mod queue;
 pub mod replica;
 pub mod setup;
 pub mod signal;
+pub mod sip;
 
 pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
 pub use setup::{Configured, EdgeOffer, EdgeSetup};

@@ -24,7 +24,10 @@ along with this software (see the LICENSE.md file). If not, see
     URLs (its addresses, or its media node's), expected and found; Check again looks them up again. XMPP writes
     nothing on this node: apply#EdgeSetup sends xmpp_domain to the edge node. Calls write edge_calls_enabled in
     runtime/.env and the edge node's CallMediaNode row (draining while off), with lines for the media address, the
-    TURN secret and the row. Next goes on to Test once Apply ran. -->
+    TURN secret and the row. Phones write edge_sip_enabled in runtime/.env (off: the trunks and fallbacks go to the
+    edge node empty, and its link-kept SipNode row takes no new call), with lines for the two replicated sets, the
+    row, the phones' realm, the registrar and the numbers' fallbacks; with phones the DNS records add the edge node's
+    SIP domain's _sips._tcp, _sip._udp and _sip._tcp records. Next goes on to Test once Apply ran. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Apply" default-menu-index="4" menu-image="sym_o_published_with_changes" menu-image-type="icon">
 
@@ -42,7 +45,9 @@ along with this software (see the LICENSE.md file). If not, see
                 passOn: !!choices.passOn, passSites: choices.passSites || [], passCallback: choices.passCallback || '',
                 xmppOn: !!choices.xmppOn,
                 // only a choice Discover offered: left out, this node's edge_calls_enabled stays as it is
-                callsOn: choices.callsOffered ? !!choices.callsOn : null}).call()
+                callsOn: choices.callsOffered ? !!choices.callsOn : null,
+                // the same for phones: left out, edge_sip_enabled stays as it is
+                sipOn: choices.sipOffered ? !!choices.sipOn : null}).call()
             if (ec.message.hasError()) return
             const lines = Array.from(out?.lineList || []).map((line) => ({area: line.area, ok: line.ok === true, text: line.text}))
             const configured = out?.configured === true
@@ -94,17 +99,19 @@ along with this software (see the LICENSE.md file). If not, see
             passText: choices.passOn ? list(choices.passSites) + ' · ' + (choices.passCallback || '') : L('Off'),
             xmppText: choices.xmppOn ? choices.xmppDomain || '' : L('Off'),
             callsText: !choices.callsOffered ? L('Not offered, so left as it is')
-                : choices.callsOn ? L("New calls on the edge node's media node") : L('Off')}
+                : choices.callsOn ? L("New calls on the edge node's media node") : L('Off'),
+            sipText: !choices.sipOffered ? L('Not offered, so left as it is')
+                : choices.sipOn ? L("This node's trunks and phones through the edge node's SIP engine") : L('Off')}
         let kept = null
         try { kept = JSON.parse(ec.web.sessionAttributes.edgeApplied || 'null') } catch (e) { kept = null }
         applied = !!kept?.configured
         const areaNames = {web: L('Web access'), mail: L('Mail'), chat: L('Chat'), pass: L('PASS'), xmpp: L('XMPP'),
-            calls: L('Calls'), link: L('Link')}
+            calls: L('Calls'), sip: L('Phones'), link: L('Link')}
         lineList = Array.from(kept?.lines || []).map((line) => ({areaText: areaNames[line.area] || line.area, text: line.text,
             stateLabel: line.ok ? L('Done') : L('Not done'), stateColor: line.ok ? 'positive' : 'negative'}))
         confirm = {applied: applied ? 'Y' : ''}
         // the DNS records, checked live: the edge node's MX host, addresses and key come from its offer; each a probe
-        if (!hostNames.length && !choices.mailOn && !choices.xmppOn && !choices.callsOn) return
+        if (!hostNames.length && !choices.mailOn && !choices.xmppOn && !choices.callsOn && !choices.sipOn) return
         ec.message.pushErrors()
         try {
             const offered = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
@@ -128,7 +135,11 @@ along with this software (see the LICENSE.md file). If not, see
                     mailMta: offer.mail?.mta || '',
                     xmppDomain: choices.xmppOn ? choices.xmppDomain || '' : '', xmppHosts,
                     xmppPort: offer.xmpp?.port || 0, xmppTlsPort: offer.xmpp?.tlsPort || 0,
-                    turnHosts, mediaAddress: choices.callsOn ? offer.calls?.mediaAddress || '' : ''}).call() || {}
+                    turnHosts, mediaAddress: choices.callsOn ? offer.calls?.mediaAddress || '' : '',
+                    // the SIP domain's SRV records name the edge node's names (as XMPP's) and its SIP ports
+                    sipDomain: choices.sipOn && offer.sip?.available ? offer.sip.domain || '' : '', sipHosts: xmppHosts,
+                    sipPort: Number(String(offer.sip?.sipAddress || '').split(':').pop()) || 0,
+                    sipTlsPort: Number(String(offer.sip?.tlsAddress || '').split(':').pop()) || 0}).call() || {}
                 recordList = Array.from(out.recordList || []).map((record) => ({kind: record.kind, name: record.name,
                     expected: record.later ? '' : record.expected || '', found: record.found || (record.later ? '' : L('None')),
                     note: record.note || '',
@@ -190,10 +201,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="passText"><default-field title="PASS"><display/></default-field></field>
                     <field name="xmppText"><default-field title="XMPP"><display/></default-field></field>
                     <field name="callsText"><default-field title="Calls"><display/></default-field></field>
+                    <field name="sipText"><default-field title="Phones"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="webText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
                         <field-row><field-ref name="xmppText"/><field-ref name="callsText"/></field-row>
+                        <field-row><field-ref name="sipText"/></field-row>
                     </field-layout>
                 </form-single>
                 <section name="NotApplied" condition="!applied"><widgets>
