@@ -16,6 +16,10 @@
 //! `new EdiHandler(ec)`, a global like `System`. The `ec` argument is accepted and not used: the
 //! handler runs on the thread's context. The setters and loaders return the handler, so calls chain.
 //!
+//! `setSegmentSuffix` (the one character after each terminator, a newline by default, so CRLF is not possible; null
+//! for none) and `setPaddingChar` (the ISA padding, Java's no-break space by default; X12 senders want a space) are MR
+//! Moqui additions for generating text.
+//!
 //! Parse results are plain objects and arrays. A segment error is a plain map, because mantle
 //! passes the list through a service parameter; `EdiHandler.makeAk3(segmentError)` stands in for
 //! the Java `segmentError.makeAk3()`.
@@ -26,7 +30,8 @@ use super::*;
 
 const EDI_HANDLER_JS: &str = r#"(function (make, makeAk3) {
     function EdiHandler(ec) { this.handler = make(); }
-    ["loadEnvelope", "loadBody", "setChars", "setX12DefaultChars", "setITradeDefaultChars", "setEdifactDefaultChars"]
+    ["loadEnvelope", "loadBody", "setChars", "setX12DefaultChars", "setITradeDefaultChars", "setEdifactDefaultChars",
+        "setSegmentSuffix", "setPaddingChar"]
         .forEach(function (name) {
             EdiHandler.prototype[name] = function () { this.handler[name].apply(this.handler, arguments); return this; };
         });
@@ -101,6 +106,22 @@ impl HostEdiHandler {
     fn set_itrade_default_chars(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
         host_guard(&ctx, || {
             self.inner.borrow_mut().set_itrade_default_chars();
+            Ok(())
+        })
+    }
+
+    fn set_segment_suffix<'js>(&self, ctx: Ctx<'js>, suffix: Opt<JsValue<'js>>) -> rquickjs::Result<()> {
+        host_guard(&ctx, || {
+            self.inner.borrow_mut().segment_suffix = char_arg(&ctx, suffix.0)?;
+            Ok(())
+        })
+    }
+
+    fn set_padding_char<'js>(&self, ctx: Ctx<'js>, padding: JsValue<'js>) -> rquickjs::Result<()> {
+        host_guard(&ctx, || {
+            let padding = char_arg(&ctx, Some(padding))?
+                .ok_or_else(|| Exception::throw_message(&ctx, "EdiHandler.setPaddingChar needs a character"))?;
+            self.inner.borrow_mut().padding_char = padding;
             Ok(())
         })
     }
@@ -256,9 +277,10 @@ mod tests {
                 var st = map.ISA[0].GS[0].ST[0];
                 var errors = edi.getSegmentErrors();
                 var ak3 = EdiHandler.makeAk3(errors[0]);
+                var plain = edi.setSegmentSuffix(null).setPaddingChar(" ").generateText(map);
                 return [st.BEG[0].elements[3], edi.countSegments(st), errors.length, errors[0].segmentId,
-                    ak3.elements.join("|"), edi.generateText(map).replace(/\u00a0/g, "") === text.replace("ZZZ*1~\n", ""),
-                    edi.splitMessage("ISA", "IEA", text + text).length];
+                    ak3.elements.join("|"), edi.setSegmentSuffix("\n").generateText(map).replace(/ /g, "") === text.replace("ZZZ*1~\n", ""),
+                    edi.splitMessage("ISA", "IEA", text + text).length, plain.indexOf("~\n") < 0 && plain.indexOf("\u00a0") < 0];
             }})()"#,
             envelope = envelope.display(),
             body = body.display()
@@ -269,6 +291,6 @@ mod tests {
             panic!("not a list: {result:?}");
         };
         let texts: Vec<String> = items.iter().map(moqui_lib::object::to_plain_string).collect();
-        assert_eq!(texts, ["PO*1", "2", "1", "ZZZ", "AK3|ZZZ|2||6", "true", "2"]);
+        assert_eq!(texts, ["PO*1", "2", "1", "ZZZ", "AK3|ZZZ|3||6", "true", "2", "true"]);
     }
 }

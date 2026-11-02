@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
-use super::{add_error, has_error, integer_of, millis_of, now_millis, param_text, stamp, text_of};
+use super::{add_error, has_error, integer_of, millis_of, now_millis, param_text, stamp, take_errors, text_of};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::service::call::{sync_with, CallOptions};
 use crate::sftp::SftpClient;
@@ -117,8 +117,12 @@ pub(super) fn send(
 }
 
 /// `poll#SystemMessageSftp`: receive each file in the expanded `receivePath` that matches `receiveFilePattern`, in name
-/// order up to `fileCountLimit`, then delete or move it as `receiveResponseEnumId` says. The first receive that fails
-/// stops the poll.
+/// order up to `fileCountLimit`, then delete or move it as `receiveResponseEnumId` says. Each file is on its own
+/// (runtime/component/mr-mantle/plan/payments-shipping-edi.md section 2): a file that cannot be read, received or
+/// removed is logged by name, stays on the server and is in `failedFileList`, and the poll goes on with the others. A
+/// file is deleted or moved only after its receipt is durable (the receive service committed a message, or answered
+/// that one already holds it); a file whose text a message already holds was received before its cleanup failed, so it
+/// is cleaned up now and not received again.
 pub(super) fn poll(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -171,9 +175,13 @@ pub(super) fn poll(
         },
     );
     client.close();
-    let file_count = polled?;
+    let polled = polled?;
     let mut out = BTreeMap::new();
-    out.insert("fileCount".to_string(), Value::I64(file_count));
+    out.insert("fileCount".to_string(), Value::I64(polled.file_count));
+    out.insert(
+        "failedFileList".to_string(),
+        Value::List(polled.failed.into_iter().map(Value::String).collect()),
+    );
     Ok(out)
 }
 
@@ -189,10 +197,110 @@ struct Poll<'a> {
     limit: Option<i64>,
 }
 
-fn poll_files(client: &mut SftpClient, facade: &EntityFacade, poll: &Poll<'_>) -> Result<i64, LibError> {
+/// What a poll did: the files it took up and those it left on the server after a failure.
+struct Polled {
+    file_count: i64,
+    failed: Vec<String>,
+}
+
+/// What became of one file.
+#[derive(Debug, PartialEq, Eq)]
+enum FileOutcome {
+    /// Received now, in the messages named.
+    Received(String),
+    /// A message already held its text: received before, cleaned up now when the type removes files.
+    AlreadyReceived(Vec<String>),
+}
+
+/// The remote file operations a poll uses, so the per-file handling is tested without a server.
+trait RemoteFiles {
+    fn ls_files(&mut self, path: &str) -> Result<Vec<String>, LibError>;
+    fn get_text(&mut self, path: &str, charset: &str) -> Result<String, LibError>;
+    fn rm(&mut self, path: &str) -> Result<(), LibError>;
+    fn move_file(&mut self, file_path: &str, dest_dir: &str) -> Result<String, LibError>;
+}
+
+impl RemoteFiles for SftpClient {
+    fn ls_files(&mut self, path: &str) -> Result<Vec<String>, LibError> {
+        SftpClient::ls_files(self, path)
+    }
+    fn get_text(&mut self, path: &str, charset: &str) -> Result<String, LibError> {
+        SftpClient::get_text(self, path, charset)
+    }
+    fn rm(&mut self, path: &str) -> Result<(), LibError> {
+        SftpClient::rm(self, path)
+    }
+    fn move_file(&mut self, file_path: &str, dest_dir: &str) -> Result<String, LibError> {
+        SftpClient::move_file(self, file_path, dest_dir, true)
+    }
+}
+
+/// The local side of a poll: the messages that already hold a file, and the receive of a new one.
+trait Receipts {
+    /// The IDs of the messages (not rejected, cancelled or in error) of this file whose text is `text`.
+    fn holding(&mut self, filename: &str, text: &str) -> Result<Vec<String>, LibError>;
+    /// Receive the file in a transaction of its own: the IDs of the messages kept, or of the one that already holds
+    /// it (a duplicate); empty when nothing was kept. An error is the receive's failure.
+    fn receive(&mut self, filename: &str, text: String) -> Result<Vec<String>, LibError>;
+}
+
+struct ServiceReceipts<'a> {
+    facade: &'a EntityFacade,
+    type_id: &'a str,
+    remote_id: &'a str,
+}
+
+impl Receipts for ServiceReceipts<'_> {
+    fn holding(&mut self, filename: &str, text: &str) -> Result<Vec<String>, LibError> {
+        existing_messages(self.facade, self.type_id, self.remote_id, filename, text)
+    }
+
+    fn receive(&mut self, filename: &str, text: String) -> Result<Vec<String>, LibError> {
+        let mut receive = BTreeMap::new();
+        receive.insert("systemMessageTypeId".to_string(), Value::string(self.type_id));
+        receive.insert("systemMessageRemoteId".to_string(), Value::string(self.remote_id));
+        receive.insert("remoteMessageId".to_string(), Value::string(filename));
+        receive.insert("messageText".to_string(), Value::string(text));
+        // A new transaction, so the message is committed before the file is deleted or moved.
+        let options = CallOptions {
+            disable_authz: true,
+            require_new_transaction: Some(true),
+            ..CallOptions::default()
+        };
+        let result = sync_with(RECEIVE, &receive, &options);
+        // Each file's errors are its own: taken here so the next file's receive starts clean.
+        let errors = take_errors();
+        let result = result?;
+        if has_error() || !errors.is_empty() {
+            return Err(LibError::new(errors));
+        }
+        let mut ids: Vec<String> = match result.get("systemMessageIdList") {
+            Some(Value::List(items)) => items.iter().map(|item| text_of(Some(item))).collect(),
+            other => vec![text_of(other)],
+        };
+        ids.retain(|id| !id.is_empty());
+        let duplicate = text_of(result.get("duplicateOfId"));
+        if ids.is_empty() && !duplicate.is_empty() {
+            ids.push(duplicate);
+        }
+        Ok(ids)
+    }
+}
+
+fn poll_files(client: &mut SftpClient, facade: &EntityFacade, poll: &Poll<'_>) -> Result<Polled, LibError> {
+    let mut receipts = ServiceReceipts {
+        facade,
+        type_id: poll.type_id,
+        remote_id: poll.remote_id,
+    };
+    poll_each(client, &mut receipts, poll)
+}
+
+fn poll_each(files_at: &mut dyn RemoteFiles, receipts: &mut dyn Receipts, poll: &Poll<'_>) -> Result<Polled, LibError> {
     let (type_id, remote_id) = (poll.type_id, poll.remote_id);
     let mut files = BTreeSet::new();
-    for name in client.ls_files(poll.receive_path)? {
+    // The listing and the pattern are the connection's: when they fail no file can be trusted, so the poll stops.
+    for name in files_at.ls_files(poll.receive_path)? {
         let matched = match poll.pattern {
             Some(pattern) => moqui_lib::object::regex_full_match(&name, pattern)
                 .map_err(|err| LibError::new(format!("receiveFilePattern {pattern} of {type_id}: {err}")))?,
@@ -217,71 +325,88 @@ fn poll_files(client: &mut SftpClient, facade: &EntityFacade, poll: &Poll<'_>) -
         );
     }
     let file_count = i64::try_from(files.len()).unwrap_or(i64::MAX);
-    let removes = matches!(poll.response, "MsgRrDelete" | "MsgRrMove");
+    let mut failed = Vec::new();
     for filename in &files {
-        if removes {
-            let existing = existing_messages(facade, poll, filename)?;
-            if !existing.is_empty() {
-                tracing::warn!(
-                    "SFTP poll file {filename} for type {type_id} remote {remote_id} already in SystemMessage records {existing:?}"
+        match poll_file(files_at, receipts, poll, filename) {
+            Ok(FileOutcome::Received(ids)) => {
+                tracing::info!("SFTP poll type {type_id} remote {remote_id} saved file {filename} in messages {ids}");
+            }
+            Ok(FileOutcome::AlreadyReceived(ids)) => {
+                tracing::info!(
+                    "SFTP poll file {filename} for type {type_id} remote {remote_id} already in SystemMessage records {ids:?}"
                 );
-                continue;
             }
-        }
-        let file_path = format!("{}/{filename}", poll.receive_path);
-        let message_text = client.get_text(&file_path, poll.charset)?;
-        // A new transaction, so the message is committed before the file is deleted or moved.
-        let mut receive = BTreeMap::new();
-        receive.insert("systemMessageTypeId".to_string(), Value::string(type_id));
-        receive.insert("systemMessageRemoteId".to_string(), Value::string(remote_id));
-        receive.insert("remoteMessageId".to_string(), Value::string(filename));
-        receive.insert("messageText".to_string(), Value::string(message_text));
-        let options = CallOptions {
-            disable_authz: true,
-            require_new_transaction: Some(true),
-            ..CallOptions::default()
-        };
-        let result = match sync_with(RECEIVE, &receive, &options) {
-            Ok(result) => result,
             Err(err) => {
-                add_error(err.message().to_string());
-                BTreeMap::new()
+                tracing::error!(
+                    "SFTP poll type {type_id} remote {remote_id} file {filename} failed and stays on the server: {}",
+                    err.message()
+                );
+                failed.push(filename.clone());
             }
-        };
-        if has_error() {
-            tracing::error!(
-                "SFTP poll error receiving SystemMessage, stopping poll for type {type_id} remote {remote_id}"
-            );
-            return Ok(file_count);
-        }
-        let ids = text_of(result.get("systemMessageIdList"));
-        tracing::info!("SFTP poll type {type_id} remote {remote_id} saved file {filename} in messages {ids}");
-        match poll.response {
-            "MsgRrDelete" => {
-                client.rm(&file_path)?;
-                tracing::info!("SFTP poll SystemMessage {ids} type {type_id} deleted {file_path}");
-            }
-            "MsgRrMove" if !poll.move_path.is_empty() => {
-                let moved = client.move_file(&file_path, poll.move_path, true)?;
-                tracing::info!("SFTP poll SystemMessage {ids} type {type_id} moved from {file_path} to {moved}");
-            }
-            "MsgRrMove" => tracing::error!(
-                "SFTP poll SystemMessage {ids} created for remote file {filename} and configured to move but no receiveMovePath set on SystemMessageType {type_id}"
-            ),
-            _ => {}
         }
     }
-    Ok(file_count)
+    Ok(Polled { file_count, failed })
 }
 
-/// IDs of the messages already received from this file that are not rejected, cancelled, or in error.
-fn existing_messages(facade: &EntityFacade, poll: &Poll<'_>, filename: &str) -> Result<Vec<String>, LibError> {
+/// Receive one file, then remove it once its receipt is durable.
+fn poll_file(
+    files_at: &mut dyn RemoteFiles,
+    receipts: &mut dyn Receipts,
+    poll: &Poll<'_>,
+    filename: &str,
+) -> Result<FileOutcome, LibError> {
+    let file_path = format!("{}/{filename}", poll.receive_path);
+    let message_text = files_at.get_text(&file_path, poll.charset)?;
+    let held = receipts.holding(filename, &message_text)?;
+    let outcome = if held.is_empty() {
+        let ids = receipts.receive(filename, message_text)?;
+        if ids.is_empty() {
+            // Nothing durable holds the file, so it stays for the next poll.
+            return Err(LibError::new("the receive service kept no message"));
+        }
+        FileOutcome::Received(ids.join(","))
+    } else {
+        FileOutcome::AlreadyReceived(held)
+    };
+    match poll.response {
+        "MsgRrDelete" => {
+            files_at.rm(&file_path)?;
+            tracing::info!("SFTP poll type {} deleted {file_path}", poll.type_id);
+        }
+        "MsgRrMove" if !poll.move_path.is_empty() => {
+            let moved = files_at.move_file(&file_path, poll.move_path)?;
+            tracing::info!("SFTP poll type {} moved {file_path} to {moved}", poll.type_id);
+        }
+        "MsgRrMove" => tracing::error!(
+            "SFTP poll file {filename} received and configured to move but no receiveMovePath set on SystemMessageType {}",
+            poll.type_id
+        ),
+        _ => {}
+    }
+    Ok(outcome)
+}
+
+/// IDs of the messages already received from this file with this text that are not rejected, cancelled, or in error.
+/// A file of the same name with other text is a new file, received again. The text is compared in the query, and only
+/// the newest few IDs and statuses are read, so a name reused for many files does not load their texts each poll.
+fn existing_messages(
+    facade: &EntityFacade,
+    type_id: &str,
+    remote_id: &str,
+    filename: &str,
+    text: &str,
+) -> Result<Vec<String>, LibError> {
     let rows = facade
         .find(MESSAGE)?
         .disable_authz()
-        .eq("systemMessageRemoteId", Value::string(poll.remote_id))
-        .eq("systemMessageTypeId", Value::string(poll.type_id))
+        .eq("systemMessageRemoteId", Value::string(remote_id))
+        .eq("systemMessageTypeId", Value::string(type_id))
         .eq("remoteMessageId", Value::string(filename))
+        .eq("messageText", Value::string(text))
+        .select_field("systemMessageId")
+        .select_field("statusId")
+        .order_by("initDate", true)
+        .limit(20)
         .list()?;
     Ok(rows
         .iter()
@@ -368,3 +493,7 @@ fn find_one(facade: &EntityFacade, entity: &str, field: &str, value: &str) -> Re
 fn field(row: &EntityValue, name: &str) -> String {
     text_of(row.get(name))
 }
+
+#[cfg(test)]
+#[path = "sftp_tests.rs"]
+mod tests;

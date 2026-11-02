@@ -211,15 +211,25 @@ fn undefined_segment_is_a_segment_error_with_ak3() {
     let mut edi = handler(true);
     edi.parse_text(interchange("000000004", &body).trim()).unwrap();
     let errors = edi.segment_errors().unwrap().to_vec();
-    assert_eq!(errors.len(), 1);
+    // ZZZ, and the PO1 the grammar requires (MIN 1), at the position of its ST.
+    assert_eq!(errors.len(), 2, "{errors:?}");
     let error = &errors[0];
     assert_eq!(error.error_type, SegmentErrorType::NotDefinedInTxSet);
     assert_eq!(error.segment_id, "ZZZ");
     assert_eq!(error.segment_index, 4);
-    assert_eq!(error.position_in_tx_set, 2);
+    // ST is position 1, BEG 2, ZZZ 3 (Java counted from the interchange and said 2).
+    assert_eq!(error.position_in_tx_set, 3);
     assert_eq!(
         error.make_ak3().get("elements"),
-        Some(&Value::List(vec![s("AK3"), s("ZZZ"), s("2"), s(""), s("6")]))
+        Some(&Value::List(vec![s("AK3"), s("ZZZ"), s("3"), s(""), s("6")]))
+    );
+    assert_eq!(
+        (
+            errors[1].error_type,
+            errors[1].segment_id.as_str(),
+            errors[1].position_in_tx_set
+        ),
+        (SegmentErrorType::MandatoryMissing, "PO1", 1)
     );
     let back = SegmentError::from_value(&error.to_value()).unwrap();
     assert_eq!(&back, error);
@@ -242,7 +252,7 @@ fn undefined_segment_is_a_segment_error_with_ak3() {
     };
     assert_eq!(
         elements(ak4),
-        vec![s("AK4"), Value::List(vec![s("3"), s("2")]), s("7"), s("XX")]
+        vec![s("AK4"), Value::List(vec![s("3"), s("2")]), s(""), s("7"), s("XX")]
     );
 }
 
@@ -345,4 +355,128 @@ fn the_converted_mantle_grammars_load_and_parse() {
     let root = edi.parse_text(interchange("000000004", &PO_BODY).trim()).unwrap();
     let st = child(child(child(&root, "ISA", 0), "GS", 0), "ST", 0);
     assert_eq!(elements(child(st, "SE", 0)), vec![s("SE"), s("7"), s("0001")]);
+}
+
+/// The kinds, segment IDs and positions of the last parse's errors.
+fn error_list(edi: &EdiHandler) -> Vec<(SegmentErrorType, String, i64)> {
+    edi.segment_errors()
+        .unwrap()
+        .iter()
+        .map(|error| (error.error_type, error.segment_id.clone(), error.position_in_tx_set))
+        .collect()
+}
+
+#[test]
+fn min_and_max_are_checked_on_each_level() {
+    let body = structure(
+        r"[
+        {ID:'ST', MIN:1, MAX:1, LEVEL:[
+            {ID:'BEG', MIN:1, MAX:1},
+            {ID:'N1', MIN:0, MAX:1, LEVEL:[{ID:'N3', MIN:1, MAX:2}]},
+            {ID:'PO1', MIN:1, MAX:100000},
+            {ID:'SE', MIN:1, MAX:1},
+        ]}
+    ]",
+    );
+    let mut edi = handler(false);
+    edi.set_body(&body).unwrap();
+    // A second BEG, an N1 with no N3 and a second N1 loop, and no PO1.
+    let text = interchange(
+        "000000010",
+        &[
+            "ST*850*0001",
+            "BEG*00*SA*PO1**20231015",
+            "BEG*00*SA*PO2**20231015",
+            "N1*ST*A",
+            "N1*BT*B",
+            "N3*1 Main",
+            "SE*7*0001",
+        ],
+    );
+    edi.parse_text(text.trim()).unwrap();
+    assert_eq!(
+        error_list(&edi),
+        vec![
+            (SegmentErrorType::MandatoryMissing, "N3".to_string(), 4),
+            (SegmentErrorType::ExceedsMaximumUse, "BEG".to_string(), 3),
+            (SegmentErrorType::LoopOverMax, "N1".to_string(), 5),
+            (SegmentErrorType::MandatoryMissing, "PO1".to_string(), 1),
+        ]
+    );
+    // The envelope's GE (MIN 1) is checked too.
+    let no_trailer = interchange("000000011", &PO_BODY).replace("GE*1*1~\n", "");
+    let mut edi = handler(true);
+    edi.parse_text(no_trailer.trim()).unwrap();
+    assert_eq!(
+        error_list(&edi),
+        vec![(SegmentErrorType::MandatoryMissing, "GE".to_string(), 2)]
+    );
+    // A structure whose MAX is below its MIN, or negative, is refused.
+    assert!(SegmentDef::list_from_value(&structure("[{ID:'A', MIN:2, MAX:1}]")).is_err());
+    assert!(SegmentDef::list_from_value(&structure("[{ID:'A', MIN:-1}]")).is_err());
+    let defs = SegmentDef::list_from_value(&structure("[{ID:'A', MIN:1, MAX:99999}, {ID:'B'}]")).unwrap();
+    assert_eq!(
+        (defs[0].min, defs[0].max, defs[1].min, defs[1].max),
+        (1, Some(99999), 0, None)
+    );
+}
+
+#[test]
+fn segments_out_of_order_and_left_after_the_root_are_errors() {
+    let mut edi = handler(true);
+    // PO1 before N1 at the ST level.
+    let text = interchange(
+        "000000012",
+        &[
+            "ST*850*0001",
+            "BEG*00*SA*PO1**20231015",
+            "PO1*1*1*EA*1",
+            "N1*ST*A",
+            "SE*5*0001",
+        ],
+    );
+    edi.parse_text(text.trim()).unwrap();
+    assert_eq!(
+        error_list(&edi),
+        vec![(SegmentErrorType::NotInSequence, "N1".to_string(), 4)]
+    );
+    // An ST after the IEA ends the parse; Java dropped it and the segments after it with no error.
+    let text = format!("{}ST*850*0009~\nBEG*00~\n", interchange("000000013", &PO_BODY));
+    let root = edi.parse_text(text.trim()).unwrap();
+    assert_eq!(children(child(child(&root, "ISA", 0), "GS", 0), "ST").len(), 1);
+    assert_eq!(
+        error_list(&edi),
+        vec![(SegmentErrorType::NotInSequence, "ST".to_string(), 12)]
+    );
+    // A GS after the IEA is the interchange's, out of order (and with no GE of its own).
+    let text = format!("{}GS*PO*X~\n", interchange("000000013", &PO_BODY));
+    edi.parse_text(text.trim()).unwrap();
+    assert_eq!(
+        error_list(&edi),
+        vec![
+            (SegmentErrorType::NotInSequence, "GS".to_string(), 12),
+            (SegmentErrorType::MandatoryMissing, "GE".to_string(), 12)
+        ]
+    );
+}
+
+#[test]
+fn positions_count_from_each_transaction_set() {
+    let mut edi = handler(true);
+    let second = [
+        "ST*850*0002",
+        "BEG*00*SA*PO2**20231015",
+        "PO1*1*1*EA*1",
+        "ZZZ*odd",
+        "SE*5*0002",
+    ];
+    let mut body: Vec<&str> = PO_BODY.to_vec();
+    body.extend(second);
+    edi.parse_text(interchange("000000014", &body).trim()).unwrap();
+    let errors = edi.segment_errors().unwrap().to_vec();
+    assert_eq!(
+        error_list(&edi),
+        vec![(SegmentErrorType::NotDefinedInTxSet, "ZZZ".to_string(), 4)]
+    );
+    assert_eq!(errors[0].segment_index, 12);
 }

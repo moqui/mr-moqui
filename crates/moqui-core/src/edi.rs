@@ -24,6 +24,11 @@
 //! is a JavaScript expression that evaluates to that list, the Groovy literal with `[:]` maps
 //! written as `{}` objects. The handler runs on the thread's `ExecutionContext`, which is why it
 //! lives in core.
+//!
+//! A parse checks the structure, which Java did not (runtime/component/mr-mantle/plan/payments-shipping-edi.md E1):
+//! each level's segments in grammar order, `MIN` and `MAX` occurrences, and no segment left after the root. Positions
+//! count from the transaction set's first segment (ST is 1), as X12 AK302 does. Element values are not checked: a
+//! mapping that needs required elements, codes or totals checks them itself.
 
 use std::collections::{HashMap, HashSet};
 
@@ -37,10 +42,14 @@ pub type EdiMap = IndexMap<String, Value>;
 const ELEMENTS: &str = "elements";
 const ORIGINAL_LIST: &str = "originalList";
 
-/// One entry of a grammar structure. MIN, MAX, QUERIES, and SUBTRANSLATION are not used.
+/// One entry of a grammar structure. QUERIES and SUBTRANSLATION are not used.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegmentDef {
     pub id: String,
+    /// `MIN`, the occurrences required at its level; 0 when absent.
+    pub min: usize,
+    /// `MAX`, the occurrences allowed at its level; no limit when absent.
+    pub max: Option<usize>,
     pub level: Vec<SegmentDef>,
 }
 
@@ -70,7 +79,20 @@ impl SegmentDef {
             None | Some(Value::Null) => Vec::new(),
             Some(level) => Self::list_from_value(level)?,
         };
-        Ok(SegmentDef { id, level })
+        let count = |name: &str| -> Result<Option<usize>, Error> {
+            match int_of(entries.get(name)) {
+                None => Ok(None),
+                Some(number) => usize::try_from(number)
+                    .map(Some)
+                    .map_err(|_| Error::new(format!("EDI structure entry {id} has a negative {name}"))),
+            }
+        };
+        let min = count("MIN")?.unwrap_or(0);
+        let max = count("MAX")?;
+        if max.is_some_and(|max| max < min) {
+            return Err(Error::new(format!("EDI structure entry {id} has MAX below MIN")));
+        }
+        Ok(SegmentDef { id, min, max, level })
     }
 }
 
@@ -204,7 +226,9 @@ pub struct ElementError {
 }
 
 impl ElementError {
-    /// The X12 AK4 segment for this error.
+    /// The X12 AK4 segment for this error: AK401 the position (with the component position of a composite), AK402
+    /// (the data element reference number) empty, AK403 the error code and AK404 the bad value. Java put the code in
+    /// AK402.
     pub fn make_ak4(&self) -> EdiMap {
         let position = Value::string(self.element_position.to_string());
         let position = match self.composite_position.filter(|composite| *composite != 0) {
@@ -217,6 +241,7 @@ impl ElementError {
             Value::List(vec![
                 Value::string("AK4"),
                 position,
+                Value::string(""),
                 Value::string(self.error_type.x12_code()),
                 Value::string(self.element_text.clone()),
             ]),
@@ -361,6 +386,8 @@ pub struct EdiHandler {
     body_root_id: Option<String>,
     known_segment_ids: HashSet<String>,
     segment_errors: Option<Vec<SegmentError>>,
+    /// The index of the transaction set's first segment while its children are parsed.
+    tx_start: Option<usize>,
 }
 
 impl Default for EdiHandler {
@@ -388,6 +415,7 @@ impl EdiHandler {
             body_root_id: None,
             known_segment_ids: HashSet::new(),
             segment_errors: None,
+            tx_start: None,
         }
     }
 
@@ -474,7 +502,8 @@ impl EdiHandler {
     ///
     /// A segment with no definition goes to the parent's `originalList` when no body is loaded,
     /// which supports an envelope-only parse that a body parse completes later. With a body it is a
-    /// segment error.
+    /// segment error. A segment out of its level's grammar order, a level with fewer than `MIN` or more than `MAX` of
+    /// a segment, and the first segment left over after the root (Java dropped it) are segment errors too.
     ///
     /// # Errors
     ///
@@ -499,7 +528,17 @@ impl EdiHandler {
         }
         let mut root = EdiMap::new();
         let body = self.body.clone().unwrap_or_default();
-        self.parse_segments(&segments, 0, &mut root, &envelope, &body)?;
+        self.tx_start = None;
+        let mut index = self.parse_segments(&segments, 0, &mut root, &envelope, &body, None)?;
+        // A segment the root level does not take ends the parse; it and those after it are not in the map.
+        while index < segments.len() {
+            let segment_text = java_trim(&segments[index]);
+            if let Some(segment_id) = self.segment_id(segment_text) {
+                self.push_error(SegmentErrorType::NotInSequence, index, segment_id, segment_text);
+                break;
+            }
+            index += 1;
+        }
         Ok(root)
     }
 
@@ -644,6 +683,8 @@ impl EdiHandler {
         Ok(())
     }
 
+    /// Parse the segments of one level from `index`, under the segment at `parent` (none for the root), and check the
+    /// level's order and occurrences when it ends.
     fn parse_segments(
         &mut self,
         segments: &[String],
@@ -651,7 +692,10 @@ impl EdiHandler {
         current: &mut EdiMap,
         level_defs: &[SegmentDef],
         body: &[SegmentDef],
+        parent: Option<usize>,
     ) -> Result<usize, Error> {
+        // Each segment parsed at this level: its definition's position in the level and its segment index.
+        let mut seen: Vec<(usize, usize)> = Vec::new();
         while index < segments.len() {
             let segment_text = java_trim(&segments[index]);
             let Some(segment_id) = self.segment_id(segment_text) else {
@@ -660,23 +704,16 @@ impl EdiHandler {
                 index += 1;
                 continue;
             };
-            if let Some(def) = level_defs.iter().find(|def| def.id == segment_id) {
+            if let Some((position, def)) = level_defs.iter().enumerate().find(|(_, def)| def.id == segment_id) {
+                if seen.last().is_some_and(|(last, _)| position < *last) {
+                    self.push_error(SegmentErrorType::NotInSequence, index, segment_id, segment_text);
+                }
+                seen.push((position, index));
                 // parse_segment returns the next segment to process.
                 index = self.parse_segment(segments, index, current, def, body)?;
             } else if !self.known_segment_ids.contains(&segment_id) {
                 if !body.is_empty() {
-                    // TODO in Java: handle more than one transaction set position.
-                    let position = i64::try_from(index).unwrap_or(i64::MAX) - 2;
-                    if let Some(errors) = self.segment_errors.as_mut() {
-                        errors.push(SegmentError {
-                            error_type: SegmentErrorType::NotDefinedInTxSet,
-                            segment_index: i64::try_from(index).unwrap_or(i64::MAX),
-                            position_in_tx_set: position,
-                            segment_id,
-                            segment_text: segment_text.to_string(),
-                            element_errors: Vec::new(),
-                        });
-                    }
+                    self.push_error(SegmentErrorType::NotDefinedInTxSet, index, segment_id, segment_text);
                 } else {
                     // Kept as text, so an envelope-only parse can be finished with the body.
                     let original = current
@@ -689,11 +726,62 @@ impl EdiHandler {
                 index += 1;
             } else {
                 // Not at this level: return so the parent checks it.
-                return Ok(index);
+                break;
             }
         }
-        // Only the root segment gets here, after its final child.
+        self.check_occurrences(segments, level_defs, &seen, parent);
         Ok(index)
+    }
+
+    /// A level's `MIN` and `MAX`: a missing segment at its parent's position, one too many at its own.
+    fn check_occurrences(
+        &mut self,
+        segments: &[String],
+        level_defs: &[SegmentDef],
+        seen: &[(usize, usize)],
+        parent: Option<usize>,
+    ) {
+        for (position, def) in level_defs.iter().enumerate() {
+            let indexes: Vec<usize> = seen
+                .iter()
+                .filter(|(def_position, _)| *def_position == position)
+                .map(|(_, index)| *index)
+                .collect();
+            if indexes.len() < def.min {
+                let index = parent.unwrap_or(0);
+                self.push_error(SegmentErrorType::MandatoryMissing, index, def.id.clone(), "");
+            }
+            if let Some(&index) = def.max.and_then(|max| indexes.get(max)) {
+                let kind = if def.level.is_empty() {
+                    SegmentErrorType::ExceedsMaximumUse
+                } else {
+                    SegmentErrorType::LoopOverMax
+                };
+                let text = segments
+                    .get(index)
+                    .map(|text| java_trim(text))
+                    .unwrap_or_default()
+                    .to_string();
+                self.push_error(kind, index, def.id.clone(), &text);
+            }
+        }
+    }
+
+    fn push_error(&mut self, error_type: SegmentErrorType, index: usize, segment_id: String, segment_text: &str) {
+        let position = match self.tx_start {
+            Some(start) if index >= start => index - start + 1,
+            _ => index + 1,
+        };
+        if let Some(errors) = self.segment_errors.as_mut() {
+            errors.push(SegmentError {
+                error_type,
+                segment_index: i64::try_from(index).unwrap_or(i64::MAX),
+                position_in_tx_set: i64::try_from(position).unwrap_or(i64::MAX),
+                segment_id,
+                segment_text: segment_text.to_string(),
+                element_errors: Vec::new(),
+            });
+        }
     }
 
     fn parse_segment(
@@ -710,14 +798,21 @@ impl EdiHandler {
         new_segment.insert(ELEMENTS.to_string(), Value::List(elements));
         let mut next = index + 1;
         // A segment with children recurses. The body root switches from the envelope to the body.
+        let is_body_root = self.body_root_id.as_deref() == Some(def.id.as_str());
         let mut level = def.level.as_slice();
-        if level.is_empty() && self.body_root_id.as_deref() == Some(def.id.as_str()) {
+        if level.is_empty() && is_body_root {
             if let Some(first) = body.first() {
                 level = first.level.as_slice();
             }
         }
+        if is_body_root {
+            self.tx_start = Some(index);
+        }
         if !level.is_empty() {
-            next = self.parse_segments(segments, next, &mut new_segment, level, body)?;
+            next = self.parse_segments(segments, next, &mut new_segment, level, body, Some(index))?;
+        }
+        if is_body_root {
+            self.tx_start = None;
         }
         // Java adds the segment before its children are parsed. Nothing else touches `current`
         // meanwhile, so adding it after keeps the same order.

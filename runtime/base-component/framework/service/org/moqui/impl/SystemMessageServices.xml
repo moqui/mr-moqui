@@ -25,6 +25,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="systemMessageIdList" type="List"><parameter name="systemMessageId"/></parameter>
+            <parameter name="duplicateOfId"><description>MR Moqui only. The message that already holds this one, when the
+                receive kept nothing because it is a duplicate (store#ReceivedSystemMessage); the receipt is durable, so a
+                poller may remove its file.</description></parameter>
         </out-parameters>
     </service>
     <service verb="consume" noun="SystemMessage" type="interface">

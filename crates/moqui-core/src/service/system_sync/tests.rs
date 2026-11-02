@@ -878,13 +878,14 @@ fn a_message_goes_out_by_sftp_and_a_poll_receives_moves_and_skips() {
         assert!(!disk.files.contains_key(&file));
     }
 
-    // The same file arriving again is skipped: a message already holds it.
+    // The same file arriving again (its move failed after the receipt, say) is not received again: a message already
+    // holds its text, so it is moved now.
     connector
         .disk
         .lock()
         .unwrap()
         .files
-        .insert(file.clone(), b"again".to_vec());
+        .insert(file.clone(), b"caf\xe9 order".to_vec());
     connector
         .disk
         .lock()
@@ -894,8 +895,8 @@ fn a_message_goes_out_by_sftp_and_a_poll_receives_moves_and_skips() {
     crate::service::sync("org.moqui.sftp.SftpMessageServices.poll#SystemMessageSftp", &poll).unwrap();
     assert_eq!(received(facade, "SftpIn").len(), 1);
     assert!(
-        connector.disk.lock().unwrap().files.contains_key(&file),
-        "a skipped file stays"
+        !connector.disk.lock().unwrap().files.contains_key(&file),
+        "a file already received is moved"
     );
 
     // fileCountLimit takes the first names in order.
