@@ -33,7 +33,8 @@ moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-r
 moqui test-client runtime/component/my-site/test/client --server https://test.example.com --insecure
 ```
 
-With no component, every component under the runtime that has `test/client/*.spec.js` runs: `base-component`, then
+With no component, every component under the runtime that has `test/client/*.spec.js` (in `test/client` or a
+subdirectory of it other than `process`; a spec's name is its file name, unique in the component) runs: `base-component`, then
 `component`, then `dev-component`, by directory name within each, and each after the components its `component.xml`
 `depends-on` names. A target with a `/`, or ending in `.spec.js`, is a path: a `test/client` directory, a component
 directory, or one spec file (its component is the directory above `test/`). A path serves a machine that has the test

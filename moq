@@ -3637,13 +3637,14 @@ save_names() {
     done
 }
 
-# Names (from component.xml) of the components that have test/*.spec.js files.
+# Names (from component.xml) of the components that have test/*.spec.js files, in test or a subdirectory of it.
 # Components with server specs, in runtime/base-component, runtime/component and runtime/dev-component; not a template,
 # whose name is a placeholder (runtime/dev-component/template).
 test_components() {
     local d name
     for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
-        compgen -G "${d}test/*.spec.js" >/dev/null && [ -f "${d}component.xml" ] || continue
+        [ -d "${d}test" ] && [ -f "${d}component.xml" ] || continue
+        [ -n "$(find "${d}test" \( -path "${d}test/client" -o -path "${d}test/agent" \) -prune -o -name '*.spec.js' -print -quit)" ] || continue
         name=$(component_name_of "${d%/}")
         case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
     done
@@ -3664,7 +3665,8 @@ git_refs() {
 client_test_components() {
     local d
     for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
-        compgen -G "${d}test/client/*.spec.js" >/dev/null && [ -f "${d}component.xml" ] || continue
+        [ -d "${d}test/client" ] && [ -f "${d}component.xml" ] || continue
+        [ -n "$(find "${d}test/client" -path "${d}test/client/process" -prune -o -name '*.spec.js' -print -quit)" ] || continue
         component_name_of "${d%/}"
     done
 }

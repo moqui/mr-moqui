@@ -316,8 +316,10 @@ const TEST: &str = "\
 moqui test [component ...] [options]
     Run the JavaScript specs in each component's test directory.
 
-With no component, this runs every component under the runtime that has test/*.spec.js. Specs in a
-component run in the order named by test/suite.js, then the other *.spec.js files by name. Components
+With no component, this runs every component under the runtime that has test/*.spec.js, in test or a
+subdirectory of it other than client and agent. A spec's name is its file name, unique in its
+component. Specs in a component run in the order named by test/suite.js, then the other *.spec.js
+files by name. Components
 run in the order they load. --spec adds the specs named in dependsOn, in that same order. Each spec
 runs in its own execution context on one database. Any failed feature exits 1. A component's
 test/MoquiConf.xml merges after its MoquiConf.xml, in test runs only. A dependsOn name that the
@@ -393,7 +395,8 @@ moqui test-client [component | path ...] [options]
 The specs have the format of moqui test (spec, feature, where, the conditions, suite.js), but reach
 the server only over HTTP, WebSocket and headless Chromium: http, session, login, logout, ws,
 browser, load, parallel, server, params, files, skip, waitUntil and sleep instead of ec and call. With no component, this runs every component under
-the runtime that has test/client/*.spec.js; a path is a test/client directory or one .spec.js file,
+the runtime that has test/client/*.spec.js (in test/client or a subdirectory of it other than
+process); a path is a test/client directory or one .spec.js file,
 for a machine with the test files and no runtime. This opens no database, binds no port, reads no
 conf or runtime/.env, and writes only under --out and --junit, so it runs beside a server in the same
 runtime directory. It first checks that the server answers. Any failed feature exits 1.

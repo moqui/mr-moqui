@@ -8,7 +8,7 @@ through adapter services, and Mantle has them. As of Oct 21, 2026.
 The code is `crates/moqui-dav/src/dav/` (the protocol: `mod.rs`, `files.rs`, `pim.rs`, `locks.rs`, `xml.rs`),
 `crates/moqui-host/src/dav_http.rs` (the routes) and `crates/moqui-host/src/ssh/sftp_fs.rs` (SFTP). Tests:
 `crates/moqui-dav/src/dav/tests.rs`, `crates/moqui-host/tests/it/ssh.rs` and `collab.rs` (the routes), and
-mr-mantle `test/Dav.spec.js` (CalDAV and CardDAV on Mantle, through `org.moqui.impl.DavServices.serve#DavRequest`).
+mr-mantle `test/work/Dav.spec.js` (CalDAV and CardDAV on Mantle, through `org.moqui.impl.DavServices.serve#DavRequest`).
 IronStone's screen is Commons, Settings, Sync.
 
 ## App passwords

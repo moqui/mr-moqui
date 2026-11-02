@@ -348,12 +348,14 @@ The console has a line per feature, and the failures in full at the end. Any fai
 
 ### Files and order
 
-A spec is `<component>/test/<Name>.spec.js`. Its name is the file name. `test/suite.js`, `suite(["SpecA", "SpecB"])`,
-gives the order; the other spec files run after it, by name. Each spec runs in its own execution context, on the one
+A spec is `<component>/test/<Name>.spec.js`, or in a subdirectory of `test/` to group a busy component's specs (mr-mantle
+by service directory, `test/order/OrderToCashBasicFlow.spec.js`; mr-boss by screen directory). Its name is the file
+name, wherever it is, so it must be unique in the component. `test/suite.js`, `suite(["SpecA", "SpecB"])`, gives the
+order; the other spec files run after it, by name. Each spec runs in its own execution context, on the one
 database of the run, so a spec sees what the specs before it wrote.
 
 A component's `test/MoquiConf.xml` merges after its `MoquiConf.xml` in `moqui test` runs only, for a test-only setting
-or mount. `test/client/` holds client specs, which `moqui test` does not read.
+or mount. `test/client/` holds client specs and `test/agent/` agent tasks, which `moqui test` does not read as specs.
 
 ### A spec file
 

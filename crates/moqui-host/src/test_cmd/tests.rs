@@ -245,3 +245,38 @@ fn suite_order_comes_first() {
     assert!(component_specs("c", &test_dir, "test").is_err());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn specs_in_subdirectories() {
+    let dir = std::env::temp_dir().join(format!("moqui-test-discover-sub-{}", std::process::id()));
+    let test_dir = dir.join("test");
+    for sub in ["order", "account/deep", "client/Orders", "client/process", "agent"] {
+        std::fs::create_dir_all(test_dir.join(sub)).unwrap();
+    }
+    std::fs::write(test_dir.join("A.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("order/C.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("account/deep/B.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("client/Orders/Walk.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("client/process/Flow.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("agent/Tasks.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("suite.js"), "suite(['C'])").unwrap();
+    // test: the subdirectories, not client or agent; suite order, then by name wherever the file is
+    let specs = component_specs("c", &test_dir, "test").unwrap();
+    let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
+    assert_eq!(names, vec!["C", "A", "B"]);
+    assert_eq!(specs[0].display, "c/test/order/C.spec.js");
+    assert_eq!(specs[2].display, "c/test/account/deep/B.spec.js");
+    // test/client: its subdirectories, not process
+    let client = component_specs("c", &test_dir.join("client"), "test/client").unwrap();
+    let names: Vec<&str> = client.iter().map(|spec| spec.name.as_str()).collect();
+    assert_eq!(names, vec!["Walk"]);
+    assert_eq!(client[0].display, "c/test/client/Orders/Walk.spec.js");
+    // one name in two directories
+    std::fs::write(test_dir.join("account/C.spec.js"), "spec({})").unwrap();
+    let err = component_specs("c", &test_dir, "test").unwrap_err().to_string();
+    assert!(
+        err.contains("c/test/order/C.spec.js") && err.contains("c/test/account/C.spec.js"),
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -15,8 +15,8 @@
 //! `moqui test [component ...]`: run the JavaScript spec files in each component's `test` directory, Moqui Java's
 //! Spock tests on the script engine (`plans/archive/TestHarness.md`).
 //!
-//! A component's specs run in the order of its `test/suite.js` (`suite(["SpecA", "SpecB"])`), then the other
-//! `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs
+//! A component's specs, in `test` or a subdirectory of it, run in the order of its `test/suite.js`
+//! (`suite(["SpecA", "SpecB"])`), then the other `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs
 //! their `dependsOn` names, in suite order. Each spec runs in its own execution context. A `dependsOn` name a spec's
 //! component lacks comes from the run's other components. Each component's `test/MoquiConf.xml` merges after its
 //! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`, plans/archive/ClientTestHarness.md 6).
@@ -311,30 +311,65 @@ pub(crate) fn component_name(dir: &Path) -> String {
         .unwrap_or(dir_name)
 }
 
-/// The specs of one component's test directory (`sub` under the component, `test` or `test/client`): the `suite.js`
-/// order first, then the rest by name.
+/// The subdirectories of a test directory that hold another command's files: `test/client` (`moqui test-client`) and
+/// `test/agent` (`--agents`) under `test`, `test/client/process` (named process specs) under `test/client`.
+fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
+    match sub {
+        "test" => &["client", "agent"],
+        "test/client" => &["process"],
+        _ => &[],
+    }
+}
+
+/// The `*.spec.js` files under `dir` and its subdirectories, other than the `skip` subdirectories of the top one.
+fn spec_paths(dir: &Path, skip: &[&str], found: &mut Vec<PathBuf>) -> Result<(), Error> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|err| Error::new(format!("could not read {}", dir.display())).with_source(err))?;
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !skip.contains(&name.as_str()) {
+                spec_paths(&path, &[], found)?;
+            }
+        } else if path.to_string_lossy().ends_with(".spec.js") {
+            found.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// The specs of one component's test directory (`sub` under the component, `test` or `test/client`), in it or in a
+/// subdirectory: the `suite.js` order first, then the rest by name. A spec's name is its file name, so it is unique
+/// in the component.
 pub(crate) fn component_specs(component: &str, test_dir: &Path, sub: &str) -> Result<Vec<SpecFile>, Error> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(test_dir)
-        .map_err(|err| Error::new(format!("could not read {}", test_dir.display())).with_source(err))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.to_string_lossy().ends_with(".spec.js"))
-        .collect();
-    files.sort();
-    let mut specs = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
+    spec_paths(test_dir, reserved_subdirs(sub), &mut files)?;
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()).then_with(|| a.cmp(b)));
+    let mut specs: Vec<SpecFile> = Vec::new();
     for path in files {
         let file_name = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
         let name = file_name.trim_end_matches(".spec.js").to_string();
+        let relative = path
+            .strip_prefix(test_dir)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let display = format!("{component}/{sub}/{relative}");
+        if let Some(other) = specs.iter().find(|spec| spec.name == name) {
+            return Err(Error::new(format!(
+                "{display} and {} are both spec {name}; a spec name is unique in its component",
+                other.display
+            )));
+        }
         let source = std::fs::read_to_string(&path)
             .map_err(|err| Error::new(format!("could not read {}", path.display())).with_source(err))?;
-        specs.push(SpecFile {
-            name,
-            display: format!("{component}/{sub}/{file_name}"),
-            source,
-        });
+        specs.push(SpecFile { name, display, source });
     }
     let suite = test_dir.join("suite.js");
     if suite.is_file() {

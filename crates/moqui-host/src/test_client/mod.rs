@@ -467,8 +467,9 @@ fn is_path(target: &str) -> bool {
     target.contains('/') || target.ends_with(".spec.js") || target == "." || target == ".."
 }
 
-/// The component of a `test/client` directory, a component directory, or one spec file in `test/client` or
-/// `test/client/process`: the directory above `test`. A file brings its own spec only, with what its `dependsOn` names.
+/// The component of a `test/client` directory, a component directory, or one spec file in `test/client` (or a
+/// subdirectory of it) or `test/client/process`: the directory above `test`. A file brings its own spec only, with
+/// what its `dependsOn` names.
 fn path_component(path: &Path) -> Result<TestComponent, Error> {
     let missing = || {
         Error::new(format!(
@@ -487,7 +488,13 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
             Some(path.clone()),
         )
     } else if path.is_file() {
-        (path.parent().ok_or_else(missing)?.to_path_buf(), Some(path.clone()))
+        // in test/client or a subdirectory of it
+        let client_dir = path
+            .ancestors()
+            .skip(1)
+            .find(|dir| dir.ends_with("test/client"))
+            .ok_or_else(missing)?;
+        (client_dir.to_path_buf(), Some(path.clone()))
     } else if path.join("test/client").is_dir() {
         (path.join("test/client"), None)
     } else {

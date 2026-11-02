@@ -97,7 +97,7 @@ impl Drop for HostGuard {
 pub struct SpecFile {
     /// The spec name, the file name without `.spec.js`.
     pub name: String,
-    /// The file as reports show it, such as `mr-mantle/test/OrderToCashBasicFlow.spec.js`; stack traces name it.
+    /// The file as reports show it, such as `mr-mantle/test/order/OrderToCashBasicFlow.spec.js`; stack traces name it.
     pub display: String,
     pub source: String,
 }

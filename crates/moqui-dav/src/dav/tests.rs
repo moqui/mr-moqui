@@ -15,7 +15,7 @@
 //! The DAV server on the real services: app passwords (made, taken, revoked, never the web password unless the conf says
 //! so, never another user's), discovery from the root to the principal, and WebDAV over a user's drives (folders,
 //! uploads and their versions, conditional writes, ranges, move, copy, trash, the desktops' litter, locks, and another
-//! user's tree not found). CalDAV and CardDAV are tested with Mantle's adapters (mr-mantle `test/Dav.spec.js`).
+//! user's tree not found). CalDAV and CardDAV are tested with Mantle's adapters (mr-mantle `test/work/Dav.spec.js`).
 
 use std::collections::BTreeMap;
 
