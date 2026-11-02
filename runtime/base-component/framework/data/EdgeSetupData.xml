@@ -44,6 +44,12 @@ along with this software (see the LICENSE.md file). If not, see
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.note#EdgeMailStatus"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <!-- chat bridges and SMS through the edge node (E6): chatWebhook's handler on a local node, chatMedia's on an edge
+        node; each refuses to run on the other role -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.ChatBridgeServices.apply#EdgeWebhook"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.ChatBridgeServices.store#EdgeMedia"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="EDGE_DELEGATE" userGroupId="EDGE_DELEGATE" artifactGroupId="EDGE_DELEGATE"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

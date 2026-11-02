@@ -211,6 +211,8 @@ moqui-db = { workspace = true }
 # (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
 # gate3_browser, search_logs_postgres) links the crate as the Dev binary does.
 example = { workspace = true }
+# Sign a Telnyx webhook as the provider does (tests/it/edge_chat.rs): the crypto rustls already links.
+aws-lc-rs = { workspace = true }
 # Read back the xlsx render and the converted images in tests/tool_components.rs.
 calamine = { workspace = true }
 image = { workspace = true }

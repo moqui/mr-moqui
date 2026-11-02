@@ -386,13 +386,18 @@ along with this software (see the LICENSE.md file). If not, see
             holds the provider account's settings and secrets, encrypted; inboundTokenHash is the SHA-256 (hex) of the token
             an adapter gives ingest#Event. statusId: CbsConnected, CbsNotConnected (its rooms show "not connected" and keep
             their local timeline), CbsDisabled (no deliveries, no input). sendsPerMinute caps the deliveries a node sends to
-            it (empty: the adapter's limit).</description>
+            it (empty: the adapter's limit). webhookPublicKey is the public key the network signs its webhooks with (an
+            SMS bridge's configJson publicKey, copied by store#Bridge and, for a bridge saved before, at start) and
+            webhookToleranceSeconds its window: not secret, so they are all of the configuration an edge node's
+            replicated copy has (plans/Edge-Node.md §5.4).</description>
         <field name="chatBridgeId" type="id" is-pk="true"/>
         <field name="typeEnumId" type="id"/>
         <field name="adapterName" type="text-short"/>
         <field name="name" type="text-medium"/>
         <field name="configJson" type="text-very-long" encrypt="true"/>
         <field name="inboundTokenHash" type="text-medium"/>
+        <field name="webhookPublicKey" type="text-medium"/>
+        <field name="webhookToleranceSeconds" type="number-integer"/>
         <field name="statusId" type="id"/>
         <field name="lastStatusDate" type="date-time"/>
         <field name="lastErrorText" type="text-long"/>

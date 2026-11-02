@@ -33,6 +33,9 @@
 //!   message.
 //! - `send#BridgeDirect`: one message straight to an adapter, outside any room (a sign-in code by SMS): no delivery row,
 //!   no retry; the caller has checked it.
+//!
+//! On an edge node (`node_role=edge`) [`webhook`] and [`media`] are the edge node's own (`chat_bridge_edge.rs`): a
+//! webhook is checked with the local node's replicated bridge and queued, and a file is one the local node put there.
 
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
@@ -255,6 +258,10 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     let Some(facade) = factory.entity() else {
         return WebhookResponse::text(503, "the server is starting");
     };
+    // an edge node checks the signature with its local node's replicated bridge and queues the request for it
+    if crate::edge::settings(factory).edge_node {
+        return super::edge::webhook(factory, &facade, bridge_id, request);
+    }
     let row = facade
         .find(BRIDGE)
         .and_then(|find| find.eq("chatBridgeId", Value::string(bridge_id)).disable_authz().one());
@@ -280,17 +287,9 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
             Err(_) => WebhookResponse::not_signed(),
         };
     }
-    // what `ingest#Event` `transportVerified` asks for: only a batch of the bridge whose webhook this context is working
-    // goes in without a token (a parameter alone, from any caller, is refused)
-    let marked = crate::context::ExecutionContext::with_current(|ec| {
-        ec.shared_map()
-            .insert(WEBHOOK_MARK.to_string(), Value::string(bridge_id));
-    })
-    .is_some();
-    let answer = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook(&info, request)));
-    if marked {
-        let _ = crate::context::ExecutionContext::with_current(|ec| ec.shared_map().shift_remove(WEBHOOK_MARK));
-    }
+    let answer = marked(bridge_id, || {
+        std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook(&info, request)))
+    });
     match answer {
         Ok(response) => response,
         Err(_) => {
@@ -303,6 +302,22 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     }
 }
 
+/// Run `work` with the current context marked as working bridge `bridge_id`'s webhook: what `ingest#Event`
+/// `transportVerified` asks for, so only a batch of that bridge goes in without a token (a parameter alone, from any
+/// caller, is refused). The mark is taken off after.
+pub(super) fn marked<T>(bridge_id: &str, work: impl FnOnce() -> T) -> T {
+    let marked = crate::context::ExecutionContext::with_current(|ec| {
+        ec.shared_map()
+            .insert(WEBHOOK_MARK.to_string(), Value::string(bridge_id));
+    })
+    .is_some();
+    let answer = work();
+    if marked {
+        let _ = crate::context::ExecutionContext::with_current(|ec| ec.shared_map().shift_remove(WEBHOOK_MARK));
+    }
+    answer
+}
+
 // ---- the files of messages that go out ----
 
 /// A file served at `/channels/{chatBridgeId}/media/{token}`.
@@ -313,7 +328,7 @@ pub struct MediaFile {
     pub bytes: Vec<u8>,
 }
 
-fn media_key() -> Option<String> {
+pub(super) fn media_key() -> Option<String> {
     let key = moqui_lib::env::get_prop_or_env(MEDIA_KEY_PROPERTY);
     (!key.trim().is_empty() && !key.ends_with("CHANGEME")).then_some(key)
 }
@@ -327,23 +342,30 @@ fn media_signature(key: &str, bridge_id: &str, attachment_id: &str, expiry: i64)
 /// The address a network fetches file `attachment_id` of a message to bridge `bridge_id` at, good for
 /// `channels_media_minutes` from `now`; none without `channels_public_url` or `channels_media_key`.
 pub fn media_url(bridge_id: &str, attachment_id: &str, now: i64) -> Option<String> {
-    let base = moqui_lib::env::get_prop_or_env(PUBLIC_URL_PROPERTY);
-    let base = base.trim().trim_end_matches('/');
-    if base.is_empty() || !(base.starts_with("https://") || base.starts_with("http://")) {
-        return None;
-    }
+    let base = public_base()?;
     let key = media_key()?;
-    let minutes: i64 = moqui_lib::env::get_prop_or_env(MEDIA_MINUTES_PROPERTY)
-        .trim()
-        .parse()
-        .unwrap_or(60)
-        .clamp(1, 7 * 24 * 60);
-    let expiry = now + minutes * 60_000;
+    let expiry = now + media_minutes() * 60_000;
     let signature = media_signature(&key, bridge_id, attachment_id, expiry)?;
     let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signature);
     Some(format!(
         "{base}/channels/{bridge_id}/media/{attachment_id}.{expiry}.{signature}"
     ))
+}
+
+/// `channels_public_url` with no trailing `/`, when it is an http or https address.
+pub(super) fn public_base() -> Option<String> {
+    let base = moqui_lib::env::get_prop_or_env(PUBLIC_URL_PROPERTY);
+    let base = base.trim().trim_end_matches('/');
+    (base.starts_with("https://") || base.starts_with("http://")).then(|| base.to_string())
+}
+
+/// How long a file's address works, in minutes: `channels_media_minutes` (60), from 1 minute to 7 days.
+pub(super) fn media_minutes() -> i64 {
+    moqui_lib::env::get_prop_or_env(MEDIA_MINUTES_PROPERTY)
+        .trim()
+        .parse::<i64>()
+        .unwrap_or(60)
+        .clamp(1, 7 * 24 * 60)
 }
 
 /// Whether `token` (`attachment.expiry.signature`) is a file address of bridge `bridge_id` that still works at `now`;
@@ -376,6 +398,10 @@ pub fn media_token_valid(bridge_id: &str, token: &str, now: i64) -> Option<Strin
 /// The file a token names, in the current context: only a file of a message with a delivery to that bridge, while the
 /// token works.
 pub fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
+    // an edge node serves the files its local node put there (chatMedia), by their own tokens
+    if crate::edge::settings(factory).edge_node {
+        return super::edge::media(factory, bridge_id, token, now);
+    }
     let attachment_id = media_token_valid(bridge_id, token, now)?;
     let facade = factory.entity()?;
     let row = facade
@@ -636,7 +662,9 @@ fn send_bridge_direct(
     };
     match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.deliver(&info, &request))) {
         Ok(DeliveryOutcome::Accepted { remote_event_id }) => answer("accepted", Some(remote_event_id), None, None),
-        Ok(DeliveryOutcome::Retry { error, .. }) => answer("retry", None, Some("retry"), Some(error)),
+        Ok(DeliveryOutcome::Retry { error, .. } | DeliveryOutcome::Wait { error, .. }) => {
+            answer("retry", None, Some("retry"), Some(error))
+        }
         Ok(DeliveryOutcome::Failed { reason_code, error }) => answer("failed", None, Some(&reason_code), Some(error)),
         Ok(DeliveryOutcome::Uncertain { error }) => answer("uncertain", None, Some("uncertain"), Some(error)),
         Err(_) => answer(

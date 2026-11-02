@@ -31,14 +31,20 @@
 //!    `ChatEventExternal`).
 //! 3. **The event.** `message.received` goes to `SmsServices.receive#Sms` (the pair room, then `ingest#Event`, stored
 //!    before this answers); `message.sent` and `message.finalized` to `ChatBridgeServices.note#DeliveryReceipt`. Others are
-//!    answered 200 and left. A failure of the server's own is 500, so the provider tries again.
+//!    answered 200 and left. A failure of the server's own (a service error, a database away) is 503, so the provider
+//!    (or an edge node's queue) tries again; a text `ingest#Event` refuses for what it is (an unknown bridge, a bad
+//!    transaction id, a batch too large) is 422.
+//!
+//! Through an edge node (plans/Edge-Node.md §5.4) the steps split: the edge node checks the signature ([`verify`]) and
+//! queues the request by its event id ([`event_key`]), which drops a repeat; the local node works the event
+//! ([`apply`]) without checking again, since the window has passed by then.
 
 use std::collections::BTreeMap;
 
 use aws_lc_rs::signature::{UnparsedPublicKey, ED25519};
 use base64::Engine;
 use moqui_core::service::chat_bridge::{
-    replay_finish, replay_take, replay_window_ms, BridgeInfo, Replay, WebhookRequest, WebhookResponse,
+    replay_finish, replay_take, replay_window_ms, BridgeInfo, Replay, WebhookEventKey, WebhookRequest, WebhookResponse,
 };
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::{json, Value as Json};
@@ -118,13 +124,47 @@ pub(crate) fn handle(bridge: &BridgeInfo, config: &Config, request: &WebhookRequ
             return WebhookResponse::text(503, "try again later");
         }
     }
-    let response = match serde_json::from_slice::<Json>(&request.body) {
+    let response = apply(bridge, config, request);
+    replay_finish(&bridge.chat_bridge_id, signature, (200..300).contains(&response.status));
+    response
+}
+
+/// The event step of [`handle`] alone, after the signature and replay checks: on any node after them, and on a local
+/// node for a request its edge node checked and queued (plans/Edge-Node.md §5.4).
+pub(crate) fn apply(bridge: &BridgeInfo, config: &Config, request: &WebhookRequest) -> WebhookResponse {
+    match serde_json::from_slice::<Json>(&request.body) {
         Ok(event) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(bridge, config, &event)))
             .unwrap_or_else(|_| WebhookResponse::text(500, "the request failed")),
         Err(_) => WebhookResponse::text(400, "the body is not JSON"),
+    }
+}
+
+/// The reason codes of `ingest#Event` that refuse a text for what it is; any other failure is the server's own.
+const REFUSALS: &[&str] = &[
+    "unknownBridge",
+    "badToken",
+    "badTransaction",
+    "batchTooLarge",
+    "localIdentity",
+];
+
+/// The event a checked request carries, for an edge node's queue: Telnyx's event id (`/data/id`; when it has none, a
+/// hash of the body, which a provider's retry sends unchanged, so a copy is still one item), ordered by their number (the sender of a text, the recipient of a receipt).
+/// None when the body is not JSON.
+pub(crate) fn event_key(request: &WebhookRequest) -> Option<WebhookEventKey> {
+    let event: Json = serde_json::from_slice(&request.body).ok()?;
+    let event_id = str_at(&event, "/data/id").map(str::to_string).unwrap_or_else(|| {
+        let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &request.body);
+        format!("sha256:{}", moqui_lib::codec::hex_encode(digest.as_ref()))
+    });
+    let conversation = match str_at(&event, "/data/event_type").unwrap_or_default() {
+        "message.received" => str_at(&event, "/data/payload/from/phone_number"),
+        _ => str_at(&event, "/data/payload/to/0/phone_number"),
     };
-    replay_finish(&bridge.chat_bridge_id, signature, (200..300).contains(&response.status));
-    response
+    Some(WebhookEventKey {
+        event_id,
+        conversation: conversation.map(str::to_string),
+    })
 }
 
 fn str_at<'a>(value: &'a Json, pointer: &str) -> Option<&'a str> {
@@ -199,12 +239,17 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
             let text = |key: &str| out.get(key).map(to_plain_string).unwrap_or_default();
             let outcome = text("outcome");
             if outcome == "failed" {
+                let reason = text("reasonCode");
                 tracing::error!(
-                    "SMS bridge {}: text {message_id} was not taken: {}",
-                    bridge.chat_bridge_id,
-                    text("reasonCode")
+                    "SMS bridge {}: text {message_id} was not taken: {reason}",
+                    bridge.chat_bridge_id
                 );
-                return WebhookResponse::text(500, "the text was not taken");
+                // refused for what it is: another try changes nothing; anything else is the server's own
+                return if REFUSALS.contains(&reason.as_str()) {
+                    WebhookResponse::text(422, &format!("the text was refused: {reason}"))
+                } else {
+                    WebhookResponse::text(503, "the text was not taken; try again later")
+                };
             }
             if outcome == "ignored" {
                 tracing::warn!(
@@ -223,7 +268,7 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
                 "SMS bridge {}: text {message_id} was not taken: {error}",
                 bridge.chat_bridge_id
             );
-            WebhookResponse::text(500, "the text was not taken")
+            WebhookResponse::text(503, "the text was not taken; try again later")
         }
     }
 }
@@ -264,7 +309,7 @@ fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse
                 "SMS bridge {}: the receipt of {message_id} was not kept: {error}",
                 bridge.chat_bridge_id
             );
-            WebhookResponse::text(500, "the receipt was not kept")
+            WebhookResponse::text(503, "the receipt was not kept; try again later")
         }
     }
 }

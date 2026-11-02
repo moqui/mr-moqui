@@ -532,6 +532,14 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                         Ok(_) => {}
                         Err(err) => tracing::error!("Edge queue retention pass failed: {err}"),
                     }
+                    // the chat files an edge node serves for its local nodes (MMS, E6) that ran out
+                    if settings.edge_node {
+                        let removed =
+                            moqui_core::service::chat_bridge::sweep_edge_media(&facade, moqui_core::user::now_millis());
+                        if removed > 0 {
+                            tracing::info!("Edge chat files that ran out removed: {removed}");
+                        }
+                    }
                 }
                 queue::stats(&facade, None)
             })

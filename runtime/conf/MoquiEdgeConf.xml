@@ -4,9 +4,9 @@
     nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by ALPN). It gives them web access: the host
     names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port); delegated calls, the
     queue and replication (the edge element below); mr-pass's authority, the local node over the link
-    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); and mail, with the
-    MTA in moqui on port 25 (the smtp-server below; docs/Run-Deploy.md, Edge node mail). A client-ip-header here
-    needs trusted-proxies, or it is ignored.
+    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); mail, with the
+    MTA in moqui on port 25 (the smtp-server below; docs/Run-Deploy.md, Edge node mail); and chat bridges' webhooks
+    and MMS files (channels below). A client-ip-header here needs trusted-proxies, or it is ignored.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
     addresses, ports) go in .env.
@@ -42,8 +42,13 @@
     <default-property name="edge_mail_relay_port" value="10025"/>
     <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
 
+    <!-- Chat bridges and SMS (plans/Edge-Node.md §5.4, E6): a network's webhook URL is this node's,
+        /channels/{chatBridgeId}/webhook. The signature is checked with the local node's replicated bridge and the
+        request queued for it; the files of the texts the local node sends (MMS) are served here at /channels/{id}/media/.
+        On the local node, set channels_public_url to this node's address. -->
+    <default-property name="channels_webhooks_enabled" value="true"/>
+
     <!-- Not built yet; each is turned on by the phase that uses it:
-        E6, chat bridges and SMS:    <default-property name="channels_webhooks_enabled" value="true"/>
         E7, calls (rtc_public_address in .env, needed when binding every address):
                                      <default-property name="rtc_media_port" value="10000"/>
                                      <default-property name="rtc_media_host" value="0.0.0.0"/>
@@ -57,8 +62,8 @@
     <!-- How work crosses the link (plans/Edge-Node.md §5.2): what waits for a local node that is away is kept 14
         days (both nodes should keep the same period), and at most 1 GB of it; then the oldest fails, logged. A payload
         is at most 1 MiB, and a larger body goes as its content. What the edge node delegates, the queue kinds and the
-        sets a local node replicates are in MoquiDefaultConf.xml, read by both ends (mail's since E5a); a later phase
-        adds its own there, with grants for _EDGE_, as:
+        sets a local node replicates are in MoquiDefaultConf.xml, read by both ends (mail's since E5a, chat's since
+        E6); a later phase adds its own there, with grants for _EDGE_, as:
             <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" allow-anonymous="true"/>   (E8)
         To check a delegated call end to end, list org.moqui.impl.EdgeServices.echo#Delegate on both nodes. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
