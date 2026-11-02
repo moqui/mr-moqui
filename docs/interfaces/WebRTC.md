@@ -279,6 +279,18 @@ the edge node is not a member of the local node's cluster:
   the media goes on.
 - **TURN** runs on the edge node; the local node signs its credentials with the edge node's secret ([TURN](TURN.md)).
 
+- **Only the edge node's own messages.** The local node delivers from the link only the media driver's replies, and
+  only to a socket that bound that leg of that call with its media on the edge node; the edge node takes from the
+  local node only frames whose replies go back to it, and media controls. Run as the link's delegate user, each
+  delegated or queued service refuses a call whose media is not on the edge node.
+- **A clustered local node.** Only the member that holds the link has the route to the edge node. A frame or control
+  for the edge node on another member is refused ("the edge link to .. is down"; a browser's frame gets `unavailable`),
+  so a call with media on the edge node works only for sockets on the link's member. Put the local node's web access
+  (and its load balancer) on that member, or run one local member; relaying through the link's member is later work.
+- **A restart.** The edge node's Hello names when its media socket started, which the local node keeps as the row's
+  `startedDate`: a recording that began before an edge node restart is failed by `expire#Recordings`, as on any media
+  node.
+
 Settings: `rtc_media_port`, `rtc_media_host` 0.0.0.0, `rtc_public_address` and `turn_port` on the edge node
 (`MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
 between the edge node and a local media node is later work.

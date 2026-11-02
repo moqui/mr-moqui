@@ -73,6 +73,13 @@ signs the edge node's TURN URLs with it (`mediaNodeId`); `turn_external_urls` ge
 node's own. Changing the edge node's secret takes effect for the local node at the next link; credentials signed with
 the old one stop working on the edge node at once.
 
+**Revoking a local node does not revoke its TURN access.** The secret is the edge node's, one for every node paired
+with it, and a revoked local node (or anyone who read its memory) keeps it and can make credentials until it changes.
+After revoking a node on Edge Clients, set a new `turn_auth_secret` in the edge node's `.env` and restart it; the
+other local nodes get it at their next link. A secret per pair (derived from the edge node's secret and the node's id)
+would need the TURN server to know which node a credential's username is of, which the TURN REST form does not say;
+it is later work.
+
 The other choice, the local node's secret sent to the edge node, would put a secret the local node also uses for its own
 media nodes and any coturn on the cloud host; the edge node's secret only ever opens the edge node's TURN.
 

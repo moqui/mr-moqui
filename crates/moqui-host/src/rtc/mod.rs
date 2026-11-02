@@ -414,6 +414,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
                 .filter(|url| !url.is_empty())
                 .map(str::to_string)
                 .collect(),
+            started_ms: moqui_core::user::now_millis(),
         };
         moqui_core::edge::media::set_advert(factory, Some(advert));
         None

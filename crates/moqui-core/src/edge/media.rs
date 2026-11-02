@@ -35,6 +35,8 @@ use crate::context::ExecutionContextFactory;
 pub struct MediaAdvert {
     pub media_address: String,
     pub turn_urls: Vec<String>,
+    /// When the media socket started (epoch milliseconds): a restart since a recording began fails it.
+    pub started_ms: i64,
 }
 
 #[derive(Default)]

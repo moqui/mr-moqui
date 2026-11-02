@@ -20,6 +20,12 @@
 //! media controls, and the SIP engine's controls (E8). The other end hands what it receives to [`receive`], which
 //! publishes it on this process's bus for the topics it takes.
 //!
+//! A node that has had a route in this process is remembered: a message for it while its link is down is refused
+//! (`the edge link to .. is down`), never published here or posted to the cluster, which it is no member of. The
+//! registry is per process (as the bus is): two servers of one process (a test's) share it, keyed by instance id.
+//! On a clustered local node only the member that holds the link has its edge node's route; a call's socket on
+//! another member is refused the same way (plans/Edge-Node.md §5.4, "As built (E7)").
+//!
 //! As the cluster's direct send, a route is fire and forget, from a bounded queue: a full one is refused at once
 //! (`overloaded`), and a message lost with the link is not sent again (the client renegotiates).
 
@@ -42,6 +48,12 @@ pub type Sender = Arc<dyn Fn(&str, &TopicMessage) -> Result<(), String> + Send +
 struct Route {
     token: u64,
     sender: Sender,
+}
+
+/// The nodes that have had a route in this process.
+fn known() -> &'static Mutex<std::collections::HashSet<String>> {
+    static KNOWN: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    KNOWN.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
 }
 
 fn routes() -> &'static Mutex<HashMap<String, Route>> {
@@ -77,6 +89,7 @@ impl Drop for RouteGuard {
 /// (the next link) replaces this one, and this guard's drop then leaves it.
 pub fn add_route(instance_id: &str, sender: Sender) -> RouteGuard {
     let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
+    lock(known()).insert(instance_id.to_string());
     let replaced = lock(routes()).insert(instance_id.to_string(), Route { token, sender });
     if replaced.is_none() {
         COUNT.fetch_add(1, Ordering::AcqRel);
@@ -95,11 +108,16 @@ pub fn route(instance_id: &str) -> Option<Sender> {
     lock(routes()).get(instance_id).map(|route| Arc::clone(&route.sender))
 }
 
-/// Send `message` on `topic` to `instance_id` over its link, when a link to it is up: `None` when there is none, so
-/// the caller sends it the usual way.
+/// Send `message` on `topic` to `instance_id` over its link, when a link to it is up; refused when it is a link's
+/// node whose link is down now. `None` for any other node, which the caller sends to the usual way.
 pub fn send(instance_id: &str, topic: &str, message: &TopicMessage) -> Option<Result<(), Error>> {
-    let sender = route(instance_id)?;
-    Some(sender(topic, message).map_err(Error::new))
+    if let Some(sender) = route(instance_id) {
+        return Some(sender(topic, message).map_err(Error::new));
+    }
+    if instance_id.is_empty() || !lock(known()).contains(instance_id) {
+        return None;
+    }
+    Some(Err(Error::new(format!("the edge link to {instance_id} is down"))))
 }
 
 /// A message the link's other end sent: published on this process's bus, on a topic of [`TOPICS`] only. The

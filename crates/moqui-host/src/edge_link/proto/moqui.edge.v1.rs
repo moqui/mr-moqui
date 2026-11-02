@@ -30,6 +30,10 @@ pub struct Hello {
     /// The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
     #[prost(string, repeated, tag = "9")]
     pub turn_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The edge node's: when its media socket started (epoch milliseconds), 0 when it is off. The local node keeps it as
+    /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
+    #[prost(uint64, tag = "10")]
+    pub media_started_ms: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}

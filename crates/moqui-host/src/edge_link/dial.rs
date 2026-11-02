@@ -217,6 +217,8 @@ struct LocalService {
     hello: super::proto::Hello,
     /// The server the queue and delegated calls run on; none without [`LocalConfig::web`].
     factory: Option<Weak<ExecutionContextFactory>>,
+    /// The edge node's instance id, from its Hello: the only media node whose replies this link delivers (E7).
+    edge_node: String,
 }
 
 #[tonic::async_trait]
@@ -268,7 +270,8 @@ impl LocalLink for LocalService {
 
     async fn signal(&self, request: Request<tonic::Streaming<SignalMessage>>) -> Result<Response<SignalReply>, Status> {
         self.factory()?;
-        let reply = super::signal::receive(request.into_inner(), |generation| self.fenced(generation)).await?;
+        let take = super::signal::local_takes(&self.edge_node);
+        let reply = super::signal::receive(request.into_inner(), |generation| self.fenced(generation), take).await?;
         Ok(Response::new(reply))
     }
 
@@ -331,6 +334,7 @@ async fn connect_down(
     config: &LocalConfig,
     prepared: &Prepared,
     generation: u64,
+    edge_node: &str,
     current: &Arc<AtomicU64>,
 ) -> Result<DownLink, LinkError> {
     let mut role = vec![ROLE_DOWN];
@@ -341,6 +345,7 @@ async fn connect_down(
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
         factory: factory.clone(),
+        edge_node: edge_node.to_string(),
     })
     .max_decoding_message_size(super::MAX_MESSAGE)
     .max_encoding_message_size(super::MAX_MESSAGE);
@@ -638,7 +643,7 @@ async fn link_once(
     let connecting = async {
         let up = connect_up_with(&config, &prepared).await?;
         shared.current.store(up.generation, Ordering::Release);
-        let down = connect_down(&config, &prepared, up.generation, &shared.current).await?;
+        let down = connect_down(&config, &prepared, up.generation, &up.edge.instance_id, &shared.current).await?;
         Ok::<_, LinkError>((up, down))
     };
     let connected = tokio::select! {
@@ -729,21 +734,33 @@ const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNod
 
 /// Write or remove (`stopping`) the `CallMediaNode` row of the edge node `edge`, kept by this link, as internal work
 /// in the current context; its errors are taken out of the context.
-pub(crate) fn register_media_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
+fn register_media_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
     use moqui_lib::object::Value;
     let parameters = std::collections::BTreeMap::from([
         ("instanceId".to_string(), Value::string(&edge.instance_id)),
         ("mediaAddress".to_string(), Value::string(&edge.media_address)),
         ("turnUrls".to_string(), Value::string(edge.turn_urls.join(","))),
         ("edgeLinked".to_string(), Value::Bool(true)),
+        (
+            "startedDate".to_string(),
+            if edge.media_started_ms > 0 {
+                moqui_core::user::stamp_value(edge.media_started_ms)
+            } else {
+                Value::Null
+            },
+        ),
         ("stopping".to_string(), Value::Bool(stopping)),
     ]);
     let _authz =
         moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    // its errors apart from the caller's, which stay
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.message().push_errors());
     let ran = moqui_core::service::sync(REGISTER_MEDIA_NODE, &parameters);
     let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
-        let errors = ec.message().errors().to_vec();
-        ec.message().clear_errors();
+        let mut messages = ec.message();
+        let errors = messages.errors().to_vec();
+        messages.clear_errors();
+        messages.pop_errors();
         errors
     })
     .unwrap_or_default();

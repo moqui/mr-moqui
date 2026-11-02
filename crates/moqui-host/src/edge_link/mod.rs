@@ -223,6 +223,7 @@ pub(crate) fn hello(
         node_name: node_name.to_string(),
         media_address: String::new(),
         turn_urls: Vec::new(),
+        media_started_ms: 0,
     }
 }
 
@@ -240,6 +241,7 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         instance_id: hello.instance_id.clone(),
         media_address: hello.media_address.clone(),
         turn_urls: hello.turn_urls.clone(),
+        media_started_ms: i64::try_from(hello.media_started_ms).unwrap_or(0),
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }

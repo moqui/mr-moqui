@@ -11,6 +11,7 @@ const B = "REC_SPEC_B"
 const C = "REC_SPEC_C"
 const D = "REC_SPEC_D"
 const NODE = "rec-spec-node"
+const EDGE_NODE = "rec-spec-edge-node"
 const RECORDING = "moqui.call.CallRecording"
 const CONSENT = "moqui.call.CallRecordingConsent"
 const SEGMENT = "moqui.call.CallRecordingSegment"
@@ -427,6 +428,14 @@ feature("an edge node's recorder's segment and end come through the edge link's 
         const item = payload => ({queueItemId: "spec-edge-item-1", pairedNodeId: "spec-edge-node", kind: "callRecording",
             conversationKey: "callRecording:" + rec.callRecordingId, payload: JSON.stringify(payload), contentLocation: received})
         const byUser = as(A, "receive#EdgeRecording", item(segment))
+        // the call's media is on another media node, not this node's edge node: refused with the same item
+        const notOnEdge = as("_edge_", "receive#EdgeRecording", item(segment))
+        sys(() => {
+            call(calls("register#MediaNode"), {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000", edgeLinked: true})
+            const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", started.callSessionId).one()
+            s.set("mediaNodeId", EDGE_NODE)
+            s.update()
+        })
         const byQueue = as("_edge_", "receive#EdgeRecording", item(segment))
         const outside = as("_edge_", "receive#EdgeRecording", Object.assign(item(segment),
             {contentLocation: "dbresource://moqui/call/recording/" + rec.callRecordingId + "/elsewhere.ogg"}))
@@ -437,11 +446,13 @@ feature("an edge node's recorder's segment and end come through the edge link's 
         const row = recording(rec.callRecordingId)
         as(A, calls("end#Call"), {callSessionId: started.callSessionId})
         sys(() => ec.resource.getLocationReference(received).delete())
-        return {rec, byUser, byQueue, outside, stored, text, ended, row}
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).deleteAll())
+        return {rec, byUser, notOnEdge, byQueue, outside, stored, text, ended, row}
     },
-    then({rec, byUser, byQueue, outside, stored, text, ended, row}) {
+    then({rec, byUser, notOnEdge, byQueue, outside, stored, text, ended, row}) {
         rec.recording.state == "recording"
         byUser.errors.includes("Only the edge link queue")
+        notOnEdge.errors.includes("only recordings of calls whose media is on it")
         byQueue.errors == ""
         outside.errors.includes("is not the content of an item the edge link received")
         stored.length == 1

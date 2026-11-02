@@ -666,14 +666,16 @@ fn queue_segment(
         .collect();
     let payload = serde_json::json!({"op": "segment", "parameters": fields});
     let key = format!("{id}/{}", job.segment.file);
-    let queued = queue_to_local(factory, id, &key, &payload, Some(content));
+    // the spool file goes once its content is queued; when queueing failed, the store fails the recording, which
+    // removes it with the spool
+    queue_to_local(factory, id, &key, &payload, Some(content))?;
     if let Err(err) = std::fs::remove_file(&job.path) {
         tracing::warn!(
             "call recording {id}: the spooled segment {} was not removed: {err}",
             job.path.display()
         );
     }
-    queued
+    Ok(())
 }
 
 /// On an edge node: an item of [`QUEUE_KIND`] for the local node (the only one paired), in the recording's

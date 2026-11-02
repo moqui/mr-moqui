@@ -317,20 +317,36 @@ impl EdgeLink for Hook {
     }
 
     fn unpair(&self) -> Result<(), Error> {
-        let dialer = lock(&self.dialer).take();
-        // the edge node is no media node of this node's calls any more: its row goes, and its TURN secret
+        let dialer = lock(&self.dialer).take().map(Arc::new);
+        let told = match &dialer {
+            Some(dialer) => {
+                let unpairing = Arc::clone(dialer);
+                crate::edge::block_on(async move { unpairing.unpair().await })?
+            }
+            None => Ok(()),
+        };
+        // the dialer stopped: wait for its link's work to end (the media row's heartbeat among it), then the edge
+        // node is no media node of this node's calls any more: its rows go, whether or not a link came up since this
+        // process started, and so does its TURN secret (plans/Edge-Node.md §5.4)
+        if let Some(dialer) = dialer {
+            let waiting = std::time::Instant::now();
+            while is_linked(&dialer) && waiting.elapsed() < LINK_WAIT {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            drop(dialer);
+        }
         let factory = self.factory()?;
         moqui_core::edge::media::clear_peer_turn(&factory);
-        let peer = dialer.as_ref().map(|dialer| dialer.status().peer);
-        if let Some(peer) = peer.filter(|peer| !peer.instance_id.is_empty()) {
-            if let Err(err) = super::dial::register_media_node(&peer, true) {
+        if let Some(facade) = factory.entity() {
+            let removed = facade.find("moqui.call.CallMediaNode").and_then(|find| {
+                find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
+                    .disable_authz()
+                    .delete_all()
+            });
+            if let Err(err) = removed {
                 tracing::warn!("Unpaired, but the edge node's call media row was not removed: {err}");
             }
         }
-        let told = match dialer {
-            Some(dialer) => crate::edge::block_on(async move { dialer.unpair().await })?,
-            None => Ok(()),
-        };
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN])?;
         for name in [NODE_URL, NODE_KEY, NODE_PIN] {
             moqui_lib::env::clear_property(name);

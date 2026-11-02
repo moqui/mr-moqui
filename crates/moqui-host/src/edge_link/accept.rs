@@ -477,6 +477,7 @@ impl EdgeServer {
         if let Some(advert) = self.media() {
             hello.media_address = advert.media_address;
             hello.turn_urls = advert.turn_urls;
+            hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
         }
         hello
     }
@@ -1269,12 +1270,14 @@ impl Link for LinkService {
     }
 
     async fn signal(&self, request: Request<tonic::Streaming<SignalMessage>>) -> Result<Response<SignalReply>, Status> {
-        self.up()?;
+        let (node, _) = self.up()?;
         if !self.helloed.load(Ordering::Acquire) {
             return Err(Status::failed_precondition("Hello first"));
         }
-        // the up connection is the generation; each message's own is not checked again
-        let reply = super::signal::receive(request.into_inner(), |_| Ok(())).await?;
+        // the up connection is the generation; each message's own is not checked again. Only what this node may send
+        // is taken, its frames' replies addressed to itself (E7)
+        let take = super::signal::edge_takes(node);
+        let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }
 

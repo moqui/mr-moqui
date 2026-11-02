@@ -817,7 +817,8 @@ along with this software (see the LICENSE.md file). If not, see
             const node = Array.from(ec.entity.find('moqui.call.CallMediaNode').condition('heartbeatDate', '>', fresh).orderBy('-heartbeatDate')
                     .limit(5).disableAuthz().list()).find((row) => row.draining !== 'Y' && row.turnUrls)
             const made = ec.service.sync().name('org.moqui.impl.CallServices.make#IceServers')
-                    .parameters({callLegId: 'xmpp.' + ec.user.userId, turnUrls: node ? node.turnUrls : null}).disableAuthz().call()
+                    .parameters({callLegId: 'xmpp.' + ec.user.userId, turnUrls: node ? node.turnUrls : null,
+                        mediaNodeId: node ? node.instanceId : null}).disableAuthz().call()
             for (const server of (made?.iceServers || [])) {
                 const expires = Number(String(server.username || '').split(':')[0] || 0)
                 for (const url of (server.urls || [])) {

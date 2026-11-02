@@ -382,6 +382,12 @@ fn get_caption_speaker(
     else {
         return Ok(out);
     };
+    let call = text(&leg_row, "callSessionId").unwrap_or_default();
+    if !edge_caller_allowed(facade, &call, text(&leg_row, "mediaNodeId").as_deref())? {
+        return Err(LibError::new(
+            "the edge node names speakers only of calls whose media is on it",
+        ));
+    }
     let Some(participant_id) = text(&leg_row, "callParticipantId") else {
         return Ok(out);
     };
@@ -406,6 +412,36 @@ fn get_caption_speaker(
     out.insert("callParticipantId".to_string(), Value::string(participant_id));
     out.insert("name".to_string(), name.map_or(Value::Null, Value::String));
     Ok(out)
+}
+
+/// Whether the current user may act for the call `call`'s media (a leg's own media node `leg_node` when it has one):
+/// anyone but the edge link's delegate user (`_edge_`, plans/Edge-Node.md §5.4), which may only for a call whose
+/// media is on this node's edge node (its `CallMediaNode` row is `edgeLinked`).
+fn edge_caller_allowed(facade: &EntityFacade, call: &str, leg_node: Option<&str>) -> Result<bool, LibError> {
+    let user = crate::user::current_username().ok().flatten();
+    if user.as_deref() != Some(crate::edge::delegate::EDGE_USERNAME) {
+        return Ok(true);
+    }
+    let node = match leg_node.filter(|node| !node.is_empty()) {
+        Some(node) => node.to_string(),
+        None => facade
+            .find("moqui.call.CallSession")?
+            .eq("callSessionId", Value::string(call))
+            .disable_authz()
+            .one()?
+            .and_then(|row| row.get("mediaNodeId").map(to_plain_string))
+            .unwrap_or_default(),
+    };
+    if node.is_empty() {
+        return Ok(false);
+    }
+    let linked = facade
+        .find("moqui.call.CallMediaNode")?
+        .eq("instanceId", Value::string(&node))
+        .disable_authz()
+        .one()?
+        .and_then(|row| row.get("edgeLinked").map(to_plain_string));
+    Ok(linked.as_deref() == Some("Y"))
 }
 
 /// The most audio one caption chunk may carry: 30 seconds of 16 kHz mono WAV is under 1 MiB; this leaves room.
@@ -436,16 +472,20 @@ fn transcribe_caption_audio(
     };
     let call = text("callSessionId");
     let user = text("userId");
-    if !user.is_empty() {
-        let participant = facade
-            .find("moqui.call.CallParticipant")?
-            .eq("callSessionId", Value::string(&call))
-            .eq("userId", Value::string(&user))
-            .disable_authz()
-            .count()?;
-        if participant == 0 {
-            return Ok(refused("notAllowed", "the user is not a participant of the call"));
-        }
+    let participant = facade
+        .find("moqui.call.CallParticipant")?
+        .eq("callSessionId", Value::string(&call))
+        .eq("userId", Value::string(&user))
+        .disable_authz()
+        .count()?;
+    if user.is_empty() || participant == 0 {
+        return Ok(refused("notAllowed", "the user is not a participant of the call"));
+    }
+    if !edge_caller_allowed(facade, &call, None)? {
+        return Ok(refused(
+            "notAllowed",
+            "the call's media is not on this node's edge node",
+        ));
     }
     let encoded = text("audioBase64");
     if encoded.len() > MAX_CAPTION_AUDIO * 4 / 3 + 4 {

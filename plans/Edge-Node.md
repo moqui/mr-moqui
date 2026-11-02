@@ -814,16 +814,19 @@ release.
   later option. W7 needs the shared database today, so edge-mode cascading is new work.
 
 **As built (E7).**
-- **Hello.** New fields (additive): `Hello.media_address` (8) and `turn_urls` (9), the edge node's while its media
-  socket is up (`moqui_core::edge::media::set_advert` from `rtc::start`), and `HelloReply.turn_secret` (3). `EdgeInfo`
-  keeps the edge node's `instance_id`, `media_address` and `turn_urls`; `get#LinkStatus` shows the last two.
+- **Hello.** New fields (additive): `Hello.media_address` (8), `turn_urls` (9) and `media_started_ms` (10), the edge
+  node's while its media socket is up (`moqui_core::edge::media::set_advert` from `rtc::start`), and
+  `HelloReply.turn_secret` (3). `EdgeInfo` keeps the edge node's `instance_id`, `media_address`, `turn_urls` and
+  `media_started_ms`; `get#LinkStatus` shows the address and URLs. The start time is the row's `startedDate`
+  (`register#MediaNode` takes it), so `expire#Recordings` fails a recording that began before an edge node restart.
 - **The row.** The edge node registers no `CallMediaNode` (`rtc::start` skips the register loop on
   `edge::settings(factory).edge_node`). The local node's dialer writes it with `register#MediaNode` (new `edgeLinked`,
   a new `CallMediaNode.edgeLinked` field) as each link comes up and every `ping_every` (15 s) while it lasts, a task
   of the link's `Work`; a link down leaves it to go stale (60 s), so a short loss ends no call, a longer one ends them
   as "media server lost" (`expire#Calls`). An edge node without media has its row removed at the next link, and
-  unpairing removes it. `Calls.js` `liveMediaNodes` puts `edgeLinked` rows first, so a paired node's new calls have
-  their media on the edge node even with a media node of its own.
+  unpairing removes it: after the dialer has stopped and its link's work ended, every `edgeLinked` row, whether or not a
+  link came up since the process started. `Calls.js` `liveMediaNodes` puts `edgeLinked` rows first, so a paired node's
+  new calls have their media on the edge node even with a media node of its own.
 - **Signaling seam.** `moqui_core::edge::signal`: a route per node at the other end of a link (the dialer adds its edge
   node's by instance id when the link is up; the edge node each local node's as its down connection attaches; a guard
   removes it with the link). `cluster::send_to` asks it first, so the browsers' frames (`notws/rtc.rs` forward), the
@@ -831,19 +834,30 @@ release.
   the message to a bounded queue (1,024, `overloaded` when full) that one task sends on a client-streaming call, new
   RPCs `Link.Signal` and `LocalLink.Signal` (`edge_link/signal.rs`), so messages keep their order without a round trip
   each; a call the link lost is opened again for the next message, and what it carried is not sent again (one try, as
-  the cluster's direct send). The receiver publishes each, in order, on its bus (`signal::receive`, `rtc-signal` only).
-  The design named a hook on `EdgeLink`; a route registry instead works for any dialer (a test's too) and needs no
-  lookup of the link per message.
+  the cluster's direct send); one the call cannot take is dropped with a warning and counted. A node that has had a
+  route in the process and has none now is refused ("the edge link to .. is down"), never published here or posted to
+  the cluster. The receiver takes only what the other end may send, in order: a local node only `reply` messages,
+  each delivered only to a socket that bound that leg of that call with its media on that edge node (topic
+  `rtc:<call>`, `to` or `callLegId`; `notws/rtc.rs` `deliver_edge_reply`), never a frame, control or relay; an edge
+  node only `frame` (whose `origin` must be the sending node), `control` and `sip`, published on its bus
+  (`signal::receive`, `rtc-signal` only). The design named a hook on `EdgeLink`; a route registry instead works for any
+  dialer (a test's too) and needs no lookup of the link per message. It is per process, as the bus is, keyed by
+  instance id. **A clustered local node:** only the member holding the link has the route, so a call's socket on
+  another member is refused; relaying through that member is later work (WebRTC.md).
 - **Delegated:** `CallServices.note#MediaEvent`, and new `CallCaptionServices.get#CaptionSpeaker` (Rust in
   `call_media.rs`, replacing the host's entity reads in `speaker_of`, on every node), `store#CallTranscript` (replacing
   the entity-auto create; it checks the leg is the call's) and `transcribe#CaptionAudio` (the WAV chunk as base64, at
   most 4 MiB; the user must be a participant of the call; a provider's refusal comes back as `errorCode`, so captions
-  keep its code). An edge node's captions use `DelegatedTranscriber`; other nodes call `llm_hooks::transcribe` as
-  before. In MoquiDefaultConf.xml's `<edge>`, granted to `_EDGE_`.
+  keep its code; `userId` is required). An edge node's captions use `DelegatedTranscriber`; other nodes call
+  `llm_hooks::transcribe` as before. In MoquiDefaultConf.xml's `<edge>`, granted to `_EDGE_`. Run as `_edge_`, these,
+  `note#MediaEvent` and `receive#EdgeRecording` refuse a call (or recording) whose media node (the leg's, else the
+  call's) is not an `edgeLinked` row. The host's service calls for captions and the media row keep their errors apart
+  from the caller's (`push_errors`, `pop_errors`).
 - **Queued:** recordings, kind `callRecording` (edge to local), handler `CallRecordingServices.receive#EdgeRecording`
   (runs only as `_edge_`). The edge node's recorder queues each closed segment with its parameters as the payload and
   the file as content, keyed `<callRecordingId>/<file>`, and its end (`note#RecorderEnd`) keyed `<id>/end`, all under
-  the conversation `callRecording:<id>`, for the only paired node. `store#RecordingSegment` takes `fromLocation`
+  the conversation `callRecording:<id>`, for the only paired node; the spool file goes once the item is queued (a
+  failure fails the recording, which removes the spool). `store#RecordingSegment` takes `fromLocation`
   instead of `tempPath`, and `store#RecordingFile` copies a `fromLocation` only under `CONTENT_IN`. An edge node's
   segments are at most 32 MiB (`Limits::for_edge`), and MoquiEdgeConf.xml sets `call_recording_segment_mb` 16.
 - **TURN.** The edge node's `turn_auth_secret` goes to the local node in the Hello answer only (a Hello also answers
@@ -851,7 +865,9 @@ release.
   `make#IceServers` (new `mediaNodeId`, which `Calls.js` passes) signs the edge node's TURN URLs with it and
   `turn_external_urls` with the local node's own, as two entries. Chosen over sending the local node's secret to the
   edge node, which would put a secret that also opens the local node's other TURN servers on the cloud host.
-  `turn_allowed_peers` needs nothing: the edge node's own media port is the default peer.
+  `turn_allowed_peers` needs nothing: the edge node's own media port is the default peer. XMPP's `get#IceServers`
+  passes `mediaNodeId` too. Revoking a local node does not revoke its TURN access: rotate the edge node's
+  `turn_auth_secret` after a revoke (TURN.md); a secret per pair needs the TURN username to name the pair, later work.
 - **Conf.** MoquiEdgeConf.xml sets `rtc_media_port` 10000, `rtc_media_host` 0.0.0.0, `turn_port` 3478 and
   `call_recording_segment_mb` 16; `rtc_public_address` goes in `.env` (the media socket does not start without it when
   binding every address).

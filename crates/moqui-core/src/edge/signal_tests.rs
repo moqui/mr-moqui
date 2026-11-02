@@ -48,7 +48,9 @@ fn a_route_takes_its_node_s_messages_until_its_guard_drops() {
     // another node's message is not this route's
     assert!(send("signal-test-other", RTC_SIGNAL, &message(serde_json::json!({}))).is_none());
     drop(guard);
-    assert!(send("signal-test-a", RTC_SIGNAL, &message(serde_json::json!({}))).is_none());
+    // its link is down: refused, not sent another way
+    let down = send("signal-test-a", RTC_SIGNAL, &message(serde_json::json!({})));
+    assert!(down.is_some_and(|sent| sent.is_err_and(|err| err.message().contains("is down"))));
 }
 
 #[test]

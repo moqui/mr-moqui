@@ -1110,9 +1110,23 @@ function release(p) {
   return { released: true }
 }
 
+/**
+ * Whether the caller may act for this call's media: anyone but the edge link's delegate user (plans/Edge-Node.md §5.4),
+ * which may only for a call whose media (the leg's node, else the call's) is on this node's edge node.
+ */
+function edgeCallerAllowed(session, leg) {
+  if (ec.user.username !== '_edge_') return true
+  const nodeId = (leg && leg.mediaNodeId) || (session && session.mediaNodeId)
+  const node = nodeId ? one(MEDIA_NODE, { instanceId: nodeId }) : null
+  return !!node && node.edgeLinked === 'Y'
+}
+
 function mediaEvent(p) {
   const leg = one(LEG, { callLegId: p.callLegId })
   if (!leg) return {}
+  if (!edgeCallerAllowed(one(SESSION, { callSessionId: leg.callSessionId }), leg)) {
+    return refuse('notAllowed', 'The edge node notes media events only of calls whose media is on it')
+  }
   const conn = find(CONNECTION).condition('callLegId', p.callLegId).condition('generation', Number(p.generation || 0)).one()
   if (!conn || conn.statusId !== 'CcsActive') return {}
   if (p.event === 'connected' && !leg.joinedDate) {
@@ -1709,11 +1723,12 @@ function registerNode(p) {
   if (row) {
     row.setFields({ mediaAddress: p.mediaAddress || row.mediaAddress, turnUrls: p.turnUrls || null, heartbeatDate: now,
       draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
+    if (p.startedDate) row.set('startedDate', p.startedDate)
     row.update()
   } else {
     const created = ec.entity.makeValue(MEDIA_NODE)
     created.setFields({ instanceId: p.instanceId, mediaAddress: p.mediaAddress || null, turnUrls: p.turnUrls || null,
-      startedDate: now, heartbeatDate: now, draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
+      startedDate: p.startedDate || now, heartbeatDate: now, draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
     created.create()
   }
   return {}

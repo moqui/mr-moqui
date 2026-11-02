@@ -44,6 +44,9 @@ message Hello {
   string media_address = 8;
   // The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
   repeated string turn_urls = 9;
+  // The edge node's: when its media socket started (epoch milliseconds), 0 when it is off. The local node keeps it as
+  // the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
+  uint64 media_started_ms = 10;
 }
 
 message ProbeRequest {}

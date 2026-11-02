@@ -88,7 +88,11 @@ where
                     Some(message) => match tx.try_send(message) {
                         Ok(()) => {}
                         Err(mpsc::error::TrySendError::Full(_)) => {
-                            tracing::debug!("edge link signal: the call is behind; a message is dropped");
+                            let dropped = DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            tracing::warn!(
+                                "edge link signal: the link's call is {QUEUE} messages behind; a message is dropped \
+                                 ({dropped} since start)"
+                            );
                         }
                         Err(mpsc::error::TrySendError::Closed(_)) => break,
                     },
@@ -109,11 +113,62 @@ where
     }
 }
 
-/// The other end's messages of one `Signal` call, each published here in order once `fenced` passes its generation.
-/// A message that cannot be read or published is logged and skipped; the call goes on.
+/// Messages a link's call could not take, dropped after their route had answered Ok.
+static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What one end does with a message the other sent, on a blocking thread: an error is why it was not taken.
+pub(crate) type Take = std::sync::Arc<dyn Fn(&str, &TopicMessage) -> Result<(), String> + Send + Sync>;
+
+/// The kind of a message on a cluster topic (`kind` in its body).
+fn kind(message: &TopicMessage) -> &str {
+    message
+        .body
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+}
+
+/// On an edge node, what the local node `node` may send: its sockets' frames (`frame`, whose replies go back to
+/// `node` only, so `origin` must be `node`), the call services' media controls (`control`) and the SIP engine's
+/// (`sip`, E8). The rest (a reply, a relay or room frame of a media node) a local node has no business sending.
+pub(crate) fn edge_takes(node: &str) -> Take {
+    let node = node.to_string();
+    std::sync::Arc::new(move |topic: &str, message: &TopicMessage| {
+        match kind(message) {
+            "frame" => {
+                let origin = message.body.get("origin").and_then(serde_json::Value::as_str);
+                if origin != Some(node.as_str()) {
+                    return Err(format!("a frame from local node {node} names another origin"));
+                }
+            }
+            "control" | "sip" => {}
+            other => return Err(format!("local node {node} sent a message of kind {other:?}")),
+        }
+        moqui_core::edge::signal::receive(topic, message).map_err(|err| err.message().to_string())
+    })
+}
+
+/// On a local node, what its edge node `edge` may send: the replies of its media driver for this node's sockets, each
+/// checked against the socket's bindings (`crate::notws::rtc::deliver_edge_reply`). Nothing else is taken.
+pub(crate) fn local_takes(edge: &str) -> Take {
+    let edge = edge.to_string();
+    std::sync::Arc::new(move |topic: &str, message: &TopicMessage| {
+        if topic != moqui_core::notify::RTC_SIGNAL || kind(message) != "reply" {
+            return Err(format!(
+                "the edge node sent a message of kind {:?} on {topic}",
+                kind(message)
+            ));
+        }
+        crate::notws::rtc::deliver_edge_reply(&edge, message)
+    })
+}
+
+/// The other end's messages of one `Signal` call, each handed to `take` in order once `fenced` passes its
+/// generation. A message that cannot be read or is not taken is logged and skipped; the call goes on.
 pub(crate) async fn receive(
     mut messages: tonic::Streaming<SignalMessage>,
     fenced: impl Fn(u64) -> Result<(), Status>,
+    take: Take,
 ) -> Result<SignalReply, Status> {
     while let Some(message) = messages.message().await? {
         fenced(message.generation)?;
@@ -131,15 +186,17 @@ pub(crate) async fn receive(
             body,
         };
         // the listeners run on the publishing thread, and may wait briefly for the media driver's queue
-        let published = tokio::task::spawn_blocking(move || {
-            moqui_core::edge::signal::receive(&topic, &message).map_err(|err| (topic, err))
-        })
-        .await;
+        let take = std::sync::Arc::clone(&take);
+        let published = tokio::task::spawn_blocking(move || take(&topic, &message).map_err(|err| (topic, err))).await;
         match published {
             Ok(Ok(())) => {}
-            Ok(Err((topic, err))) => tracing::warn!("edge link signal on {topic} not taken: {}", err.message()),
+            Ok(Err((topic, err))) => tracing::warn!("edge link signal on {topic} not taken: {err}"),
             Err(err) => tracing::error!("edge link signal: publishing a message failed: {err}"),
         }
     }
     Ok(SignalReply {})
 }
+
+#[cfg(test)]
+#[path = "signal_tests.rs"]
+mod tests;

@@ -608,6 +608,14 @@ function receiveEdge(p) {
   } catch (err) {
     return refuse('badRequest', 'The edge recording item is not JSON')
   }
+  // only a recording of a call whose media is on this node's edge node (plans/Edge-Node.md §5.4)
+  const recordingId = item.op === 'segment' ? item.parameters?.callRecordingId : item.callRecordingId
+  const recording = recordingId ? one(RECORDING, { callRecordingId: recordingId }) : null
+  const session = recording ? one(SESSION, { callSessionId: recording.callSessionId }) : null
+  const node = session?.mediaNodeId ? one('moqui.call.CallMediaNode', { instanceId: session.mediaNodeId }) : null
+  if (recording && (!node || node.edgeLinked !== 'Y')) {
+    return refuse('notAllowed', 'The edge node stores only recordings of calls whose media is on it')
+  }
   if (item.op === 'segment') {
     if (!p.contentLocation) return refuse('badRequest', 'The edge recording segment came without its file')
     const parameters = Object.assign({}, item.parameters || {}, { tempPath: null, fromLocation: p.contentLocation })

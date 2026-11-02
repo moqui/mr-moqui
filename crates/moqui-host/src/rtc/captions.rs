@@ -864,15 +864,19 @@ fn speaker_of(leg: &str) -> Result<Speaker, moqui_core::context::Error> {
     })
 }
 
-/// A service in this thread's context: its result, or its errors as one.
+/// A service in this thread's context: its result, or its errors as one, kept apart from the context's own errors,
+/// which stay.
 fn service(
     name: &str,
     parameters: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, moqui_core::context::Error> {
+    ExecutionContext::with_current(|ec| ec.message().push_errors());
     let out = moqui_core::service::sync(name, parameters);
     let errors = ExecutionContext::with_current(|ec| {
-        let errors = ec.message().errors().to_vec();
-        ec.message().clear_errors();
+        let mut messages = ec.message();
+        let errors = messages.errors().to_vec();
+        messages.clear_errors();
+        messages.pop_errors();
         errors
     })
     .unwrap_or_default();

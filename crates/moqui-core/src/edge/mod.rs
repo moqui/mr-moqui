@@ -114,6 +114,8 @@ pub struct EdgeInfo {
     pub media_address: String,
     /// Its embedded TURN listeners as `turn:` and `turns:` URLs; empty without TURN (E7).
     pub turn_urls: Vec<String>,
+    /// When its media socket started (epoch milliseconds), 0 when it is off (E7).
+    pub media_started_ms: i64,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.

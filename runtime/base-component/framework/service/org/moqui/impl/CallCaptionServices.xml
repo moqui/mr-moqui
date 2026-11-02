@@ -104,6 +104,15 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="leg == null || leg.callSessionId != callSessionId">
                 <return error="true" message="Leg ${callLegId} is not a leg of call ${callSessionId}"/>
             </if>
+            <!-- the edge link's delegate user only for a call whose media is on this node's edge node -->
+            <if condition="ec.user.username == '_edge_'">
+                <entity-find-one entity-name="moqui.call.CallSession" value-field="session" disable-authz="true"/>
+                <entity-find-one entity-name="moqui.call.CallMediaNode" value-field="mediaNode" disable-authz="true">
+                    <field-map field-name="instanceId" from="leg.mediaNodeId || session?.mediaNodeId"/></entity-find-one>
+                <if condition="mediaNode?.edgeLinked != 'Y'">
+                    <return error="true" message="The edge node keeps captions only of calls whose media is on it"/>
+                </if>
+            </if>
             <service-call name="create#moqui.call.CallTranscript" disable-authz="true" out-map="created"
                     in-map="{callSessionId, callLegId, segment, speaker, statusId: 'CtsDone', text,
                         createdDate: ec.user.nowTimestamp}"/>
@@ -115,12 +124,13 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (an edge node's captions): a chunk of a call's audio (audioBase64, WAV) through the agent
             runtime's transcribe binding, counted against userId's quota (the user who turned captions on, who must be a
             participant of the call) and kept as an LlmCall with the client captions:(callSessionId). text, or errorCode
-            (notBuiltIn, notConfigured, invalid, quota, failed, timeout, or notAllowed for a user not in the call) and
-            errorMessage; a provider's refusal is no service error, so its code comes back.</description>
+            (notBuiltIn, notConfigured, invalid, quota, failed, timeout, or notAllowed for a user not in the call, or as
+            the edge link's user for a call whose media is not on this node's edge node) and errorMessage; a provider's
+            refusal is no service error, so its code comes back.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="audioBase64" required="true" allow-html="any"/>
-            <parameter name="userId"/>
+            <parameter name="userId" required="true"/>
             <parameter name="language"/>
             <parameter name="timeoutSeconds" type="Integer"/>
         </in-parameters>
