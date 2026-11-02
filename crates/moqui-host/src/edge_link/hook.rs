@@ -354,18 +354,24 @@ impl EdgeLink for Hook {
         }
         let factory = self.factory()?;
         moqui_core::edge::media::clear_peer_turn(&factory);
-        if let Some(facade) = factory.entity() {
-            let removed = facade.find("moqui.call.CallMediaNode").and_then(|find| {
-                find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
-                    .disable_authz()
-                    .delete_all()
-            });
-            if let Err(err) = removed {
-                tracing::warn!("Unpaired, but the edge node's call media row was not removed: {err}");
+        // under the rows' lock, and no row may be written after it: a heartbeat or an Apply in flight does not make
+        // the row again (moqui_core::edge::calls::register_row)
+        moqui_core::edge::calls::forget_rows(&factory, || {
+            if let Some(facade) = factory.entity() {
+                let removed = facade.find("moqui.call.CallMediaNode").and_then(|find| {
+                    find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
+                        .disable_authz()
+                        .delete_all()
+                });
+                if let Err(err) = removed {
+                    tracing::warn!("Unpaired, but the edge node's call media row was not removed: {err}");
+                }
             }
-        }
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN, NODE_ID])?;
-        for name in [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID] {
+        });
+        // the wizard's calls choice goes too: a node paired again starts with calls on its edge node, as E7 does
+        let calls = moqui_core::edge::calls::CALLS_ENABLED;
+        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls])?;
+        for name in [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID, calls] {
             moqui_lib::env::clear_property(name);
         }
         // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for
@@ -470,6 +476,13 @@ impl EdgeLink for Hook {
         }
         let url = self.status().url;
         crate::edge::block_on(super::probe::xmpp_probe(factory, url, port, direct))?.map_err(Error::new)
+    }
+
+    fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, Error> {
+        if moqui_core::edge::settings(&*self.factory()?).edge_node {
+            return Err(Error::new("this is an edge node: its local nodes check its TURN"));
+        }
+        super::probe::turn_probe(url, username, credential, peer).map_err(Error::new)
     }
 
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {

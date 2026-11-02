@@ -290,14 +290,26 @@ message XmppOffer {
   bool needs_node = 5;
 }
 
-// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
-// and SIP get theirs the same way when they are built.
+// The edge node as media node of the local node's calls (E7), as its Hello advertises it: the media socket and TURN.
+message CallsOffer {
+  // Its media socket is up.
+  bool available = 1;
+  // The address browsers send call media to (rtc_public_address, ip:port).
+  string media_address = 2;
+  // Its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
+  repeated string turn_urls = 3;
+  // Other local nodes are linked too, so the edge node takes call messages from none of them (decision 1).
+  bool other_nodes = 4;
+}
+
+// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; SIP
+// gets its own the same way when it is built.
 message Offer {
   WebOffer web = 1;
   MailOffer mail = 2;
   ChatOffer chat = 3;
   PassOffer pass = 4;
-  // Areas not built on this edge node yet: calls, sip.
+  // Areas not built on this edge node yet: sip (calls and xmpp before their areas).
   repeated string not_available = 5;
   // The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
   // when not set, and then the addresses of its web host name are expected.
@@ -305,6 +317,7 @@ message Offer {
   // The asking local node's host names on this edge node now.
   repeated HostSetting node_hosts = 7;
   XmppOffer xmpp = 8;
+  CallsOffer calls = 9;
 }
 
 message OfferRequest {}

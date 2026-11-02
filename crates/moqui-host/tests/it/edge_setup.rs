@@ -30,13 +30,20 @@
 //!   area: Discover offers it for this node's `xmpp_domain` and adds the domain to the passthrough names, Apply sends
 //!   it (the edge node keeps it and has the name), and Test probes the tunnel ports (this node runs no XMPP server, so
 //!   those fail, saying so) and finds the name.
+//! - Calls: the edge node runs a media node and TURN (the process's one media socket: the local node, started first,
+//!   has none), on loopback and advertised as a documentation address. The offer names them and the Hello `calls`;
+//!   Discover offers calls, on by default; Apply writes `edge_calls_enabled` and the link-kept row, with lines for the
+//!   media address, the TURN secret and the row; Test finds the row live and preferred, `make#IceServers` signs the
+//!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
+//!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
 
 #![cfg(all(
     unix,
     feature = "edge",
     feature = "embedded-postgres",
     feature = "inbound-smtp",
-    feature = "channels"
+    feature = "channels",
+    feature = "rtc"
 ))]
 
 use std::collections::BTreeMap;
@@ -50,7 +57,7 @@ use moqui_core::edge::{
     PairResult, PairingCode, HOST_PASSTHROUGH, HOST_TERMINATE,
 };
 use moqui_core::entity::EntityFacade;
-use moqui_host::edge_link::{local_web, pair, xmpp_probe, Backoff, Dialer, LocalConfig, PairConfig};
+use moqui_host::edge_link::{local_web, pair, turn_probe, xmpp_probe, Backoff, Dialer, LocalConfig, PairConfig};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 use rustls::pki_types::CertificateDer;
@@ -61,6 +68,8 @@ use crate::common::Gate;
 const NODE: &str = "local-setup";
 const OTHER: &str = "other-node";
 const BRIDGE: &str = "SETUP_BRIDGE";
+/// The address the edge node's media node advertises (documentation range, so Apply finds it public).
+const MEDIA_IP: &str = "203.0.113.5";
 
 const LOCAL_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
     <email-client idle-enabled="false"/>"#;
@@ -277,6 +286,9 @@ impl EdgeLink for DialerLink {
                 direct,
             ))
             .map_err(LibError::new)
+    }
+    fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, LibError> {
+        turn_probe(url, username, credential, peer).map_err(LibError::new)
     }
 }
 
@@ -553,6 +565,173 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     assert_eq!(edge_host().0, NODE, "nothing changed");
 }
 
+/// The calls area of the wizard on the local node: the edge node's media node at `media`, with its TURN.
+fn calls_area(local: &Gate, media: &str) {
+    let factory = Arc::clone(local.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let screens = moqui_core::screen::ScreenTest::new(&factory)
+        .root_screen("component://tools/screen/System.xml")
+        .render_mode("html");
+    let show = |path: &str, texts: &[&str]| {
+        let page = screens.test_render(path, BTreeMap::new(), None);
+        let text = page.text();
+        assert!(page.error_messages.is_empty(), "{path}: {:?}", page.error_messages);
+        for wanted in texts {
+            assert!(text.contains(wanted), "{path} has no {wanted}: {text}");
+        }
+    };
+    let post = |path: &str, fields: &[(&str, Value)]| {
+        let parameters: BTreeMap<String, Value> = fields
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        screens
+            .test_render(path, parameters, Some("post"))
+            .error_messages
+            .join(" | ")
+    };
+    let offered = format!("New calls have their media on the edge node&#39;s media node at {media}");
+    show(
+        "EdgeNode/Pair/Discover",
+        &[&offered, "office users in a call with each other", "Media node at"],
+    );
+    // a choice the form did not offer is no choice
+    let unoffered = post("EdgeNode/Pair/Discover/chooseSetup", &[("callsOn", Value::string("Y"))]);
+    assert!(unoffered.contains("at least one area"), "{unoffered}");
+    assert_eq!(
+        post(
+            "EdgeNode/Pair/Discover/chooseSetup",
+            &[("callsOffered", Value::string("Y")), ("callsOn", Value::string("Y"))]
+        ),
+        "",
+        "calls alone is a setup"
+    );
+    show("EdgeNode/Pair/Apply", &["New calls on the edge node&#39;s media node"]);
+    assert_eq!(post("EdgeNode/Pair/Apply/applySetup", &[]), "");
+    let edge_id = local_edge_id(local);
+    let row = |name: &str| field(local, "moqui.call.CallMediaNode", ("instanceId", &edge_id), name);
+    assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "N".to_string()));
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    let calls_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
+        list(out.get("lineList"))
+            .into_iter()
+            .filter(|line| line["area"] == "calls")
+            .collect()
+    };
+    let applied = calls_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    for wanted in [
+        "New calls have their media on the edge node's media node",
+        &format!("Browsers send call media to {media}"),
+        "takes credentials signed with the secret its link handed this node",
+        &format!("New calls have their media on the edge node at {media}, before this node's own media nodes"),
+    ] {
+        assert!(
+            applied
+                .iter()
+                .any(|line| line["ok"] == "true" && line["text"].contains(wanted)),
+            "{wanted}: {applied:?}"
+        );
+    }
+    assert!(applied.iter().all(|line| line["ok"] == "true"), "{applied:?}");
+    // Test: the row live and preferred, the edge node's TURN URLs signed with its secret, and an allocation on it
+    let tests = |out: BTreeMap<String, Value>| -> BTreeMap<String, BTreeMap<String, String>> {
+        list(out.get("testList"))
+            .into_iter()
+            .map(|row| (row["check"].clone(), row))
+            .collect()
+    };
+    let tested = tests(call(
+        local,
+        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    for check in ["callsNode", "iceServers", "turn"] {
+        assert_eq!(tested[check]["ok"], "true", "{check}: {tested:?}");
+    }
+    assert!(
+        tested["turn"]["message"].contains(&format!("permission for its media address's IP {MEDIA_IP}")),
+        "{tested:?}"
+    );
+    // an Apply that was not asked about calls leaves them as they are
+    let untouched = calls_lines(call(local, "org.moqui.impl.EdgeServices.apply#EdgeSetup", &[]));
+    assert!(untouched.is_empty(), "{untouched:?}");
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert_eq!(row("draining"), "N");
+    show(
+        "EdgeNode/Status",
+        &[&format!("New calls on the edge node at {media}, with its TURN")],
+    );
+    // calls off: the row stays, draining, so calls on it go on; this node has no media node of its own, so a line
+    // says no new call can start
+    let off = calls_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("callsOn", Value::Bool(false))],
+    ));
+    assert!(
+        off.iter()
+            .any(|line| line["ok"] == "true" && line["text"].contains("takes no new calls; calls on it go on")),
+        "{off:?}"
+    );
+    let failed: Vec<&BTreeMap<String, String>> = off.iter().filter(|line| line["ok"] == "false").collect();
+    assert!(
+        failed.len() == 1 && failed[0]["text"].contains("no new call can start"),
+        "{off:?}"
+    );
+    assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "Y".to_string()));
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_calls_enabled=false"), "{env}");
+    let tested = tests(call(
+        local,
+        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    assert_eq!(tested["callsNode"]["checked"], "false", "{tested:?}");
+    assert!(!tested.contains_key("turn"), "{tested:?}");
+    show(
+        "EdgeNode/Status",
+        &["Off, and this node has no live media node of its own, so no new call can start"],
+    );
+    // after unpairing has forgotten the rows, an Apply in flight does not make the row again
+    moqui_core::edge::calls::forget_rows(&factory, || ());
+    let late = calls_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    assert!(
+        late.iter()
+            .any(|line| line["ok"] == "false" && line["text"].contains("this node unpaired")),
+        "{late:?}"
+    );
+    assert_eq!(row("draining"), "Y", "the row is not written");
+    // and on again, as the wizard leaves it, once the link allows the row again
+    moqui_core::edge::calls::allow_row(&factory, &edge_id);
+    let on = calls_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    assert!(on.iter().all(|line| line["ok"] == "true"), "{on:?}");
+    assert_eq!(row("draining"), "N");
+}
+
+/// The edge node's instance id, as the local node pinned it from its Hello.
+fn local_edge_id(local: &Gate) -> String {
+    let factory = local.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::edge::link().unwrap().status().peer.instance_id
+}
+
 #[test]
 fn a_local_node_is_attached_from_the_wizard() {
     if !crate::common::own_process() {
@@ -593,6 +772,9 @@ fn a_local_node_is_attached_from_the_wizard() {
     let edge_port = crate::common::free_port();
     let edge_port_text = edge_port.to_string();
     let (xmpp_port, xmpp_tls_port) = (crate::common::free_port(), crate::common::free_port());
+    // the edge node's media node on loopback, advertised as a documentation address, and its TURN on loopback
+    let (media_port, turn_port) = (crate::common::free_port(), crate::common::free_port());
+    let media = format!("{MEDIA_IP}:{media_port}");
     let edge = crate::common::start_second_with(
         "edge-setup-edge",
         EDGE_CONF,
@@ -608,6 +790,14 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("edge_xmpp_port", &xmpp_port.to_string()),
             ("edge_xmpp_tls_port", &xmpp_tls_port.to_string()),
             ("edge_xmpp_host", "127.0.0.1"),
+            ("rtc_media_port", &media_port.to_string()),
+            ("rtc_media_host", "127.0.0.1"),
+            ("rtc_public_address", &media),
+            ("turn_port", &turn_port.to_string()),
+            ("turn_host", "127.0.0.1"),
+            ("turn_public_host", "127.0.0.1"),
+            ("turn_relay_ports", "51310-51400"),
+            ("turn_auth_secret", "edge-setup-turn-secret"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -644,7 +834,8 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(
         paired.edge.capabilities.iter().any(|area| area == "mail")
             && paired.edge.capabilities.iter().any(|area| area == "chat")
-            && paired.edge.capabilities.iter().any(|area| area == "xmpp"),
+            && paired.edge.capabilities.iter().any(|area| area == "xmpp")
+            && paired.edge.capabilities.iter().any(|area| area == "calls"),
         "the Hello names the areas: {:?}",
         paired.edge.capabilities
     );
@@ -679,7 +870,18 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(offer.chat.webhooks);
     assert!(!offer.pass.available, "no mr-pass in the test runtime");
     assert_eq!(offer.pass.client_id, "edge");
-    assert_eq!(offer.not_available, ["calls", "sip"]);
+    assert_eq!(offer.not_available, ["sip"]);
+    assert!(
+        offer.calls.available && offer.calls.media_address == media && !offer.calls.other_nodes,
+        "the media node: {:?}",
+        offer.calls
+    );
+    assert_eq!(
+        offer.calls.turn_urls.first().map(String::as_str),
+        Some(format!("turn:127.0.0.1:{turn_port}?transport=udp").as_str()),
+        "{:?}",
+        offer.calls
+    );
     assert!(
         offer.xmpp.available
             && offer.xmpp.port == xmpp_port
@@ -871,6 +1073,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     records.fix_txt("_dmarc.example.com", "v=DMARC1; p=quarantine").unwrap();
     records.fix_ips("erp.example.com", &["203.0.113.5".parse().unwrap()]);
     records.fix_ips("old.example.com", &["198.51.100.7".parse().unwrap()]);
+    records.fix_ips("turn.example.net", &[MEDIA_IP.parse().unwrap()]);
     let srv = |port: u16, target: &str| moqui_mail::dns::Srv {
         priority: 0,
         weight: 5,
@@ -903,6 +1106,11 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("xmppHosts", Value::List(vec![Value::string("edge.example.net")])),
             ("xmppPort", Value::I64(i64::from(offer.xmpp.port))),
             ("xmppTlsPort", Value::I64(i64::from(offer.xmpp.tls_port))),
+            (
+                "turnHosts",
+                Value::List(vec![Value::string("turn.example.net"), Value::string("127.0.0.1")]),
+            ),
+            ("mediaAddress", Value::string(&offer.calls.media_address)),
         ],
     );
     let rows = list(dns.get("recordList"));
@@ -918,6 +1126,13 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(ok("DMARC", "_dmarc.example.com"), "{rows:?}");
     assert!(ok("A/AAAA", "erp.example.com"));
     assert!(!ok("A/AAAA", "old.example.com"));
+    assert!(ok("A/AAAA", "turn.example.net"), "the TURN host: {rows:?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.get("name").map(String::as_str) == Some("127.0.0.1")),
+        "a TURN address needs no record: {rows:?}"
+    );
     assert!(ok("SRV", "_xmpp-client._tcp.chat.example.com"), "{rows:?}");
     assert!(
         !ok("SRV", "_xmpps-client._tcp.chat.example.com"),
@@ -992,6 +1207,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         let _role = LocalRole::take(&dialer, rt.handle(), &local);
         walk_the_wizard(&local, &sales);
         xmpp_area(&local, &edge);
+        calls_area(&local, &media);
     }
     assert_eq!(server("SYSTEM"), "edge:", "the wizard's Apply");
     restore(&local);

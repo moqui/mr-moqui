@@ -22,13 +22,14 @@
 //! service facade's hand-off of delegated calls ([`delegate`]), the queue's rows, receipts and handlers ([`queue`]),
 //! and replication's change notes, batches and copies ([`replica`]). The host's link moves them. Attaching a local node
 //! (§5.7, E10) is [`setup`]: the edge node's offer, the local node's Configure, the local rows Apply writes and the
-//! Test step's round trips.
+//! Test step's round trips; its calls area, on the edge node as media node, is [`calls`].
 
 use std::sync::Arc;
 
 use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
 
+pub mod calls;
 pub mod conf;
 pub mod delegate;
 pub mod media;
@@ -262,6 +263,13 @@ pub trait EdgeLink: Send + Sync {
     /// reaches it; what was reached, or why not. No credentials are sent.
     fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, Error> {
         let _ = (port, direct);
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a local node, the Test step's TURN check (§5.7, E10 calls): an allocation on the edge node's TURN at `url`
+    /// (a `turn:` URL over UDP) with `username` and `credential`, as a browser's, then a permission for the IP of `peer` (its media
+    /// address), and the allocation deleted; what was allocated, or why not.
+    fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, Error> {
+        let _ = (url, username, credential, peer);
         Err(Error::new(NOT_BUILT))
     }
 }

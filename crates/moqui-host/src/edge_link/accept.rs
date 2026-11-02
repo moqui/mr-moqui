@@ -473,11 +473,14 @@ impl EdgeServer {
             &self.config.capabilities,
             &self.config.public_names,
         );
-        // a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): its media address and TURN URLs
+        // a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): its media address and TURN URLs, and
+        // its area (§5.7, E10 calls) as the media socket is now, not as it was when the areas were read at start
+        hello.capabilities.retain(|area| area != super::offer::CALLS_AREA);
         if let Some(advert) = self.media() {
             hello.media_address = advert.media_address;
             hello.turn_urls = advert.turn_urls;
             hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
+            hello.capabilities.push(super::offer::CALLS_AREA.to_string());
         }
         hello
     }

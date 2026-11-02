@@ -455,6 +455,14 @@ fn flag(parameters: &BTreeMap<String, Value>, name: &str) -> bool {
     }
 }
 
+/// A Boolean parameter that may be left out: `None` when it is absent or empty, else as [`flag`] reads it.
+fn optional_flag(parameters: &BTreeMap<String, Value>, name: &str) -> Option<bool> {
+    parameters
+        .get(name)
+        .filter(|value| !is_empty(value))
+        .map(|_| flag(parameters, name))
+}
+
 /// A list parameter as texts: a list, or a comma-separated text; blanks left out.
 fn list(parameters: &BTreeMap<String, Value>, name: &str) -> Vec<String> {
     let items: Vec<String> = match parameters.get(name) {
@@ -517,6 +525,17 @@ fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
                 ("tlsPort", Value::I64(i64::from(offer.xmpp.tls_port))),
                 ("otherNode", Value::Bool(offer.xmpp.other_node)),
                 ("needsNode", Value::Bool(offer.xmpp.needs_node)),
+            ]),
+        ),
+        (
+            "calls",
+            map(vec![
+                ("available", Value::Bool(offer.calls.available)),
+                ("mediaAddress", Value::string(&offer.calls.media_address)),
+                ("turnUrls", strings(&offer.calls.turn_urls)),
+                ("otherNodes", Value::Bool(offer.calls.other_nodes)),
+                // this node's own setting (edge_calls_enabled), for Discover's default and Status
+                ("enabled", Value::Bool(crate::edge::calls::calls_enabled())),
             ]),
         ),
         ("notAvailable", strings(&offer.not_available)),
@@ -700,7 +719,9 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
 /// input), send the edge node its part (Configure; when it is not taken nothing changes here either), then write the
 /// chosen areas' local rows and settings, and send every replicated set whole again. Each step is a line; once the
 /// edge node has its part, a local step that fails does not stop the others. XMPP writes nothing here: the domain is
-/// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]).
+/// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]). Calls send nothing to
+/// the edge node: with its media node offered, `callsOn` is this node's `edge_calls_enabled`
+/// ([`crate::edge::calls::apply`]).
 fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
     let factory = current_factory()?;
@@ -814,6 +835,25 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     if xmpp {
         lines.extend(xmpp_lines(&xmpp_domain, xmpp_hosted, &answer));
     }
+    // calls: on or off when the edge node has a media node and the caller chose (callsOn given; Discover passes it
+    // only when it offered calls); absent leaves edge_calls_enabled as it is. Nothing is sent to the edge node.
+    let calls = optional_flag(parameters, "callsOn");
+    if let (Some(on), true) = (calls, answer.offer.calls.available) {
+        lines.extend(crate::edge::calls::apply(
+            &factory,
+            facade,
+            &env_file,
+            on,
+            &status.peer,
+            &answer.offer.calls,
+        ));
+    } else if calls == Some(true) {
+        lines.push(SetupLine::new(
+            "calls",
+            false,
+            "The edge node runs no media node (rtc_media_port), so calls stay on this node's own media nodes",
+        ));
+    }
     let sets = match crate::edge::replica::replica(facade) {
         Some(replica) => {
             replica.resync_all();
@@ -855,8 +895,9 @@ struct TestLine {
 /// chosen accounts' mail goes through the edge mail server, and the edge node can send it (its DKIM key, or its
 /// Postfix relay); for chat, it takes the bridges' webhooks; for PASS, the client settings are there and the edge
 /// node has mr-pass; for XMPP, a client stream through each of the edge node's tunnel ports reaches this node's XMPP
-/// server ([`crate::edge::EdgeLink::xmpp_probe`]) and the domain is one of this node's host names there. No outside
-/// mail or provider is needed. A check with nothing to check is "not checked".
+/// server ([`crate::edge::EdgeLink::xmpp_probe`]) and the domain is one of this node's host names there; for calls,
+/// the edge node's media node row and its TURN ([`calls_tests`]). No outside mail or provider is needed. A check with
+/// nothing to check is "not checked".
 fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{start_echo, wait_echo, EchoCheck};
     let factory = current_factory()?;
@@ -945,6 +986,12 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
         let link = link.as_ref().ok().map(std::sync::Arc::clone);
         std::thread::spawn(move || xmpp_tests(link.as_deref()))
     });
+    // calls: the row and the credential here, now; the TURN allocation on a thread of its own
+    let (calls_lines, turn_probe) = if flag(parameters, "callsOn") {
+        calls_tests(&factory, facade, link.as_ref().ok())
+    } else {
+        (Vec::new(), None)
+    };
     let deadline = std::time::Instant::now() + TEST_WAIT;
     for (check, label, started) in pending {
         let (mut ok, mut message) = match started {
@@ -978,6 +1025,15 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
                 ok: Some(false),
                 message: "The XMPP check stopped with an error; the log has why".to_string(),
             }]
+        }));
+    }
+    tests.extend(calls_lines);
+    if let Some(probe) = turn_probe {
+        tests.push(probe.join().unwrap_or_else(|_| TestLine {
+            check: "turn",
+            label: "TURN",
+            ok: Some(false),
+            message: "The TURN check stopped with an error; the log has why".to_string(),
         }));
     }
     if flag(parameters, "passOn") {
@@ -1064,6 +1120,97 @@ fn xmpp_tests(link: Option<&dyn crate::edge::EdgeLink>) -> Vec<TestLine> {
         },
     });
     tests
+}
+
+/// The Test step's calls lines (plans/Edge-Node.md §5.7, E10 calls): the edge node's row is live and preferred
+/// (`callsNode`, [`crate::edge::calls::row_check`]), `make#IceServers` gives its TURN URLs a credential signed with
+/// the secret its link handed this node (`iceServers`), and, on a thread of its own, that credential allocates on its
+/// TURN with a permission for its media address's IP (`turn`, [`crate::edge::EdgeLink::turn_probe`]). A check with no TURN
+/// is not checked.
+fn calls_tests(
+    factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,
+    facade: &EntityFacade,
+    link: Option<&std::sync::Arc<dyn crate::edge::EdgeLink>>,
+) -> (Vec<TestLine>, Option<std::thread::JoinHandle<TestLine>>) {
+    let line = |check: &'static str, label: &'static str, ok: Option<bool>, message: String| TestLine {
+        check,
+        label,
+        ok,
+        message,
+    };
+    let Some(link) = link else {
+        let failed = line("callsNode", "Calls", Some(false), crate::edge::NOT_BUILT.to_string());
+        return (vec![failed], None);
+    };
+    let status = link.status();
+    let edge = match crate::edge::calls::linked_media_node(&status) {
+        Ok(edge) => edge,
+        Err(why) => return (vec![line("callsNode", "Calls", Some(false), why)], None),
+    };
+    if !crate::edge::calls::calls_enabled() {
+        let message = format!(
+            "Not checked: calls are off here ({}), so new calls do not use the edge node",
+            crate::edge::calls::CALLS_ENABLED
+        );
+        return (vec![line("callsNode", "Calls", None, message)], None);
+    }
+    let (ok, message) = crate::edge::calls::row_check(facade, edge, crate::user::now_millis());
+    let mut lines = vec![line("callsNode", "Calls", Some(ok), message)];
+    if edge.turn_urls.is_empty() {
+        let message = "Not checked: the edge node runs no TURN".to_string();
+        lines.push(line("iceServers", "TURN credentials", None, message));
+        return (lines, None);
+    }
+    let row_urls = crate::edge::calls::media_row(facade, &edge.instance_id)
+        .ok()
+        .flatten()
+        .map(|row| row.turn_urls)
+        .unwrap_or_default();
+    let leg = format!(
+        "{}.{}",
+        crate::edge::calls::PROBE_LEG,
+        crate::user::random_string(12).unwrap_or_else(|_| crate::user::now_millis().to_string())
+    );
+    let (urls, username, credential) = match crate::edge::calls::ice_check(factory, edge, &row_urls, &leg) {
+        Ok(ice) => ice,
+        Err(why) => {
+            lines.push(line("iceServers", "TURN credentials", Some(false), why));
+            return (lines, None);
+        }
+    };
+    lines.push(line(
+        "iceServers",
+        "TURN credentials",
+        Some(true),
+        format!(
+            "make#IceServers gives the edge node's {} a credential signed with its secret",
+            urls.join(", ")
+        ),
+    ));
+    let Some(url) = urls
+        .iter()
+        .find(|url| url.starts_with("turn:") && !url.contains("transport=tcp"))
+        .cloned()
+    else {
+        let message = "Not checked: the edge node's TURN has no UDP listener".to_string();
+        lines.push(line("turn", "TURN", None, message));
+        return (lines, None);
+    };
+    let link = std::sync::Arc::clone(link);
+    let peer = edge.media_address.clone();
+    let probe = std::thread::spawn(move || {
+        let (ok, message) = match link.turn_probe(&url, &username, &credential, &peer) {
+            Ok(done) => (true, done),
+            Err(err) => (false, err.to_string()),
+        };
+        TestLine {
+            check: "turn",
+            label: "TURN",
+            ok: Some(ok),
+            message,
+        }
+    });
+    (lines, Some(probe))
 }
 
 /// The address of a hosted or shared account here, for the mail-in check when none was chosen.

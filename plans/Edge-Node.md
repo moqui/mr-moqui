@@ -15,7 +15,7 @@ built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); 
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
 (E5b)"), E6's in §5.4 ("As built (E6)"), E7's in §5.4 ("As built (E7)"), E9's, the XMPP tunnel with the design of C3b's and C6b's split, in §5.4
 ("As built (E9)"), and E10's, the wizard's Discover, Apply and Test, in
-[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", and its XMPP area in "As built (E10, XMPP)"). A real local node attached through the wizard on a
+[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", its XMPP area in "As built (E10, XMPP)" and its calls area in "As built (E10, calls)"). A real local node attached through the wizard on a
 served Maximal build, with real DNS, is pending.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
@@ -1243,7 +1243,7 @@ Its actions are pause, resync and unpair.
   up), and a new RPC `Link.GetOffer` (additive) answers a structured `Offer`: web access (its public names and the
   modes), mail (moqui or postfix, the listener on, the MX host `smtp_hostname`, the bounce domain, and with the MTA in
   moqui its DKIM selector and record), chat (webhooks on, the public URL), PASS (mr-pass loaded, the client id `edge`),
-  calls and SIP as not available (XMPP since its area, below), its public addresses (a new property, `edge_public_addresses`) and the asking
+  SIP as not available (XMPP and calls since their areas, below), its public addresses (a new property, `edge_public_addresses`) and the asking
   node's host names. The offer is asked on the link, never on the pairing connection, so it is always fresh: the wizard
   and Status read it with `get#EdgeOffer`. Code: `edge_link/offer.rs`; `moqui_core::edge::setup` holds the types.
 - **Configure.** A new RPC `Link.Configure` (additive): the local node's host names with their modes (`set_hosts`: the
@@ -1265,7 +1265,7 @@ Its actions are pause, resync and unpair.
   - **Discover** (`Pair/Discover.xml`): the offer as a form, each area on or off: passthrough and terminate host names
     (this node's `webapp_http_host` and its names there now), mail (the hosted and shared accounts' domains, the
     system's mail, the accounts), chat (the bridges), PASS (the sites, from `mantle.public.PublicSite` when Mantle is
-    there, else typed, and the SSO callback). Calls and phones are listed as not available yet (XMPP has its area, below). The choices go in
+    there, else typed, and the SSO callback). Phones are listed as not available yet (XMPP and calls have their areas, below). The choices go in
     the session (`edgeSetup`), never a URL.
   - **Apply** (`Pair/Apply.xml`, `apply#EdgeSetup`): Apply (a button on the step; the wizard's Next then needs it done,
     and a new choice in Discover clears it, so a changed setup is applied again before Test) checks the whole setup
@@ -1299,9 +1299,11 @@ Its actions are pause, resync and unpair.
   - **Status** has a Setup box: the host names (from the offer while linked), mail out (the system and the accounts
     through `EDGE`), the chat address and the PASS sites, with Set up again, which opens the wizard at Discover.
 - **Deviations.** Each area's host names are two lists (passthrough, terminate), not one row per name. Turning an
-  area off leaves what an earlier Apply set; there is no undo. The mail-out test is a queue round trip, not a message
-  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone, calls and
-  monitoring are not in the form (E7, E8 and §5.9 are not built). XMPP's domain is not chosen in the form but is the
+  area off leaves what an earlier Apply set; there is no undo (calls are the exception: off is a setting of its own,
+  below). The mail-out test is a queue round trip, not a message
+  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone and
+  monitoring are not in the form (E8 and §5.9 are not built); calls have their area since E7 ("As built (E10,
+  calls)"). XMPP's domain is not chosen in the form but is the
   node's `xmpp_domain`, and Apply writes nothing local for it; its probe goes to the host of `edge_node_url`, not to the SRV target.
 - **Tests.** `tests/it/edge_setup.rs` (about 4 s): the offer read, Configure applied (a name another node holds
   refused, the edge node's own names and their subdomains, an IP address, `localhost` and a one-label name refused, a
@@ -1318,7 +1320,7 @@ Its actions are pause, resync and unpair.
 **As built (E10, XMPP).** The wizard's XMPP area, on E9's tunnel.
 - **Offer.** `Offer.xmpp` (field 8, `XmppOffer`): on (a tunnel port is), `edge_xmpp_port` and `edge_xmpp_tls_port`
   (0 while off), and `other_node` when `edge_xmpp_node` names another node. Hello's areas add `xmpp` when a port is
-  on; `setup::NOT_AVAILABLE` is calls and SIP. Each area is a message of its own, so calls and SIP add theirs the same
+  on; `setup::NOT_AVAILABLE` was calls and SIP (SIP alone since the calls area). Each area is a message of its own, so calls and SIP add theirs the same
   way (Offer from 9, ConfigureRequest from 7).
 - **Configure.** `ConfigureRequest.xmpp` (field 6, `XmppSetup`): the local node's XMPP domain, checked by
   `check_setup` as a host name (not an IP address, one label or `localhost`; a bad one refuses the request whole) and
@@ -1354,6 +1356,70 @@ Its actions are pause, resync and unpair.
   with web access off and the name kept giving no failed line, and Apply refused with no `xmpp_domain`). `edge_xmpp.rs`: the probe through both tunnel ports reaches the local node's
   server, and fails with the link down. Unit: `setup_tests.rs` (the domain's checks), `edge_dns_tests.rs` (the SRV
   rows, a fixed SRV record). `EdgeScreens.spec.js`: Discover adds the domain, or refuses with no `xmpp_domain`.
+
+**As built (E10, calls).** The wizard's calls area, on E7's edge node as media node (§5.4, "As built (E7)").
+- **Offer.** `Offer.calls` (field 9, `CallsOffer`, additive): on while the edge node's media socket is up, its media
+  address and TURN URLs (what `rtc::start` advertises, `edge::media::advert`, the same as E7's Hello fields), and
+  `other_nodes` when another local node is linked too, so the edge node takes call messages from none (decision 1).
+  Hello's areas name `calls` while the media socket is up, as the Hello is made (`accept.rs` `hello`), not only as
+  read at start, since the media socket can come up after the link. `setup::NOT_AVAILABLE` is `["sip"]`.
+  `ConfigureRequest` field 7 is not used: the edge node needs nothing from the local node for calls.
+- **What calls off means.** E7 keeps the edge node's `CallMediaNode` row from the link and `Calls.js`
+  `liveMediaNodes` puts it first whenever paired. The choice is a local setting, `edge_calls_enabled` in
+  `runtime/.env` (on unless `false`, `n`, `no`, `0` or `off`; unpairing removes it, so a pair again starts on, as E7
+  does): while it is off the link keeps the row as `draining` (`edge::calls::register_row`, which the dialer's
+  `keep_media_node` now calls, reading the setting each beat). `Calls.js` already gives a draining node no new call and
+  needs no change; calls already on the edge node go on, since the row stays live (`expire#Calls` does not end them,
+  and the delegated media events and recordings still find an `edgeLinked` row). Removing the row instead would have
+  ended them as "media server lost".
+- **Discover** offers calls when the edge node has a media node, on by default unless this node's
+  `edge_calls_enabled` is off, showing the media address and TURN URLs, with a note: new calls have their media on
+  the edge node, so office users in a call with each other send it to the cloud and back (decision 6), with no
+  cascading to a media node of this node's own and one local node per edge node; and a warning when other local nodes
+  are linked. Calls alone is a setup. The form posts `callsOffered` (hidden) only when it showed the choice; a
+  `callsOn` without it is no choice, so a form rendered while the media socket was down cannot turn calls off.
+- **Apply** (`callsOn`, tri-state: left out, as Apply's step does when Discover did not offer calls, or as an older
+  caller sends, `edge_calls_enabled` is left as it is; given with no calls in the offer, true is a failed line):
+  `edge_calls_enabled` written, the row written again at once with it (the link writes it every 15 s after that),
+  then a line each (core `edge/calls.rs` `apply`): the media address is public (`media_address_problem`: not
+  loopback, private, link-local or unspecified; else set `rtc_public_address`), other local nodes linked, the TURN
+  secret the link's Hello handed this node (`edge::media::turn_secret`; no TURN is a failed line too), and the row
+  (`row_check`: there, `edgeLinked`, a heartbeat within 60 s, the Hello's media address, draining only while off).
+  Calls off with no live, non-draining media node of this node's own (`own_media_nodes`) is a failed line too: no
+  new call can start then. Nothing goes to the edge node.
+- **Unpairing and the row.** Every write of the row (`register_row`, from the link's heartbeat or Apply) holds a
+  per-factory lock and needs the edge node allowed: `allow_row` as a link comes up (`Work::start`), cleared by
+  `forget_rows`, under which unpairing deletes the `edgeLinked` rows. So a heartbeat or an Apply in flight never
+  makes the row again after unpairing removed it.
+- **DNS.** `check#EdgeDns` takes `turnHosts` (the hosts of the TURN URLs, `turn_public_host` on the edge node) and
+  `mediaAddress`: each that is a name, and not one of the web host names, gets an A/AAAA row noted "TURN for calls",
+  against `edge_public_addresses` and the media address's IP (`edge_dns.rs` `address_row`, the A/AAAA check shared
+  with the host names). An address needs no record.
+- **Test** (`callsOn`; not checked while `edge_calls_enabled` is off): `callsNode`, the row live and preferred
+  (`row_check`, as `liveMediaNodes` orders: a live `edgeLinked` row not draining is first); `iceServers`,
+  `make#IceServers` for a probe leg (`edgeSetupProbe.<random>`) with the row's URLs and the edge node's instance id
+  gives exactly the edge node's TURN URLs, signed with the handed-off secret (refused when the link handed none);
+  `turn`, on a thread beside the round trips, `EdgeLink::turn_probe`: that credential allocates over UDP on the first
+  `turn:` URL, as a browser would (`turn-client-proto`, now an optional dependency of the host under `rtc`; host
+  `rtc/turn_probe.rs`), a permission for the IP of the media address is granted (a TURN permission is for an IP alone, RFC 8656: the edge
+  node's TURN grants one only for an IP of its allowed peers, and its port rule is checked on data, which the check
+  sends none of), and the allocation is deleted; at most 3 s. No STUN binding to the media address itself: the media socket
+  answers one only with a leg's ICE credentials.
+- **Status** shows calls: new calls on the edge node at its media address (with TURN or not) while its link-kept row
+  is live, off by `edge_calls_enabled` (saying no new call can start when this node has no live media node of its
+  own), or no media node. The TURN check (`rtc/turn_probe.rs`) is built only with both `rtc` and `edge`.
+- **Tests.** `edge_setup.rs` (about 5 s now): the edge node runs a media socket and TURN in the test's process (the
+  process's one media node; the local node, started first, has none), on loopback, advertised as `203.0.113.5` so the
+  media address is public; the offer and `calls` in the Hello, the TURN host's A/AAAA against fixed records, and the
+  calls walk: Discover offering calls, calls alone chosen, Apply (the setting, the row, every line passing), Test's
+  three checks passing (a real allocation on the edge node's TURN with the credential `make#IceServers` signed),
+  Status, calls off (the row draining, the setting written, Test not checking, Status saying so) and on again. Unit:
+  `edge/calls_tests.rs` (the setting, the media address check, a link with no media node), `rtc/turn_probe_tests.rs`
+  (an allocation and permission on the embedded TURN on loopback with the edge node's secret, another secret refused,
+  the URL forms), `edge_link/tests.rs` (the offer's conversion), `edge_dns_tests.rs` (the TURN host rows).
+  `EdgeScreens.spec.js`: Discover takes calls alone.
+- **Not done.** Real browsers through a deployed edge node's TURN, with a real `turn_public_host` in DNS, are to be
+  checked by hand. The TURN check uses UDP only; a TURN with only TCP or TLS listeners is not checked.
 
 ### 5.8 Security
 
@@ -1411,7 +1477,7 @@ Its actions are pause, resync and unpair.
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node. Built. Met in `tests/it/edge_call.rs` with str0m stand-ins (the outside one relayed by the edge node's TURN); real browsers over the internet are pending |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node. Built. Tested in `tests/it/edge_xmpp.rs`: clients over the STARTTLS and direct TLS tunnel ports sign in with SCRAM-SHA-256-PLUS and chat on the local node; refused with the link down. C3b's and C6b's split is designed in §5.4. Not tested: a real client through a deployed edge node |
-| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port); calls and SIP come with E7 and E8. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records; the XMPP probe also in `edge_xmpp.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
+| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port) and the calls area on E7's media node (calls off a local setting that keeps the edge node's row draining; Test allocates on its TURN with a credential make#IceServers signed); SIP comes with E8. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records; the XMPP probe also in `edge_xmpp.rs`; the TURN check also against the embedded TURN in `rtc/turn_probe_tests.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
 

@@ -770,56 +770,18 @@ impl Drop for Work {
     }
 }
 
-/// The service that keeps a media node's row (`moqui.call.CallMediaNode`).
-const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNode";
-
-/// Write or remove (`stopping`) the `CallMediaNode` row of the edge node `edge`, kept by this link, as internal work
-/// in the current context; its errors are taken out of the context.
-fn register_media_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
-    use moqui_lib::object::Value;
-    let parameters = std::collections::BTreeMap::from([
-        ("instanceId".to_string(), Value::string(&edge.instance_id)),
-        ("mediaAddress".to_string(), Value::string(&edge.media_address)),
-        ("turnUrls".to_string(), Value::string(edge.turn_urls.join(","))),
-        ("edgeLinked".to_string(), Value::Bool(true)),
-        (
-            "startedDate".to_string(),
-            if edge.media_started_ms > 0 {
-                moqui_core::user::stamp_value(edge.media_started_ms)
-            } else {
-                Value::Null
-            },
-        ),
-        ("stopping".to_string(), Value::Bool(stopping)),
-    ]);
-    let _authz =
-        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
-    // its errors apart from the caller's, which stay
-    moqui_core::context::ExecutionContext::with_current(|ec| ec.message().push_errors());
-    let ran = moqui_core::service::sync(REGISTER_MEDIA_NODE, &parameters);
-    let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
-        let mut messages = ec.message();
-        let errors = messages.errors().to_vec();
-        messages.clear_errors();
-        messages.pop_errors();
-        errors
-    })
-    .unwrap_or_default();
-    match ran {
-        Err(err) => Err(err.message().to_string()),
-        Ok(_) if !errors.is_empty() => Err(errors.join("; ")),
-        Ok(_) => Ok(()),
-    }
-}
-
 /// The edge node's `CallMediaNode` row while this link lasts (plans/Edge-Node.md §5.4): written now and again every
 /// `every`, from the link's liveness, so it goes stale (and its calls end, `expire#Calls`) only when the link has been
-/// down past the media nodes' grace. An edge node with no media has its row removed.
+/// down past the media nodes' grace. An edge node with no media has its row removed. With this node's
+/// `edge_calls_enabled` off the row is draining, read again each time, so the wizard's choice holds (E10 calls).
 async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration) {
     let stopping = edge.media_address.is_empty();
     loop {
         let row = edge.clone();
-        let registered = crate::worker::on_pool(&factory, move |_| Ok(register_media_node(&row, stopping))).await;
+        let registered = crate::worker::on_pool(&factory, move |_| {
+            Ok(moqui_core::edge::calls::register_row(&row, stopping))
+        })
+        .await;
         match registered {
             Ok(Ok(())) => {}
             Ok(Err(err)) => tracing::warn!("the edge node's call media row was not kept: {err}"),
@@ -849,6 +811,8 @@ impl Work {
         let Some(node) = factory.upgrade().map(|factory| {
             // the edge node's TURN checks its own secret: the credentials of its TURN URLs are signed with it
             moqui_core::edge::media::set_peer_turn(&factory, &up.edge.instance_id, &up.turn_secret);
+            // its media node row may be kept until unpairing (moqui_core::edge::calls::forget_rows)
+            moqui_core::edge::calls::allow_row(&factory, &up.edge.instance_id);
             moqui_core::edge::queue::local_node_id(&factory)
         }) else {
             return none();
