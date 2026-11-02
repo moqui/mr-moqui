@@ -1262,7 +1262,7 @@ impl Link for LinkService {
         let key = node.to_string();
         let offer = self
             .server
-            .on_pool(move |factory| super::offer::offer(factory, &server.config, &key))
+            .on_pool(move |factory| super::offer::offer(factory, &server.config, &key, &server.linked_nodes()))
             .await
             .map_err(|err| {
                 tracing::error!("Edge link of {node}: the offer was not made: {err}");
@@ -1284,7 +1284,8 @@ impl Link for LinkService {
         let reply = self
             .server
             .on_pool(move |factory| {
-                let reply = super::offer::configure(factory, &server.config, &key, request)?;
+                let linked = server.linked_nodes();
+                let reply = super::offer::configure(factory, &server.config, &key, request, &linked)?;
                 server.hosts.load(factory)?;
                 Ok(reply)
             })

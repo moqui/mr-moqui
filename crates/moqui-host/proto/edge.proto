@@ -248,19 +248,35 @@ message PassOffer {
   string client_id = 2;
 }
 
-// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover).
+// The XMPP tunnel (E9): the edge node's ports that pipe XMPP clients down the link to the local node's XMPP server.
+message XmppOffer {
+  // A tunnel port is on.
+  bool available = 1;
+  // edge_xmpp_port (STARTTLS) and edge_xmpp_tls_port (direct TLS); 0 while off.
+  uint32 port = 2;
+  uint32 tls_port = 3;
+  // edge_xmpp_node names another local node, so the tunnels do not come to the asking node.
+  bool other_node = 4;
+  // edge_xmpp_node is empty and the asking node is not the only one linked, so the tunnels go to no node until
+  // edge_xmpp_node names one.
+  bool needs_node = 5;
+}
+
+// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
+// and SIP get theirs the same way when they are built.
 message Offer {
   WebOffer web = 1;
   MailOffer mail = 2;
   ChatOffer chat = 3;
   PassOffer pass = 4;
-  // Areas not built on this edge node yet: calls, sip, xmpp.
+  // Areas not built on this edge node yet: calls, sip.
   repeated string not_available = 5;
   // The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
   // when not set, and then the addresses of its web host name are expected.
   repeated string addresses = 6;
   // The asking local node's host names on this edge node now.
   repeated HostSetting node_hosts = 7;
+  XmppOffer xmpp = 8;
 }
 
 message OfferRequest {}
@@ -278,6 +294,14 @@ message ConfigureRequest {
   repeated string pass_sites = 4;
   // hosts is the node's whole list; when false the node's names are left as they are.
   bool set_hosts = 5;
+  // XMPP clients through the edge node's tunnel ports; unset when not chosen.
+  XmppSetup xmpp = 6;
+}
+
+// The local node's XMPP server behind the tunnel (E9). Its rooms. and upload. names are the domain's; the upload URL
+// (https at the domain) and /xmpp-websocket ride on web access, so the domain is one of the node's host names too.
+message XmppSetup {
+  string domain = 1;
 }
 
 message ConfigureReply {

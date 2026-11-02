@@ -507,6 +507,16 @@ fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
                 ("clientId", Value::string(&offer.pass.client_id)),
             ]),
         ),
+        (
+            "xmpp",
+            map(vec![
+                ("available", Value::Bool(offer.xmpp.available)),
+                ("port", Value::I64(i64::from(offer.xmpp.port))),
+                ("tlsPort", Value::I64(i64::from(offer.xmpp.tls_port))),
+                ("otherNode", Value::Bool(offer.xmpp.other_node)),
+                ("needsNode", Value::Bool(offer.xmpp.needs_node)),
+            ]),
+        ),
         ("notAvailable", strings(&offer.not_available)),
         ("addresses", strings(&offer.addresses)),
         (
@@ -570,10 +580,125 @@ fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
         .collect()
 }
 
+/// The local node's XMPP domain (`xmpp_domain`), lower case with no trailing dot; empty when it runs no XMPP server.
+fn xmpp_domain() -> String {
+    moqui_lib::env::get_prop_or_env("xmpp_domain")
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+/// The XMPP choice of `apply#EdgeSetup` (plans/Edge-Node.md §5.7, E10): this node's `xmpp_domain`, which must be one of
+/// its host names on the edge node, since uploads (`https://<domain>`) and `/xmpp-websocket` ride on web access. With
+/// web access on, the domain is added to `hosts` as passthrough when it is not listed; with it off, the edge node should
+/// have it already, and the answer's second part is false when it does not (a failed line, the rest still applied).
+/// Why not, when XMPP cannot be set up at all.
+fn xmpp_choice(
+    offer: &crate::edge::EdgeOffer,
+    web: bool,
+    hosts: &mut Vec<EdgeHostInfo>,
+) -> Result<(String, bool), String> {
+    let domain = xmpp_domain();
+    if domain.is_empty() {
+        return Err("this node runs no XMPP server: set xmpp_domain".to_string());
+    }
+    if !offer.xmpp.available {
+        return Err("the edge node has no XMPP tunnel ports (edge_xmpp_port, edge_xmpp_tls_port)".to_string());
+    }
+    let named = |name: &str| name.trim().trim_end_matches('.').eq_ignore_ascii_case(&domain);
+    if web {
+        if !hosts.iter().any(|host| named(&host.host_name)) {
+            hosts.push(EdgeHostInfo {
+                host_name: domain.clone(),
+                paired_node_id: String::new(),
+                mode_enum_id: HOST_PASSTHROUGH.to_string(),
+            });
+        }
+        return Ok((domain, true));
+    }
+    let hosted = offer.node_hosts.iter().any(|host| named(&host.host_name));
+    Ok((domain, hosted))
+}
+
+/// The lines of the XMPP area after Configure: the domain through the edge node, and what the operator still has to
+/// keep in step (its host name refused, the tunnels going to another node, Chat apps showing other port numbers).
+fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> Vec<crate::edge::setup::SetupLine> {
+    use crate::edge::setup::SetupLine;
+    let xmpp = &answer.offer.xmpp;
+    let ports: Vec<String> = [(xmpp.port, "STARTTLS"), (xmpp.tls_port, "direct TLS")]
+        .iter()
+        .filter(|(port, _)| *port > 0)
+        .map(|(port, kind)| format!("{port} ({kind})"))
+        .collect();
+    let mut lines = vec![SetupLine::new(
+        "xmpp",
+        true,
+        format!(
+            "XMPP clients of {domain} come through the edge node's port {}",
+            ports.join(" and ")
+        ),
+    )];
+    if let Some(host) = answer
+        .hosts
+        .iter()
+        .find(|host| host.host_name == domain && !host.error.is_empty())
+    {
+        lines.push(SetupLine::new(
+            "xmpp",
+            false,
+            format!(
+                "Uploads and the WebSocket need {domain} on web access, and the edge node did not take it: {}",
+                host.error
+            ),
+        ));
+    }
+    if !hosted {
+        lines.push(SetupLine::new(
+            "xmpp",
+            false,
+            format!(
+                "Uploads and the WebSocket need {domain} on web access, and web access was off with the edge node \
+                 not having the name: turn web access on and apply again"
+            ),
+        ));
+    }
+    if xmpp.other_node {
+        lines.push(SetupLine::new(
+            "xmpp",
+            false,
+            "The edge node's edge_xmpp_node names another local node, so its XMPP clients do not come here",
+        ));
+    }
+    if xmpp.needs_node {
+        lines.push(SetupLine::new(
+            "xmpp",
+            false,
+            "Several local nodes are linked to the edge node and its edge_xmpp_node is empty, so XMPP clients are \
+             refused: set edge_xmpp_node there to this node",
+        ));
+    }
+    // Chat apps (get#ClientSettings) shows this node's own ports: the edge node's should have the same numbers
+    for (name, edge_port) in [("xmpp_port", xmpp.port), ("xmpp_tls_port", xmpp.tls_port)] {
+        let own = moqui_lib::env::get_prop_or_env(name).trim().to_string();
+        if !own.is_empty() && edge_port > 0 && own != edge_port.to_string() {
+            lines.push(SetupLine::new(
+                "xmpp",
+                false,
+                format!(
+                    "Chat apps shows this node's {name} {own}, and the edge node's port is {edge_port}: give them \
+                     the same number"
+                ),
+            ));
+        }
+    }
+    lines
+}
+
 /// `apply#EdgeSetup`: on a paired local node, check the whole setup first (nothing changes when any of it is not
 /// input), send the edge node its part (Configure; when it is not taken nothing changes here either), then write the
 /// chosen areas' local rows and settings, and send every replicated set whole again. Each step is a line; once the
-/// edge node has its part, a local step that fails does not stop the others.
+/// edge node has its part, a local step that fails does not stop the others. XMPP writes nothing here: the domain is
+/// this node's `xmpp_domain`, sent in Configure and added to the host names ([`xmpp_choice`]).
 fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
     let factory = current_factory()?;
@@ -589,11 +714,12 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
             "the edge node's offer was not read, so nothing was changed: {err}"
         ))
     })?;
-    let (web, mail, chat, pass) = (
+    let (web, mail, chat, pass, xmpp) = (
         flag(parameters, "webOn"),
         flag(parameters, "mailOn"),
         flag(parameters, "chatOn"),
         flag(parameters, "passOn"),
+        flag(parameters, "xmppOn"),
     );
     let bridges = list(parameters, "chatBridgeIds");
     let sites = list(parameters, "passSites");
@@ -609,8 +735,14 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
             callback: text(parameters, "passCallback").unwrap_or_default(),
         }),
     };
+    let mut hosts = if web { host_list(parameters) } else { Vec::new() };
+    let (xmpp_domain, xmpp_hosted) = if xmpp {
+        xmpp_choice(&offer, web, &mut hosts).map_err(|why| LibError::new(format!("nothing was changed: {why}")))?
+    } else {
+        (String::new(), true)
+    };
     let request = crate::edge::EdgeSetup {
-        hosts: if web { host_list(parameters) } else { Vec::new() },
+        hosts,
         set_hosts: web,
         mail_domains: if mail {
             list(parameters, "mailDomains")
@@ -619,6 +751,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         },
         chat_bridge_ids: if chat { bridges } else { Vec::new() },
         pass_sites: if pass { sites } else { Vec::new() },
+        xmpp_domain: xmpp_domain.clone(),
     };
     // the whole setup is checked before anything changes, here or on the edge node
     let checked = setup::check_setup(&request).map_err(|err| LibError::new(format!("nothing was changed: {err}")))?;
@@ -676,6 +809,9 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     lines.push(SetupLine::new("link", true, "The edge node has this node's setup"));
     let env_file = factory.runtime_dir().join(".env");
     lines.extend(setup::apply_local(facade, &env_file, &choices, &answer.offer));
+    if xmpp {
+        lines.extend(xmpp_lines(&xmpp_domain, xmpp_hosted, &answer));
+    }
     let sets = match crate::edge::replica::replica(facade) {
         Some(replica) => {
             replica.resync_all();
@@ -716,7 +852,9 @@ struct TestLine {
 /// node takes mail for an address (its answer comes back on the queue, as inbound mail does), the system's and the
 /// chosen accounts' mail goes through the edge mail server, and the edge node can send it (its DKIM key, or its
 /// Postfix relay); for chat, it takes the bridges' webhooks; for PASS, the client settings are there and the edge
-/// node has mr-pass. No outside mail or provider is needed. A check with nothing to check is "not checked".
+/// node has mr-pass; for XMPP, a client stream through each of the edge node's tunnel ports reaches this node's XMPP
+/// server ([`crate::edge::EdgeLink::xmpp_probe`]) and the domain is one of this node's host names there. No outside
+/// mail or provider is needed. A check with nothing to check is "not checked".
 fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{start_echo, wait_echo, EchoCheck};
     let factory = current_factory()?;
@@ -800,6 +938,11 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
             );
         }
     }
+    // the XMPP probes run on a thread of their own while the round trips are on their way
+    let xmpp_probes = flag(parameters, "xmppOn").then(|| {
+        let link = link.as_ref().ok().map(std::sync::Arc::clone);
+        std::thread::spawn(move || xmpp_tests(link.as_deref()))
+    });
     let deadline = std::time::Instant::now() + TEST_WAIT;
     for (check, label, started) in pending {
         let (mut ok, mut message) = match started {
@@ -825,6 +968,16 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
         });
     }
     tests.extend(not_checked);
+    if let Some(probes) = xmpp_probes {
+        tests.extend(probes.join().unwrap_or_else(|_| {
+            vec![TestLine {
+                check: "xmpp",
+                label: "XMPP",
+                ok: Some(false),
+                message: "The XMPP check stopped with an error; the log has why".to_string(),
+            }]
+        }));
+    }
     if flag(parameters, "passOn") {
         let (ok, message) = pass_ready(link.ok().as_deref(), &list(parameters, "passSites"));
         tests.push(TestLine {
@@ -851,6 +1004,64 @@ fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
         ("testList".to_string(), Value::List(test_list)),
         ("passed".to_string(), Value::Bool(passed)),
     ]))
+}
+
+/// The Test step's XMPP lines: a client stream through each tunnel port the edge node has on (not checked for one
+/// that is off), and the domain among this node's host names there, for uploads and the WebSocket.
+fn xmpp_tests(link: Option<&dyn crate::edge::EdgeLink>) -> Vec<TestLine> {
+    let failed = |message: String| TestLine {
+        check: "xmpp",
+        label: "XMPP",
+        ok: Some(false),
+        message,
+    };
+    let Some(link) = link else {
+        return vec![failed(crate::edge::NOT_BUILT.to_string())];
+    };
+    let offer = match link.offer() {
+        Ok(offer) => offer,
+        Err(err) => return vec![failed(format!("The edge node's offer was not read: {err}"))],
+    };
+    if !offer.xmpp.available {
+        return vec![failed("The edge node has no XMPP tunnel ports".to_string())];
+    }
+    let mut tests = Vec::new();
+    for (port, direct, check, label) in [
+        (offer.xmpp.port, false, "xmpp", "XMPP (STARTTLS)"),
+        (offer.xmpp.tls_port, true, "xmpps", "XMPP (direct TLS)"),
+    ] {
+        let (ok, message) = if port == 0 {
+            (None, "Not checked: the edge node's port for it is off".to_string())
+        } else {
+            match link.xmpp_probe(port, direct) {
+                Ok(reached) => (Some(true), reached),
+                Err(err) => (Some(false), err.to_string()),
+            }
+        };
+        tests.push(TestLine {
+            check,
+            label,
+            ok,
+            message,
+        });
+    }
+    let domain = xmpp_domain();
+    let hosted = !domain.is_empty()
+        && offer
+            .node_hosts
+            .iter()
+            .any(|host| host.host_name.eq_ignore_ascii_case(&domain));
+    tests.push(TestLine {
+        check: "xmppWeb",
+        label: "XMPP uploads",
+        ok: Some(hosted),
+        message: if hosted {
+            format!("Uploads and the WebSocket of {domain} ride on the edge node's web access")
+        } else {
+            format!("{domain} is not one of this node's host names on the edge node: apply again with web access on")
+        },
+    });
+    tests
 }
 
 /// The address of a hosted or shared account here, for the mail-in check when none was chosen.

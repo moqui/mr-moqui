@@ -78,8 +78,10 @@ fn a_configure_is_normalized_and_one_that_is_not_input_is_refused() {
         mail_domains: vec!["Example.com".to_string(), "example.com".to_string()],
         chat_bridge_ids: vec!["100".to_string()],
         pass_sites: vec!["SITE".to_string()],
+        xmpp_domain: " Chat.Example.com. ".to_string(),
     };
     let checked = check_setup(&setup).unwrap();
+    assert_eq!(checked.xmpp_domain, "chat.example.com");
     assert_eq!(
         checked.hosts.len(),
         2,
@@ -111,6 +113,20 @@ fn a_configure_is_normalized_and_one_that_is_not_input_is_refused() {
         ..EdgeSetup::default()
     };
     assert!(check_setup(&too_many).is_err());
+    for domain in ["localhost", "10.0.0.1", "chat", "not a domain"] {
+        let bad_xmpp = EdgeSetup {
+            xmpp_domain: domain.to_string(),
+            ..EdgeSetup::default()
+        };
+        let refused = check_setup(&bad_xmpp).unwrap_err();
+        assert!(refused.message().contains("not an XMPP domain"), "{domain}: {refused}");
+    }
+    assert_eq!(
+        check_setup(&EdgeSetup::default()).unwrap().xmpp_domain,
+        "",
+        "no XMPP domain is XMPP not chosen"
+    );
+    assert_eq!(NOT_AVAILABLE, ["calls", "sip"]);
 }
 
 #[test]

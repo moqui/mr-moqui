@@ -14,7 +14,7 @@
 
 //! The DNS of mail (plans/Edge-Node.md §5.4, E5b): the resolver that SPF, DKIM, DMARC and ARC verification query
 //! ([`super::auth`]), and the MX, A and AAAA lookups of the edge node's MX delivery ([`super::mx`]). E10's DNS checks
-//! ([`super::edge_dns`]) use [`txt`], [`mx`] and [`ips`] too.
+//! ([`super::edge_dns`]) use [`txt`], [`mx`] and [`ips`] too, and [`srv`] for the XMPP records.
 //!
 //! The resolver is hickory's, built from the system's resolver configuration (Cloudflare when there is none), with its
 //! answers kept in a [`Records`] cache until their TTL. It runs on a small Tokio runtime of this crate's own, so the
@@ -116,6 +116,17 @@ pub struct Records {
     ptr: Answers<IpAddr, Answer<Box<str>>>,
     /// The fixed TXT records' text, by name, which [`txt`] answers with.
     raw_txt: Mutex<HashMap<Box<str>, Vec<String>>>,
+    /// The fixed SRV records, by name, which [`srv`] answers with (mail authentication reads none).
+    raw_srv: Mutex<HashMap<Box<str>, Vec<Srv>>>,
+}
+
+/// An SRV record (RFC 2782): its priority, weight, port and target host, with no trailing dot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Srv {
+    pub priority: u16,
+    pub weight: u16,
+    pub port: u16,
+    pub target: String,
 }
 
 impl DnsCache for Records {
@@ -169,7 +180,13 @@ impl Records {
             ipv6: Answers::offline(Err(negative)),
             ptr: Answers::offline(Err(negative)),
             raw_txt: Mutex::new(HashMap::new()),
+            raw_srv: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Fixed SRV records of `name` (such as `_xmpp-client._tcp.example.com`), which [`srv`] answers with.
+    pub fn fix_srv(&self, name: &str, records: &[Srv]) {
+        lock(&self.raw_srv).insert(fqdn(name), records.to_vec());
     }
 
     /// A fixed TXT record at `name`: an SPF (`v=spf1`), DMARC (`v=DMARC1`) or DKIM key (`v=DKIM1`, or any other text at a
@@ -371,6 +388,43 @@ pub fn txt(name: &str) -> Result<Vec<String>, String> {
                 .collect()),
             Err(err) if err.is_no_records_found() => Ok(Vec::new()),
             Err(err) => Err(format!("the TXT records of {name}: {err}")),
+        }
+    })?
+}
+
+/// The SRV records of `name`: the fixed ones when `name` has any.
+///
+/// # Errors
+///
+/// Returns why when the lookup failed; a name with no SRV records is an empty list.
+pub fn srv(name: &str) -> Result<Vec<Srv>, String> {
+    if let Some(fixed) = lock(&records().raw_srv).get(&fqdn(name)) {
+        return Ok(fixed.clone());
+    }
+    if offline() {
+        return Ok(Vec::new());
+    }
+    let resolver = authenticator()?;
+    let name = name.to_string();
+    run(async move {
+        let key = hickory_resolver::proto::rr::Name::from_str_relaxed(name.as_str())
+            .map_err(|err| format!("{name} is not a DNS name: {err}"))?;
+        match resolver.resolver().srv_lookup(key).await {
+            Ok(lookup) => Ok(lookup
+                .answers()
+                .iter()
+                .filter_map(|record| match &record.data {
+                    hickory_resolver::proto::rr::RData::SRV(srv) => Some(Srv {
+                        priority: srv.priority,
+                        weight: srv.weight,
+                        port: srv.port,
+                        target: srv.target.to_ascii().trim_end_matches('.').to_ascii_lowercase(),
+                    }),
+                    _ => None,
+                })
+                .collect()),
+            Err(err) if err.is_no_records_found() => Ok(Vec::new()),
+            Err(err) => Err(format!("the SRV records of {name}: {err}")),
         }
     })?
 }

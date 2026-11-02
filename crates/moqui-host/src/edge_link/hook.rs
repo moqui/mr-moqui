@@ -421,6 +421,15 @@ impl EdgeLink for Hook {
             .map_err(Error::new)
     }
 
+    fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, Error> {
+        let factory = self.factory()?;
+        if moqui_core::edge::settings(&factory).edge_node {
+            return Err(Error::new("this is an edge node: its local nodes run the XMPP servers"));
+        }
+        let url = self.status().url;
+        crate::edge::block_on(super::probe::xmpp_probe(factory, url, port, direct))?.map_err(Error::new)
+    }
+
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {
         let server = self.server()?;
         let node = paired_node_id.to_string();

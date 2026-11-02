@@ -17,7 +17,9 @@ along with this software (see the LICENSE.md file). If not, see
     this node's choices filled in: web access (its host names, passthrough or terminate; by default this node's
     webapp_http_host and the names it has there now), mail (the domains of the hosted and shared accounts, and whether
     the system's and the chosen accounts' outgoing mail goes through the edge node), chat (the bridges whose webhooks
-    go to it) and PASS (the sites it serves, and their SSO callback). Calls, phones and XMPP are listed as not
+    go to it), PASS (the sites it serves, and their SSO callback) and XMPP (this node's xmpp_domain through the edge
+    node's tunnel ports; on by default when both are there, and Next adds the domain to the passthrough names when it
+    is in neither list, since uploads and /xmpp-websocket ride on web access). Calls and phones are listed as not
     available yet. Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
     hold no secret, and nothing goes in a URL. Status links here to set a paired node up again. Not paired, an edge
     node, a build without the link, and a link that is down see why instead. -->
@@ -43,8 +45,9 @@ along with this software (see the LICENSE.md file). If not, see
                 chatOn: on(chatOn), chatBridgeIds: toList(chatBridgeIds).map(String),
                 passOn: on(passOn), passSites: toList(passSites).flatMap((text) => String(text).split(','))
                     .map((text) => text.trim()).filter((text) => text),
-                passCallback: String(passCallback || '').trim()}
-            if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn) {
+                passCallback: String(passCallback || '').trim(),
+                xmppOn: on(xmppOn), xmppDomain: String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()}
+            if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn && !choices.xmppOn) {
                 ec.message.addError(L('Turn on at least one area')); return }
             if (choices.webOn && !choices.passthroughNames.length && !choices.terminateNames.length) {
                 ec.message.addValidationError(null, 'passthroughNames', null, L('Enter a host name, or turn web access off'), null); return }
@@ -61,6 +64,34 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addValidationError(null, 'mailDomains', null, ec.resource.expand('${name} is not a mail domain', '', {name: badDomain}), null); return }
             const badId = choices.chatBridgeIds.concat(choices.passSites).find((id) => !/^[A-Za-z0-9_.-]{1,63}$/.test(id))
             if (badId) { ec.message.addError(ec.resource.expand('${id} is not an id', '', {id: badId})); return }
+            if (choices.xmppOn && !publicName(choices.xmppDomain)) {
+                ec.message.addValidationError(null, 'xmppOn', null, L('This node runs no XMPP server with a public domain: set xmpp_domain'), null); return }
+            // uploads (https://<domain>) and /xmpp-websocket ride on web access: the domain is one of the host names
+            if (choices.xmppOn && choices.webOn && !choices.passthroughNames.concat(choices.terminateNames).includes(choices.xmppDomain)) {
+                choices.passthroughNames.push(choices.xmppDomain)
+                ec.message.addMessage(ec.resource.expand('${name} is added to the passthrough names, for XMPP uploads and the WebSocket', '', {name: choices.xmppDomain}), 'info')
+            }
+            // with web access off the names are left as they are, so the edge node must have the domain already
+            // (apply#EdgeSetup checks again); a probe of the offer, so a link that is down is said, not raised
+            if (choices.xmppOn && !choices.webOn) {
+                let nodeHosts = null
+                ec.message.pushErrors()
+                try {
+                    const offered = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
+                    if (!ec.message.hasError()) nodeHosts = Array.from(offered.offer?.nodeHosts || [])
+                        .map((host) => String(host.hostName || '').replace(/\.$/, '').toLowerCase())
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+                if (nodeHosts == null) {
+                    ec.message.addValidationError(null, 'xmppOn', null, L('The edge node did not answer, so its host names for XMPP are not known: try again, or turn web access on'), null); return }
+                if (!nodeHosts.includes(choices.xmppDomain)) {
+                    ec.message.addValidationError(null, 'xmppOn', null, ec.resource.expand('XMPP uploads and the WebSocket need ${name} as a host name on the edge node: turn web access on', '', {name: choices.xmppDomain}), null); return }
+            }
+            // the most names a setup may send (moqui_core::edge::setup::MAX_NAMES), the XMPP domain counted
+            if (choices.passthroughNames.length + choices.terminateNames.length > 64) {
+                ec.message.addValidationError(null, 'passthroughNames', null, L('At most 64 host names, the XMPP domain counted'), null); return }
             ec.web.sessionAttributes.edgeSetup = JSON.stringify(choices)
             // a changed choice is applied again before it is tested
             ec.web.sessionAttributes.remove('edgeApplied')
@@ -98,9 +129,19 @@ along with this software (see the LICENSE.md file). If not, see
         const mail = offer.mail || {}
         const chat = offer.chat || {}
         const pass = offer.pass || {}
+        const xmpp = offer.xmpp || {}
         mailAvailable = !!mail.available
         chatAvailable = !!chat.webhooks
         passAvailable = !!pass.available
+        // XMPP: the edge node's tunnel ports, to this node's own XMPP server (xmpp_domain)
+        xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
+        const xmppPorts = [xmpp.port ? xmpp.port + ' (STARTTLS)' : '', xmpp.tlsPort ? xmpp.tlsPort + ' (' + L('direct TLS') + ')' : '']
+            .filter((text) => text).join(', ')
+        xmppAvailable = !!xmpp.available && !xmpp.otherNode && !xmpp.needsNode
+        xmppOtherNode = !!xmpp.available && !!xmpp.otherNode
+        xmppNeedsNode = !!xmpp.available && !!xmpp.needsNode
+        xmppPortsText = xmppPorts
+        // xmpp too, for an edge node from before its area that still lists it as not available
         const areaNames = {calls: L('calls'), sip: L('phones'), xmpp: L('XMPP chat clients')}
         notAvailableText = Array.from(offer.notAvailable || []).map((area) => areaNames[area] || area).join(', ')
         offerText = {
@@ -108,7 +149,10 @@ along with this software (see the LICENSE.md file). If not, see
             mailText: mailAvailable ? ec.resource.expand('MX ${mx}, the ${mta}', '', {mx: mail.mxHost || '',
                 mta: mail.mta === 'moqui' ? L('MTA in moqui') : L('Postfix beside it')}) : L('No mail'),
             chatText: chatAvailable ? (chat.publicUrl || out.edgeUrl || '') : L('No webhooks'),
-            passText: passAvailable ? L('mr-pass') : L('No mr-pass')}
+            passText: passAvailable ? L('mr-pass') : L('No mr-pass'),
+            xmppText: xmpp.available ? ec.resource.expand('Tunnel ports ${ports}', '', {ports: xmppPorts}) +
+                (xmpp.otherNode ? ' (' + L('to another local node') + ')' : '') +
+                (xmpp.needsNode ? ' (' + L('to no node: set edge_xmpp_node') + ')' : '') : L('No XMPP tunnel')}
         // this node's choices: kept from an earlier visit, else filled in from the offer and this node's records
         let kept = null
         try { kept = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { kept = null }
@@ -156,14 +200,15 @@ along with this software (see the LICENSE.md file). If not, see
             chatOn: chatAvailable && bridgeOptions.length > 0, chatBridgeIds: bridgeOptions.map((bridge) => bridge.chatBridgeId),
             passOn: false, passSites: registeredSites,
             passCallback: String(System.getProperty('pass_client_' + client + '_callback') || '') ||
-                (firstHost ? 'https://' + firstHost + '/account/Sso' : '')}
+                (firstHost ? 'https://' + firstHost + '/account/Sso' : ''),
+            xmppOn: xmppAvailable && !!xmppDomain}
         form = {webOn: choices.webOn ? 'Y' : '', passthroughNames: (choices.passthroughNames || []).join(', '),
             terminateNames: (choices.terminateNames || []).join(', '),
             mailOn: choices.mailOn ? 'Y' : '', mailDomains: (choices.mailDomains || []).join(', '),
             systemMail: choices.systemMail ? 'Y' : '', emailAccountIds: choices.emailAccountIds || [],
             chatOn: choices.chatOn ? 'Y' : '', chatBridgeIds: choices.chatBridgeIds || [],
             passOn: choices.passOn ? 'Y' : '', passSites: siteOptions.length ? (choices.passSites || []) : (choices.passSites || []).join(', '),
-            passCallback: choices.passCallback || ''}
+            passCallback: choices.passCallback || '', xmppOn: choices.xmppOn ? 'Y' : ''}
         hasSites = siteOptions.length > 0
     ]]></script></actions>
     <widgets>
@@ -228,11 +273,18 @@ along with this software (see the LICENSE.md file). If not, see
                         <default-field><ignored/></default-field></field>
                     <field name="passCallback"><conditional-field condition="passAvailable" title="SSO callback" tooltip="The frontend's sign-in callback, such as https://forum.example.com/account/Sso"><text-line size="60"/></conditional-field>
                         <default-field><ignored/></default-field></field>
+                    <field name="xmppOn"><conditional-field condition="xmppAvailable &amp;&amp; xmppDomain" title="XMPP" tooltip="Outside XMPP clients connect to the edge node's ports, and it pipes them to this node's XMPP server, which ends their TLS. Uploads and the WebSocket need the domain on web access">
+                            <check><option key="Y" text="XMPP clients of ${xmppDomain} come through the edge node's ports ${xmppPortsText}"/></check></conditional-field>
+                        <conditional-field condition="xmppAvailable" title="XMPP"><display text="This node runs no XMPP server: set xmpp_domain"/></conditional-field>
+                        <conditional-field condition="xmppOtherNode" title="XMPP"><display text="The edge node's XMPP tunnels go to another local node (edge_xmpp_node)"/></conditional-field>
+                        <conditional-field condition="xmppNeedsNode" title="XMPP"><display text="Several local nodes are linked to the edge node: set its edge_xmpp_node to this node"/></conditional-field>
+                        <default-field title="XMPP"><display text="The edge node has no XMPP tunnel ports"/></default-field></field>
                     <field-layout>
                         <field-group title="Web access"><field-ref name="webOn"/><field-ref name="passthroughNames"/><field-ref name="terminateNames"/></field-group>
                         <field-group title="Mail"><field-ref name="mailOn"/><field-ref name="mailDomains"/><field-ref name="systemMail"/><field-ref name="emailAccountIds"/></field-group>
                         <field-group title="Chat"><field-ref name="chatOn"/><field-ref name="chatBridgeIds"/></field-group>
                         <field-group title="PASS"><field-ref name="passOn"/><field-ref name="passSites"/><field-ref name="passCallback"/></field-group>
+                        <field-group title="XMPP"><field-ref name="xmppOn"/></field-group>
                     </field-layout>
                 </form-single>
                 <section name="Merged" condition="mergedText"><widgets>
@@ -251,9 +303,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="mailText"><default-field title="Mail"><display/></default-field></field>
                     <field name="chatText"><default-field title="Webhooks"><display/></default-field></field>
                     <field name="passText"><default-field title="PASS"><display/></default-field></field>
+                    <field name="xmppText"><default-field title="XMPP"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="publicNamesText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
+                        <field-ref name="xmppText"/>
                     </field-layout>
                 </form-single>
                 <label type="p" text="Next keeps these choices for Apply. Nothing is changed yet." style="text-caption m-muted q-mb-none q-mt-sm"/>

@@ -14,7 +14,9 @@
 
 //! `org.moqui.impl.EdgeServices.check#EdgeDns` (plans/Edge-Node.md §5.7, the Apply step, E10): the DNS records a
 //! local node behind an edge node needs, each looked up now with this crate's resolver ([`super::dns`]) and compared
-//! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, and A and AAAA for each host name.
+//! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, A and AAAA for each host name, and
+//! the XMPP domain's client SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`), which name the edge node and its
+//! tunnel ports.
 //! The expected values come from the edge node's offer, which the caller passes, so the check itself needs no link.
 //! One record that cannot be looked up is a row that says so; the others are still checked.
 
@@ -49,6 +51,20 @@ pub struct Expected {
     /// The edge node's MTA: `moqui` (it signs with its own key, `dkim_record`) or `postfix` (Rspamd signs, with a key
     /// the edge node does not know).
     pub mta: String,
+    pub xmpp: XmppExpected,
+}
+
+/// The XMPP records: the local node's XMPP domain, whose client SRV records name the edge node and its tunnel ports
+/// (plans/Edge-Node.md §5.4, E9). None when `domain` is empty; a port of 0 is off, and its record is not listed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct XmppExpected {
+    pub domain: String,
+    /// The edge node's names an SRV target may be; the first is the one to set.
+    pub hosts: Vec<String>,
+    /// `edge_xmpp_port` (STARTTLS), for `_xmpp-client._tcp`.
+    pub port: u16,
+    /// `edge_xmpp_tls_port` (direct TLS), for `_xmpps-client._tcp`.
+    pub tls_port: u16,
 }
 
 fn bare(name: &str) -> String {
@@ -286,32 +302,88 @@ pub fn check(domains: &[String], host_names: &[String], expected: &Expected, loo
         }
         rows.push(ips);
     }
+    let later = |name: String, note: &str| DnsRow {
+        kind: "SRV".to_string(),
+        name,
+        ok: true,
+        note: note.to_string(),
+        later: true,
+        ..DnsRow::default()
+    };
+    let xmpp_domain = bare(&expected.xmpp.domain);
+    if !xmpp_domain.is_empty() {
+        rows.extend(xmpp_rows(&xmpp_domain, &expected.xmpp, lookup));
+        // federation (C3b) will have the edge node's 5269 listener: listed for later
+        rows.push(later(
+            format!("_xmpp-server._tcp.{xmpp_domain}"),
+            "For federation with other XMPP servers (C3b), not available yet",
+        ));
+    }
     // the records of the areas not built yet, listed for later
     for domain in domains
         .iter()
         .map(|domain| bare(domain))
         .filter(|domain| !domain.is_empty())
     {
-        for (name, note) in [
-            ("_sips._tcp", "For phones through the edge node, not available yet"),
-            (
-                "_xmpp-client._tcp",
-                "For XMPP clients through the edge node, not available yet",
-            ),
-            (
-                "_xmpp-server._tcp",
-                "For XMPP clients through the edge node, not available yet",
-            ),
-        ] {
-            rows.push(DnsRow {
-                kind: "SRV".to_string(),
-                name: format!("{name}.{domain}"),
-                ok: true,
-                note: note.to_string(),
-                later: true,
-                ..DnsRow::default()
-            });
+        rows.push(later(
+            format!("_sips._tcp.{domain}"),
+            "For phones through the edge node, not available yet",
+        ));
+    }
+    rows
+}
+
+/// The client SRV records of `domain`: each tunnel port that is on, every record naming one of the edge node's
+/// `hosts` and that port (a record pointing elsewhere would send some clients past the edge node).
+fn xmpp_rows(domain: &str, xmpp: &XmppExpected, lookup: &dyn Lookup) -> Vec<DnsRow> {
+    let hosts: Vec<String> = xmpp
+        .hosts
+        .iter()
+        .map(|host| bare(host))
+        .filter(|host| !host.is_empty())
+        .collect();
+    let target = hosts.first().map_or("(the edge node's host name)", String::as_str);
+    let mut rows = Vec::new();
+    for (service, port, kind) in [
+        ("_xmpp-client._tcp", xmpp.port, "STARTTLS"),
+        ("_xmpps-client._tcp", xmpp.tls_port, "direct TLS"),
+    ] {
+        if port == 0 {
+            continue;
         }
+        let name = format!("{service}.{domain}");
+        let mut srv = row("SRV", &name, format!("0 5 {port} {target}"));
+        match lookup.srv(&name) {
+            Ok(records) => {
+                srv.found = records
+                    .iter()
+                    .map(|record| {
+                        format!(
+                            "{} {} {} {}",
+                            record.priority,
+                            record.weight,
+                            record.port,
+                            bare(&record.target)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let names_edge =
+                    |record: &super::dns::Srv| record.port == port && hosts.contains(&bare(&record.target));
+                srv.ok = !records.is_empty() && records.iter().all(names_edge);
+                if !srv.ok && !records.is_empty() {
+                    srv.note = if records.iter().any(names_edge) {
+                        format!("A record that is not the edge node's: XMPP clients ({kind}) may go past it")
+                    } else {
+                        format!("Point it at the edge node, port {port} ({kind})")
+                    };
+                } else if records.is_empty() {
+                    srv.note = format!("XMPP clients ({kind}) find the edge node by this record");
+                }
+            }
+            Err(err) => srv.note = err,
+        }
+        rows.push(srv);
     }
     rows
 }
@@ -321,6 +393,7 @@ pub trait Lookup {
     fn mx(&self, domain: &str) -> Result<Vec<(u16, String)>, String>;
     fn txt(&self, name: &str) -> Result<Vec<String>, String>;
     fn ips(&self, host: &str) -> Result<Vec<IpAddr>, String>;
+    fn srv(&self, name: &str) -> Result<Vec<super::dns::Srv>, String>;
 }
 
 /// The resolver of [`super::dns`], with its fixed records.
@@ -335,6 +408,9 @@ impl Lookup for Resolver {
     }
     fn ips(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         super::dns::ips(host)
+    }
+    fn srv(&self, name: &str) -> Result<Vec<super::dns::Srv>, String> {
+        super::dns::srv(name)
     }
 }
 
@@ -385,6 +461,12 @@ pub(crate) fn check_edge_dns(
         dkim_selector: text(parameters, "dkimSelector"),
         dkim_record: text(parameters, "dkimRecord"),
         mta: text(parameters, "mailMta"),
+        xmpp: XmppExpected {
+            domain: text(parameters, "xmppDomain"),
+            hosts: texts(parameters, "xmppHosts"),
+            port: text(parameters, "xmppPort").parse().unwrap_or(0),
+            tls_port: text(parameters, "xmppTlsPort").parse().unwrap_or(0),
+        },
     };
     let rows = check(&domains, &host_names, &expected, &Resolver);
     let passed = rows.iter().all(|row| row.ok);

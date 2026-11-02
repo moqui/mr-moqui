@@ -339,7 +339,27 @@ pub struct PassOffer {
     #[prost(string, tag = "2")]
     pub client_id: ::prost::alloc::string::String,
 }
-/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover).
+/// The XMPP tunnel (E9): the edge node's ports that pipe XMPP clients down the link to the local node's XMPP server.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct XmppOffer {
+    /// A tunnel port is on.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// edge_xmpp_port (STARTTLS) and edge_xmpp_tls_port (direct TLS); 0 while off.
+    #[prost(uint32, tag = "2")]
+    pub port: u32,
+    #[prost(uint32, tag = "3")]
+    pub tls_port: u32,
+    /// edge_xmpp_node names another local node, so the tunnels do not come to the asking node.
+    #[prost(bool, tag = "4")]
+    pub other_node: bool,
+    /// edge_xmpp_node is empty and the asking node is not the only one linked, so the tunnels go to no node until
+    /// edge_xmpp_node names one.
+    #[prost(bool, tag = "5")]
+    pub needs_node: bool,
+}
+/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
+/// and SIP get theirs the same way when they are built.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Offer {
     #[prost(message, optional, tag = "1")]
@@ -350,7 +370,7 @@ pub struct Offer {
     pub chat: ::core::option::Option<ChatOffer>,
     #[prost(message, optional, tag = "4")]
     pub pass: ::core::option::Option<PassOffer>,
-    /// Areas not built on this edge node yet: calls, sip, xmpp.
+    /// Areas not built on this edge node yet: calls, sip.
     #[prost(string, repeated, tag = "5")]
     pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
@@ -360,6 +380,8 @@ pub struct Offer {
     /// The asking local node's host names on this edge node now.
     #[prost(message, repeated, tag = "7")]
     pub node_hosts: ::prost::alloc::vec::Vec<HostSetting>,
+    #[prost(message, optional, tag = "8")]
+    pub xmpp: ::core::option::Option<XmppOffer>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}
@@ -382,6 +404,16 @@ pub struct ConfigureRequest {
     /// hosts is the node's whole list; when false the node's names are left as they are.
     #[prost(bool, tag = "5")]
     pub set_hosts: bool,
+    /// XMPP clients through the edge node's tunnel ports; unset when not chosen.
+    #[prost(message, optional, tag = "6")]
+    pub xmpp: ::core::option::Option<XmppSetup>,
+}
+/// The local node's XMPP server behind the tunnel (E9). Its rooms. and upload. names are the domain's; the upload URL
+/// (https at the domain) and /xmpp-websocket ride on web access, so the domain is one of the node's host names too.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct XmppSetup {
+    #[prost(string, tag = "1")]
+    pub domain: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigureReply {

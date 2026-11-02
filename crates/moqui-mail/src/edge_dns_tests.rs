@@ -22,6 +22,7 @@ struct Fixed {
     mx: HashMap<String, Vec<(u16, String)>>,
     txt: HashMap<String, Vec<String>>,
     ips: HashMap<String, Vec<IpAddr>>,
+    srv: HashMap<String, Vec<super::super::dns::Srv>>,
     broken: Vec<String>,
 }
 
@@ -38,6 +39,21 @@ impl Lookup for Fixed {
     fn ips(&self, host: &str) -> Result<Vec<IpAddr>, String> {
         Ok(self.ips.get(host).cloned().unwrap_or_default())
     }
+    fn srv(&self, name: &str) -> Result<Vec<super::super::dns::Srv>, String> {
+        if self.broken.iter().any(|broken| broken == name) {
+            return Err(format!("the SRV records of {name}: timed out"));
+        }
+        Ok(self.srv.get(name).cloned().unwrap_or_default())
+    }
+}
+
+fn srv(priority: u16, port: u16, target: &str) -> super::super::dns::Srv {
+    super::super::dns::Srv {
+        priority,
+        weight: 5,
+        port,
+        target: target.to_string(),
+    }
 }
 
 fn expected() -> Expected {
@@ -47,6 +63,7 @@ fn expected() -> Expected {
         dkim_selector: "moqui".to_string(),
         dkim_record: "v=DKIM1; k=rsa; p=ABC def".to_string(),
         mta: "moqui".to_string(),
+        xmpp: XmppExpected::default(),
     }
 }
 
@@ -123,7 +140,98 @@ fn records_that_name_the_edge_node_pass_and_others_say_why_not() {
     );
     assert!(
         rows.iter().any(|row| row.later && row.name == "_sips._tcp.example.com"),
-        "the SIP and XMPP records are listed for later"
+        "the SIP records are listed for later"
+    );
+    assert!(
+        !rows.iter().any(|row| row.name.starts_with("_xmpp")),
+        "no XMPP records without an XMPP domain: {rows:?}"
+    );
+}
+
+#[test]
+fn the_xmpp_domains_client_srv_records_name_the_edge_node_and_its_tunnel_ports() {
+    let xmpp = |domain: &str, port: u16, tls_port: u16| Expected {
+        xmpp: XmppExpected {
+            domain: domain.to_string(),
+            hosts: vec!["edge.example.net".to_string(), "Edge2.example.net.".to_string()],
+            port,
+            tls_port,
+        },
+        ..expected()
+    };
+    let mut fixed = Fixed::default();
+    fixed.srv.insert(
+        "_xmpp-client._tcp.chat.example.com".into(),
+        vec![srv(0, 5222, "Edge.Example.net.")],
+    );
+    fixed.srv.insert(
+        "_xmpps-client._tcp.chat.example.com".into(),
+        vec![srv(0, 5223, "edge2.example.net"), srv(10, 5223, "office.example.com")],
+    );
+    fixed.srv.insert(
+        "_xmpp-client._tcp.other.example.com".into(),
+        vec![srv(0, 5333, "edge.example.net")],
+    );
+    fixed.broken.push("_xmpps-client._tcp.other.example.com".into());
+    let rows = check(&[], &[], &xmpp("Chat.example.com", 5222, 5223), &fixed);
+    let starttls = rows
+        .iter()
+        .find(|row| row.name == "_xmpp-client._tcp.chat.example.com")
+        .unwrap();
+    assert!(
+        starttls.ok && starttls.expected == "0 5 5222 edge.example.net",
+        "{starttls:?}"
+    );
+    let direct = rows
+        .iter()
+        .find(|row| row.name == "_xmpps-client._tcp.chat.example.com")
+        .unwrap();
+    assert!(
+        !direct.ok && direct.note.contains("may go past it"),
+        "a record past the edge node fails: {direct:?}"
+    );
+    let server = rows
+        .iter()
+        .find(|row| row.name == "_xmpp-server._tcp.chat.example.com")
+        .unwrap();
+    assert!(
+        server.later && server.note.contains("federation"),
+        "the server record is C3b's, for later: {server:?}"
+    );
+    let rows = check(&[], &[], &xmpp("other.example.com", 5222, 5223), &fixed);
+    let wrong_port = rows
+        .iter()
+        .find(|row| row.name == "_xmpp-client._tcp.other.example.com")
+        .unwrap();
+    assert!(
+        !wrong_port.ok && wrong_port.note.contains("port 5222"),
+        "{wrong_port:?}"
+    );
+    let broken = rows
+        .iter()
+        .find(|row| row.name == "_xmpps-client._tcp.other.example.com")
+        .unwrap();
+    assert!(!broken.ok && broken.note.contains("timed out"), "{broken:?}");
+    // a tunnel port that is off has no record to set; a missing record says what it is for
+    let rows = check(&[], &[], &xmpp("none.example.com", 5222, 0), &fixed);
+    assert!(
+        !rows.iter().any(|row| row.name.starts_with("_xmpps-client")),
+        "{rows:?}"
+    );
+    let missing = rows
+        .iter()
+        .find(|row| row.name == "_xmpp-client._tcp.none.example.com")
+        .unwrap();
+    assert!(!missing.ok && missing.found.is_empty(), "{missing:?}");
+}
+
+#[test]
+fn a_fixed_srv_record_is_what_the_resolver_answers() {
+    let fixed = vec![srv(0, 5222, "edge.example.net")];
+    super::super::dns::records().fix_srv("_xmpp-client._tcp.fixed-edge-dns.test", &fixed);
+    assert_eq!(
+        super::super::dns::srv("_XMPP-client._tcp.fixed-edge-dns.test.").unwrap(),
+        fixed
     );
 }
 

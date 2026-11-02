@@ -648,7 +648,7 @@ An edge node is a small server in the cloud in front of a local server, which di
 open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
 edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
 beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
-their PASS authority. Calls, phones (SIP) and XMPP do not go through it yet.
+their PASS authority, and XMPP clients through its tunnel ports. Calls and phones (SIP) do not go through it yet.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
@@ -661,10 +661,12 @@ their PASS authority. Calls, phones (SIP) and XMPP do not go through it yet.
       has one label, and the names the edge node has for this node now); the mail domains (from the hosted and shared
       accounts), and whether the system's mail (off by default when `SYSTEM` has a server of its own) and the chosen
       accounts' mail goes out through the edge node; the chat bridges whose webhooks go to it; the PASS sites it
-      serves, with their SSO callback. Calls, phones and XMPP are listed as not available yet. A host name must be a
-      public DNS name: not an IP address, `localhost` or a name with one label.
+      serves, with their SSO callback; XMPP, this node's `xmpp_domain` through the edge node's tunnel ports (on by
+      default when both are there; Next adds the domain to the passthrough names, as uploads and `/xmpp-websocket`
+      ride on web access). Calls and phones are listed as not available yet. A host name must be a public DNS name:
+      not an IP address, `localhost` or a name with one label.
    4. **Apply.** The whole setup is checked first, and nothing changes when any of it is not right. The edge node's
-      part goes first (host names, mail domains, bridges, sites): it takes only this node's names, and refuses a name
+      part goes first (host names, mail domains, bridges, sites, the XMPP domain): it takes only this node's names, and refuses a name
       another node holds and its own names (its public names, its SMTP host, its bounce domain, its sites' hosts, and
       their subdomains); a name of this node not listed is removed. When the edge node does not take the setup,
       nothing changes on this node. Then it writes this node's part: an `EmailServer` `EDGE` with `smtpHost` `edge:`,
@@ -674,19 +676,22 @@ their PASS authority. Calls, phones (SIP) and XMPP do not go through it yet.
       `edgePriorServerId`), and **unpairing puts it back**; mail for an `edge:` server while this node is not paired is
       not queued, but fails as retryable and stays in the Outbox. Every replicated set is sent whole again. An area
       turned off is left as it is. Then it lists the DNS records to set, each looked up live: MX, SPF, the DKIM key and DMARC for
-      each mail domain, and A and AAAA for each host name. Check again looks them up again. `_sips._tcp` and the XMPP
-      SRV records are listed for later.
+      each mail domain, A and AAAA for each host name, and with XMPP `_xmpp-client._tcp` and `_xmpps-client._tcp`
+      for the XMPP domain, naming the edge node and its tunnel ports. Check again looks them up again. `_sips._tcp` and
+      `_xmpp-server._tcp` (federation) are listed for later. A line says when this node's `xmpp_port` or
+      `xmpp_tls_port`, which Chat apps shows, differ from the edge node's ports.
    5. **Test.** The link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
       and the accounts' servers are on `edge:`, and the edge node can send: its DKIM key, or its Postfix relay
-      answering), the webhooks and PASS, each a pass, fail or not-checked line, with round trips on the queue and no
-      outside mail or provider. It runs once per visit; Test again runs it again. Continue anyway goes on with a
-      failure; Finish shows the status.
+      answering), the webhooks, PASS, and XMPP (a client connection through each tunnel port reaches this node's XMPP
+      server, its TLS this node's own certificate, and the domain is one of its host names there), each a pass, fail
+      or not-checked line, with round trips on the queue and no outside mail or provider. It runs once per visit;
+      Test again runs it again. Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
 
-The status screen shows what is set up (host names, mail, chat, PASS), with Set up again, which opens the wizard at
+The status screen shows what is set up (host names, mail, chat, PASS, XMPP), with Set up again, which opens the wizard at
 Discover. Edge Clients shows what each node's setup sent. A page waits at most 3 s for the edge node's offer, and
 says when it is not answering. The offer is read fresh each time; the area names in the edge node's Hello are read at
-its start, so restart it after changing its mail, chat or PASS settings. The sections below are what the wizard sets,
+its start, so restart it after changing its mail, chat, PASS or XMPP settings. The sections below are what the wizard sets,
 for an operator who sets a part by hand; a name the operator adds on Edge Clients is not checked against the edge
 node's own names.
 

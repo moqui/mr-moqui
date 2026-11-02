@@ -19,8 +19,9 @@ along with this software (see the LICENSE.md file). If not, see
     oldest), and each replicated set's epoch, last batch acknowledged and changes waiting; Pause (pause#QueueDelivery)
     holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Setup (§5.7,
     E10): what this node uses the edge node for: its host names there (get#EdgeOffer nodeHosts, while the link is up),
-    the system's and the accounts' mail through the EDGE mail server, the chat address (channels_public_url) and the
-    PASS client's sites, with Set up again, which opens the wizard at Discover. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    the system's and the accounts' mail through the EDGE mail server, the chat address (channels_public_url), the
+    PASS client's sites and XMPP (xmpp_domain through the edge node's tunnel ports, while the link is up), with Set up
+    again, which opens the wizard at Discover. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
@@ -106,6 +107,8 @@ along with this software (see the LICENSE.md file). If not, see
         setup = {}
         if (paired) {
             let hostsText = L('Not known while the link is down')
+            let xmppText = hostsText
+            const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
             if (state === 'linked') {
                 ec.message.pushErrors()
                 try {
@@ -114,6 +117,15 @@ along with this software (see the LICENSE.md file). If not, see
                         const names = Array.from(offer.nodeHosts || []).map((host) => host.hostName +
                             ' (' + (host.modeEnumId === 'EdgeHostTerminate' ? L('terminate') : L('passthrough')) + ')')
                         hostsText = names.length ? names.join(', ') : L('None')
+                        const xmpp = offer.xmpp || {}
+                        const ports = [xmpp.port, xmpp.tlsPort].filter((port) => port).join(', ')
+                        // through the edge node: its tunnel ports come here, and the domain is a host name of this node there
+                        const hosted = !!xmppDomain && Array.from(offer.nodeHosts || [])
+                            .some((host) => String(host.hostName || '').replace(/\.$/, '').toLowerCase() === xmppDomain)
+                        xmppText = !xmppDomain ? L('No XMPP server on this node') : xmpp.needsNode ? L('Refused: set edge_xmpp_node on the edge node')
+                            : xmpp.available && !xmpp.otherNode && hosted
+                            ? ec.resource.expand('${domain} through ports ${ports}', '', {domain: xmppDomain, ports})
+                            : L('Not through the edge node')
                     }
                 } finally {
                     ec.message.clearErrors()
@@ -130,7 +142,8 @@ along with this software (see the LICENSE.md file). If not, see
                 mailText: systemEdge || accounts ? (systemEdge ? L('The system') + (accounts ? ', ' : '') : '') +
                     (accounts ? ec.resource.expand('${n} accounts', '', {n: accounts}) : '') + ' ' + L('through the edge node') : L('Not through the edge node'),
                 chatText: chatUrl ? chatUrl + '/channels/(bridge)/webhook' : L('Not set'),
-                passText: sites ? ec.resource.expand('${sites}, as PASS client ${client}', '', {sites, client}) : L('Not set')}
+                passText: sites ? ec.resource.expand('${sites}, as PASS client ${client}', '', {sites, client}) : L('Not set'),
+                xmppText}
         }
     ]]></script></actions>
     <widgets>
@@ -221,9 +234,11 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="mailText"><default-field title="Mail out"><display/></default-field></field>
                     <field name="chatText"><default-field title="Chat webhooks" tooltip="The address chat providers call"><display/></default-field></field>
                     <field name="passText"><default-field title="PASS sites"><display/></default-field></field>
+                    <field name="xmppText"><default-field title="XMPP" tooltip="Outside XMPP clients through the edge node's tunnel ports"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="hostsText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
+                        <field-ref name="xmppText"/>
                     </field-layout>
                 </form-single>
             </box-body></container-box>

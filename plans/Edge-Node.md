@@ -14,7 +14,7 @@ built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); 
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
 (E5b)"), E6's in §5.4 ("As built (E6)"), E9's, the XMPP tunnel with the design of C3b's and C6b's split, in §5.4
 ("As built (E9)"), and E10's, the wizard's Discover, Apply and Test, in
-[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)"). A real local node attached through the wizard on a
+[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", and its XMPP area in "As built (E10, XMPP)"). A real local node attached through the wizard on a
 served Maximal build, with real DNS, is pending.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
@@ -817,7 +817,7 @@ release.
   direct room; with the link down both ports are refused. `down_tests.rs`: both kinds refused on a node with no XMPP
   server.
 - **Not done.** A real client (Conversations) through a deployed edge node is checked by hand. The wizard's XMPP
-  area (§5.7) is E10's completion.
+  area is built (§5.7, "As built (E10, XMPP)").
 
 **XMPP federation (C3b) with an edge node.** The design C3b builds to ([Comms-Framework](Comms-Framework.md) §4.3).
 - **On the edge node:** the 5269 listener (`xmpp_s2s_port`, documented and off; nothing listens yet) and the
@@ -1155,7 +1155,7 @@ Its actions are pause, resync and unpair.
   up), and a new RPC `Link.GetOffer` (additive) answers a structured `Offer`: web access (its public names and the
   modes), mail (moqui or postfix, the listener on, the MX host `smtp_hostname`, the bounce domain, and with the MTA in
   moqui its DKIM selector and record), chat (webhooks on, the public URL), PASS (mr-pass loaded, the client id `edge`),
-  calls, SIP and XMPP as not available, its public addresses (a new property, `edge_public_addresses`) and the asking
+  calls and SIP as not available (XMPP since its area, below), its public addresses (a new property, `edge_public_addresses`) and the asking
   node's host names. The offer is asked on the link, never on the pairing connection, so it is always fresh: the wizard
   and Status read it with `get#EdgeOffer`. Code: `edge_link/offer.rs`; `moqui_core::edge::setup` holds the types.
 - **Configure.** A new RPC `Link.Configure` (additive): the local node's host names with their modes (`set_hosts`: the
@@ -1177,7 +1177,7 @@ Its actions are pause, resync and unpair.
   - **Discover** (`Pair/Discover.xml`): the offer as a form, each area on or off: passthrough and terminate host names
     (this node's `webapp_http_host` and its names there now), mail (the hosted and shared accounts' domains, the
     system's mail, the accounts), chat (the bridges), PASS (the sites, from `mantle.public.PublicSite` when Mantle is
-    there, else typed, and the SSO callback). Calls, phones and XMPP are listed as not available yet. The choices go in
+    there, else typed, and the SSO callback). Calls and phones are listed as not available yet (XMPP has its area, below). The choices go in
     the session (`edgeSetup`), never a URL.
   - **Apply** (`Pair/Apply.xml`, `apply#EdgeSetup`): Apply (a button on the step; the wizard's Next then needs it done,
     and a new choice in Discover clears it, so a changed setup is applied again before Test) checks the whole setup
@@ -1198,7 +1198,7 @@ Its actions are pause, resync and unpair.
     network with one of its addresses, or `include:` it, noted as needing its own SPF record), the DKIM key (the `p=`
     compared; under Postfix only that a record is there), DMARC, and A and AAAA against `edge_public_addresses`, else
     the MX host's addresses, a family the edge node lists none of not checked; each expected and found, with Check
-    again. `_sips._tcp` and the XMPP SRV records are listed for later.
+    again. `_sips._tcp` is listed for later (the XMPP SRV records are checked, below).
   - **Test** (`Pair/Test.xml`, `test#EdgeSetup`, modeled on MailAccounts' Test with Continue anyway): the link (state
     and round trip), and round trips on the queue (a new kind, `edgeEcho`, `receive#EdgeEcho`, granted to `_EDGE_`;
     at most 20 a minute per node on the edge node): mail in (the edge node finds the first chosen account's address,
@@ -1212,8 +1212,9 @@ Its actions are pause, resync and unpair.
     through `EDGE`), the chat address and the PASS sites, with Set up again, which opens the wizard at Discover.
 - **Deviations.** Each area's host names are two lists (passthrough, terminate), not one row per name. Turning an
   area off leaves what an earlier Apply set; there is no undo. The mail-out test is a queue round trip, not a message
-  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone, calls, XMPP
-  and monitoring are not in the form (E7–E9 and §5.9 are not built).
+  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone, calls and
+  monitoring are not in the form (E7, E8 and §5.9 are not built). XMPP's domain is not chosen in the form but is the
+  node's `xmpp_domain`, and Apply writes nothing local for it; its probe goes to the host of `edge_node_url`, not to the SRV target.
 - **Tests.** `tests/it/edge_setup.rs` (about 4 s): the offer read, Configure applied (a name another node holds
   refused, the edge node's own names and their subdomains, an IP address, `localhost` and a one-label name refused, a
   stale name removed, input refused whole), Apply's local writes into the test runtime's own `.env` (the
@@ -1225,6 +1226,46 @@ Its actions are pause, resync and unpair.
   `edge_link.rs` covers pairing. Unit tests: `edge/setup_tests.rs` (input checks, the mail rows, PASS refusals, the echo) and
   `moqui-mail` `edge_dns_tests.rs`. `EdgeScreens.spec.js` renders the new steps in its three cases and checks that
   Discover keeps its choices in the session.
+
+**As built (E10, XMPP).** The wizard's XMPP area, on E9's tunnel.
+- **Offer.** `Offer.xmpp` (field 8, `XmppOffer`): on (a tunnel port is), `edge_xmpp_port` and `edge_xmpp_tls_port`
+  (0 while off), and `other_node` when `edge_xmpp_node` names another node. Hello's areas add `xmpp` when a port is
+  on; `setup::NOT_AVAILABLE` is calls and SIP. Each area is a message of its own, so calls and SIP add theirs the same
+  way (Offer from 9, ConfigureRequest from 7).
+- **Configure.** `ConfigureRequest.xmpp` (field 6, `XmppSetup`): the local node's XMPP domain, checked by
+  `check_setup` as a host name (not an IP address, one label or `localhost`; a bad one refuses the request whole) and
+  kept as `xmppDomain` in `setupJson`. The `rooms.` and `upload.` names are the domain's and are not sent; the edge
+  node needs them only for federation (C3b). It tunnels by port, not by name, so the domain is kept for the operator,
+  and a domain whose tunnels `edge_xmpp_node` sends elsewhere is logged.
+- **Discover** offers XMPP when the edge node has a tunnel port and this node an `xmpp_domain` (on by default then),
+  showing the domain and ports. Uploads (`https://<domain>`) and `/xmpp-websocket` ride on web access, so the domain
+  must be an `EdgeHost`: Next adds it to the passthrough names when it is in neither list (terminate is taken too: its
+  WebSocket signs in without `-PLUS`); with web access off it asks the offer and refuses unless the edge node has
+  the name. `apply#EdgeSetup` (`xmppOn`) adds it the same way; with web access off and the name not there it gives a
+  failed line and applies the rest; with no `xmpp_domain` or no tunnel port it changes nothing. It writes nothing
+  local; its lines say when this node's `xmpp_port` or `xmpp_tls_port` (which Chat apps shows) differ from the edge
+  node's ports, when the edge node did not take the name, and when the tunnels go to another node or to none
+  (`needs_node`, field 5: `edge_xmpp_node` empty and the node not the only one linked, the tunnel ports' own rule).
+- **DNS.** `edge_dns` checks `_xmpp-client._tcp` and `_xmpps-client._tcp` of the XMPP domain (not of each mail
+  domain), each port that is on: every record must name one of the edge node's names (its public names, the host of
+  `edge_node_url`, its MX host) and the tunnel port. `Lookup::srv` is hickory's SRV lookup (`dns::srv`), with fixed
+  records (`Records::fix_srv`) as TXT has. `_xmpp-server._tcp` is listed for later, as federation's (C3b);
+  `_sips._tcp` stays listed for later (E8).
+- **Test.** `test#EdgeSetup` (`xmppOn`) calls `EdgeLink::xmpp_probe` for each port that is on (host
+  `edge_link/probe.rs`): this node's server must take tunneled connections of the kind (`xmpp::running`), then a
+  client connection to the edge node's port (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its
+  features from the domain with STARTTLS, then STARTTLS) must complete a TLS handshake pinned to this node's own
+  certificate for the domain (`tls::leaf_for`, the whole certificate): only this node has its key, so that is the
+  proof the connection came back here. Nothing more is sent, so no sign-in is counted. A port that is off is not
+  checked. A third line checks the domain is one of the node's host names there. The checks run on a thread of
+  their own beside the round trips' 10 s wait.
+- **Status** shows XMPP: the domain through the ports, while the link is up and the name is there.
+- **Tests.** `edge_setup.rs`: the offer's ports and `xmpp` in Hello, Configure keeping the domain and refusing a bad
+  one, the SRV records against fixed ones, and the wizard's XMPP walk (Discover adding the domain, Apply, the edge
+  node's row and `setupJson`, Test's probes failing on a node with no XMPP server and the name found, Status, Apply
+  with web access off and the name kept giving no failed line, and Apply refused with no `xmpp_domain`). `edge_xmpp.rs`: the probe through both tunnel ports reaches the local node's
+  server, and fails with the link down. Unit: `setup_tests.rs` (the domain's checks), `edge_dns_tests.rs` (the SRV
+  rows, a fixed SRV record). `EdgeScreens.spec.js`: Discover adds the domain, or refuses with no `xmpp_domain`.
 
 ### 5.8 Security
 
@@ -1282,7 +1323,7 @@ Its actions are pause, resync and unpair.
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node. Built. Tested in `tests/it/edge_xmpp.rs`: clients over the STARTTLS and direct TLS tunnel ports sign in with SCRAM-SHA-256-PLUS and chat on the local node; refused with the link down. C3b's and C6b's split is designed in §5.4. Not tested: a real client through a deployed edge node |
-| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
+| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port); calls and SIP come with E7 and E8. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records; the XMPP probe also in `edge_xmpp.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
 
