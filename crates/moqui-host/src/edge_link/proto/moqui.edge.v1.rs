@@ -402,8 +402,24 @@ pub struct XmppOffer {
     #[prost(bool, tag = "5")]
     pub needs_node: bool,
 }
-/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
-/// and SIP get theirs the same way when they are built.
+/// The edge node as media node of the local node's calls (E7), as its Hello advertises it: the media socket and TURN.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CallsOffer {
+    /// Its media socket is up.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// The address browsers send call media to (rtc_public_address, ip:port).
+    #[prost(string, tag = "2")]
+    pub media_address: ::prost::alloc::string::String,
+    /// Its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
+    #[prost(string, repeated, tag = "3")]
+    pub turn_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Other local nodes are linked too, so the edge node takes call messages from none of them (decision 1).
+    #[prost(bool, tag = "4")]
+    pub other_nodes: bool,
+}
+/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; SIP
+/// gets its own the same way when it is built.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Offer {
     #[prost(message, optional, tag = "1")]
@@ -414,7 +430,7 @@ pub struct Offer {
     pub chat: ::core::option::Option<ChatOffer>,
     #[prost(message, optional, tag = "4")]
     pub pass: ::core::option::Option<PassOffer>,
-    /// Areas not built on this edge node yet: calls, sip.
+    /// Areas not built on this edge node yet: sip (calls and xmpp before their areas).
     #[prost(string, repeated, tag = "5")]
     pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
@@ -426,6 +442,8 @@ pub struct Offer {
     pub node_hosts: ::prost::alloc::vec::Vec<HostSetting>,
     #[prost(message, optional, tag = "8")]
     pub xmpp: ::core::option::Option<XmppOffer>,
+    #[prost(message, optional, tag = "9")]
+    pub calls: ::core::option::Option<CallsOffer>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OfferRequest {}

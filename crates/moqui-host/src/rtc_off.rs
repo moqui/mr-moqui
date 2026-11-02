@@ -28,6 +28,14 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> 
     None
 }
 
+/// The edge wizard's TURN check (`rtc/turn_probe.rs`) without calls: there is no TURN client.
+#[cfg(feature = "edge")]
+pub(crate) mod turn_probe {
+    pub(crate) fn probe(_url: &str, _username: &str, _credential: &str, _peer: &str) -> Result<String, String> {
+        Err("This build has no calls (the rtc feature), so the edge node's TURN is not checked".to_string())
+    }
+}
+
 /// The media hook points without calls (`rtc/media.rs` has the API and its docs): nothing to attach to or inject into.
 #[allow(
     dead_code,

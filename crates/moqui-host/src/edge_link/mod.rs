@@ -78,7 +78,7 @@ pub use dial::{connect_up, Dialer, UpLink};
 pub use down::{local_web, LocalWeb};
 pub(crate) use hook::{start, stopped};
 pub use pair::{check, new_key, pair, PairConfig, Paired};
-pub use probe::xmpp_probe;
+pub use probe::{turn_probe, xmpp_probe};
 pub(crate) use web::{Target, WebFront};
 
 /// The ALPN protocol of the link's up and down connections on the edge node's HTTPS port: the link key's certificate.

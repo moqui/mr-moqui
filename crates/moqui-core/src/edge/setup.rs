@@ -45,9 +45,9 @@ pub const EDGE_SMTP_HOST: &str = "edge:";
 pub const CHAT_PUBLIC_URL: &str = "channels_public_url";
 /// The most names of each kind a Configure carries.
 pub const MAX_NAMES: usize = 64;
-/// The areas an edge node does not offer yet (E7, E8). Each gets an offer of its own when it is built, as XMPP has
-/// ([`XmppOffer`]).
-pub const NOT_AVAILABLE: [&str; 2] = ["calls", "sip"];
+/// The areas an edge node does not offer yet (E8). Each gets an offer of its own when it is built, as XMPP and calls
+/// have ([`XmppOffer`], [`CallsOffer`]).
+pub const NOT_AVAILABLE: [&str; 1] = ["sip"];
 
 const SERVER: &str = "moqui.basic.email.EmailServer";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
@@ -103,6 +103,20 @@ pub struct XmppOffer {
     pub needs_node: bool,
 }
 
+/// The edge node as media node of the local node's calls, with its TURN (E7): what its media node advertises
+/// ([`super::media::advert`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallsOffer {
+    /// Its media socket is up.
+    pub available: bool,
+    /// The address browsers send the media of its calls to.
+    pub media_address: String,
+    /// Its embedded TURN listeners as `turn:` and `turns:` URLs; empty without TURN.
+    pub turn_urls: Vec<String>,
+    /// Other local nodes are linked too, so the edge node takes call messages from none of them (decision 1, E7).
+    pub other_nodes: bool,
+}
+
 /// What an edge node offers a local node.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeOffer {
@@ -114,7 +128,8 @@ pub struct EdgeOffer {
     pub chat: ChatOffer,
     pub pass: PassOffer,
     pub xmpp: XmppOffer,
-    /// Areas not built yet: calls, sip.
+    pub calls: CallsOffer,
+    /// Areas not built yet: sip.
     pub not_available: Vec<String>,
     /// The edge node's public addresses, when it names them (`edge_public_addresses`).
     pub addresses: Vec<String>,
@@ -332,7 +347,7 @@ pub struct PassChoice {
 /// One thing Apply did, or could not do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SetupLine {
-    /// web, mail, chat, pass, xmpp or link.
+    /// web, mail, chat, pass, xmpp, calls or link.
     pub area: String,
     pub ok: bool,
     pub text: String,
@@ -456,7 +471,7 @@ fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) 
 
 /// Write `set` to the dotenv file; the line says so, or why not. A process property of the same name wins over the
 /// file, so a value that does not read back is named.
-fn set_env(area: &str, env_file: &std::path::Path, set: &[(&str, &str)], done: &str) -> SetupLine {
+pub(crate) fn set_env(area: &str, env_file: &std::path::Path, set: &[(&str, &str)], done: &str) -> SetupLine {
     let pairs: Vec<(String, String)> = set
         .iter()
         .map(|(name, value)| ((*name).to_string(), (*value).to_string()))

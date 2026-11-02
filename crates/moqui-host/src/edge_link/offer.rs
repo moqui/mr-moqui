@@ -23,14 +23,14 @@ use std::net::IpAddr;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::setup::{
-    self, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, XmppOffer,
+    self, CallsOffer, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, XmppOffer,
 };
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
 
 use super::proto::{
-    ChatOffer as ProtoChat, ConfigureReply, ConfigureRequest, HostSetting, MailOffer as ProtoMail, Offer,
-    PassOffer as ProtoPass, WebOffer, XmppOffer as ProtoXmpp, XmppSetup,
+    CallsOffer as ProtoCalls, ChatOffer as ProtoChat, ConfigureReply, ConfigureRequest, HostSetting,
+    MailOffer as ProtoMail, Offer, PassOffer as ProtoPass, WebOffer, XmppOffer as ProtoXmpp, XmppSetup,
 };
 use super::{hosts, store, EdgeConfig};
 
@@ -123,14 +123,27 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             other_node: false,
             needs_node: false,
         }),
+        // the media node as rtc::start advertises it (E7), the address and URLs its Hello carries
+        calls: Some(
+            match moqui_core::edge::media::advert(factory).filter(|advert| !advert.media_address.is_empty()) {
+                Some(advert) => ProtoCalls {
+                    available: true,
+                    media_address: advert.media_address,
+                    turn_urls: advert.turn_urls,
+                    other_nodes: false,
+                },
+                None => ProtoCalls::default(),
+            },
+        ),
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
         node_hosts: Vec::new(),
     }
 }
 
-/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat, pass and xmpp when they are
-/// set up.
+/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat, pass, xmpp and calls when they
+/// are set up. Calls are named as of now; the Hello adds them as the media socket comes up after the link
+/// (`accept.rs` `hello`).
 pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let offer = base_offer(factory, config);
     let mut areas = vec!["web".to_string()];
@@ -146,8 +159,14 @@ pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> V
     if offer.xmpp.as_ref().is_some_and(|xmpp| xmpp.available) {
         areas.push("xmpp".to_string());
     }
+    if offer.calls.as_ref().is_some_and(|calls| calls.available) {
+        areas.push(CALLS_AREA.to_string());
+    }
     areas
 }
+
+/// The area name of the edge node as media node (E7) in its Hello.
+pub(crate) const CALLS_AREA: &str = "calls";
 
 fn host_setting(host: &EdgeHostInfo) -> HostSetting {
     HostSetting {
@@ -180,6 +199,10 @@ pub(crate) fn offer(
     offer.node_hosts = hosts::list(factory, Some(node))?.iter().map(host_setting).collect();
     if let Some(xmpp) = offer.xmpp.as_mut() {
         (xmpp.other_node, xmpp.needs_node) = xmpp_node(config, node, linked);
+    }
+    // the media driver keys rooms by call alone, so it takes call messages only while one local node is linked (E7)
+    if let Some(calls) = offer.calls.as_mut().filter(|calls| calls.available) {
+        calls.other_nodes = linked.iter().any(|other| other != node);
     }
     Ok(offer)
 }
@@ -394,6 +417,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
     let chat = offer.chat.unwrap_or_default();
     let pass = offer.pass.unwrap_or_default();
     let xmpp = offer.xmpp.unwrap_or_default();
+    let calls = offer.calls.unwrap_or_default();
     // a port that is not one (0, or past u16 from a newer peer) is off
     let port = |port: u32| u16::try_from(port).unwrap_or(0);
     EdgeOffer {
@@ -422,6 +446,12 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
             tls_port: port(xmpp.tls_port),
             other_node: xmpp.other_node,
             needs_node: xmpp.needs_node,
+        },
+        calls: CallsOffer {
+            available: calls.available && !calls.media_address.is_empty(),
+            media_address: calls.media_address,
+            turn_urls: calls.turn_urls,
+            other_nodes: calls.other_nodes,
         },
         not_available: offer.not_available,
         addresses: offer.addresses,

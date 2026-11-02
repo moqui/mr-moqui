@@ -771,10 +771,6 @@ impl Drop for Work {
     }
 }
 
-/// The service that keeps a media node's row (`moqui.call.CallMediaNode`).
-const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNode";
-/// The service that keeps a SIP engine's row (`moqui.call.SipNode`, E8).
-const REGISTER_SIP_NODE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
 /// The service that writes each phone number's fallback for while this node is away (`moqui.call.PhoneNumberFallback`,
 /// the replicated set `voiceFallbacks`, E8), and queues their greetings to the edge node.
 const REFRESH_FALLBACKS: &str = "org.moqui.impl.VoiceServices.refresh#PhoneFallbacks";
@@ -806,44 +802,11 @@ fn run_internal(
     }
 }
 
-/// Write or remove (`stopping`) the `CallMediaNode` row of the edge node `edge`, kept by this link.
-fn register_media_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
-    use moqui_lib::object::Value;
-    let parameters = std::collections::BTreeMap::from([
-        ("instanceId".to_string(), Value::string(&edge.instance_id)),
-        ("mediaAddress".to_string(), Value::string(&edge.media_address)),
-        ("turnUrls".to_string(), Value::string(edge.turn_urls.join(","))),
-        ("edgeLinked".to_string(), Value::Bool(true)),
-        (
-            "startedDate".to_string(),
-            if edge.media_started_ms > 0 {
-                moqui_core::user::stamp_value(edge.media_started_ms)
-            } else {
-                Value::Null
-            },
-        ),
-        ("stopping".to_string(), Value::Bool(stopping)),
-    ]);
-    run_internal(REGISTER_MEDIA_NODE, &parameters)
-}
-
-/// Write or remove (`stopping`) the `SipNode` row of the edge node `edge`, kept by this link (E8).
-fn register_sip_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
-    use moqui_lib::object::Value;
-    let parameters = std::collections::BTreeMap::from([
-        ("instanceId".to_string(), Value::string(&edge.instance_id)),
-        ("sipAddress".to_string(), Value::string(&edge.sip_address)),
-        ("tlsAddress".to_string(), Value::string(&edge.sip_tls_address)),
-        ("edgeLinked".to_string(), Value::Bool(true)),
-        ("stopping".to_string(), Value::Bool(stopping)),
-    ]);
-    run_internal(REGISTER_SIP_NODE, &parameters)
-}
-
 /// The edge node's `CallMediaNode` and `SipNode` rows while this link lasts (plans/Edge-Node.md §5.4): written now and
 /// again every `every`, from the link's liveness, so they go stale (and their calls end, `expire#Calls`) only when
 /// the link has been down past the nodes' grace. An edge node with no media, or no SIP engine, has that row removed.
-/// The phone numbers' fallbacks are written at the start and every [`REFRESH_EVERY`] (E8).
+/// With this node's `edge_calls_enabled` off the media row is draining, read again each time, so the wizard's choice
+/// holds (E10 calls). The phone numbers' fallbacks are written at the start and every [`REFRESH_EVERY`] (E8).
 async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration) {
     let media_stopping = edge.media_address.is_empty();
     let sip_stopping = media_stopping || (edge.sip_address.is_empty() && edge.sip_tls_address.is_empty());
@@ -852,8 +815,8 @@ async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo,
         let row = edge.clone();
         let refresh = refreshed.is_none_or(|at| at.elapsed() >= REFRESH_EVERY);
         let kept = crate::worker::on_pool(&factory, move |_| {
-            let media = register_media_node(&row, media_stopping);
-            let sip = register_sip_node(&row, sip_stopping);
+            let media = moqui_core::edge::calls::register_row(&row, media_stopping);
+            let sip = moqui_core::edge::calls::register_sip_row(&row, sip_stopping);
             let fallbacks = if refresh {
                 run_internal(REFRESH_FALLBACKS, &std::collections::BTreeMap::new())
             } else {
@@ -902,6 +865,8 @@ impl Work {
         let Some(node) = factory.upgrade().map(|factory| {
             // the edge node's TURN checks its own secret: the credentials of its TURN URLs are signed with it
             moqui_core::edge::media::set_peer_turn(&factory, &up.edge.instance_id, &up.turn_secret);
+            // its media node row may be kept until unpairing (moqui_core::edge::calls::forget_rows)
+            moqui_core::edge::calls::allow_row(&factory, &up.edge.instance_id);
             moqui_core::edge::queue::local_node_id(&factory)
         }) else {
             return none();
