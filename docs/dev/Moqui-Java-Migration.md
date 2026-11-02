@@ -57,6 +57,10 @@ These are names inside the components, not component names:
 - **Data and security IDs.** These include the artifact groups `SimpleScreensAccounting`, `SimpleScreensOrder` and the
   rest, the `MarbleErp*` records, and the setup file `SimpleScreensSetupData.xml` (Marble's is now `ZmeMarbleErpSetupData.xml`, so that it loads after the Simple Screens artifact groups it uses).
 - **Entities and services.** These are `mantle.*` entities and services, and the `ironstone.*` services of mr-boss.
+  The exception is the services of particular external systems, now in `service/mantle/ext/`: the NACHA, Positive
+  Pay, BAI and OFX services are `mantle.ext.account.NachaServices` (and `PositivePayServices`, `BaiServices`,
+  `OfxServices`) instead of `mantle.account.*`, and the Google Maps services are
+  `mantle.ext.party.GooglePartyServices` instead of `mantle.party.GooglePartyServices`.
 - **Spec names.** For example, `SimpleScreensRender` is still `SimpleScreensRender`.
 
 ### Existing databases
@@ -95,3 +99,9 @@ DROP TABLE IF EXISTS artifact_hit_bin;
 
 The old `clean_ArtifactData_daily` and `clean_ElasticSearch*Messages_daily` job registrations are paused at start;
 their past runs stay.
+
+Records also name the services moved to `mantle.ext.*`: `moqui.service.message.SystemMessageType.consumeServiceName`
+(the NACHA return, BAI and OFX message types) and `moqui.service.job.ServiceJob.serviceName` (the NACHA file and
+Positive Pay jobs). Reload the data that defines them, or update the names with SQL as for locations above, for
+example `regexp_replace(consume_service_name, '^mantle\.account\.(Nacha|PositivePay|Bai|Ofx)Services\.',
+'mantle.ext.account.\1Services.')`.
