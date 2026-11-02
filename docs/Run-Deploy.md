@@ -693,7 +693,7 @@ clients through its tunnel ports. Phones (SIP) do not go through it yet.
       answering), the webhooks, PASS, and XMPP (a client connection through each tunnel port reaches this node's XMPP
       server, its TLS this node's own certificate, and the domain is one of its host names there), and calls (the edge
       node's media row is live and first for new calls, `make#IceServers` signs its TURN URLs with its secret, and that
-      credential allocates on its TURN with a permission to its media address), each a pass, fail
+      credential allocates on its TURN with a permission for its media address's IP), each a pass, fail
       or not-checked line, with round trips on the queue and no outside mail or provider. It runs once per visit;
       Test again runs it again. Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.

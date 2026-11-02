@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     stream through each of the edge node's tunnel ports reaches this node's XMPP server, and the domain is one of this
     node's host names there, for uploads); calls (the edge node's media node row is live and preferred, make#IceServers
     gives its TURN URLs a credential signed with the secret its link handed this node, and that credential allocates
-    on its TURN with a permission to its media address). No outside mail or provider is needed. A check with nothing to check (no account, no bridge) says it was not checked. The test runs
+    on its TURN with a permission for its media address's IP). No outside mail or provider is needed. A check with nothing to check (no account, no bridge) says it was not checked. The test runs
     once when the step first shows after Apply, and its result is kept in the session, so a failed Finish shows the
     same result without asking the edge node again; Test again runs it again. Finish goes to the status when the test
     passed, or with "Continue anyway", and forgets the wizard's choices. -->

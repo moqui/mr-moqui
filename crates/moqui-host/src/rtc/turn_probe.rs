@@ -14,8 +14,10 @@
 
 //! The edge wizard's TURN check (plans/Edge-Node.md §5.7, "As built (E10, calls)"): from the local node, as a browser
 //! would, an allocation on the edge node's TURN over UDP with the credential `make#IceServers` gave, then a permission
-//! to the edge node's media address (its TURN relays only to its media port), then the allocation deleted. A
-//! `turn-client-proto` client on a socket of its own, a few seconds at most.
+//! for the IP of the edge node's media address, then the allocation deleted. A TURN permission is for an IP alone
+//! (RFC 8656); the edge node's TURN grants one only for an IP of its allowed peers, and its rule that data goes only
+//! to their ports is checked on the data, which the check sends none of. A `turn-client-proto` client on a socket of
+//! its own, a few seconds at most.
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
@@ -73,7 +75,7 @@ fn refused(server: SocketAddr) -> String {
     )
 }
 
-/// A UDP allocation on the TURN server of `url` with `username` and `credential`, then a permission to `peer`
+/// A UDP allocation on the TURN server of `url` with `username` and `credential`, then a permission for the IP of `peer`
 /// (`ip:port`), then the allocation deleted: what was allocated, or why not.
 pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> Result<String, String> {
     let server_text = udp_server(url)?;
@@ -122,7 +124,8 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
                     WAIT.as_secs()
                 ),
                 Some(relayed) => format!(
-                    "The edge node's TURN allocated {relayed} but did not answer for a permission to {peer} in {} s",
+                    "The edge node's TURN allocated {relayed} but did not answer for a permission for {} in {} s",
+                    peer.ip(),
                     WAIT.as_secs()
                 ),
             });
@@ -145,20 +148,22 @@ pub(crate) fn probe(url: &str, username: &str, credential: &str, peer: &str) -> 
                 TurnEvent::AllocationCreated(_, address) => {
                     relayed = Some(address);
                     if let Err(err) = client.create_permission(TransportType::Udp, peer.ip(), now()) {
-                        done = Some(Err(format!("A permission to {peer} was not asked: {err}")));
+                        done = Some(Err(format!("A permission for {} was not asked: {err}", peer.ip())));
                     }
                 }
                 TurnEvent::AllocationCreateFailed(_) => done = Some(Err(refused(server))),
                 TurnEvent::PermissionCreated(_, ip) if ip == peer.ip() => {
                     done = Some(Ok(format!(
-                        "The edge node's TURN at {server} allocated {} for this node's credential and relays to {peer}",
+                        "The edge node's TURN at {server} allocated {} for this node's credential and grants a \
+                         permission for its media address's IP {ip}",
                         relayed.map(|address| address.to_string()).unwrap_or_default()
                     )));
                 }
                 TurnEvent::PermissionCreateFailed(_, ip) if ip == peer.ip() => {
                     done = Some(Err(format!(
-                        "The edge node's TURN allocated, but refused relaying to its media address {peer}: is \
-                         rtc_public_address its media port?"
+                        "The edge node's TURN allocated, but refused a permission for {ip}, the IP of its media address \
+                         {peer}: its TURN allows only its media node's address (rtc_public_address there, or \
+                         turn_allowed_peers)"
                     )));
                 }
                 _ => {}

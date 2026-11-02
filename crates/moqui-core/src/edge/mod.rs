@@ -266,7 +266,7 @@ pub trait EdgeLink: Send + Sync {
         Err(Error::new(NOT_BUILT))
     }
     /// On a local node, the Test step's TURN check (§5.7, E10 calls): an allocation on the edge node's TURN at `url`
-    /// (a `turn:` URL over UDP) with `username` and `credential`, as a browser's, then a permission to `peer` (its media
+    /// (a `turn:` URL over UDP) with `username` and `credential`, as a browser's, then a permission for the IP of `peer` (its media
     /// address), and the allocation deleted; what was allocated, or why not.
     fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, Error> {
         let _ = (url, username, credential, peer);

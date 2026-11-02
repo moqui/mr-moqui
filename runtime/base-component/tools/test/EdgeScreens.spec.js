@@ -156,12 +156,13 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         // XMPP is this node's xmpp_domain: added to the passthrough names, or refused when there is none
         const xmppDomain = String(System.getProperty("xmpp_domain") || "").trim().toLowerCase()
         const xmpp = post({webOn: "Y", passthroughNames: "erp.example.com", xmppOn: "Y"})
-        // calls alone is a setup: the edge node's media node for new calls, nothing else
-        const calls = post({callsOn: "Y"})
+        // calls alone is a setup when the form offered it (callsOffered), and no choice when it did not
+        const calls = post({callsOffered: "Y", callsOn: "Y"})
+        const unoffered = post({callsOn: "Y"})
         ec.web.sessionAttributes.remove("edgeSetup")
-        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls}
+        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered}
     },
-    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls}) {
+    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered}) {
         none.errors.includes("at least one area")
         none.kept == null
         noName.kept == null
@@ -178,7 +179,11 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         chosen.kept.callsOn == false
         calls.errors == ""
         calls.kept.callsOn == true
+        calls.kept.callsOffered == true
         calls.kept.webOn == false
+        unoffered.errors.includes("at least one area")
+        unoffered.kept == null
+        chosen.kept.callsOffered == false
         xmppDomain ? xmpp.kept.xmppOn && xmpp.kept.passthroughNames.join(",") == "erp.example.com," + xmppDomain
             : xmpp.errors.includes("set xmpp_domain") && xmpp.kept == null
     }

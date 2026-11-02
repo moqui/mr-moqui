@@ -56,14 +56,46 @@ pub fn calls_enabled() -> bool {
     )
 }
 
+/// The edge node whose row the link may keep: set as a link comes up ([`allow_row`]), cleared by unpairing
+/// ([`forget_rows`]), each under the lock, so a row written by a heartbeat or an Apply in flight is never made again
+/// after unpairing removed it.
+#[derive(Default)]
+struct Keeper(std::sync::Mutex<Option<String>>);
+
+/// On a local node whose link to the edge node `instance_id` came up: its `CallMediaNode` row may be written.
+pub fn allow_row(factory: &ExecutionContextFactory, instance_id: &str) {
+    let keeper = factory.extension(|_| Keeper::default());
+    *moqui_lib::sync::lock(&keeper.0) = (!instance_id.is_empty()).then(|| instance_id.to_string());
+}
+
+/// On a local node that unpairs: no edge node's row may be written from now on, and `remove` (which removes the rows)
+/// runs under the same lock as [`register_row`], so no write in flight lands after it.
+pub fn forget_rows<T>(factory: &ExecutionContextFactory, remove: impl FnOnce() -> T) -> T {
+    let keeper = factory.extension(|_| Keeper::default());
+    let mut allowed = moqui_lib::sync::lock(&keeper.0);
+    *allowed = None;
+    remove()
+}
+
 /// Write or remove (`stopping`) the `CallMediaNode` row of the edge node `edge`, as the link keeps it: `draining`
-/// while [`calls_enabled`] is off. Internal work in the current context; its errors are taken out of the context, so
-/// the caller's stay as they were.
+/// while [`calls_enabled`] is off. A write is refused unless the edge node's link came up and the node has not
+/// unpaired since ([`allow_row`], [`forget_rows`]). Internal work in the current context; its errors are taken out of
+/// the context, so the caller's stay as they were.
 ///
 /// # Errors
 ///
 /// Returns why the row was not written.
 pub fn register_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| "no execution context to write the media node row in".to_string())?;
+    let keeper = factory.extension(|_| Keeper::default());
+    let allowed = moqui_lib::sync::lock(&keeper.0);
+    if !stopping && allowed.as_deref() != Some(edge.instance_id.as_str()) {
+        return Err(format!(
+            "the link to the edge node {} is not up or this node unpaired, so its media node row is not written",
+            edge.instance_id
+        ));
+    }
     let parameters = std::collections::BTreeMap::from([
         ("instanceId".to_string(), Value::string(&edge.instance_id)),
         ("mediaAddress".to_string(), Value::string(&edge.media_address)),
@@ -80,7 +112,31 @@ pub fn register_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
         ),
         ("stopping".to_string(), Value::Bool(stopping)),
     ]);
-    internal(|| crate::service::sync(REGISTER_MEDIA_NODE, &parameters).map(drop))
+    let written = internal(|| crate::service::sync(REGISTER_MEDIA_NODE, &parameters).map(drop));
+    drop(allowed);
+    written
+}
+
+/// How many media nodes of this node's own (not the edge node's) are live and take new calls: with none, and calls
+/// off on the edge node, no new call can start.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn own_media_nodes(facade: &EntityFacade, now_ms: i64) -> Result<usize, Error> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let rows = facade.find(MEDIA_NODE)?.use_cache(false).list()?;
+    Ok(rows
+        .iter()
+        .filter(|row| {
+            let text = |field: &str| row.get(field).map(to_plain_string).unwrap_or_default();
+            let heartbeat = row
+                .get("heartbeatDate")
+                .and_then(crate::user::value_millis)
+                .unwrap_or(0);
+            text("edgeLinked") != "Y" && text("draining") != "Y" && now_ms - heartbeat <= STALE_MS
+        })
+        .count())
 }
 
 /// Run `call` with authorization off and its errors apart from the caller's: the call's error, else the errors it
@@ -249,7 +305,7 @@ pub fn apply(
         if on {
             "New calls have their media on the edge node's media node"
         } else {
-            "New calls have their media on this node's own media nodes, not the edge node's"
+            "New calls do not use the edge node's media node"
         },
     )];
     if edge.instance_id.is_empty() || edge.media_address.is_empty() {
@@ -269,8 +325,24 @@ pub fn apply(
         ));
     }
     if !on {
-        let (ok, text) = row_check(facade, edge, crate::user::now_millis());
+        let now = crate::user::now_millis();
+        let (ok, text) = row_check(facade, edge, now);
         lines.push(SetupLine::new("calls", ok, text));
+        // off is only useful with a media node of this node's own to take the new calls
+        match own_media_nodes(facade, now) {
+            Ok(0) => lines.push(SetupLine::new(
+                "calls",
+                false,
+                "This node has no live media node of its own, so no new call can start while calls are off: run one \
+                 (rtc_media_port) or turn calls on",
+            )),
+            Ok(_) => {}
+            Err(err) => lines.push(SetupLine::new(
+                "calls",
+                false,
+                format!("This node's own media nodes were not read: {err}"),
+            )),
+        }
         return lines;
     }
     lines.push(match media_address_problem(&edge.media_address) {

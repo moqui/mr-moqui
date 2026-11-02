@@ -76,7 +76,7 @@ the old one stop working on the edge node at once.
 The Edge Node wizard checks this end to end (Apply and Test, plans/Edge-Node.md §5.7): Apply says whether the link
 handed the secret over; Test has `make#IceServers` sign the edge node's URLs for a probe leg (`edgeSetupProbe.<random>`,
 no leg of a call), then allocates with that credential on the edge node's TURN over UDP, as a browser would, asks a
-permission to its media address, and deletes the allocation. A refused allocation means the secret the edge node checks
+permission for the IP of its media address (a permission is for an IP alone; the port rule is checked on data), and deletes the allocation. A refused allocation means the secret the edge node checks
 is not the one it handed over (restart it after changing `turn_auth_secret`). With `turn_public_host` a name, Apply's
 DNS list checks its A and AAAA records against the edge node's addresses or its media address.
 

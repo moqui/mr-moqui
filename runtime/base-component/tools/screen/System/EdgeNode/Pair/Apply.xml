@@ -40,7 +40,9 @@ along with this software (see the LICENSE.md file). If not, see
                 systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
                 chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
                 passOn: !!choices.passOn, passSites: choices.passSites || [], passCallback: choices.passCallback || '',
-                xmppOn: !!choices.xmppOn, callsOn: !!choices.callsOn}).call()
+                xmppOn: !!choices.xmppOn,
+                // only a choice Discover offered: left out, this node's edge_calls_enabled stays as it is
+                callsOn: choices.callsOffered ? !!choices.callsOn : null}).call()
             if (ec.message.hasError()) return
             const lines = Array.from(out?.lineList || []).map((line) => ({area: line.area, ok: line.ok === true, text: line.text}))
             const configured = out?.configured === true
@@ -91,7 +93,8 @@ along with this software (see the LICENSE.md file). If not, see
             chatText: choices.chatOn ? ec.resource.expand('${n} bridges', '', {n: (choices.chatBridgeIds || []).length}) : L('Off'),
             passText: choices.passOn ? list(choices.passSites) + ' · ' + (choices.passCallback || '') : L('Off'),
             xmppText: choices.xmppOn ? choices.xmppDomain || '' : L('Off'),
-            callsText: choices.callsOn ? L("New calls on the edge node's media node") : L('Off')}
+            callsText: !choices.callsOffered ? L('Not offered, so left as it is')
+                : choices.callsOn ? L("New calls on the edge node's media node") : L('Off')}
         let kept = null
         try { kept = JSON.parse(ec.web.sessionAttributes.edgeApplied || 'null') } catch (e) { kept = null }
         applied = !!kept?.configured

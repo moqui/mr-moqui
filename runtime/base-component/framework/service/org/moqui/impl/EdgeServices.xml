@@ -316,11 +316,13 @@ along with this software (see the LICENSE.md file). If not, see
             before any change when this node has no xmpp_domain or the edge node no tunnel port. Nothing is written
             locally for XMPP; lines say when this node's xmpp_port or xmpp_tls_port (which Chat apps shows) differ
             from the edge node's ports, and when the tunnels go to another node or, with several linked and no
-            edge_xmpp_node, to none. Calls (callsOn, when the edge node's media node is offered; nothing is sent to it):
-            edge_calls_enabled true or false in runtime/.env, and the edge node's CallMediaNode row written again at once,
-            draining while it is false (the link keeps it so after that), so new calls have their media on the edge
-            node, or on this node's own media nodes while calls on the edge node go on; lines check the media address
-            (public), the TURN secret the link's Hello handed this node, and the row (live, preferred). An area turned
+            edge_xmpp_node, to none. Calls (callsOn given, and the edge node's media node offered; left out, nothing
+            changes; nothing is sent to the edge node): edge_calls_enabled true or false in runtime/.env, and the edge
+            node's CallMediaNode row written again at once, draining while it is false (the link keeps it so after
+            that, and never after unpairing), so new calls have their media on the edge node, or on this node's own
+            media nodes while calls on the edge node go on (a failed line when it has none live, as no new call can
+            start then); lines check the media address (public), the TURN secret the link's Hello handed this node,
+            and the row (live, preferred). An area turned
             off is left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
             Refused on an edge node; fails before any change when the edge node's offer cannot be read.</description>
         <in-parameters>
@@ -336,7 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passSites" type="List"/>
             <parameter name="passCallback"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
-            <parameter name="callsOn" type="Boolean" default="false"/>
+            <parameter name="callsOn" type="Boolean"><description>Calls on or off; left out (as Discover does when it offered no calls) leaves edge_calls_enabled as it is</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="lineList" type="List"/>
@@ -400,7 +402,7 @@ along with this software (see the LICENSE.md file). If not, see
             live, with the Hello's media address and not draining, so Calls.js puts it first (callsNode),
             make#IceServers gives a probe leg the edge node's TURN URLs with a credential signed with the secret its
             link handed this node (iceServers), and that credential allocates on its TURN over UDP with a permission
-            to its media address, then the allocation is deleted (turn, up to 3 seconds; not checked without TURN or
+            for the IP of its media address (a TURN permission is for an IP alone), then the allocation is deleted (turn, up to 3 seconds; not checked without TURN or
             a UDP listener). No outside
             mail or provider is needed; the round trips' answers are waited for up to 10 seconds, and the XMPP checks
             (up to 3 seconds for the offer and 5 for each port) run alongside. testList has check, label, ok, checked and message; passed is true when

@@ -455,6 +455,14 @@ fn flag(parameters: &BTreeMap<String, Value>, name: &str) -> bool {
     }
 }
 
+/// A Boolean parameter that may be left out: `None` when it is absent or empty, else as [`flag`] reads it.
+fn optional_flag(parameters: &BTreeMap<String, Value>, name: &str) -> Option<bool> {
+    parameters
+        .get(name)
+        .filter(|value| !is_empty(value))
+        .map(|_| flag(parameters, name))
+}
+
 /// A list parameter as texts: a list, or a comma-separated text; blanks left out.
 fn list(parameters: &BTreeMap<String, Value>, name: &str) -> Vec<String> {
     let items: Vec<String> = match parameters.get(name) {
@@ -827,18 +835,19 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     if xmpp {
         lines.extend(xmpp_lines(&xmpp_domain, xmpp_hosted, &answer));
     }
-    // calls: on or off when the edge node has a media node; nothing is sent to it, the row here is the setup
-    let calls = flag(parameters, "callsOn");
-    if answer.offer.calls.available {
+    // calls: on or off when the edge node has a media node and the caller chose (callsOn given; Discover passes it
+    // only when it offered calls); absent leaves edge_calls_enabled as it is. Nothing is sent to the edge node.
+    let calls = optional_flag(parameters, "callsOn");
+    if let (Some(on), true) = (calls, answer.offer.calls.available) {
         lines.extend(crate::edge::calls::apply(
             &factory,
             facade,
             &env_file,
-            calls,
+            on,
             &status.peer,
             &answer.offer.calls,
         ));
-    } else if calls {
+    } else if calls == Some(true) {
         lines.push(SetupLine::new(
             "calls",
             false,
@@ -1116,7 +1125,7 @@ fn xmpp_tests(link: Option<&dyn crate::edge::EdgeLink>) -> Vec<TestLine> {
 /// The Test step's calls lines (plans/Edge-Node.md §5.7, E10 calls): the edge node's row is live and preferred
 /// (`callsNode`, [`crate::edge::calls::row_check`]), `make#IceServers` gives its TURN URLs a credential signed with
 /// the secret its link handed this node (`iceServers`), and, on a thread of its own, that credential allocates on its
-/// TURN with a permission to its media address (`turn`, [`crate::edge::EdgeLink::turn_probe`]). A check with no TURN
+/// TURN with a permission for its media address's IP (`turn`, [`crate::edge::EdgeLink::turn_probe`]). A check with no TURN
 /// is not checked.
 fn calls_tests(
     factory: &std::sync::Arc<crate::context::ExecutionContextFactory>,

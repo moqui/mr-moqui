@@ -1376,13 +1376,21 @@ Its actions are pause, resync and unpair.
   `edge_calls_enabled` is off, showing the media address and TURN URLs, with a note: new calls have their media on
   the edge node, so office users in a call with each other send it to the cloud and back (decision 6), with no
   cascading to a media node of this node's own and one local node per edge node; and a warning when other local nodes
-  are linked. Calls alone is a setup.
-- **Apply** (`callsOn`, only when the offer has calls; asked without one it gives a failed line): `edge_calls_enabled`
-  written, the row written again at once with it (the link writes it every 15 s after that), then a line each (core
-  `edge/calls.rs` `apply`): the media address is public (`media_address_problem`: not loopback, private, link-local
-  or unspecified; else set `rtc_public_address`), other local nodes linked, the TURN secret the link's Hello handed this
-  node (`edge::media::turn_secret`; no TURN is a failed line too), and the row (`row_check`: there, `edgeLinked`, a
-  heartbeat within 60 s, the Hello's media address, draining only while off). Nothing goes to the edge node.
+  are linked. Calls alone is a setup. The form posts `callsOffered` (hidden) only when it showed the choice; a
+  `callsOn` without it is no choice, so a form rendered while the media socket was down cannot turn calls off.
+- **Apply** (`callsOn`, tri-state: left out, as Apply's step does when Discover did not offer calls, or as an older
+  caller sends, `edge_calls_enabled` is left as it is; given with no calls in the offer, true is a failed line):
+  `edge_calls_enabled` written, the row written again at once with it (the link writes it every 15 s after that),
+  then a line each (core `edge/calls.rs` `apply`): the media address is public (`media_address_problem`: not
+  loopback, private, link-local or unspecified; else set `rtc_public_address`), other local nodes linked, the TURN
+  secret the link's Hello handed this node (`edge::media::turn_secret`; no TURN is a failed line too), and the row
+  (`row_check`: there, `edgeLinked`, a heartbeat within 60 s, the Hello's media address, draining only while off).
+  Calls off with no live, non-draining media node of this node's own (`own_media_nodes`) is a failed line too: no
+  new call can start then. Nothing goes to the edge node.
+- **Unpairing and the row.** Every write of the row (`register_row`, from the link's heartbeat or Apply) holds a
+  per-factory lock and needs the edge node allowed: `allow_row` as a link comes up (`Work::start`), cleared by
+  `forget_rows`, under which unpairing deletes the `edgeLinked` rows. So a heartbeat or an Apply in flight never
+  makes the row again after unpairing removed it.
 - **DNS.** `check#EdgeDns` takes `turnHosts` (the hosts of the TURN URLs, `turn_public_host` on the edge node) and
   `mediaAddress`: each that is a name, and not one of the web host names, gets an A/AAAA row noted "TURN for calls",
   against `edge_public_addresses` and the media address's IP (`edge_dns.rs` `address_row`, the A/AAAA check shared
@@ -1393,11 +1401,13 @@ Its actions are pause, resync and unpair.
   gives exactly the edge node's TURN URLs, signed with the handed-off secret (refused when the link handed none);
   `turn`, on a thread beside the round trips, `EdgeLink::turn_probe`: that credential allocates over UDP on the first
   `turn:` URL, as a browser would (`turn-client-proto`, now an optional dependency of the host under `rtc`; host
-  `rtc/turn_probe.rs`), a permission to the media address is granted (the edge node's TURN relays only to its media
-  port), and the allocation is deleted; at most 3 s. No STUN binding to the media address itself: the media socket
-  answers one only with a leg's ICE credentials, and the permission covers the address.
+  `rtc/turn_probe.rs`), a permission for the IP of the media address is granted (a TURN permission is for an IP alone, RFC 8656: the edge
+  node's TURN grants one only for an IP of its allowed peers, and its port rule is checked on data, which the check
+  sends none of), and the allocation is deleted; at most 3 s. No STUN binding to the media address itself: the media socket
+  answers one only with a leg's ICE credentials.
 - **Status** shows calls: new calls on the edge node at its media address (with TURN or not) while its link-kept row
-  is live, off by `edge_calls_enabled`, or no media node.
+  is live, off by `edge_calls_enabled` (saying no new call can start when this node has no live media node of its
+  own), or no media node. The TURN check (`rtc/turn_probe.rs`) is built only with both `rtc` and `edge`.
 - **Tests.** `edge_setup.rs` (about 5 s now): the edge node runs a media socket and TURN in the test's process (the
   process's one media node; the local node, started first, has none), on loopback, advertised as `203.0.113.5` so the
   media address is public; the offer and `calls` in the Hello, the TURN host's A/AAAA against fixed records, and the

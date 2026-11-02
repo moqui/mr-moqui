@@ -34,8 +34,8 @@
 //!   has none), on loopback and advertised as a documentation address. The offer names them and the Hello `calls`;
 //!   Discover offers calls, on by default; Apply writes `edge_calls_enabled` and the link-kept row, with lines for the
 //!   media address, the TURN secret and the row; Test finds the row live and preferred, `make#IceServers` signs the
-//!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission to the media
-//!   address. Calls off keeps the row as draining, which Test does not check, and Status says so.
+//!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
+//!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
 
 #![cfg(all(
     unix,
@@ -597,8 +597,14 @@ fn calls_area(local: &Gate, media: &str) {
         "EdgeNode/Pair/Discover",
         &[&offered, "office users in a call with each other", "Media node at"],
     );
+    // a choice the form did not offer is no choice
+    let unoffered = post("EdgeNode/Pair/Discover/chooseSetup", &[("callsOn", Value::string("Y"))]);
+    assert!(unoffered.contains("at least one area"), "{unoffered}");
     assert_eq!(
-        post("EdgeNode/Pair/Discover/chooseSetup", &[("callsOn", Value::string("Y"))]),
+        post(
+            "EdgeNode/Pair/Discover/chooseSetup",
+            &[("callsOffered", Value::string("Y")), ("callsOn", Value::string("Y"))]
+        ),
         "",
         "calls alone is a setup"
     );
@@ -650,24 +656,34 @@ fn calls_area(local: &Gate, media: &str) {
         assert_eq!(tested[check]["ok"], "true", "{check}: {tested:?}");
     }
     assert!(
-        tested["turn"]["message"].contains(&format!("relays to {media}")),
+        tested["turn"]["message"].contains(&format!("permission for its media address's IP {MEDIA_IP}")),
         "{tested:?}"
     );
+    // an Apply that was not asked about calls leaves them as they are
+    let untouched = calls_lines(call(local, "org.moqui.impl.EdgeServices.apply#EdgeSetup", &[]));
+    assert!(untouched.is_empty(), "{untouched:?}");
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_calls_enabled=true"), "{env}");
+    assert_eq!(row("draining"), "N");
     show(
         "EdgeNode/Status",
         &[&format!("New calls on the edge node at {media}, with its TURN")],
     );
-    // calls off: the row stays, draining, so calls on it go on and new ones use this node's own media nodes
+    // calls off: the row stays, draining, so calls on it go on; this node has no media node of its own, so a line
+    // says no new call can start
     let off = calls_lines(call(
         local,
         "org.moqui.impl.EdgeServices.apply#EdgeSetup",
         &[("callsOn", Value::Bool(false))],
     ));
     assert!(
-        off.iter().all(|line| line["ok"] == "true")
-            && off
-                .iter()
-                .any(|line| line["text"].contains("takes no new calls; calls on it go on")),
+        off.iter()
+            .any(|line| line["ok"] == "true" && line["text"].contains("takes no new calls; calls on it go on")),
+        "{off:?}"
+    );
+    let failed: Vec<&BTreeMap<String, String>> = off.iter().filter(|line| line["ok"] == "false").collect();
+    assert!(
+        failed.len() == 1 && failed[0]["text"].contains("no new call can start"),
         "{off:?}"
     );
     assert_eq!((row("edgeLinked"), row("draining")), ("Y".to_string(), "Y".to_string()));
@@ -682,9 +698,23 @@ fn calls_area(local: &Gate, media: &str) {
     assert!(!tested.contains_key("turn"), "{tested:?}");
     show(
         "EdgeNode/Status",
-        &["Off: new calls use this node&#39;s own media nodes"],
+        &["Off, and this node has no live media node of its own, so no new call can start"],
     );
-    // and on again, as the wizard leaves it
+    // after unpairing has forgotten the rows, an Apply in flight does not make the row again
+    moqui_core::edge::calls::forget_rows(&factory, || ());
+    let late = calls_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("callsOn", Value::Bool(true))],
+    ));
+    assert!(
+        late.iter()
+            .any(|line| line["ok"] == "false" && line["text"].contains("this node unpaired")),
+        "{late:?}"
+    );
+    assert_eq!(row("draining"), "Y", "the row is not written");
+    // and on again, as the wizard leaves it, once the link allows the row again
+    moqui_core::edge::calls::allow_row(&factory, &edge_id);
     let on = calls_lines(call(
         local,
         "org.moqui.impl.EdgeServices.apply#EdgeSetup",

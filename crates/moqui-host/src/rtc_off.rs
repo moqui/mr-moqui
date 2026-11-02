@@ -29,10 +29,7 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> 
 }
 
 /// The edge wizard's TURN check (`rtc/turn_probe.rs`) without calls: there is no TURN client.
-#[allow(
-    dead_code,
-    reason = "the edge link's turn_probe calls it, in a build with the edge feature"
-)]
+#[cfg(feature = "edge")]
 pub(crate) mod turn_probe {
     pub(crate) fn probe(_url: &str, _username: &str, _credential: &str, _peer: &str) -> Result<String, String> {
         Err("This build has no calls (the rtc feature), so the edge node's TURN is not checked".to_string())

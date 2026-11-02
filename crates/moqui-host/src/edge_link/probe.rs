@@ -46,7 +46,7 @@ fn kind(direct: bool) -> &'static str {
 }
 
 /// The Test step's TURN check: a UDP allocation on the edge node's TURN at `url` with `username` and `credential`,
-/// a permission to its media address `peer`, and the allocation deleted; blocking, a few seconds at most.
+/// a permission for its media address's IP `peer`, and the allocation deleted; blocking, a few seconds at most.
 ///
 /// # Errors
 ///

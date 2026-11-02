@@ -42,6 +42,8 @@ pub(crate) mod media;
 pub(crate) mod recorder;
 mod tcp;
 mod turn;
+// the edge wizard's TURN check, which only the edge link calls
+#[cfg(feature = "edge")]
 pub(crate) mod turn_probe;
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};

@@ -13,7 +13,7 @@
  */
 
 //! The wizard's TURN check against the embedded TURN server on loopback, as an edge node runs it (E7): the credential
-//! of its own secret allocates and gets a permission to the media address; one of another secret is refused.
+//! of its own secret allocates and gets a permission for the media address's IP; one of another secret is refused.
 
 use std::net::SocketAddr;
 
@@ -51,7 +51,10 @@ fn a_credential_of_the_edge_nodes_secret_allocates_and_relays_to_its_media_addre
     let (_node, url) = turn_node(media);
     let (username, password) = moqui_rtc::turn::credential(SECRET.as_bytes(), "edgeSetupProbe.a", expiry());
     let done = probe(&url, &username, &password, &media.to_string()).unwrap();
-    assert!(done.contains("relays to 127.0.0.1:10000"), "{done}");
+    assert!(
+        done.contains("permission for its media address's IP 127.0.0.1"),
+        "{done}"
+    );
     // another secret's credential is refused, as a local node's own would be
     let (username, password) = moqui_rtc::turn::credential(b"another-secret", "edgeSetupProbe.b", expiry());
     let refused = probe(&url, &username, &password, &media.to_string()).unwrap_err();

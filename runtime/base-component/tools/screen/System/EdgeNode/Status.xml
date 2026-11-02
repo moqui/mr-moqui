@@ -135,10 +135,14 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // calls (E7, E10 calls): the edge node's media node row the link keeps, live, and this node's choice
             const callsOff = ['false', 'n', 'no', '0', 'off'].includes(String(System.getProperty('edge_calls_enabled') || '').trim().toLowerCase())
-            const liveRow = Array.from(ec.entity.find('moqui.call.CallMediaNode').condition('edgeLinked', 'Y')
-                .condition('heartbeatDate', '>=', new Date(Date.now() - 60000)).useCache(false).disableAuthz().list())[0]
+            const liveRows = Array.from(ec.entity.find('moqui.call.CallMediaNode')
+                .condition('heartbeatDate', '>=', new Date(Date.now() - 60000)).useCache(false).disableAuthz().list())
+            const liveRow = liveRows.find((row) => row.edgeLinked === 'Y')
+            // off needs a media node of this node's own to take new calls (moqui_core::edge::calls::own_media_nodes)
+            const ownLive = liveRows.some((row) => row.edgeLinked !== 'Y' && row.draining !== 'Y')
             const callsText = !link.mediaAddress ? L('The edge node runs no media node')
-                : callsOff ? L("Off: new calls use this node's own media nodes")
+                : callsOff ? (ownLive ? L("Off: new calls use this node's own media nodes")
+                    : L('Off, and this node has no live media node of its own, so no new call can start'))
                 : liveRow ? ec.resource.expand('New calls on the edge node at ${address}', '', {address: link.mediaAddress}) +
                     (Array.from(link.turnUrls || []).length ? ', ' + L('with its TURN') : ', ' + L('no TURN'))
                 : L('Not live: the link keeps the edge node as media node while it is up')
