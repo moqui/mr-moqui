@@ -50,7 +50,8 @@ function clientRegistered(clientId, clientSecret, siteId, verified) {
     )
 }
 /* A registered PASS deployment forwards its browser's address; everyone else is limited by their own. Mantle's
-   PassAuthority sets the key for a call from a registered client (passRequester), which over gRPC has no request. */
+   PassAuthority sets the key for a call from a registered client (passRequester), which over gRPC has no request, only
+   for the length of that call. */
 function requesterKey() {
     const preset = ec.user.context.passRequester
     if (preset) return String(preset)
@@ -190,7 +191,9 @@ function beginRegistration(p) {
         // The answer stays the same either way; the challenge remains, so asking again resends.
         if (ec.message.hasError()) {
             ec.message.clearErrors()
-            ec.logger.error('Registration verification mail failed for user ' + userId)
+            ec.logger.error(
+                'Registration verification mail failed for user ' + userId,
+            )
         }
     }
     return {
@@ -273,13 +276,17 @@ function startSession(p) {
     }
     return { authenticated: true, verified: verified() }
 }
+/* The client the host's PassAuthority over gRPC authenticated for the call under way (its direct listener's secret,
+   or the edge link): Mantle's PassAuthority sets it in the user context around that call only, never from input. */
+const transportVerified = (clientId) =>
+    !!clientId && ec.user.context.passVerifiedClient === String(clientId)
 function registeredClient(p) {
     if (
         !clientRegistered(
             p.clientId,
             p.clientSecret,
             p.siteId,
-            p.clientVerified === true,
+            transportVerified(p.clientId),
         )
     )
         fail('Unauthorized', 'Unregistered deployment or site')

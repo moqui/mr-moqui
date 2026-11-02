@@ -378,6 +378,8 @@ impl ExecutionContextFactory {
             return Ok(factory);
         }
         factory.native.configure(&factory, &conf_node)?;
+        // on an edge node its delegated services go to the link from the first call (plans/Edge-Node.md §5.2)
+        crate::edge::conf::init(&factory);
         for extension in crate::extension::linked() {
             (extension.after_boot)(&factory);
         }

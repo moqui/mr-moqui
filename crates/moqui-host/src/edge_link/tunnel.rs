@@ -176,8 +176,14 @@ pub(crate) fn listen_ssh(server: &Arc<EdgeServer>, bind: SocketAddr, guard: Arc<
                 accepted = listener.accept() => accepted,
                 _ = shutdown.wait_for(|stopped| *stopped) => return,
             };
-            let Ok((mut stream, remote)) = accepted else {
-                continue;
+            let (mut stream, remote) = match accepted {
+                Ok(pair) => pair,
+                Err(err) => {
+                    // as out of file descriptors: wait rather than spin on the error
+                    tracing::debug!("Edge SSH tunnel: accept failed: {err}");
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    continue;
+                }
             };
             let Some(admitted) = guard.admit(remote.ip()) else {
                 tracing::debug!("Edge SSH tunnel: web protection refused {remote}");

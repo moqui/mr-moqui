@@ -77,3 +77,17 @@ fn nothing_the_edge_node_sends_changes_the_user_a_delegated_call_runs_as() {
     };
     assert_eq!(caller.get("username"), Some(&Value::string("visitor")));
 }
+
+#[test]
+fn an_edge_node_sends_a_delegated_call_to_the_link_before_any_link_is_started() {
+    let ctx = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><edge><delegate service="a.B.call#Remote" allow-anonymous="true"/></edge></moqui-conf>"#,
+    );
+    let _entered = ctx.enter();
+    let parameters = BTreeMap::from([("message".to_string(), Value::string("hi"))]);
+    // as boot reads it on an edge node (conf::init), before the host's listeners start
+    assert!(super::super::conf::settings_as(ctx.factory(), true).edge_node);
+    let err = crate::service::sync("a.B.call#Remote", &parameters).unwrap_err();
+    // no link, or a link with no local node: offline either way, never run here (where it is not even defined)
+    assert!(err.message().starts_with(OFFLINE), "{}", err.message());
+}

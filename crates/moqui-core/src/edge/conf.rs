@@ -197,11 +197,23 @@ pub(crate) fn delegating() -> bool {
     DELEGATING.load(Ordering::Acquire)
 }
 
-/// The `<edge>` conf of `factory`, read the first time and kept. The host reads it when its listeners start, so the
-/// role is the one the node started with.
+/// The `<edge>` conf of `factory`, read the first time and kept: at boot on an edge node ([`init`]), else when the
+/// host's listeners start, so the role is the one the node started with.
 pub fn settings(factory: &ExecutionContextFactory) -> Arc<EdgeSettings> {
+    settings_as(factory, super::is_edge_node())
+}
+
+/// At boot, on an edge node: read the `<edge>` conf now, so a service it delegates goes to the link from the first
+/// call, before the link is installed or with no listener at all (then failing as offline), and never runs here.
+pub(crate) fn init(factory: &ExecutionContextFactory) {
+    if super::is_edge_node() {
+        settings_as(factory, true);
+    }
+}
+
+/// [`settings`], read for a node of the given role the first time.
+pub(super) fn settings_as(factory: &ExecutionContextFactory, edge_node: bool) -> Arc<EdgeSettings> {
     factory.extension(|factory| {
-        let edge_node = super::is_edge_node();
         let settings = match MNode::parse_shared("moqui-conf", factory.conf_text()) {
             Ok(conf) => EdgeSettings::parse(&conf, edge_node),
             Err(err) => {

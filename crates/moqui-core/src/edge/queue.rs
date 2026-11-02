@@ -483,6 +483,27 @@ pub fn release_leases(facade: &EntityFacade, node: &str, direction: &str) -> Res
     })
 }
 
+/// Fail every pending item going `direction` with `reason`, kept for inspection the retention period: on a local node
+/// that unpairs, its outbox, which is not for whichever edge node it pairs with next. The count failed.
+pub fn fail_pending(facade: &EntityFacade, direction: &str, reason: &str, now: i64) -> Result<i64, Error> {
+    transaction(facade, TransactionAttribute::ForceNew, || {
+        facade
+            .find(QUEUE_ITEM)?
+            .eq("directionEnumId", Value::string(direction))
+            .eq("statusEnumId", Value::string(PENDING))
+            .select_field("queueItemId")
+            .disable_authz()
+            .update_all([
+                ("statusEnumId".to_string(), Value::string(FAILED)),
+                ("failedDate".to_string(), stamp_value(now)),
+                ("lastErrorText".to_string(), Value::string(reason)),
+                ("nextAttemptDate".to_string(), Value::Null),
+                ("leaseOwner".to_string(), Value::Null),
+                ("leaseExpiresDate".to_string(), Value::Null),
+            ])
+    })
+}
+
 /// What [`finish`] did with a claimed item.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {

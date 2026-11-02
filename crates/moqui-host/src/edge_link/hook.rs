@@ -132,8 +132,6 @@ pub(crate) fn start(
         }
     }
     moqui_core::edge::install_edge_link(Arc::clone(&hook) as Arc<dyn EdgeLink>);
-    // scripts' calls to a PASS authority over gRPC, direct or down this edge node's link (plans/Edge-Node.md §5.5)
-    crate::pass_authority::install_sender();
     if let Some((server, _)) = &server {
         *lock(&CURRENT_SERVER) = Arc::downgrade(server);
     }
@@ -162,8 +160,10 @@ pub(crate) fn edge_server() -> Option<Arc<EdgeServer>> {
     lock(&CURRENT_SERVER).upgrade()
 }
 
-/// The listeners have stopped: let go of the app this node's down connections served, and of replication's notes.
+/// The listeners have stopped: let go of the app this node's down connections served, of replication's notes, and of
+/// the edge link hook (its dialer stops when dropped).
 pub(crate) fn stopped(factory: &ExecutionContextFactory) {
+    moqui_core::edge::clear_edge_link();
     super::down::clear(factory);
     // replication's notes go with the server, as a restart's would
     if let Some(facade) = factory.entity() {
@@ -304,6 +304,17 @@ impl EdgeLink for Hook {
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN])?;
         for name in [NODE_URL, NODE_KEY, NODE_PIN] {
             moqui_lib::env::clear_property(name);
+        }
+        // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for
+        // inspection, rather than going to whichever edge node this node pairs with next (plans/Edge-Node.md §5.2)
+        if let Some(facade) = self.factory()?.entity() {
+            moqui_core::edge::replica::disable(&facade);
+            let queue = moqui_core::edge::queue::TO_EDGE;
+            match moqui_core::edge::queue::fail_pending(&facade, queue, "unpaired", moqui_core::user::now_millis()) {
+                Ok(0) => {}
+                Ok(count) => tracing::warn!("Unpaired: {count} queued items for the edge node failed (unpaired)"),
+                Err(err) => tracing::error!("Unpaired, but the queued items for the edge node were not failed: {err}"),
+            }
         }
         match told {
             Ok(()) => {

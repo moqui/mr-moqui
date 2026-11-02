@@ -224,3 +224,25 @@ fn a_pause_is_kept_per_facade() {
     set_paused(&facade, false);
     assert!(!paused(&facade));
 }
+
+#[test]
+fn an_unpaired_outbox_fails_with_its_reason_and_stays_for_inspection() {
+    let (ctx, facade) = open();
+    enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();
+    enqueue(ctx.factory(), &facade, None, &item("b", "2")).unwrap();
+    assert_eq!(fail_pending(&facade, TO_LOCAL, "unpaired", now_millis()).unwrap(), 0);
+    assert_eq!(fail_pending(&facade, TO_EDGE, "unpaired", now_millis()).unwrap(), 2);
+    let stats = stats(&facade, None).unwrap();
+    assert_eq!((stats[0].pending, stats[0].failed), (0, 2));
+    let rows = facade.find(QUEUE_ITEM).unwrap().disable_authz().list().unwrap();
+    assert!(rows.values().iter().all(|row| text(row, "lastErrorText") == "unpaired"));
+    assert!(due_heads(
+        &facade,
+        &local_node_id(ctx.factory()),
+        TO_EDGE,
+        now_millis() + MAX_RETRY.as_millis() as i64
+    )
+    .unwrap()
+    .due
+    .is_empty());
+}

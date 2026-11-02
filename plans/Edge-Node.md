@@ -1,7 +1,8 @@
 # Edge Node
 
-Status 2026-11-01: E4 built: mr-pass reaches its authority over gRPC, direct or on the link, with REST kept; after E3's
-delegate, queue and replicate and E2's web access; no comms use the link yet. Every question in [§8](#8-decisions) is
+Status 2026-11-01: E0–E4 built; the E4 two-runtime acceptance run (mr-pass over gRPC direct, on the link, and REST) is
+pending. mr-pass reaches its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and
+replicate and E2's web access; no comms use the link yet. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
@@ -359,13 +360,15 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   with `entity name fields` children, and the queue's `queue-retention-days` (14), `queue-max-megabytes` (1024),
   `queue-max-attempts` (10) and `queue-retry-seconds` (5, doubling to 10 minutes). Service names are canonicalized as
   the service facade does (`create-moqui.X` is `create#moqui.X`). `moqui_core::edge::settings` reads it once per
-  factory with the node's role, so two servers in one test process keep their own; the host reads it when its
-  listeners start.
+  factory with the node's role, so two servers in one test process keep their own. An edge node reads it at boot
+  (`edge::conf::init`, from the factory's boot), so a delegated service goes to the link from the first call, and with
+  no link yet fails as offline rather than running on the edge node; any other node reads it when its listeners start.
 - **Code.** What needs no network is in core (`moqui_core::edge::{conf, delegate, queue, replica}`): rows, receipts,
   handlers, change notes, batches. The host's link moves it: `edge_link/queue.rs` (the delivery loops, metrics,
   retention), `edge_link/replicate.rs` (the local node's sender), new RPCs `LocalLink.Deliver`, `LocalLink.Delegate`,
-  `Link.Deliver` and `Link.Replicate` (additive). The down connection still takes gRPC only under
-  `/moqui.edge.v1.LocalLink/` with no client named, so a forwarded request reaches none of them. Every message is at
+  `Link.Deliver` and `Link.Replicate` (additive). The down connection takes gRPC only under
+  `/moqui.edge.v1.LocalLink/` and, since E4, `/moqui.pass.v1.PassAuthority/` (§5.5), and only with no client named,
+  so a forwarded request reaches none of them. Every message is at
   most 16 MiB both ways. The loops catch a panic per round and go on.
 - **Delegate.** The service facade (`service::call` `sync_with`) hands a listed synchronous call to the link; an async
   call or a scheduled job runs where it was queued. The edge node keeps the has-error and rollback-only checks, and with
@@ -409,6 +412,12 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   whose sends keep failing is tried again after a backoff from 1 s to 60 s. The copies are
   `moqui.edge.EdgeReplicaValue` (entity, key hash, `pkJson` and `fieldsJson` encrypted at rest); `get#ReplicaValues`
   and `moqui_core::edge::replica::{get_value, list_values}` read them.
+- **Unpair and revoke.** A local node that unpairs stops noting writes for replication (`replica::disable`, so its
+  `.replication.waiting` and `.lag_seconds` stop growing) and fails its pending outbox (`EqdToEdge`) with
+  lastErrorText "unpaired", kept for inspection the retention period rather than delivered to whichever edge node it
+  pairs with next. An edge node that revokes a node keeps that node's `EdgeHost` names, queue items and replica rows
+  on purpose: a re-pair of the same local node (its instance id), even with a new key, is the same node, so it gets
+  the items queued for it, and replication resyncs on the new link anyway.
 - **Status and metrics.** System › Edge Node shows the outbox by kind and each set's epoch, last batch and waiting
   changes, with Pause (`pause#QueueDelivery`: deliveries to this node are answered "paused" and its outbox waits; in
   memory) and Resync (`resync#Replication`; on an edge node it forgets the cursors). Edge Clients shows each node's
@@ -449,7 +458,8 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
 - **The down connection serves the app.** It is one hyper HTTP/2 server with extended CONNECT
   (`edge_link/down.rs`). Tunnels go by `:protocol` `moqui-tunnel`. A request that names a client in
   `x-moqui-edge-client` is forwarded and goes to the local node's router, whatever its path or content type. The
-  link's own gRPC is taken only with no client named and only on `/moqui.edge.v1.LocalLink/`; anything else is 404.
+  link's own gRPC is taken only with no client named, never for a forwarded request, and only on
+  `/moqui.edge.v1.LocalLink/` and (E4, §5.5) `/moqui.pass.v1.PassAuthority/`; anything else is 404.
   `http/serve.rs` has the per-request part (`serve_request`) that the listeners and the down connection share.
   `http::listen` keeps what the down connection serves per factory (`edge_link::local_web`), and the dialer takes it.
   The listener now reports ready only after the edge link has started.
@@ -650,6 +660,9 @@ release.
   is the REST adapter (headers, CSRF, the JSON body, the bearer as `/^Bearer (\S+)$/`, the `sso`/`sso-complete`
   redirects); gRPC runs `mantle.pass.PassAuthorityServices.handle#Call` (`transaction="ignore"`). The framework added
   `check#Client`, and `requesterKey` reads `ec.user.context.passRequester`, set by `handle` for a registered client.
+  The client the transport authenticated is `ec.user.context.passVerifiedClient`, which `handle` sets from its
+  `clientVerified` (only `handle#Call`, `allow-remote="false"`, passes it) and which the account services
+  (`registeredClient`) read instead of a flag in their input; `handle` clears both before and after each call.
 - **REST answers that changed** in the refactor, since a credential is now checked in `handle`, after the route: with
   a credential that is not good (from a registered client), an unknown route is 404 (was 401), a non-POST or unknown
   account action 404 (was 401), and a body that is not a JSON object 422 (was 401); the SSO front channel ignores the
@@ -664,7 +677,8 @@ release.
   sign-in in progress. The SSO back channel binds no session. REST still carries the session as its cookie and keeps
   it signed in in the frontend's server-side session, as before E4.
 - **Host.** `src/grpc_listen.rs` (the `grpc` feature) is the host's gRPC listener, the OTLP routes and the PASS
-  authority's (the `edge` feature) on one port: the receiver's address when that is on, else
+  authority's (the `edge` feature; the direct listener is off unless `pass_authority_grpc_enabled=true`) on one port:
+  the receiver's address when that is on, else
   `pass_authority_grpc_host`:`pass_authority_grpc_port` (4317); TLS with the HTTPS certificates, else h2c, and then the
   PASS routes only on a loopback address or with `pass_authority_grpc_insecure=true` (an error logged otherwise). A
   direct call names its client in `x-pass-client` (or `client_id`) with `x-pass-client-secret`; `check#Client` runs on
@@ -677,7 +691,9 @@ release.
 - **Core and scripts.** `moqui_core::pass_authority`: `serve`, `serve_download` (the file the service names, its
   location never sent), `check_client`, the handle, and the `PassSender` slot, which the host fills: `grpc://` and
   `grpcs://` on one kept HTTP/2 connection each (WebPKI roots only), `edge:` down the only link
-  (`EdgeServer::only_link`, shared with delegated calls). Scripts use `ec.service.passAuthority(endpoint)`; with no
+  (`EdgeServer::only_link`, shared with delegated calls). The host installs the sender at server start, with or without
+  listeners, and clears it (closing the kept connections) when the server stops; before this node's edge link runs,
+  `edge:` is "local node offline". Scripts use `ec.service.passAuthority(endpoint)`; with no
   sender (Lite, Dev) it throws "gRPC not built into this host".
 - **mr-pass.** `service/pass/Transport.js` has the REST adapter (the old code) and the gRPC one behind the same
   functions and error kinds. The transport rule: `pass_backend_transport` `rest` or `grpc` forces one; empty is gRPC
@@ -755,6 +771,19 @@ the gateway.
       protox-parse, miette) are all MIT or Apache-2.0, in `deny.toml`'s allow list.
     - They are dev-dependencies only. The generated code is checked in, and a test regenerates it with
       `MOQUI_REGENERATE_PROTO=1`, as goldens are. A normal build has no build script for it.
+- **Effect on a node that is not an edge node** (nor paired), as built through E4:
+  - `edge_link_key` is a secret default property (`MoquiDefaultConf.xml`), so it is generated into `runtime/.env` on
+    every node at its first start, used or not.
+  - The seed data (`EdgeSetupData.xml`) loads the `_edge_` user, the `EDGE_DELEGATE` group and its artifact group on
+    every node; `_edge_` has no password and only that group's grants.
+  - In a build with `edge` (Maximal, Enterprise): when the listeners start the edge link hook is installed and the
+    `moqui.edgelink.up` gauge reads 0; the PASS authority sender is installed at server start; the HTTP app has the
+    `edge_forward` layer, one request extension check per request; a service call costs one atomic load (no `<edge>`
+    lookup unless some factory delegates) and a committed entity write one more (no replication unless the link
+    enabled it). The `<edge>` conf is read only when the listeners start (at boot on an edge node).
+  - The gRPC listener's log line names what it serves (`gRPC listener (OTLP/gRPC receiver) on <address>`, with `and
+    PASS authority` only when that is on); with the OTLP receiver off and `pass_authority_grpc_enabled` not true there
+    is no gRPC listener.
 
 ### 5.7 Attaching a local node (System app)
 
@@ -813,7 +842,10 @@ Its actions are pause, resync and unpair.
      are step 1's answer, kept in the session, so there is no second round trip. Pair calls `pair#EdgeNode` with that
      fingerprint as `expectFingerprint`, then shows Status.
 
-  Steps 3 to 5 come with the comms. The status screen has no queues or replication yet, so no pause or resync.
+  Steps 3 to 5 come with the comms. In E1 the status screen had no queues or replication, so no pause or resync; E3
+  added both (§5.2 "Status and metrics"). Unpair also stops this node's replication notes and fails its pending
+  outbox as "unpaired"; Revoke on Edge Clients keeps the node's host names, queue and replica rows for a re-pair of the
+  same node (§5.2 "Unpair and revoke").
 - **Edge Clients** (`EdgeClients.xml`, menu index 18): the paired local nodes (state, generation, last connect,
   address, versions, the start of each node's key fingerprint), Ping (shows the round trip) and Revoke (with a
   confirmation). "Make a pairing code" lets the operator pick the code's lifetime, from 15 minutes to a day, and shows

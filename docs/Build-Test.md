@@ -90,6 +90,8 @@ build, with no features of its own.
 | `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too; for a Dev build `./moq build -- --features sip` | | | yes | yes |
 | `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. For a Dev build `./moq build -- --features channels` | | | yes | yes |
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too; for a Dev build `./moq build -- --features xmpp` | | | yes | yes |
+| `grpc` | host (includes `telemetry`, `axum`) | The host's gRPC listener (tonic): the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | | | yes | yes |
+| `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | | yes | yes |
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
@@ -113,6 +115,9 @@ The definitions still load, so components, screens and service files are the sam
 - An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
   location has no provider, and `/git/...` is not routed.
 - gitECA rules are still read and checked; nothing runs them, since there are no git events.
+- Without `edge`, the `org.moqui.impl.EdgeServices` that need the link (pairing, clients, hosts, ping) fail with
+  `edge link not built into this host` (`get#LinkStatus` answers state `notBuilt`), and `ec.service.passAuthority`
+  throws `gRPC not built into this host`, so mr-pass takes REST.
 - Without `embedded-postgres`, `entity_ds_db_conf` must name an external `postgres` or `mysql` database, the sim
   overlay is not available, and `save-db`, `load-save`, and `moqui test --db fresh` (which makes scratch embedded
   databases) report that this build has no embedded Postgres. `moqui test --db none` still runs specs that set

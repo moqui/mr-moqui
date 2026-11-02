@@ -130,6 +130,11 @@ fn failed(status: &tonic::Status) -> Error {
 }
 
 impl Sender {
+    /// Let go of the kept direct connections: each closes once no call is using it.
+    pub(crate) fn close(&self) {
+        lock(&self.direct).clear();
+    }
+
     /// A client for `endpoint`: the kept connection, dialed again when it has closed; or the edge node's down
     /// connection.
     async fn client(

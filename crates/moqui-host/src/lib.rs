@@ -1522,6 +1522,8 @@ fn boot_server_factory(
     tracing::info!("Request pool started");
     // Empty cluster_https_port listens on 8444. 0 is ephemeral for tests.
     moqui_core::notify::install();
+    // scripts' calls to a PASS authority over gRPC (plans/Edge-Node.md §5.5), with or without listeners
+    let pass_sender = install_pass_sender();
     if matches!(listeners, Listeners::None) {
         tracing::info!(
             "Moqui Framework initialized in {:.3} seconds, with no listeners",
@@ -1530,6 +1532,7 @@ fn boot_server_factory(
         return Ok(ServeProcess {
             runtime: None,
             pdf: Some(pdf),
+            pass_sender: Some(pass_sender),
             smtpd: None,
             #[cfg(feature = "ssh")]
             sshd: None,
@@ -1622,6 +1625,7 @@ fn boot_server_factory(
     Ok(ServeProcess {
         runtime: Some(runtime),
         pdf: Some(pdf),
+        pass_sender: Some(pass_sender),
         smtpd: Some(smtpd),
         #[cfg(feature = "ssh")]
         sshd,
@@ -1651,6 +1655,8 @@ struct ServeProcess {
     /// Stopped with [`RUNTIME_SHUTDOWN`] as its limit.
     runtime: Option<tokio::runtime::Runtime>,
     pdf: Option<PdfSlot>,
+    /// The PASS authority sender, cleared after the factory stops.
+    pass_sender: Option<PassSenderSlot>,
     smtpd: Option<SmtpSlot>,
     #[cfg(feature = "ssh")]
     sshd: Option<ssh::server::SshServer>,
@@ -1682,6 +1688,7 @@ impl Drop for ServeProcess {
         if let Some(factory) = &self.factory {
             factory.shutdown();
         }
+        self.pass_sender.take();
         self.pdf.take();
         self.smtpd.take();
         #[cfg(feature = "ssh")]
@@ -1731,6 +1738,39 @@ fn start_smtp(_factory: &std::sync::Arc<moqui_core::context::ExecutionContextFac
         tracing::error!("smtp_listen_port is set but this build has no SMTP listener (the inbound-smtp feature)");
     }
     NoSmtp
+}
+
+#[cfg(all(feature = "axum", feature = "edge", any(feature = "postgres", feature = "mysql")))]
+type PassSenderSlot = pass_authority::SenderGuard;
+#[cfg(all(
+    feature = "axum",
+    not(feature = "edge"),
+    any(feature = "postgres", feature = "mysql")
+))]
+type PassSenderSlot = NoPassSender;
+
+/// No PASS authority sender in this build.
+#[cfg(all(
+    feature = "axum",
+    not(feature = "edge"),
+    any(feature = "postgres", feature = "mysql")
+))]
+struct NoPassSender;
+
+/// The sender of scripts' calls to a PASS authority over gRPC; with no `edge` feature none, so a call says "gRPC not
+/// built into this host".
+#[cfg(all(feature = "axum", feature = "edge", any(feature = "postgres", feature = "mysql")))]
+fn install_pass_sender() -> PassSenderSlot {
+    pass_authority::install_sender()
+}
+
+#[cfg(all(
+    feature = "axum",
+    not(feature = "edge"),
+    any(feature = "postgres", feature = "mysql")
+))]
+fn install_pass_sender() -> PassSenderSlot {
+    NoPassSender
 }
 
 #[cfg(feature = "pdf")]

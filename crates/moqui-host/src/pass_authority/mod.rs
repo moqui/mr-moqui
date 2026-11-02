@@ -97,9 +97,23 @@ fn server(factory: Weak<ExecutionContextFactory>, mode: Mode) -> PassAuthoritySe
     .max_encoding_message_size(MAX_MESSAGE)
 }
 
-/// Install the sender of scripts' calls to an authority in this process.
-pub(crate) fn install_sender() {
-    moqui_core::pass_authority::install_pass_sender(Arc::new(client::Sender::default()));
+/// Install the sender of scripts' calls to an authority in this process, at server start so a direct endpoint works
+/// with no listener; `edge:` is "local node offline" until this node's edge link runs. The guard clears it, and closes
+/// the direct connections it kept, when the server stops.
+pub(crate) fn install_sender() -> SenderGuard {
+    let sender = Arc::new(client::Sender::default());
+    moqui_core::pass_authority::install_pass_sender(Arc::clone(&sender) as Arc<dyn core::PassSender>);
+    SenderGuard(sender)
+}
+
+/// The installed sender, until the server stops.
+pub(crate) struct SenderGuard(Arc<client::Sender>);
+
+impl Drop for SenderGuard {
+    fn drop(&mut self) {
+        moqui_core::pass_authority::clear_pass_sender();
+        self.0.close();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
