@@ -1,11 +1,12 @@
 # Comms Framework
 
-Status 2026-11-01: P0 (PWA and Web Push), A0–A4 (the extension model and BasicComms), W1–W8 (calls on the embedded
+Status 2026-11-02: P0 (PWA and Web Push), A0–A4 (the extension model and BasicComms), W1–W8 (calls on the embedded
 SFU, call links and guests, TURN and ICE-TCP, recording, captions, cascading media nodes, end-to-end encrypted calls),
 M0 (the audio core), V1–V5 (phone calls: SIP trunks, voicemail, call handling, the registrar, the IVR, queues,
 transfer and merge), C1 (chat actors and bridges), C7 (encrypted rooms and chat keys), C4-SMS (SMS and MMS on Telnyx)
-and C3a (XMPP for local users) built; see [§7.4](#74-built). Next: C4 (WhatsApp, Messenger, Instagram, Telegram), C3b,
-C6a, C6b and C6c.
+and C3a (XMPP for local users) built; see [§7.4](#74-built). XMPP clients reach a local server through an edge node's
+tunnel ports, and C3b's and C6b's split with an edge node is designed (§4.3, [Edge-Node](Edge-Node.md) E9). Next: C4
+(WhatsApp, Messenger, Instagram, Telegram), C3b, C6a, C6b and C6c.
 The decisions are in [§8](#8-decisions). The libraries, reference applications and review findings are in
 [§10](#10-libraries-and-sources).
 
@@ -458,11 +459,22 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     `/xmpp-websocket` (RFC 7395).
   - **C3b, federation:** server to server on 5269 with TLS and SASL EXTERNAL, with dialback (XEP-0220) as the fallback.
     Remote users reach only rooms with federation on (§4.4).
-    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.4, E9). A local server behind an edge node takes s2s
-      on the edge node: the edge node holds the 5269 listener, its TLS and dialback, and checks the remote server;
-      stanzas for local users are queued to the local node over the link, so they wait while it is away, and the local
-      node's stanzas go out through the edge node. Client connections (5222, 5223, `/xmpp-websocket`) are tunneled to
-      the local node until then, and fail while it is away. Room and user state stay on the local node.
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.4, designed in E9). A local server behind an edge
+      node takes s2s on the edge node; room and user state stay on the local node.
+      - The edge node holds the 5269 listener (`xmpp_s2s_port`) and the outbound streams, its own certificate for the
+        domain, SASL EXTERNAL and dialback with its dialback secret, the remote's SRV lookups and the domain checks.
+        These answer with the local node away.
+      - A replicated list of local JIDs (users, rooms with federation on) refuses stanzas to anyone else at the edge.
+      - Messages and subscription presence to local users are queued (`xmppIn`, keyed by the local bare JID) and
+        arrive in order once the local node is back. Iqs are delegated, refused `recipient-unavailable` (wait) while
+        it is away, as are MUC joins; ephemeral presence is dropped.
+      - The local node's stanzas to remote JIDs go up the queue (`xmppOut`, keyed by the remote bare JID) and out on
+        the edge node's streams, so an office that lets out only 443 federates; one not sent in time comes back as an
+        error stanza.
+      - Client connections (5222, 5223) are tunneled to the local node (E9, built), which ends their TLS so channel
+        binding holds; `/xmpp-websocket` rides on web access. They fail while it is away.
+      - Groundwork built in E9: moqui-xmpp's `conn::serve_stream` serves any byte stream, and `Outbound`
+        (`Server::with_outbound`) is the seam the queue plugs into.
   - **Sign-in:** an app password (`UserAppPassword`, as DAV and git use).
     - Today's app-password hash is unsalted SHA-256, which cannot answer SCRAM. An app password made for XMPP also
       stores salted SCRAM-SHA-256 verifiers.
@@ -504,12 +516,16 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     - C7's key endpoints (§4.5).
   - **C6b, federation:** signing keys, event signing, the room DAG, state resolution v2, backfill and media, on 8448 or
     443 with `.well-known` delegation (§6.5).
-    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.2, §5.4). The federation endpoint is public, so on a
-      local server behind an edge node it is reached through the edge node: incoming transactions are checked there
-      (signatures, the origin server's keys, replicated from the local node's view of the room) and queued for the local
-      node, which keeps the room DAG, state resolution and the signing key. The edge node answers key queries from its
-      copy while the local node is away; backfill and state queries need the local node and fail while it is away.
-      The client-server API (C6a) goes to the local node through web access. Design this split with C6b.
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.2, §5.4, designed in E9). The federation endpoint is
+      public, so on a local server behind an edge node it is the edge node's own, served there and never forwarded.
+      - The edge node checks each request's X-Matrix signature against the origin's keys (fetched and cached there)
+        and each transaction's PDU hashes and signatures, queues it (`matrixTxn`, keyed by room id) and answers 200.
+      - The local node keeps the room DAG, the auth rules, state resolution and the private signing key.
+      - Key queries are answered from a copy: the local node signs its key response with a validity of days and
+        replicates it, so the edge node answers while the local node is away.
+      - Backfill, state, `make_join` and `send_join` are delegated and fail while it is away.
+      - Outbound requests are signed on the local node and dialed from there, or sent through the edge node if C6b
+        wants one public address. The client-server API (C6a) goes to the local node through web access.
   - **C6c, appservices:** so mautrix bridges (WhatsApp, Signal, Telegram, Meta, Google Messages and others) attach to
     Moqui as to any homeserver.
     - Each is a separate AGPL process with its own Postgres (D-C4).
@@ -1170,7 +1186,7 @@ every case, so rvoip was not tried. rustpbx stayed a design reference: it was no
 | 443, own address | TCP | TURN over TLS where only HTTPS gets out | `turn_tls443_host` |
 | 49152–65535 | UDP | TURN relays | `turn_relay_ports` |
 | 5222, 5223 | TCP | XMPP clients, STARTTLS and direct TLS | `xmpp_port`, `xmpp_tls_port` |
-| 5269 | TCP | XMPP server to server | `xmpp_s2s_port` |
+| 5269 | TCP | XMPP server to server; behind an edge node, the edge node's (§4.3) | `xmpp_s2s_port` (in the default conf, off; nothing listens until C3b) |
 | 8448 | TCP | Matrix federation, or 443 with `.well-known` | `matrix_federation_port` |
 
 The switch names follow §2's style and are settled when built; the ranges are defaults.

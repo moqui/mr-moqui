@@ -24,6 +24,10 @@
     <default-property name="webapp_web_protection" value="true"/>
     <!-- mr-pass calls its local node as the PASS authority over gRPC down the link (plans/Edge-Node.md §5.5) -->
     <default-property name="pass_backend_url" value="edge:"/>
+    <!-- XMPP (plans/Edge-Node.md §5.4, E9): no XMPP server runs here; XMPP clients' ports tunnel to the local node,
+        which ends their TLS with its certificates for the XMPP domain. Set in .env to take them:
+                                     <default-property name="edge_xmpp_port" value="5222"/>
+                                     <default-property name="edge_xmpp_tls_port" value="5223"/> -->
 
     <!-- Mail (plans/Edge-Node.md §5.4): the MTA in moqui (E5b), the default. The SMTP listener takes port 25 from the
         internet itself (internet mode; smtp_listen_port 25 and smtp_listen_host 0.0.0.0, or :: for IPv6 too, in .env):

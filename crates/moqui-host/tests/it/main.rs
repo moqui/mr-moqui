@@ -52,6 +52,7 @@ mod edge_pass;
 mod edge_setup;
 mod edge_web;
 mod edge_work;
+mod edge_xmpp;
 mod elfinder;
 mod entity_cache;
 mod entity_db;

@@ -20,6 +20,9 @@
 //!   HTTPS listener ([`super::accept`]). A PROXY v2 header with the client's address goes first, then the ClientHello's
 //!   bytes, then both ways as they come. The local node ends the TLS with its own certificate.
 //! - **SSH** ([`super::TUNNEL_SSH`]): each connection to `edge_ssh_tunnel_port`, to the local node's SSH server.
+//! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge_xmpp_port` (STARTTLS) or
+//!   `edge_xmpp_tls_port` (direct TLS), to the local node's XMPP server, which ends the TLS (§5.4). The edge node sees
+//!   no stanza, and channel binding works as on the local node's own ports.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,10 +32,13 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 
 use super::accept::EdgeServer;
-use super::{CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH};
+use super::{CLIENT_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS};
 
 /// SSH connections piped at once.
 const MAX_SSH_TUNNELS: usize = 64;
+/// XMPP client connections piped at once, STARTTLS and direct TLS together. Clients stay connected, so this is a good
+/// part of what a link may hold (768 tunnels and WebSockets); the local node's own limits apply behind it.
+const MAX_XMPP_TUNNELS: usize = 256;
 
 /// Open a tunnel of `kind` down `node`'s link for `client`.
 async fn open(
@@ -136,39 +142,90 @@ async fn relay<S, T>(
     pipe(shutdown, &mut stream, &mut tunnel).await;
 }
 
-/// The node the SSH tunnel goes to: `edge_ssh_tunnel_node`, else the one node linked now; none when several are and
-/// none is named.
-fn ssh_node(server: &EdgeServer) -> Result<String, String> {
-    let named = &server.config().ssh_tunnel_node;
+/// The node a tunnel port's connections go to: the one its property names, else the one node linked now; none when
+/// several are and none is named.
+fn tunnel_node(server: &EdgeServer, named: &str, property: &str) -> Result<String, String> {
     if !named.is_empty() {
-        return Ok(named.clone());
+        return Ok(named.to_string());
     }
     let linked = server.linked_nodes();
     match linked.as_slice() {
         [only] => Ok(only.clone()),
         [] => Err("no local node is linked".to_string()),
-        _ => Err("several local nodes are linked; set edge_ssh_tunnel_node to the one SSH goes to".to_string()),
+        _ => Err(format!(
+            "several local nodes are linked; set {property} to the one it goes to"
+        )),
     }
 }
 
-/// Listen on `bind` and pipe each connection to a linked node's SSH server, until the listeners stop. `guard`, the web
-/// protection, admits each connection first (its deny and exempt rules, bans and per-client limit). A bind that fails is
-/// logged, and the rest of the edge node goes on.
-pub(crate) fn listen_ssh(server: &Arc<EdgeServer>, bind: SocketAddr, guard: Arc<crate::guard::Guard>) {
+/// A port whose connections each go down a link as a byte tunnel of one kind.
+pub(crate) struct TunnelPort {
+    pub(crate) kind: &'static str,
+    pub(crate) bind: SocketAddr,
+    /// The paired node named for it, and the property that names it; an empty name is the one node linked now.
+    pub(crate) node: String,
+    pub(crate) node_property: &'static str,
+    /// Connections piped at once, shared by the ports of one service.
+    pub(crate) permits: Arc<tokio::sync::Semaphore>,
+}
+
+/// The edge node's tunnel ports from its settings: SSH (at most [`MAX_SSH_TUNNELS`] at once), and XMPP's STARTTLS and
+/// direct TLS ports (at most [`MAX_XMPP_TUNNELS`] at once, the two together). All of them also count toward the
+/// link's own limit of tunnels (`accept::MAX_TUNNELS_PER_NODE`).
+pub(crate) fn ports(config: &super::EdgeConfig) -> Vec<TunnelPort> {
+    let mut ports = Vec::new();
+    if let Some(bind) = config.ssh_tunnel {
+        ports.push(TunnelPort {
+            kind: TUNNEL_SSH,
+            bind,
+            node: config.ssh_tunnel_node.clone(),
+            node_property: "edge_ssh_tunnel_node",
+            permits: Arc::new(tokio::sync::Semaphore::new(MAX_SSH_TUNNELS)),
+        });
+    }
+    let xmpp_permits = Arc::new(tokio::sync::Semaphore::new(MAX_XMPP_TUNNELS));
+    for (kind, bind) in [
+        (TUNNEL_XMPP, config.xmpp_tunnel),
+        (TUNNEL_XMPPS, config.xmpp_tls_tunnel),
+    ] {
+        if let Some(bind) = bind {
+            ports.push(TunnelPort {
+                kind,
+                bind,
+                node: config.xmpp_tunnel_node.clone(),
+                node_property: "edge_xmpp_node",
+                permits: Arc::clone(&xmpp_permits),
+            });
+        }
+    }
+    ports
+}
+
+/// Listen on `port`'s address and pipe each connection down a linked node's tunnel of its kind, until the listeners
+/// stop. `guard`, the web protection, admits each connection first (its deny and exempt rules, bans and per-client
+/// limit). A bind that fails is logged, and the rest of the edge node goes on.
+pub(crate) fn listen(server: &Arc<EdgeServer>, port: TunnelPort, guard: Arc<crate::guard::Guard>) {
+    let TunnelPort {
+        kind,
+        bind,
+        node,
+        node_property,
+        permits,
+    } = port;
     let listener = match std::net::TcpListener::bind(bind)
         .and_then(|listener| listener.set_nonblocking(true).map(|()| listener))
         .and_then(tokio::net::TcpListener::from_std)
     {
         Ok(listener) => listener,
         Err(err) => {
-            tracing::error!("The edge SSH tunnel could not bind {bind}: {err}");
+            tracing::error!("The edge {kind} tunnel could not bind {bind}: {err}");
             return;
         }
     };
     let address = listener.local_addr().unwrap_or(bind);
-    tracing::info!("Edge node: the SSH tunnel to a linked local node listens on {address}");
+    tracing::info!("Edge node: the {kind} tunnel to a linked local node listens on {address}");
     let server = Arc::clone(server);
-    let permits = Arc::new(tokio::sync::Semaphore::new(MAX_SSH_TUNNELS));
+    let node: Arc<str> = Arc::from(node);
     tokio::spawn(async move {
         let mut shutdown = server.shutdown();
         loop {
@@ -180,37 +237,37 @@ pub(crate) fn listen_ssh(server: &Arc<EdgeServer>, bind: SocketAddr, guard: Arc<
                 Ok(pair) => pair,
                 Err(err) => {
                     // as out of file descriptors: wait rather than spin on the error
-                    tracing::debug!("Edge SSH tunnel: accept failed: {err}");
+                    tracing::debug!("Edge {kind} tunnel: accept failed: {err}");
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     continue;
                 }
             };
             let Some(admitted) = guard.admit(remote.ip()) else {
-                tracing::debug!("Edge SSH tunnel: web protection refused {remote}");
+                tracing::debug!("Edge {kind} tunnel: web protection refused {remote}");
                 continue;
             };
             let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
-                tracing::warn!("Edge SSH tunnel: {MAX_SSH_TUNNELS} open already; {remote} is closed");
+                tracing::warn!("Edge {kind} tunnel: its most at once are open already; {remote} is closed");
                 continue;
             };
-            let server = Arc::clone(&server);
+            let (server, node) = (Arc::clone(&server), Arc::clone(&node));
             tokio::spawn(async move {
-                let node = match ssh_node(&server) {
+                let node = match tunnel_node(&server, &node, node_property) {
                     Ok(node) => node,
                     Err(err) => {
-                        server.count("moqui.edgelink.refused", TUNNEL_SSH);
-                        tracing::info!("Edge SSH tunnel from {remote} refused: {err}");
+                        server.count("moqui.edgelink.refused", kind);
+                        tracing::info!("Edge {kind} tunnel from {remote} refused: {err}");
                         return;
                     }
                 };
-                let Some(_active) = server.opened(&node, TUNNEL_SSH) else {
+                let Some(_active) = server.opened(&node, kind) else {
                     return;
                 };
-                let mut tunnel = match open(&server, &node, TUNNEL_SSH, remote).await {
+                let mut tunnel = match open(&server, &node, kind, remote).await {
                     Ok(tunnel) => tunnel,
                     Err(err) => {
-                        server.count("moqui.edgelink.refused", TUNNEL_SSH);
-                        tracing::info!("Edge SSH tunnel from {remote}: {err}");
+                        server.count("moqui.edgelink.refused", kind);
+                        tracing::info!("Edge {kind} tunnel from {remote}: {err}");
                         return;
                     }
                 };

@@ -42,6 +42,27 @@ The TLS listeners use `runtime/cert` by the name a client asks for (the domain, 
 else `default`; [Run-Deploy](../Run-Deploy.md)). The WebSocket and uploads are on the HTTPS listener and its
 certificate. In dev an empty `runtime/cert` gets a self-signed `localhost` certificate, which clients will not trust.
 
+## Behind an edge node
+
+A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-Node.md](../../plans/Edge-Node.md)
+§5.4) keeps its XMPP server; the edge node starts none, and its tunnel ports pipe clients down the link.
+
+- On the edge node, `edge_xmpp_port` (STARTTLS, 5222) and `edge_xmpp_tls_port` (direct TLS, 5223) on
+  `edge_xmpp_host`; `edge_xmpp_node` names the local node when more than one is linked. At most 256 tunneled XMPP
+  connections at once.
+- The local node serves each as a connection from the client's address: its blocks for failed sign-ins and its
+  limits per source apply. So the edge node must see the clients' own addresses: behind a TCP load balancer that
+  sends no PROXY header, every client would share one address, one per-source limit (20) and one sign-in block. The TLS ends there, with its certificates for the domain, so SCRAM-SHA-256-PLUS and FAST
+  bound to the TLS session work as on its own ports. It needs no XMPP port of its own for the tunnel; Chat apps shows
+  its own `xmpp_port` and `xmpp_tls_port`, so give them the edge node's numbers.
+- The SRV records name the edge node in public DNS, the local node in the office's.
+- `/xmpp-websocket` and uploads (`xmpp_upload_url`, `https://<domain>`) ride on web access: the XMPP domain must be
+  one of the node's host names on the edge node. In terminate mode the WebSocket has no exporter, so clients sign in
+  with SCRAM-SHA-256 there.
+- While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
+- Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
+  the local node is away ([plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3).
+
 ## Addresses
 
 - A user is `username@<domain>`, in lower case. The characters a localpart cannot hold are escaped as XEP-0106 has
@@ -226,6 +247,9 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   issued; an unknown user's salt the same from a server with the same decoy key; stream management counts and resumption inside SASL2; a
   detached session's text-free push; at most 10 detached sessions a user, and no resumption once unacknowledged
   stanzas were let go.
+- `cargo test -p moqui-host --test it edge_xmpp` (about 4 s, two servers): outside clients through an edge node's
+  tunnel ports, tokio-xmpp over direct TLS and a raw SASL2 client over STARTTLS, both with SCRAM-SHA-256-PLUS on the
+  local node's TLS, trading direct messages; refused with the link down; no XMPP server on the edge node.
 - `cargo test -p moqui-host --test it -- xmpp::` (about 6 s, two servers): an upload PUT answered before its body for
   an unknown token and a wrong length, a body over the slot's size 413, one past `xmpp_upload_seconds` 408, and two PUTs
   at once, the second waiting on the row and then 409; and a real server with tokio-xmpp as one client

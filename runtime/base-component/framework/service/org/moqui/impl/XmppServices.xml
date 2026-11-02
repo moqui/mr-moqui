@@ -759,7 +759,8 @@ along with this software (see the LICENSE.md file). If not, see
             (STARTTLS, xmpp_port) and tlsPort (direct TLS, xmpp_tls_port), each empty while off, and websocketUrl
             (/xmpp-websocket with xmpp_websocket_enabled); and appPasswordList, the user's app passwords
             (UserServices.get#UserAppPasswords) each with xmppReady: one made before XMPP sign-in (C3a) has no SCRAM
-            verifiers, and most apps need a new one.</description>
+            verifiers, and most apps need a new one. Behind an edge node the ports are still this node's own: the edge
+            node's tunnel ports (edge_xmpp_port, edge_xmpp_tls_port) are given the same numbers (docs/interfaces/XMPP.md).</description>
         <out-parameters>
             <parameter name="enabled" type="Boolean"/>
             <parameter name="jid"/><parameter name="server"/><parameter name="port"/><parameter name="tlsPort"/>

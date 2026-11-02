@@ -14,8 +14,10 @@
 
 //! A session over its connection: TCP with STARTTLS (`xmpp_port`), direct TLS with ALPN `xmpp-client`
 //! (`xmpp_tls_port`, XEP-0368), or WebSocket frames (`/xmpp-websocket`, RFC 7395, which moqui-host's HTTP listener
-//! upgrades). The TLS session's exporter is taken here for channel binding; over WebSocket the host takes it at its
-//! HTTPS accept. A connection that drops with resumption on leaves its session detached for the resumption timeout.
+//! upgrades). A stream need not be TCP ([`serve_stream`]): an edge node's tunnel (plans/Edge-Node.md §5.4) is a byte
+//! stream with the client's TLS inside, and server-to-server (C3b) will run over the same. The TLS session's exporter
+//! is taken here for channel binding; over WebSocket the host takes it at its HTTPS accept. A connection that drops
+//! with resumption on leaves its session detached for the resumption timeout.
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -24,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moqui_lib::source_guard::Failure;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::server::TlsStream;
@@ -76,9 +78,14 @@ pub trait FrameIo: Send {
     fn send(&mut self, text: String) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
 }
 
+/// The bytes a session runs over: a TCP connection, or a tunnel down an edge link.
+pub trait ByteStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> ByteStream for T {}
+
 enum Io {
-    Plain(TcpStream),
-    Tls(Box<TlsStream<TcpStream>>),
+    Plain(Box<dyn ByteStream>),
+    Tls(Box<TlsStream<Box<dyn ByteStream>>>),
     Gone,
 }
 
@@ -93,7 +100,11 @@ impl Io {
 
     async fn write(&mut self, text: &str) -> std::io::Result<()> {
         match self {
-            Io::Plain(stream) => stream.write_all(text.as_bytes()).await,
+            // a tunnel's stream may buffer, so each write is flushed; on TCP the flush does nothing
+            Io::Plain(stream) => {
+                stream.write_all(text.as_bytes()).await?;
+                stream.flush().await
+            }
             Io::Tls(stream) => {
                 stream.write_all(text.as_bytes()).await?;
                 stream.flush().await
@@ -117,6 +128,17 @@ struct StreamLink {
 /// Serve a TCP connection: STARTTLS first, or TLS at once when `direct`.
 pub async fn serve_tcp(server: Arc<Server>, stream: TcpStream, peer: SocketAddr, acceptor: TlsAcceptor, direct: bool) {
     let _ = stream.set_nodelay(true);
+    serve_stream(server, stream, peer, acceptor, direct).await;
+}
+
+/// Serve a byte stream from `peer` as a client connection: STARTTLS first, or TLS at once when `direct`. The TLS
+/// ends here, so channel binding has this session's exporter whatever carried the bytes. The caller has admitted
+/// `peer` (its block for failed sign-ins and its connection count) and set any socket options.
+pub async fn serve_stream<S>(server: Arc<Server>, stream: S, peer: SocketAddr, acceptor: TlsAcceptor, direct: bool)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let stream: Box<dyn ByteStream> = Box::new(stream);
     let (io, binding) = if direct {
         match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(stream)).await {
             Ok(Ok(tls)) => {

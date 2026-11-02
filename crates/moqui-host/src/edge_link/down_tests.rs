@@ -249,3 +249,18 @@ async fn a_passthrough_tunnel_is_from_the_client_its_proxy_header_names() {
     );
     assert_eq!(open(&mut send, "smtp").await.err(), Some(http::StatusCode::BAD_REQUEST));
 }
+
+#[tokio::test]
+async fn an_xmpp_tunnel_is_refused_on_a_node_with_no_xmpp_server() {
+    // the STARTTLS and direct TLS kinds (plans/Edge-Node.md §5.4, E9) go only to this node's own XMPP server, which an
+    // app with no factory has not; tests/it/edge_xmpp.rs serves them on a real one
+    let (web, _, _stop) = local("down-xmpp");
+    let mut send = connect(web).await;
+    for kind in [TUNNEL_XMPP, TUNNEL_XMPPS] {
+        assert_eq!(
+            open(&mut send, kind).await.err(),
+            Some(http::StatusCode::NOT_FOUND),
+            "{kind}"
+        );
+    }
+}

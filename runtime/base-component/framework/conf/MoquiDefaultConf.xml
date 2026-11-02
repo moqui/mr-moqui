@@ -293,7 +293,10 @@
         xmpp_upload_seconds is the longest a PUT to an upload slot may take. xmpp_turn_enabled true lets external services
         (XEP-0215) hand a user's XMPP app a TURN credential (never an external user's, EXTERNAL_USER), at most
         xmpp_turn_per_hour a user an hour; off, the feature is not advertised. xmpp_scram_decoy_key derives the SCRAM salts
-        of names that are no user's, so they stay the same across restarts and nodes (generated when unset). -->
+        of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
+        xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
+        behind an edge node it will be the edge node's (plans/Edge-Node.md §5.4). On an edge node (node_role=edge) no XMPP
+        server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. -->
     <default-property name="xmpp_domain" value=""/>
     <default-property name="xmpp_rooms_domain" value=""/>
     <default-property name="xmpp_upload_domain" value=""/>
@@ -311,6 +314,7 @@
     <default-property name="xmpp_turn_enabled" value="false"/>
     <default-property name="xmpp_turn_per_hour" value="30"/>
     <default-property name="xmpp_scram_decoy_key" value="CHANGEME" is-secret="true"/>
+    <default-property name="xmpp_s2s_port" value=""/>
 
     <!-- Voicemail (V2; plans/Comms-Framework.md §5.3, docs/interfaces/Voicemail.md): an inbound call to a user goes to their
         box after its rings (call_ring_seconds by default), when they are in another call, or when they decline it.
@@ -394,11 +398,18 @@
         moqui.edge.EdgeHost rows (System › Edge Clients). edge_offline_page is the location of the page a terminate host
         shows while its node's link is down (503 with Retry-After); empty for the built-in one. edge_ssh_tunnel_port, when
         set, is a TCP port on edge_ssh_tunnel_host (empty for every address) whose connections go down the link to the
-        local node's SSH server; edge_ssh_tunnel_node names the paired node, empty for the only one linked. -->
+        local node's SSH server; edge_ssh_tunnel_node names the paired node, empty for the only one linked. edge_xmpp_port
+        (STARTTLS, 5222) and edge_xmpp_tls_port (direct TLS, 5223), when set, are TCP ports on edge_xmpp_host (empty for
+        every address) whose connections go down the link to the local node's XMPP server, which ends their TLS;
+        edge_xmpp_node names the paired node, empty for the only one linked. -->
     <default-property name="edge_offline_page" value=""/>
     <default-property name="edge_ssh_tunnel_port" value=""/>
     <default-property name="edge_ssh_tunnel_host" value=""/>
     <default-property name="edge_ssh_tunnel_node" value=""/>
+    <default-property name="edge_xmpp_port" value=""/>
+    <default-property name="edge_xmpp_tls_port" value=""/>
+    <default-property name="edge_xmpp_host" value=""/>
+    <default-property name="edge_xmpp_node" value=""/>
     <default-property name="entity_add_missing_runtime" value="false"/>
     <default-property name="entity_add_missing_startup" value="true"/>
     <default-property name="entity_lock_track" value="false"/>

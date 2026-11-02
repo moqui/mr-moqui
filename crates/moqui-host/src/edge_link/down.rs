@@ -19,9 +19,9 @@
 //!   client;
 //! - byte tunnels (`:protocol` `moqui-tunnel`): a passthrough connection, whose PROXY v2 header names the client and
 //!   whose TLS this node ends with the HTTPS listener's own settings, served as a connection to that listener; or a
-//!   connection to this node's SSH server. The kind picks this node's own listener, never an address the edge node
-//!   names. A PROXY header is read here only, never on an open socket. An SSH tunnel is served in process as a
-//!   connection from the client the edge node names;
+//!   connection to this node's SSH server, or an XMPP client's (STARTTLS or direct TLS) to its XMPP server. The kind
+//!   picks this node's own listener, never an address the edge node names. A PROXY header is read here only, never on
+//!   an open socket. An SSH or XMPP tunnel is served in process as a connection from the client the edge node names;
 //! - every request that names a client in [`CLIENT_HEADER`], forwarded from a terminate host, whatever its path or
 //!   content type: this node's web app, as if the client had come straight
 //!   here. The client's address is the one the edge node sends in [`CLIENT_HEADER`], believed only because the request
@@ -43,7 +43,9 @@ use moqui_core::context::ExecutionContextFactory;
 use moqui_lib::sync::lock;
 use tower::ServiceExt as _;
 
-use super::{CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH};
+use super::{
+    CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS,
+};
 use crate::http::{plain, DownServe, ExtendedConnect, Peer};
 
 /// How long a passthrough tunnel's PROXY header may take, and its TLS handshake when the listener has no header
@@ -269,6 +271,12 @@ enum Destination {
     Https(LocalWeb),
     /// The SSH server, as a connection from the client the edge node names.
     Ssh(Arc<ExecutionContextFactory>, SocketAddr),
+    /// The XMPP server, as a client connection from the client the edge node names: direct TLS (`xmpps`) or STARTTLS.
+    Xmpp {
+        factory: Arc<ExecutionContextFactory>,
+        client: SocketAddr,
+        direct: bool,
+    },
 }
 
 /// Take a tunnel when its kind names a listener this node has, and serve it once the stream is open.
@@ -294,6 +302,24 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
                 None => return plain(400, "the edge node named no client"),
             },
         },
+        (TUNNEL_XMPP | TUNNEL_XMPPS, Some(web)) => {
+            let direct = kind == TUNNEL_XMPPS;
+            match web
+                .factory
+                .upgrade()
+                .filter(|factory| crate::xmpp::running(factory, direct))
+            {
+                None => return plain(404, "this node has no XMPP server for this kind of connection"),
+                Some(factory) => match client {
+                    Some(client) => Destination::Xmpp {
+                        factory,
+                        client,
+                        direct,
+                    },
+                    None => return plain(400, "the edge node named no client"),
+                },
+            }
+        }
         _ => return plain(400, "unknown tunnel kind"),
     };
     let upgrade = hyper::upgrade::on(&mut request);
@@ -308,6 +334,18 @@ fn tunnel(mut request: http::Request<Incoming>, web: Option<&LocalWeb>) -> Respo
         match destination {
             Destination::Https(web) => passthrough(stream, web).await,
             Destination::Ssh(factory, client) => ssh(&factory, stream, client),
+            Destination::Xmpp {
+                factory,
+                client,
+                direct,
+            } => {
+                tracing::debug!("edge XMPP tunnel from {client}");
+                if !crate::xmpp::serve_tunneled(&factory, stream, client, direct) {
+                    tracing::debug!(
+                        "edge XMPP tunnel from {client}: not taken (the server stopped, or the source refused)"
+                    );
+                }
+            }
         }
     });
     Response::new(axum::body::Body::empty())

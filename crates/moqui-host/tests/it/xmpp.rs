@@ -49,9 +49,9 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="XMPP_BEN" username="xmpp.ben" userFullName="Ben Xmpp"/>
 </entity-facade-xml>"#;
 
-const WAIT: Duration = Duration::from_secs(5);
+pub(crate) const WAIT: Duration = Duration::from_secs(5);
 
-fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
+pub(crate) fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     let parameters = parameters
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
@@ -68,7 +68,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     out
 }
 
-fn as_user<T>(
+pub(crate) fn as_user<T>(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     username: &str,
     body: impl FnOnce() -> T,
@@ -81,7 +81,7 @@ fn as_user<T>(
     body()
 }
 
-fn get(out: &BTreeMap<String, Value>, key: &str) -> String {
+pub(crate) fn get(out: &BTreeMap<String, Value>, key: &str) -> String {
     out.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -125,6 +125,13 @@ impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
 }
 
 async fn tls(address: SocketAddr) -> (tokio_rustls::client::TlsStream<TcpStream>, Vec<u8>) {
+    let tcp = TcpStream::connect(address).await.unwrap();
+    tls_over(tcp, true).await
+}
+
+/// TLS to `moqui.local` over `tcp`, with ALPN `xmpp-client` when `direct` (XEP-0368), else as after STARTTLS: the
+/// stream and its tls-exporter.
+pub(crate) async fn tls_over(tcp: TcpStream, direct: bool) -> (tokio_rustls::client::TlsStream<TcpStream>, Vec<u8>) {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut config = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_safe_default_protocol_versions()
@@ -132,8 +139,9 @@ async fn tls(address: SocketAddr) -> (tokio_rustls::client::TlsStream<TcpStream>
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AnyCertificate(provider)))
         .with_no_client_auth();
-    config.alpn_protocols = vec![b"xmpp-client".to_vec()];
-    let tcp = TcpStream::connect(address).await.unwrap();
+    if direct {
+        config.alpn_protocols = vec![b"xmpp-client".to_vec()];
+    }
     let name = rustls::pki_types::ServerName::try_from("moqui.local").unwrap();
     let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(name, tcp)
@@ -149,7 +157,7 @@ async fn tls(address: SocketAddr) -> (tokio_rustls::client::TlsStream<TcpStream>
 
 /// tokio-xmpp over direct TLS (XEP-0368) to the test server, with tls-exporter channel binding.
 #[derive(Clone, Debug)]
-struct DirectTls(SocketAddr);
+pub(crate) struct DirectTls(pub(crate) SocketAddr);
 
 impl ServerConnector for DirectTls {
     type Stream = tokio::io::BufStream<tokio_rustls::client::TlsStream<TcpStream>>;
@@ -176,7 +184,7 @@ impl ServerConnector for DirectTls {
     }
 }
 
-fn stanza(xml: &str) -> Stanza {
+pub(crate) fn stanza(xml: &str) -> Stanza {
     let element: Element = xml.parse().unwrap_or_else(|err| panic!("{xml}: {err}"));
     match element.name() {
         "message" => Stanza::Message(Message::try_from(element).unwrap()),
@@ -194,7 +202,7 @@ fn element(stanza: Stanza) -> Element {
 }
 
 /// The next stanza the client gets that `wanted` takes.
-async fn next_where(client: &mut Client, wanted: impl Fn(&Element) -> bool) -> Element {
+pub(crate) async fn next_where(client: &mut Client, wanted: impl Fn(&Element) -> bool) -> Element {
     let until = tokio::time::Instant::now() + WAIT;
     let mut seen = Vec::new();
     loop {
@@ -215,16 +223,21 @@ async fn next_where(client: &mut Client, wanted: impl Fn(&Element) -> bool) -> E
 }
 
 /// A SASL2 client over raw TLS, reading the server's stream with moqui-xmpp's own reader.
-struct Raw {
+pub(crate) struct Raw {
     stream: tokio_rustls::client::TlsStream<TcpStream>,
     reader: StreamReader,
-    exporter: Vec<u8>,
+    pub(crate) exporter: Vec<u8>,
     got: Vec<Element>,
 }
 
 impl Raw {
     async fn open(address: SocketAddr) -> Raw {
         let (stream, exporter) = tls(address).await;
+        Raw::over(stream, exporter).await
+    }
+
+    /// A stream to `moqui.local` over a TLS connection made already, read up to its features.
+    pub(crate) async fn over(stream: tokio_rustls::client::TlsStream<TcpStream>, exporter: Vec<u8>) -> Raw {
         let mut raw = Raw {
             stream,
             reader: StreamReader::new(1 << 20),
@@ -236,12 +249,12 @@ impl Raw {
         raw
     }
 
-    async fn write(&mut self, text: &str) {
+    pub(crate) async fn write(&mut self, text: &str) {
         self.stream.write_all(text.as_bytes()).await.unwrap();
         self.stream.flush().await.unwrap();
     }
 
-    async fn until(&mut self, wanted: impl Fn(&Element) -> bool) -> Element {
+    pub(crate) async fn until(&mut self, wanted: impl Fn(&Element) -> bool) -> Element {
         let until = tokio::time::Instant::now() + WAIT;
         loop {
             if let Some(at) = self.got.iter().position(&wanted) {

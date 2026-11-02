@@ -14,6 +14,7 @@
 
 //! XMPP when this build has no `xmpp` feature: nothing starts, and a set `xmpp_domain` is an error in the log.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
@@ -25,4 +26,24 @@ pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode>
         tracing::error!("xmpp_domain is set but this build has no XMPP server (the xmpp feature)");
     }
     None
+}
+
+/// No XMPP server runs in this build.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn running(_factory: &ExecutionContextFactory, _direct: bool) -> bool {
+    false
+}
+
+/// No XMPP server takes a tunneled stream in this build; it is dropped.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn serve_tunneled<S>(
+    _factory: &ExecutionContextFactory,
+    _stream: S,
+    _client: SocketAddr,
+    _direct: bool,
+) -> bool
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    false
 }
