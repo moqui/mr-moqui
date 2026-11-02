@@ -315,6 +315,7 @@ System-message receive:
 | --- | --- |
 | empty or `SmatLogin` | a logged-in user, then authorization of the receive service. No user is 401 or 403 |
 | `SmatHmacSha256` | header HMAC-SHA256, Base64, then anonymous login |
+| `SmatHmacSha512` | header hex HMAC-SHA512 of the body (either case, an optional `sha512=` prefix: Authorize.Net's `X-ANET-Signature`), then anonymous login. No timestamp or replay window; the receive service keeps each event once (`store#ReceivedSystemMessage`) |
 | `SmatHmacSha256Timestamp` | `t` / `v1`. Skew 10 seconds, max age 300 seconds. Replay cache `moqui.security.hmac.replay`, type `distributed`, live 300 seconds |
 | `SmatNone` | anonymous login, no check |
 

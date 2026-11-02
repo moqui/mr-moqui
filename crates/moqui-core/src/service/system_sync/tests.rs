@@ -464,7 +464,61 @@ fn an_hmac_receive_is_refused_when_the_remote_has_no_shared_secret() {
 }
 
 #[test]
+fn an_hmac_sha512_receive_checks_the_hex_signature_in_either_case_with_or_without_its_prefix() {
+    let setup = setup("hmac-512");
+    let _entered = setup.context.enter();
+    install(&setup);
+    let facade = &setup.facade;
+    {
+        let _authz = setup.context.disable_authz();
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageType",
+            &[("systemMessageTypeId", "SmsgTestIn512")],
+        );
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", "SmsgAnet"),
+                ("messageAuthEnumId", "SmatHmacSha512"),
+                ("authHeaderName", "X-ANET-Signature"),
+                ("sharedSecret", "s3cret"),
+            ],
+        );
+    }
+    let body = r#"{"notificationId":"n-1","eventType":"net.authorize.payment.authcapture.created"}"#;
+    let signed = super::message::hmac_sha512_hex("s3cret", body);
+    let receive = |signature: &str, sent: &str| {
+        let mut request = crate::web::WebRequest::new("POST", "/rest/sm/SmsgTestIn512/SmsgAnet".to_string());
+        request.set_header("X-ANET-Signature", signature.to_string());
+        request.body = sent.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &["SmsgTestIn512".to_string(), "SmsgAnet".to_string()])
+            .unwrap();
+        crate::web::output_status()
+    };
+    // Authorize.Net sends `sha512=` and upper-case hex
+    let header = format!("sha512={}", signed.to_ascii_uppercase());
+    assert_eq!(receive(&header, body), 200, "{}", errors(&setup.context));
+    assert_eq!(receive(&signed, body), 200, "{}", errors(&setup.context));
+    // another body, another key, an empty or a SHA-256 signature are refused before anything is kept
+    assert_eq!(receive(&header, &body.replace("n-1", "n-2")), 403);
+    let other_key = super::message::hmac_sha512_hex("other", body);
+    assert_eq!(receive(&format!("sha512={other_key}"), body), 403);
+    assert_eq!(receive("sha512=", body), 403);
+    assert_eq!(receive(&super::message::hmac_base64_for_test("s3cret", body), body), 403);
+    assert!(!super::message::sha512_hex_matches_for_test(&signed[..64], "s3cret", body));
+}
+
+#[test]
 fn hmac_values_match_the_java_web_utilities() {
+    // HMAC-SHA512 of the usual test vector, hex (SmatHmacSha512).
+    assert_eq!(
+        super::message::hmac_sha512_hex("key", "The quick brown fox jumps over the lazy dog"),
+        "b42af09057bac1e2d41708e48a902e09b5ff7f12ab428a4fe86653c73dd248fb\
+         82f948a549f7b791a5b41915ee4d1ec3935357e4e2317250d0372afa2ebeeb3a"
+    );
     // HMAC-SHA256 of the usual test vector, base64 as hmacSha256Base64 gives it.
     assert_eq!(
         super::message::hmac_base64_for_test("key", "The quick brown fox jumps over the lazy dog"),

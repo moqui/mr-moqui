@@ -207,7 +207,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="send" noun="SystemMessageRest" type="rust" location="moqui_core::service::system_sync::message::send_rest">
         <description>POST the message text to SystemMessageRemote.sendUrl, expanded with remoteMessageId,
             systemMessageTypeId, and systemMessageRemoteId, with the auth of SystemMessageRemote.messageAuthEnumId (basic
-            auth for SmatLogin or none set, an HMAC header for SmatHmacSha256 and SmatHmacSha256Timestamp, nothing for
+            auth for SmatLogin or none set, an HMAC header for SmatHmacSha256, SmatHmacSha512 and SmatHmacSha256Timestamp, nothing for
             SmatNone). The body is Rust (crates/moqui-core/src/service/system_sync/message.rs).</description>
         <implements service="org.moqui.impl.SystemMessageServices.send#SystemMessage"/>
     </service>

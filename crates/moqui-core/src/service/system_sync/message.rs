@@ -13,7 +13,8 @@
  */
 
 //! `send#SystemMessageRest`, from its Groovy script, and the `/rest/sm` receive, from `WebFacadeImpl.handleSystemMessage`.
-//! The HMAC values are `WebUtilities.hmacSha256Base64`, `hmacSha256Hex`, and `hmacSha256TimestampHeader`.
+//! The HMAC values are `WebUtilities.hmacSha256Base64`, `hmacSha256Hex`, and `hmacSha256TimestampHeader`; MR Moqui adds
+//! `SmatHmacSha512` (hex HMAC-SHA512 of the body, as Authorize.Net's `X-ANET-Signature: sha512=<HEX>`).
 
 use std::collections::BTreeMap;
 
@@ -24,7 +25,7 @@ use indexmap::IndexMap;
 use moqui_lib::codec::hex_encode;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
-use sha2::Sha256;
+use sha2::{Sha256, Sha512};
 
 use super::{add_error, has_error, param_text, text_of};
 use crate::context::{Error, ExecutionContext};
@@ -49,6 +50,7 @@ const SKEW_MILLIS: i64 = 10_000;
 const MAX_AGE_MILLIS: i64 = 300_000;
 
 type HmacSha256 = Hmac<Sha256>;
+type HmacSha512 = Hmac<Sha512>;
 
 /// `send#SystemMessageRest`: POST the message text to the remote's `sendUrl` and read the remote message ID from a
 /// JSON reply of `{systemMessageIdList: [...]}`. A failure is a message error, so `send#ProducedSystemMessage` puts the
@@ -108,7 +110,7 @@ pub(super) fn send_rest(
                 format!("Basic {}", STANDARD.encode(credentials)),
             ));
         }
-        "SmatHmacSha256" | "SmatHmacSha256Timestamp" => {
+        "SmatHmacSha256" | "SmatHmacSha256Timestamp" | "SmatHmacSha512" => {
             let header_name = field(&remote, "authHeaderName");
             let secret = field(&remote, "sharedSecret");
             if header_name.is_empty() || secret.is_empty() {
@@ -117,10 +119,10 @@ pub(super) fn send_rest(
                 ));
                 return Ok(BTreeMap::new());
             }
-            let value = if auth == "SmatHmacSha256" {
-                hmac_base64(&secret, &body)
-            } else {
-                timestamp_header(&secret, &body, super::now_millis() / 1000)
+            let value = match auth.as_str() {
+                "SmatHmacSha256" => hmac_base64(&secret, &body),
+                "SmatHmacSha512" => hmac_sha512_hex(&secret, &body),
+                _ => timestamp_header(&secret, &body, super::now_millis() / 1000),
             };
             headers.push((header_name, value));
         }
@@ -179,8 +181,9 @@ pub(super) fn send_rest(
 
 /// The `sm` transition of `rest.xml`: `/rest/sm/{systemMessageTypeId}/{systemMessageRemoteId}/{remoteMessageId}` with
 /// the message as the request body. The remote's `messageAuthEnumId` picks the check: a logged-in user authorized for
-/// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, or SmatHmacSha256Timestamp
-/// with a five minute window and a replay cache), or nothing (SmatNone). The reply is `{systemMessageIdList: [...]}`.
+/// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, SmatHmacSha512, or
+/// SmatHmacSha256Timestamp with a five minute window and a replay cache), or nothing (SmatNone). The reply is
+/// `{systemMessageIdList: [...]}`.
 pub(crate) fn receive_rest_message(request: &WebRequest, extra: &[String]) -> Result<bool, Error> {
     let [type_id, remote_id, more @ ..] = extra else {
         web::send_json_error(400, "No message type or remote system specified");
@@ -267,6 +270,30 @@ fn receive_checked(
             };
             let signature = hmac_base64(&secret, text);
             if !same_text(header, &signature) {
+                tracing::warn!("System message receive HMAC verify did not match for remote {remote_id}");
+                web::send_json_error(403, &format!("HMAC verify failed for remote system {remote_id}"));
+                return Ok(());
+            }
+            crate::user::login_anonymous()?;
+        }
+        // Hex HMAC-SHA512 of the body, in any case, after an optional `<algorithm>=` (Authorize.Net's `sha512=`). It
+        // has no timestamp, so no replay window: the receive service keeps each provider event once.
+        "SmatHmacSha512" => {
+            let Some((header_name, secret)) = hmac_settings(&remote, remote_id) else {
+                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                return Ok(());
+            };
+            let Some(header) = request.header(&header_name).filter(|value| !value.is_empty()) else {
+                tracing::warn!(
+                    "System message receive HMAC verify no header {header_name} value found, for remote {remote_id}"
+                );
+                web::send_json_error(
+                    403,
+                    &format!("No HMAC header {header_name} found for remote system {remote_id}"),
+                );
+                return Ok(());
+            };
+            if !sha512_hex_matches(header, &secret, text) {
                 tracing::warn!("System message receive HMAC verify did not match for remote {remote_id}");
                 web::send_json_error(403, &format!("HMAC verify failed for remote system {remote_id}"));
                 return Ok(());
@@ -407,6 +434,25 @@ fn hmac_hex(secret: &str, message: &str) -> String {
     hex_encode(&hmac_bytes(secret, message))
 }
 
+/// Lower-case hex HMAC-SHA512(`secret`, `message`): System Message `SmatHmacSha512`, the secret's text as the key.
+pub fn hmac_sha512_hex(secret: &str, message: &str) -> String {
+    match HmacSha512::new_from_slice(secret.as_bytes()) {
+        Ok(mut mac) => {
+            mac.update(message.as_bytes());
+            hex_encode(&mac.finalize().into_bytes())
+        }
+        // As hmac_bytes: not reached, and an empty signature matches nothing.
+        Err(_) => String::new(),
+    }
+}
+
+/// Whether a `SmatHmacSha512` header (`<hex>` or `<algorithm>=<hex>`, in either case) signs `body`.
+fn sha512_hex_matches(header: &str, secret: &str, body: &str) -> bool {
+    let incoming = header.rsplit_once('=').map_or(header, |(_, hex)| hex).trim();
+    let expected = hmac_sha512_hex(secret, body);
+    !expected.is_empty() && same_text(&incoming.to_ascii_lowercase(), &expected)
+}
+
 /// The Stripe-style `t=<epochSeconds>,v1=<hex>` header of `SmatHmacSha256Timestamp`.
 pub fn timestamp_header(secret: &str, message: &str, epoch_seconds: i64) -> String {
     format!(
@@ -459,6 +505,11 @@ fn first_use(key: &str) -> Result<bool, Error> {
     }
     // One atomic check and store: two requests with the same signature cannot both see it unused.
     Ok(cache.put_if_absent(key.to_string(), Value::Bool(true))?)
+}
+
+#[cfg(test)]
+pub(super) fn sha512_hex_matches_for_test(header: &str, secret: &str, body: &str) -> bool {
+    sha512_hex_matches(header, secret, body)
 }
 
 #[cfg(test)]
