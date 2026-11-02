@@ -160,9 +160,20 @@ async fn a_forwarded_request_never_reaches_the_link_calls_whatever_its_content_t
     }
     let (status, body) = ask(&mut send, "/echo", Some("203.0.113.9:1")).await;
     assert_eq!(status, 405, "{body}");
-    // the edge node's own calls: the link's service
+    // nor the PASS authority's calls, whose client must be the edge node (plans/Edge-Node.md §5.5)
+    for call in ["Call", "Download", "Upload"] {
+        let path = format!("/moqui.pass.v1.PassAuthority/{call}");
+        let (status, _) = ask(&mut send, &path, Some("203.0.113.9:1")).await;
+        assert_eq!(status, 404, "{path}");
+    }
+    // the edge node's own calls: the link's service, and the PASS authority's
     for call in ["Ping", "Deliver", "Delegate"] {
         let path = format!("/moqui.edge.v1.LocalLink/{call}");
+        let (status, _) = ask(&mut send, &path, None).await;
+        assert_eq!(status, 200, "{path}");
+    }
+    for call in ["Call", "Download", "Upload"] {
+        let path = format!("/moqui.pass.v1.PassAuthority/{call}");
         let (status, _) = ask(&mut send, &path, None).await;
         assert_eq!(status, 200, "{path}");
     }
@@ -173,6 +184,8 @@ async fn a_forwarded_request_never_reaches_the_link_calls_whatever_its_content_t
     assert_eq!(status, 404);
     // gRPC elsewhere, or anything else with no client named, is neither
     let (status, _) = ask(&mut send, "/echo", None).await;
+    assert_eq!(status, 404);
+    let (status, _) = ask(&mut send, "/moqui.pass.v1.Other/Call", None).await;
     assert_eq!(status, 404);
 }
 

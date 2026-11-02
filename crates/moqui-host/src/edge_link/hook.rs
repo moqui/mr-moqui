@@ -132,6 +132,11 @@ pub(crate) fn start(
         }
     }
     moqui_core::edge::install_edge_link(Arc::clone(&hook) as Arc<dyn EdgeLink>);
+    // scripts' calls to a PASS authority over gRPC, direct or down this edge node's link (plans/Edge-Node.md §5.5)
+    crate::pass_authority::install_sender();
+    if let Some((server, _)) = &server {
+        *lock(&CURRENT_SERVER) = Arc::downgrade(server);
+    }
     match server {
         Some((server, acceptor)) => {
             let loading = Arc::clone(&server);
@@ -146,6 +151,15 @@ pub(crate) fn start(
         }
         None => Started::default(),
     }
+}
+
+/// This process's edge node, while it runs: what a PASS frontend's `edge:` calls go down (`crate::pass_authority`).
+/// One per process, as the edge link hook is.
+static CURRENT_SERVER: Mutex<Weak<EdgeServer>> = Mutex::new(Weak::new());
+
+/// The edge node of this process, while it runs.
+pub(crate) fn edge_server() -> Option<Arc<EdgeServer>> {
+    lock(&CURRENT_SERVER).upgrade()
 }
 
 /// The listeners have stopped: let go of the app this node's down connections served, and of replication's notes.

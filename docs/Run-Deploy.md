@@ -632,8 +632,8 @@ the Dev AIDE loads there.
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
 open ([plan](../plans/Edge-Node.md)). For now this is the link, web access and the ways work crosses it: pairing, the
-link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication. No
-mail, chat, calls or PASS use them yet.
+link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication, and
+mr-pass's calls to the local node as its PASS authority. No mail, chat or calls use them yet.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -687,6 +687,12 @@ mail, chat, calls or PASS use them yet.
   replication. System › Edge Node shows the outbox and the sets, with Pause and Resync; Edge Clients shows each node's
   queue and sets. The edge node's database now holds the queue: unpause its backup job
   (`backup_EmbeddedDatabase_daily`).
+- **PASS** ([plan](../plans/Edge-Node.md) §5.5). With `pass_backend_url=edge:` (set in MoquiEdgeConf.xml), the edge
+  node's mr-pass calls its local node as the authority over gRPC down the link; the local node needs no public authority
+  and no PASS client secret for it. On the local node, the edge node is the client `pass_edge_client` (default `edge`):
+  set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
+  `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
+  edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
 
 ## Cluster
 
@@ -773,6 +779,11 @@ In local mode, mr-pass runs in the same runtime as Mantle and makes in-process c
 `pass_backend_url` is not set. Provisioning, mail, media, workers and imports are in mr-pass
 [docs/Deployment.md](../runtime/component/mr-pass/docs/Deployment.md). This section covers the remote layout.
 
+The remote calls go over REST, which every package has and which is Lite's default, or over gRPC where the package has
+it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an [edge node](#edge-node)
+to its local node over the edge link (`pass_backend_url=edge:`). `pass_backend_transport` chooses (`rest`, `grpc`, or
+empty for automatic); the settings are in Deployment.md.
+
 ### The authority
 
 1. Run a BOSS server: `./moq component-get mr-boss`, which brings mr-mantle. It can be one server or a
@@ -787,6 +798,10 @@ In local mode, mr-pass runs in the same runtime as Mantle and makes in-process c
    | `pass_client_<id>_sites` | The site IDs it may serve, comma-separated |
    | `pass_client_<id>_callback` | The exact SSO callback, such as `https://forum.example.com/account/Sso` |
 
+   For gRPC clients, set `pass_authority_grpc_enabled=true`: the gRPC listener (`pass_authority_grpc_port`, 4317) then
+   takes PASS calls, with the client's ID and secret in metadata and TLS from the HTTPS listener's certificate. With no
+   certificate in `cert/` the listener falls back to plain h2c, and then takes PASS calls only on a loopback address
+   (an error is logged otherwise), unless `pass_authority_grpc_insecure=true` says to send the secrets in clear.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
    (Deployment.md, Provisioning).
 4. When web protection is on (`webapp_trusted_proxies` set, or `webapp_web_protection=true`), exempt the PASS servers,

@@ -30,6 +30,7 @@
 //!   of the edge node's [`proto::link_server::Link`]; on **down** the roles flip and the edge node is the client of the
 //!   local node's [`proto::local_link_server::LocalLink`] and of its web app ([`down`]).
 //! - **Work** (§5.2). Delegated service calls and queued items go down (`LocalLink.Delegate`, `LocalLink.Deliver`),
+//!   and so do mr-pass's calls of the PASS authority (`moqui.pass.v1.PassAuthority`, §5.5, `crate::pass_authority`),
 //!   the local node's outbox and replicated sets go up (`Link.Deliver`, `Link.Replicate`); the rows, receipts and
 //!   change notes are `moqui_core::edge`, the delivery loops [`queue`] and [`replicate`].
 //! - **Web access** (§5.3). The edge node answers for the paired nodes' public host names ([`hosts`]). A terminate
@@ -293,7 +294,7 @@ pub(crate) fn jitter() -> f64 {
 /// An HTTP/2 connection's sender as a tower service, which the generated gRPC clients take: the up connection on the
 /// local node and the down connection on the edge node, each a connection the other end dialed or answered.
 #[derive(Clone, Debug)]
-pub(crate) struct H2Channel(hyper::client::conn::http2::SendRequest<tonic::body::Body>);
+pub(crate) struct H2Channel(pub(crate) hyper::client::conn::http2::SendRequest<tonic::body::Body>);
 
 impl tower::Service<http::Request<tonic::body::Body>> for H2Channel {
     type Response = http::Response<hyper::body::Incoming>;
@@ -309,7 +310,8 @@ impl tower::Service<http::Request<tonic::body::Body>> for H2Channel {
     }
 }
 
-fn origin() -> http::Uri {
+/// The `:authority` of the link's gRPC calls, the PASS authority's on a down connection too.
+pub(crate) fn origin() -> http::Uri {
     http::Uri::from_static(ORIGIN)
 }
 

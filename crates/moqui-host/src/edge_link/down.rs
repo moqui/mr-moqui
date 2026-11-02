@@ -14,7 +14,9 @@
 
 //! The local node's side of the down connection (plans/Edge-Node.md §5.1, §5.3): one HTTP/2 server with extended
 //! CONNECT (RFC 8441) that serves the edge node
-//! - the link's own gRPC calls (`content-type: application/grpc` on `/moqui.edge.v1.LocalLink/`, with no client named);
+//! - the link's own gRPC calls (`content-type: application/grpc` on `/moqui.edge.v1.LocalLink/`, with no client named),
+//!   and the PASS authority's on `/moqui.pass.v1.PassAuthority/` the same way (§5.5), for which the edge node is the
+//!   client;
 //! - byte tunnels (`:protocol` `moqui-tunnel`): a passthrough connection, whose PROXY v2 header names the client and
 //!   whose TLS this node ends with the HTTPS listener's own settings, served as a connection to that listener; or a
 //!   connection to this node's SSH server. The kind picks this node's own listener, never an address the edge node
@@ -110,7 +112,8 @@ pub(crate) fn builder(
 
 type Answer = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
 
-/// The down connection's service: `grpc` for the link's calls, `web` for the rest.
+/// The down connection's service: `grpc` for the edge node's calls (the link's and the PASS authority's), `web` for the
+/// rest.
 pub(crate) fn service<G>(
     grpc: G,
     web: Option<LocalWeb>,
@@ -149,17 +152,19 @@ where
     })
 }
 
-/// The path prefix of the link's own calls on the down connection.
-const LINK_CALLS: &str = "/moqui.edge.v1.LocalLink/";
+/// The path prefixes of the calls the edge node makes on the down connection: the link's own, and the PASS authority's
+/// (plans/Edge-Node.md §5.5, `crate::pass_authority`), whose client is the edge node.
+const LINK_CALLS: [&str; 2] = ["/moqui.edge.v1.LocalLink/", crate::pass_authority::PATH_PREFIX];
 
-/// A call of the link's own: gRPC on [`LINK_CALLS`], with no client named (checked before).
+/// A call of the edge node's own: gRPC on one of [`LINK_CALLS`], with no client named (checked before).
 fn is_link_call<B>(request: &http::Request<B>) -> bool {
     let grpc = request
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.starts_with("application/grpc"));
-    grpc && request.uri().path().starts_with(LINK_CALLS)
+    let path = request.uri().path();
+    grpc && LINK_CALLS.iter().any(|prefix| path.starts_with(prefix))
 }
 
 fn protocol<B>(request: &http::Request<B>) -> Option<&str> {

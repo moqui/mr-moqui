@@ -307,13 +307,20 @@ async fn connect_down(
     let mut role = vec![ROLE_DOWN];
     role.extend_from_slice(&generation.to_be_bytes());
     let stream = dial_role(prepared, config.connect_timeout, &role).await?;
-    let grpc = LocalLinkServer::new(LocalService {
+    let factory = config.web.as_ref().map(super::down::LocalWeb::factory);
+    let link = LocalLinkServer::new(LocalService {
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
-        factory: config.web.as_ref().map(super::down::LocalWeb::factory),
+        factory: factory.clone(),
     })
     .max_decoding_message_size(super::MAX_MESSAGE)
     .max_encoding_message_size(super::MAX_MESSAGE);
+    // the PASS authority for the edge node's mr-pass, the link its client (plans/Edge-Node.md §5.5); it runs on the
+    // server's factory, so only with a web app
+    let mut grpc = tonic::service::Routes::new(link);
+    if let Some(factory) = factory {
+        grpc = grpc.add_service(crate::pass_authority::link_server(factory));
+    }
     // the link's calls, and this node's web app and tunnels (plans/Edge-Node.md §5.3)
     let builder = super::down::builder(config.keepalive, config.web.as_ref());
     let service = super::down::service(grpc, config.web.clone());

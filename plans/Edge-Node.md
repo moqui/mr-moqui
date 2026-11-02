@@ -1,10 +1,12 @@
 # Edge Node
 
-Status 2026-11-01: E3 built: delegate, queue and replicate over the link, after E2's web access; no comms use them yet.
-Every question in [§8](#8-decisions) is decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and
-the build cost is in §5.6. What E1 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As
-built"), [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is
-in [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built").
+Status 2026-11-01: E4 built: mr-pass reaches its authority over gRPC, direct or on the link, with REST kept; after E3's
+delegate, queue and replicate and E2's web access; no comms use the link yet. Every question in [§8](#8-decisions) is
+decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
+built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
+[§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
+[§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
+built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built").
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -634,12 +636,68 @@ release.
 - **Plan text to revise:** `design-shop.md:1333-1337` ("no new REST or GraphQL server") and
   `implementation-forum.md:16` ("one configured HTTP authority").
 
+**As built (E4).**
+- **Proto.** `crates/moqui-host/proto/pass.proto`, package `moqui.pass.v1`, a file of its own because the direct
+  listener serves it too; generated and checked in as `edge.proto` is (`src/pass_authority/proto/`,
+  `MOQUI_REGENERATE_PROTO=1`). `Call`, `Download` (metadata or the error first, then 64 KiB chunks) and `Upload` (the
+  call, the file's metadata, its bytes; over 10 MiB the REST API's 422). JSON input and result, the REST API's error
+  envelope with its status; typed messages may come later (decision 7). A request message is at most 2 MiB, an answer
+  16 MiB.
+- **Authority seam.** Mantle's `script/PassAuthority.js` `handle(p)` runs after the transport's checks: the client's
+  sites (`clientRegistered(..., verified)`), the delegation, the write rule for a call with no browser session (a
+  write needs a delegation unless it is an account action, an opt-out or a bearer link's token write), routed
+  operations only, the schema's fields, `account.<action>` and the SSO back channel, the error envelope. `PassApi.js`
+  is the REST adapter (headers, CSRF, the JSON body, the bearer as `/^Bearer (\S+)$/`, the `sso`/`sso-complete`
+  redirects); gRPC runs `mantle.pass.PassAuthorityServices.handle#Call` (`transaction="ignore"`). The framework added
+  `check#Client`, and `requesterKey` reads `ec.user.context.passRequester`, set by `handle` for a registered client.
+- **REST answers that changed** in the refactor, since a credential is now checked in `handle`, after the route: with
+  a credential that is not good (from a registered client), an unknown route is 404 (was 401), a non-POST or unknown
+  account action 404 (was 401), and a body that is not a JSON object 422 (was 401); the SSO front channel ignores the
+  bearer (it was checked); an empty or malformed `Bearer` is no credential, so it no longer skips the CSRF check or
+  the write rule. A bearer from an unregistered client is still 401 first.
+- **Session handle.** The second factor's state stays in the authority's framework session (`moqui.server.HttpSession`
+  and its expiry). The handle is `p1.<session id>.<MAC>`, the MAC under a key derived from `session_cookie_key` for
+  this use only (as the MCP requestState's), so it is never a `moqui.session` cookie (`session::bind_id` binds the id
+  it names). A session made for an account action is marked with its client and site (`passClientId`, `passSiteId`);
+  a handle of another client or site, or of no PASS session, gets a new session. Once a delegation is issued the
+  session's user is cleared (not `logoutUser`, which would sign the user out everywhere), so a handle carries only a
+  sign-in in progress. The SSO back channel binds no session. REST still carries the session as its cookie and keeps
+  it signed in in the frontend's server-side session, as before E4.
+- **Host.** `src/grpc_listen.rs` (the `grpc` feature) is the host's gRPC listener, the OTLP routes and the PASS
+  authority's (the `edge` feature) on one port: the receiver's address when that is on, else
+  `pass_authority_grpc_host`:`pass_authority_grpc_port` (4317); TLS with the HTTPS certificates, else h2c, and then the
+  PASS routes only on a loopback address or with `pass_authority_grpc_insecure=true` (an error logged otherwise). A
+  direct call names its client in `x-pass-client` (or `client_id`) with `x-pass-client-secret`; `check#Client` runs on
+  the request pool first, for an upload on its first part before the file is read; wrong secrets are counted per
+  address, refused for the rest of a 10-minute window after 10, the first and tenth logged. On a local node's down
+  connection the service shares `LocalLink`'s `Routes` and rule (no client named, or it is not reached); its client is
+  `pass_edge_client` (default `edge`), with `pass_client_<id>_sites` and `_callback` and no secret; pairing writes
+  nothing for it. Calls run `pass_authority_service` (default Mantle's) on the request pool; they are not fenced by
+  the link generation.
+- **Core and scripts.** `moqui_core::pass_authority`: `serve`, `serve_download` (the file the service names, its
+  location never sent), `check_client`, the handle, and the `PassSender` slot, which the host fills: `grpc://` and
+  `grpcs://` on one kept HTTP/2 connection each (WebPKI roots only), `edge:` down the only link
+  (`EdgeServer::only_link`, shared with delegated calls). Scripts use `ec.service.passAuthority(endpoint)`; with no
+  sender (Lite, Dev) it throws "gRPC not built into this host".
+- **mr-pass.** `service/pass/Transport.js` has the REST adapter (the old code) and the gRPC one behind the same
+  functions and error kinds. The transport rule: `pass_backend_transport` `rest` or `grpc` forces one; empty is gRPC
+  when the host has the binding and a gRPC endpoint is set (`pass_backend_url=edge:`, or `pass_backend_grpc_url`),
+  else REST, so a frontend upgraded to Maximal does not move to an authority port nobody opened. `grpc` with no URL
+  dials the `pass_backend_url` host on 4317; `edge:` takes gRPC only. A gRPC GET sends text values and no nulls, as
+  REST's query does. `pass_backend_web_url` is the authority's web address for the SSO front channel.
+- **Tests.** `tests/it/edge_pass.rs`, with a stub authority service: Call, Download and Upload direct and on the link,
+  the session handle across a rotation, refused for another site and another client, never a cookie, without a user
+  once a delegation is issued; a wrong secret refused, an upload before its file; then "local node offline".
+  Mantle's `PassAuthority.spec.js` runs `handle` and the servlet; mr-pass's `Transport.spec.js` the transport rule.
+  Mantle's own `handle#Call` through the host is not tested there: loading mr-mantle in a host test takes longer than
+  a fast test allows. The two-runtime compatibility check over each transport is in mr-pass's Deployment.md.
+
 ### 5.6 MoquiEdgeConf.xml and packaging
 
 Built in E1 as `runtime/conf/MoquiEdgeConf.xml`: `instance_purpose` production, `node_role=edge`, web protection, and
 the entity facade's crypt-pass. The properties of what is not built yet are comments in it, each with its phase:
-`channels_webhooks_enabled` (E6), the rtc and TURN ports (E7), and `pass_backend_url=edge:` (E4; set now, it would send
-mr-pass's REST calls to an address that does not exist). E3 filled in its `<edge>` element: the queue's limits, with the
+`channels_webhooks_enabled` (E6) and the rtc and TURN ports (E7). E4 set `pass_backend_url=edge:`, so mr-pass calls
+its local node over the link. E3 filled in its `<edge>` element: the queue's limits, with the
 delegated services and replicated sets as commented examples for the comms phases. The draft below is the target. The
 listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP domain, LMTP from
 the gateway.

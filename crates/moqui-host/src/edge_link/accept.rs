@@ -860,6 +860,28 @@ impl EdgeServer {
         }
     }
 
+    /// The only local node whose link is up, with its down connection's sender and the link's generation: what a
+    /// delegated call or a PASS authority call goes down. [`OFFLINE`] at once while no link is up, and refused while
+    /// several are (plans/Edge-Node.md decision 1).
+    ///
+    /// [`OFFLINE`]: moqui_core::edge::OFFLINE
+    pub(crate) fn only_link(
+        &self,
+    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
+        let registry = lock(&self.registry);
+        let mut up = registry.links.iter().filter_map(|(node, link)| {
+            let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
+            Some((node.clone(), down.send.clone(), link.generation))
+        });
+        let first = up.next().ok_or_else(|| Error::new(moqui_core::edge::OFFLINE))?;
+        if up.next().is_some() {
+            return Err(Error::new(
+                "several local nodes are linked; a call down the link needs one (plans/Edge-Node.md decision 1)",
+            ));
+        }
+        Ok(first)
+    }
+
     /// A Ping down `node`'s down connection: its round trip.
     pub(crate) async fn ping_local(&self, node: &str) -> Result<Duration, String> {
         let (send, generation) = {
@@ -888,21 +910,7 @@ impl EdgeServer {
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
-        let offline = || Error::new(moqui_core::edge::OFFLINE);
-        let (node, send, generation) = {
-            let registry = lock(&self.registry);
-            let mut up = registry.links.iter().filter_map(|(node, link)| {
-                let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
-                Some((node.clone(), down.send.clone(), link.generation))
-            });
-            let first = up.next().ok_or_else(offline)?;
-            if up.next().is_some() {
-                return Err(Error::new(
-                    "several local nodes are linked; a delegated call needs one (plans/Edge-Node.md decision 1)",
-                ));
-            }
-            first
-        };
+        let (node, send, generation) = self.only_link()?;
         let mut client = super::local_link_client(send);
         let request = DelegateRequest {
             generation,

@@ -198,7 +198,7 @@ pub(crate) async fn listen(
         .local_addr()
         .map_err(|err| fail(format!("bound listener has no address: {err}")))?;
     #[cfg(feature = "grpc")]
-    let grpc = crate::monitor::grpc::bind_address(&factory, address)
+    let grpc = crate::grpc_listen::bind_address(&factory, address, https.is_some())
         .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
     let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
     let tls_config = https.as_ref().map(|https| Arc::clone(&https.config));
@@ -333,7 +333,7 @@ pub(crate) async fn listen(
     let signal = tokio::spawn(shutdown(stop, shutdown_tx));
     #[cfg(feature = "grpc")]
     let grpc = grpc.map(|(bind, tls)| {
-        tokio::spawn(crate::monitor::grpc::serve(
+        tokio::spawn(crate::grpc_listen::serve(
             Arc::clone(&grpc_factory),
             bind,
             tls,

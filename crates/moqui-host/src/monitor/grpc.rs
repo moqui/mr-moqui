@@ -1,12 +1,11 @@
 //! The OTLP/gRPC receiver (plans/Monitoring.md, Ingest): the trace, logs and metrics collector services on tonic,
 //! on `<telemetry><receiver grpc-port>` (4317 by default), opened only when `grpc-enabled="true"`. It shares the
 //! HTTP receiver's ingest keys, rate limit, concurrency budget, decoder and queue (`receiver.rs`); a refusal is the
-//! matching gRPC status. With the HTTPS listener's certificates it serves TLS (ALPN h2), else plain h2c. The edge
-//! guard admits each connection as it does for HTTP.
+//! matching gRPC status. The services are routes of the host's gRPC listener (`crate::grpc_listen`), which serves TLS
+//! with the HTTPS listener's certificates (ALPN h2), else plain h2c, and admits each connection by the edge guard as
+//! for HTTP.
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::telemetry::ingest::Signal;
@@ -24,21 +23,19 @@ use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{Tra
 use opentelemetry_proto::tonic::collector::trace::v1::{
     ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::TcpListener;
 use tonic::codec::CompressionEncoding;
 use tonic::{Request, Response, Status};
 
 use super::receiver::{self, Refusal};
 
-/// The address the gRPC listener bound, for `Server::grpc_address`.
-#[derive(Default)]
-pub struct GrpcAddress(pub std::sync::Mutex<Option<SocketAddr>>);
+/// Whether the OTLP/gRPC receiver is on: `<telemetry><receiver grpc-enabled="true">` with the receiver enabled.
+pub(crate) fn enabled(factory: &ExecutionContextFactory) -> bool {
+    factory.conf_setting("telemetry/receiver", "grpc-enabled") == "true" && receiver::receiver_enabled(factory)
+}
 
-/// Where to listen, when the receiver and its gRPC side are on: `grpc-bind` (the HTTP listener's address when
-/// empty) and `grpc-port`.
+/// Where the receiver listens, when it is on: `grpc-bind` (the HTTP listener's address when empty) and `grpc-port`.
 pub(crate) fn bind_address(factory: &ExecutionContextFactory, http: SocketAddr) -> Option<SocketAddr> {
-    if factory.conf_setting("telemetry/receiver", "grpc-enabled") != "true" || !receiver::receiver_enabled(factory) {
+    if !enabled(factory) {
         return None;
     }
     let port = factory.conf_number("telemetry/receiver", "grpc-port", 4317_u16);
@@ -55,162 +52,31 @@ pub(crate) fn bind_address(factory: &ExecutionContextFactory, http: SocketAddr) 
     Some(SocketAddr::new(ip, port))
 }
 
-/// Bind `bind` and serve until `stop`. A bind failure is logged and the HTTP listeners go on without gRPC.
-pub(crate) async fn serve(
-    factory: Arc<ExecutionContextFactory>,
-    bind: SocketAddr,
-    tls: Option<Arc<rustls::ServerConfig>>,
-    guard: Arc<crate::guard::Guard>,
-    stop: impl std::future::Future<Output = ()>,
-) {
-    let listener = match TcpListener::bind(bind).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            tracing::error!("could not bind the OTLP/gRPC receiver on {bind}: {error}");
-            return;
-        }
-    };
-    let local = listener.local_addr().unwrap_or(bind);
-    *moqui_lib::sync::lock(&factory.extension(|_| GrpcAddress::default()).0) = Some(local);
-    tracing::info!(
-        "OTLP/gRPC receiver on {local}{}",
-        if tls.is_some() { " (TLS)" } else { "" }
-    );
-    let acceptor = tls.map(|config| {
-        // gRPC is HTTP/2 only; the HTTPS listener's config offers http/1.1.
-        let mut config = (*config).clone();
-        config.alpn_protocols = vec![b"h2".to_vec()];
-        tokio_rustls::TlsAcceptor::from(Arc::new(config))
-    });
-    let limit = receiver::body_limit(&factory);
+/// `routes` with the collector services, held to the receiver's `body-limit`.
+pub(crate) fn add_routes(
+    routes: tonic::service::Routes,
+    factory: &Arc<ExecutionContextFactory>,
+) -> tonic::service::Routes {
+    let limit = receiver::body_limit(factory);
     let otlp = Arc::new(Otlp {
-        factory: Arc::clone(&factory),
+        factory: Arc::clone(factory),
     });
-    let routes = tonic::service::Routes::new(
-        TraceServiceServer::from_arc(Arc::clone(&otlp))
-            .accept_compressed(CompressionEncoding::Gzip)
-            .max_decoding_message_size(limit),
-    )
-    .add_service(
-        LogsServiceServer::from_arc(Arc::clone(&otlp))
-            .accept_compressed(CompressionEncoding::Gzip)
-            .max_decoding_message_size(limit),
-    )
-    .add_service(
-        MetricsServiceServer::from_arc(otlp)
-            .accept_compressed(CompressionEncoding::Gzip)
-            .max_decoding_message_size(limit),
-    );
-    let (connections, incoming) = tokio::sync::mpsc::channel::<std::io::Result<Connection>>(64);
-    let accepting = tokio::spawn(accept(listener, acceptor, guard, connections));
-    let incoming = futures_util::stream::unfold(incoming, |mut incoming| async move {
-        incoming.recv().await.map(|connection| (connection, incoming))
-    });
-    if let Err(error) = tonic::transport::Server::builder()
-        .add_routes(routes)
-        .serve_with_incoming_shutdown(incoming, stop)
-        .await
-    {
-        tracing::error!("the OTLP/gRPC receiver stopped: {error}");
-    }
-    accepting.abort();
-}
-
-/// Accept connections, each TLS handshake in a task of its own so a slow client does not hold up the others.
-async fn accept(
-    listener: TcpListener,
-    acceptor: Option<tokio_rustls::TlsAcceptor>,
-    guard: Arc<crate::guard::Guard>,
-    connections: tokio::sync::mpsc::Sender<std::io::Result<Connection>>,
-) {
-    loop {
-        let (stream, remote) = match listener.accept().await {
-            Ok(pair) => pair,
-            Err(error) => {
-                tracing::debug!("OTLP/gRPC accept failed: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                continue;
-            }
-        };
-        let Some(slot) = guard.admit(remote.ip()) else {
-            continue;
-        };
-        let _ = stream.set_nodelay(true);
-        let connections = connections.clone();
-        let acceptor = acceptor.clone();
-        tokio::spawn(async move {
-            let io: Box<dyn Io> = match acceptor {
-                None => Box::new(stream),
-                Some(acceptor) => {
-                    match tokio::time::timeout(std::time::Duration::from_secs(10), acceptor.accept(stream)).await {
-                        Ok(Ok(stream)) => Box::new(stream),
-                        Ok(Err(error)) => {
-                            tracing::debug!("OTLP/gRPC TLS handshake with {remote} failed: {error}");
-                            return;
-                        }
-                        Err(_) => return,
-                    }
-                }
-            };
-            let _ = connections
-                .send(Ok(Connection {
-                    io,
-                    remote,
-                    _slot: slot,
-                }))
-                .await;
-        });
-    }
-}
-
-trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
-
-/// A plain or TLS connection, holding its edge-guard slot while it is open.
-struct Connection {
-    io: Box<dyn Io>,
-    remote: SocketAddr,
-    _slot: crate::guard::ConnectionSlot,
-}
-
-impl tonic::transport::server::Connected for Connection {
-    type ConnectInfo = SocketAddr;
-
-    fn connect_info(&self) -> SocketAddr {
-        self.remote
-    }
-}
-
-impl AsyncRead for Connection {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut *self.io).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for Connection {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut *self.io).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut *self.io).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut *self.io).poll_shutdown(cx)
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut *self.io).poll_write_vectored(cx, bufs)
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.io.is_write_vectored()
-    }
+    routes
+        .add_service(
+            TraceServiceServer::from_arc(Arc::clone(&otlp))
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(limit),
+        )
+        .add_service(
+            LogsServiceServer::from_arc(Arc::clone(&otlp))
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(limit),
+        )
+        .add_service(
+            MetricsServiceServer::from_arc(otlp)
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(limit),
+        )
 }
 
 struct Otlp {

@@ -332,14 +332,38 @@ pub fn bind(
     visitor_cookie: Option<&str>,
     https: bool,
 ) -> Result<SessionGuard, Error> {
+    let presented = presented_id(session_cookie)?;
+    // A request with no moqui cookie may come from a client that keeps none, such as a crawler, which
+    // would leave a Visitor and a Visit behind on every request. Its visit starts when the session
+    // cookie comes back or a user logs in.
+    let keeps_cookies = [session_cookie, visitor_cookie]
+        .iter()
+        .any(|cookie| cookie.is_some_and(|value| !value.trim().is_empty()));
+    bind_presented(factory, presented.as_deref(), keeps_cookies, visitor_cookie, https)
+}
+
+/// Bind this thread to the factory session `id`, already authenticated by the caller with a MAC of its own (the PASS
+/// authority's session handle, `crate::pass_authority`, which is never a `moqui.session` cookie); `None`, or an id with
+/// no session, mints a new one. Its visit starts when the id comes back or a user logs in, as for [`bind`].
+pub fn bind_id(factory: &Arc<ExecutionContextFactory>, id: Option<&str>, https: bool) -> Result<SessionGuard, Error> {
+    let id = id.filter(|id| is_session_id(id));
+    bind_presented(factory, id, id.is_some(), None, https)
+}
+
+fn bind_presented(
+    factory: &Arc<ExecutionContextFactory>,
+    presented: Option<&str>,
+    keeps_cookies: bool,
+    visitor_cookie: Option<&str>,
+    https: bool,
+) -> Result<SessionGuard, Error> {
     if !ExecutionContext::is_entered() {
         return Err(Error::new("no execution context"));
     }
     if with_session(|session| session.bound_id.is_some()) {
         return Err(Error::new("a web session is already bound"));
     }
-    let presented = presented_id(session_cookie)?;
-    let (id, created) = resolve_id(factory, presented.as_deref())?;
+    let (id, created) = resolve_id(factory, presented)?;
     touch_session(factory, &id);
     install_thread(factory, &id)?;
     if created {
@@ -348,12 +372,6 @@ pub fn bind(
             scripts.fire("sessionCreated", session_event(&id));
         }
     }
-    // A request with no moqui cookie may come from a client that keeps none, such as a crawler, which
-    // would leave a Visitor and a Visit behind on every request. Its visit starts when the session
-    // cookie comes back or a user logs in.
-    let keeps_cookies = [session_cookie, visitor_cookie]
-        .iter()
-        .any(|cookie| cookie.is_some_and(|value| !value.trim().is_empty()));
     let visit = if keeps_cookies {
         ensure_visit(factory, visitor_cookie)
     } else {

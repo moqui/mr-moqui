@@ -33,21 +33,27 @@ function recordAttempt(p) {
 /* Compare digests so the comparison time does not depend on how much of a secret matched. */
 const secretMatches = (given, expected) =>
     !!given && !!expected && digest(given) === digest(expected)
-function clientRegistered(clientId, clientSecret, siteId) {
+/* `verified`: the caller already authenticated this client another way, the host's PassAuthority over gRPC (the
+   secret on its direct listener, or the edge link's identity); only its sites are checked then. Server code only. */
+function clientRegistered(clientId, clientSecret, siteId, verified) {
     const sites = String(
         System.getProperty('pass_client_' + clientId + '_sites') || '',
     ).split(',')
     return (
         !!clientId &&
-        secretMatches(
-            clientSecret,
-            System.getProperty('pass_client_' + clientId + '_secret'),
-        ) &&
+        (verified === true ||
+            secretMatches(
+                clientSecret,
+                System.getProperty('pass_client_' + clientId + '_secret'),
+            )) &&
         (siteId == null || sites.includes(siteId))
     )
 }
-/* A registered PASS deployment forwards its browser's address; everyone else is limited by their own. */
+/* A registered PASS deployment forwards its browser's address; everyone else is limited by their own. Mantle's
+   PassAuthority sets the key for a call from a registered client (passRequester), which over gRPC has no request. */
 function requesterKey() {
+    const preset = ec.user.context.passRequester
+    if (preset) return String(preset)
     const request = ec.web?.request
     if (!request) return 'service'
     const clientId = request.getHeader('x-pass-client') || '',
@@ -268,7 +274,14 @@ function startSession(p) {
     return { authenticated: true, verified: verified() }
 }
 function registeredClient(p) {
-    if (!clientRegistered(p.clientId, p.clientSecret, p.siteId))
+    if (
+        !clientRegistered(
+            p.clientId,
+            p.clientSecret,
+            p.siteId,
+            p.clientVerified === true,
+        )
+    )
         fail('Unauthorized', 'Unregistered deployment or site')
 }
 function issueDelegation(p) {

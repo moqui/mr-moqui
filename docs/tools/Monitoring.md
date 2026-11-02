@@ -128,8 +128,9 @@ with an `artifact` override and the receiver limits written out:
 **In.** `POST /v1/traces`, `/v1/logs` and `/v1/metrics` take OTLP/HTTP as `application/x-protobuf` or
 `application/json`, gzip allowed, and answer as OTLP does, with partial success. In a build with the `grpc` feature
 (Enterprise and Maximal), `<telemetry><receiver grpc-enabled="true">` also opens OTLP/gRPC on `grpc-port` (4317) at
-`grpc-bind` (the HTTP listener's address by default); the dev conf turns it on. It is TLS with the HTTPS listener's
-certificates, else plain h2c, takes gzip, and answers refusals as gRPC statuses (`UNAUTHENTICATED`,
+`grpc-bind` (the HTTP listener's address by default); the dev conf turns it on. The port is the host's gRPC listener,
+which the PASS authority's gRPC shares when that is on ([Edge-Node](../../plans/Edge-Node.md) §5.5). It is TLS with the
+HTTPS listener's certificates, else plain h2c, takes gzip, and answers refusals as gRPC statuses (`UNAUTHENTICATED`,
 `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INVALID_ARGUMENT`; `OUT_OF_RANGE` over the body limit).
 
 - Each sender needs an ingest key: Monitor › Sources › Create key, which shows the token once. Send it as

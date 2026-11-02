@@ -46,6 +46,7 @@ mod component_load;
 mod create_or_update_race;
 mod devaide;
 mod edge_link;
+mod edge_pass;
 mod edge_web;
 mod edge_work;
 mod elfinder;

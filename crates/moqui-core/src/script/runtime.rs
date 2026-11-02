@@ -60,6 +60,7 @@ mod helpers;
 mod metadata_tests;
 mod native_tools;
 mod notification;
+mod pass_host;
 mod screen_host;
 mod search;
 mod services;

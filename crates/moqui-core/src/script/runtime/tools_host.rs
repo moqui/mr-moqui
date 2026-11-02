@@ -2739,6 +2739,7 @@ pub(super) fn install<'js>(
     method!("restSend", rest_send);
     super::web_host::methods(ctx, &host)?;
     super::archive_host::methods(ctx, &host)?;
+    super::pass_host::methods(ctx, &host)?;
     method!("runTokenCommand", run_token_command);
     method!("testConfConnection", test_conf_connection);
     method!("runSqlCountConf", run_sql_count_conf);
@@ -2763,6 +2764,8 @@ pub(super) fn install<'js>(
     )?;
     // the servlet API's request and response for web scripts, ec.web.request and ec.web.response (web_host.rs)
     super::web_host::install(ctx, &host)?;
+    // a PASS frontend's calls to its authority over gRPC, ec.service.passAuthority (pass_host.rs)
+    super::pass_host::install(ctx, &host)?;
     // change sets, version notes and the rest of what drives use (files_host.rs)
     super::files_host::install(ctx)
 }

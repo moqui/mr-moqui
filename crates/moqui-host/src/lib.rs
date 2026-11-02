@@ -55,6 +55,9 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+// The host's gRPC listener: the OTLP receiver's and the PASS authority's routes.
+#[cfg(feature = "grpc")]
+mod grpc_listen;
 #[cfg(feature = "print")]
 pub mod ipp;
 pub mod logging;
@@ -64,6 +67,13 @@ pub mod lsp;
 mod monitor;
 #[cfg(feature = "pdf")]
 pub mod pdf;
+// The PASS authority over gRPC (plans/Edge-Node.md §5.5): direct on the gRPC listener and on the edge link, and the
+// sender of scripts' calls to one; with gRPC but no edge feature, an off stub for the listener.
+#[cfg(feature = "edge")]
+mod pass_authority;
+#[cfg(all(feature = "grpc", not(feature = "edge")))]
+#[path = "pass_authority_off.rs"]
+mod pass_authority;
 // The PROXY header of the SMTP listener and of the edge link's passthrough tunnels.
 #[cfg(any(feature = "inbound-smtp", feature = "edge"))]
 mod proxy_header;
@@ -305,14 +315,15 @@ impl Server {
         }
     }
 
-    /// The OTLP/gRPC receiver's address, when this build has the `grpc` feature and `<telemetry><receiver
-    /// grpc-enabled="true">` is set.
+    /// The host's gRPC listener's address (`grpc_listen`), when this build has the `grpc` feature and a service on it
+    /// is on: the OTLP/gRPC receiver (`<telemetry><receiver grpc-enabled="true">`) or the PASS authority
+    /// (`pass_authority_grpc_enabled=true`).
     #[must_use]
     pub fn grpc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "grpc")]
         {
             let factory = self.factory.as_ref()?;
-            *lock(&factory.extension(|_| monitor::grpc::GrpcAddress::default()).0)
+            *lock(&factory.extension(|_| grpc_listen::GrpcAddress::default()).0)
         }
         #[cfg(not(feature = "grpc"))]
         {
