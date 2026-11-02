@@ -63,6 +63,16 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
    second for room in the media queue. One that still does not arrive (the recorder ended, the media node is gone) is
    logged with the recording's id.
 
+**On an edge node** ([Edge-Node](../../plans/Edge-Node.md) §5.4), the media node of a local node's calls, the recorder
+runs there, and the rows and files are the local node's. Each closed segment is queued to the local node as an item of
+the link's queue kind `callRecording`, with the file as the item's content (the spool file goes once queued), keyed by
+the recording and the file's name; the recorder's end (`note#RecorderEnd`) goes in the same conversation, the
+recording's id, so it never overtakes a segment. The local node's `CallRecordingServices.receive#EdgeRecording` (run
+only for the queue, as `_edge_`) stores each with `store#RecordingSegment` from the queue's copy (`fromLocation`, which
+`store#RecordingFile` takes only under `dbresource://moqui/edge/content/in/`). While the link is down they wait in the
+edge node's queue, kept 14 days. An edge node's segments are at most 32 MiB (`MoquiEdgeConf.xml` sets
+`call_recording_segment_mb` 16), under the queue's 64 MiB content cap.
+
 **Failure ends the recording, not the call.** A full queue, a file error or a store error stops the recorder: its
 partial files are removed, and `note#RecorderEnd` marks the recording failed with `lastErrorText`. Reaching
 `call_recording_max_mb` stops it with that as its text. Either way every leg is told the recording stopped, and the
@@ -142,5 +152,7 @@ logged.
 - `./moq test framework --spec CallRecording`: the policy, the notice per leg (a late joiner too), the acknowledgement
   and withdrawal pauses with every earlier answer kept as history, access, retention, a recorder failure, the drive
   quota (a segment that fills it stops the recording, a full drive refuses a start that records once there is room),
-  and recovery after a media node restart.
+  and recovery after a media node restart, and an edge node's segment and end through the queue (only for `_edge_`, from
+  the queue's copy only).
+- `cargo test -p moqui-host --test it edge_call`: a call recorded on an edge node, its segments stored on the local node.
 - `./moq test basic-comms --spec BasicCommsCalls`: the Recordings screen and its file transition.

@@ -38,6 +38,10 @@
 //!   connection, before any TLS, and the SSH tunnel port's go down as byte tunnels ([`tunnel`]).
 //! - **Generations.** Each new up connection bumps the local node's link generation on the edge node; the connections of
 //!   an older one are closed and their calls refused, so a stale connection cannot answer or acknowledge.
+//! - **Calls** (§5.4, E7). An edge node with call media is a media node of its local node's calls: its Hello names its
+//!   media address and TURN URLs, its Hello answer carries its TURN secret, and the local node keeps its
+//!   `CallMediaNode` row from the link ([`dial`]). A message on a cluster topic for the node at the other end (call
+//!   signaling) goes over `Link.Signal` and `LocalLink.Signal` ([`signal`], `moqui_core::edge::signal`).
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
 //!   30 s ([`dial`]); a refused node waits up to 10 minutes.
 //!
@@ -63,6 +67,7 @@ pub mod pair;
 pub(crate) mod proto;
 mod queue;
 mod replicate;
+mod signal;
 mod store;
 pub(crate) mod tunnel;
 pub(crate) mod web;
@@ -216,6 +221,8 @@ pub(crate) fn hello(
         public_names: public_names.to_vec(),
         instance_id: instance_id.to_string(),
         node_name: node_name.to_string(),
+        media_address: String::new(),
+        turn_urls: Vec::new(),
     }
 }
 
@@ -230,6 +237,9 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         features: hello.features.clone(),
         capabilities: hello.capabilities.clone(),
         public_names: hello.public_names.clone(),
+        instance_id: hello.instance_id.clone(),
+        media_address: hello.media_address.clone(),
+        turn_urls: hello.turn_urls.clone(),
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }

@@ -646,7 +646,8 @@ An edge node is a small server in the cloud in front of a local server, which di
 open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
 edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
 beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
-their PASS authority. Calls, phones (SIP) and XMPP do not go through it yet.
+their PASS authority, and the media of calls, with TURN, whose recordings come back to the local node. Phones (SIP) and
+XMPP do not go through it yet.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
@@ -726,6 +727,13 @@ node's own names.
   The apps, `/notws` and the other sockets, DAV and git over HTTPS work in both. The local node's logs and web
   protection see the client's address. If a proxy is in front of the edge node, name it in `webapp_trusted_proxies`;
   on an edge node a client-IP header with no trusted proxies is ignored.
+- **Calls.** The edge node is the media node of the local node's calls ([WebRTC](interfaces/WebRTC.md#the-edge-node-as-media-node)):
+  `conf/MoquiEdgeConf.xml` turns on its media socket (`rtc_media_port` 10000 on every address) and TURN (`turn_port`
+  3478); set `rtc_public_address` in its `.env` and open UDP 10000, UDP and TCP 3478 and the relay range
+  (`turn_relay_ports`). The local node needs no media port: it keeps the edge node's media row from the link, sends the
+  calls' signaling over it, signs TURN credentials with the edge node's secret (told on the link,
+  [TURN](interfaces/TURN.md#on-an-edge-node)) and stores the recordings the edge node queues
+  ([Call-Recording](interfaces/Call-Recording.md)).
 - **SSH.** Set `edge_ssh_tunnel_port` on the edge node (and `edge_ssh_tunnel_host`, empty for every address). The edge
   node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
   local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than

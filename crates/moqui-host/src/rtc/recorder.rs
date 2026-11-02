@@ -25,6 +25,12 @@
 //! Files are spooled under `runtime/tmp/call-recording/<callRecordingId>/`. A closed segment goes to a store thread
 //! (a bounded queue) that hands it to `store#RecordingSegment`, which moves it to `dbresource://` and writes its rows.
 //!
+//! On an edge node (plans/Edge-Node.md §5.4, E7) the recording's rows are its local node's: each closed segment is
+//! queued to the local node as an item of kind [`QUEUE_KIND`] with the file as its content (the spool file goes once
+//! it is queued), and its end (`note#RecorderEnd`) under the same conversation key, the recording's id, so it never
+//! overtakes a segment; the local node's `receive#EdgeRecording` stores them. Its segments are at most
+//! [`EDGE_SEGMENT_MB`], well under the queue's content cap.
+//!
 //! A failure ends the recording, never the call: a queue that overflowed (more than [`MAX_DROPPED`] frames dropped),
 //! a file that could not be written, a store that failed or fell behind. The segments already closed are stored, the
 //! partial files removed, and `note#RecorderEnd` marks the recording failed with the reason; the call's media goes on.
@@ -68,6 +74,11 @@ const BATCH: usize = 256;
 const NOTICE_WAIT: Duration = Duration::from_millis(500);
 /// How often the recorder asks the room's browsers for keyframes while a video track waits for one.
 const KEYFRAME_ASK: Duration = Duration::from_secs(1);
+/// The edge link's queue kind of an edge node's recordings (MoquiDefaultConf.xml edge).
+pub(crate) const QUEUE_KIND: &str = "callRecording";
+/// The largest segment an edge node's recorder makes, in MiB: half the queue's content cap
+/// (`moqui_core::edge::queue::MAX_CONTENT_BYTES`), so a segment that runs past its limit by a frame still fits.
+pub(crate) const EDGE_SEGMENT_MB: u64 = 32;
 
 /// The recorder's limits, from the properties.
 #[derive(Debug, Clone, Copy)]
@@ -77,6 +88,12 @@ pub(crate) struct Limits {
 }
 
 impl Limits {
+    /// On an edge node a segment is at most [`EDGE_SEGMENT_MB`], which its queue carries to the local node.
+    pub(crate) fn for_edge(mut self) -> Self {
+        self.record.max_segment_bytes = self.record.max_segment_bytes.min(EDGE_SEGMENT_MB * 1024 * 1024);
+        self
+    }
+
     pub(crate) fn from_properties(property: &dyn Fn(&str) -> String, mixed_only: bool) -> Self {
         let number = |name: &str, default: u64| {
             property(name)
@@ -151,6 +168,9 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
         "start" => {
             let paused = body.get("paused").and_then(Json::as_bool).unwrap_or(false);
             let mut limits = Limits::from_properties(&moqui_lib::env::get_prop_or_env, text("kind") == "mixed");
+            if moqui_core::edge::settings(factory).edge_node {
+                limits = limits.for_edge();
+            }
             // what is left of the owner's drive quota, when it has one: the recording stops there as at its size limit
             if let Some(left) = body.get("maxBytes").and_then(Json::as_u64) {
                 limits.record.max_total_bytes = limits.record.max_total_bytes.min(left.max(1));
@@ -490,6 +510,13 @@ fn sanitize(id: &str) -> String {
 }
 
 fn end_service(factory: &Arc<ExecutionContextFactory>, id: &str, outcome: &str, text: &str) {
+    if moqui_core::edge::settings(factory).edge_node {
+        let payload = serde_json::json!({"op": "end", "callRecordingId": id, "outcome": outcome, "errorText": text});
+        if let Err(err) = queue_to_local(factory, id, &format!("{id}/end"), &payload, None) {
+            tracing::error!("call recording {id}: its end ({outcome}) was not queued for the local node: {err}");
+        }
+        return;
+    }
     let parameters = std::collections::BTreeMap::from([
         ("callRecordingId".to_string(), Value::string(id)),
         ("outcome".to_string(), Value::string(outcome)),
@@ -616,7 +643,68 @@ fn store_one(factory: &Arc<ExecutionContextFactory>, id: &str, job: &Job) -> Res
     if let Some(source) = s.track.source {
         parameters.insert("source".to_string(), Value::string(source.as_str()));
     }
+    if moqui_core::edge::settings(factory).edge_node {
+        return queue_segment(factory, id, job, parameters);
+    }
     call_service(factory, STORE_SERVICE, parameters)
+}
+
+/// On an edge node: the segment queued for the local node, with its file as the item's content, then the spool file
+/// removed. Keyed by the recording and the file's name, so a segment queued twice is one item.
+fn queue_segment(
+    factory: &Arc<ExecutionContextFactory>,
+    id: &str,
+    job: &Job,
+    mut parameters: std::collections::BTreeMap<String, Value>,
+) -> Result<(), String> {
+    parameters.remove("tempPath");
+    let content =
+        std::fs::read(&job.path).map_err(|err| format!("the spooled segment {}: {err}", job.path.display()))?;
+    let fields: serde_json::Map<String, Json> = parameters
+        .iter()
+        .map(|(name, value)| (name.clone(), moqui_lib::json::to_json(value)))
+        .collect();
+    let payload = serde_json::json!({"op": "segment", "parameters": fields});
+    let key = format!("{id}/{}", job.segment.file);
+    let queued = queue_to_local(factory, id, &key, &payload, Some(content));
+    if let Err(err) = std::fs::remove_file(&job.path) {
+        tracing::warn!(
+            "call recording {id}: the spooled segment {} was not removed: {err}",
+            job.path.display()
+        );
+    }
+    queued
+}
+
+/// On an edge node: an item of [`QUEUE_KIND`] for the local node (the only one paired), in the recording's
+/// conversation, so its segments and its end arrive in order.
+fn queue_to_local(
+    factory: &Arc<ExecutionContextFactory>,
+    id: &str,
+    key: &str,
+    payload: &Json,
+    content: Option<Vec<u8>>,
+) -> Result<(), String> {
+    let item = moqui_core::edge::queue::NewItem {
+        kind: QUEUE_KIND.to_string(),
+        conversation_key: format!("callRecording:{id}"),
+        idempotency_key: key.to_string(),
+        payload: Some(payload.to_string()),
+        content,
+        content_location: None,
+    };
+    let owner = Arc::clone(factory);
+    factory
+        .service_pools()
+        .call(move || {
+            let facade = owner
+                .entity()
+                .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
+            moqui_core::edge::queue::enqueue(&owner, &facade, None, &item)
+                .map(drop)
+                .map_err(|err| moqui_core::context::Error::new(err.message().to_string()))
+        })
+        .map_err(|err| err.message().to_string())
 }
 
 impl Store for ServiceStore {

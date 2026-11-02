@@ -52,11 +52,17 @@
         On the local node, set channels_public_url to this node's address. -->
     <default-property name="channels_webhooks_enabled" value="true"/>
 
-    <!-- Not built yet; each is turned on by the phase that uses it:
-        E7, calls (rtc_public_address in .env, needed when binding every address):
-                                     <default-property name="rtc_media_port" value="10000"/>
-                                     <default-property name="rtc_media_host" value="0.0.0.0"/>
-                                     <default-property name="turn_port" value="3478"/> -->
+    <!-- Calls (plans/Edge-Node.md §5.4, E7): this node is the media node of its local node's calls, and their TURN.
+        Set rtc_public_address in .env to this node's public address: the media socket binds every address, and does not
+        start without it. The local node keeps this node's CallMediaNode row from the link (this node registers none),
+        signs its legs' TURN credentials with this node's turn_auth_secret (told on the link), and sends the calls'
+        signaling over the link; media events and captions run on the local node, and recordings are queued to it, in
+        segments of at most call_recording_segment_mb (32 at most here, under the queue's 64 MiB content cap). Open UDP
+        10000 (media), UDP and TCP 3478 (TURN) and the relay range turn_relay_ports (49152-65535). -->
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="call_recording_segment_mb" value="16"/>
 
     <!-- The link's queue is the only data here that matters: unpause the backup_EmbeddedDatabase_daily job (System ›
         Service Jobs) and set its mirror (docs/Run-Deploy.md, backups). -->

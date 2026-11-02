@@ -49,6 +49,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="features" type="List"/>
             <parameter name="capabilities" type="List"/>
             <parameter name="publicNames" type="List"/>
+            <parameter name="mediaAddress"><description>The edge node's media address, when it is a media node of this
+                node's calls (plans/Edge-Node.md §5.4, E7); empty when its media socket is off.</description></parameter>
+            <parameter name="turnUrls" type="List"><description>The edge node's TURN URLs; empty without TURN.</description></parameter>
             <parameter name="compatible" type="Boolean"/>
             <parameter name="message"/>
         </out-parameters>

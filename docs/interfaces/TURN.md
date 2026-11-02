@@ -61,6 +61,21 @@ Open these ports on the firewall:
 - Quotas: two allocations per credential, `turn_max_allocations` in all, and `turn_max_kbps` each way for each
   allocation. Data over the bandwidth is dropped.
 
+## On an edge node
+
+An edge node ([Edge-Node](../../plans/Edge-Node.md) §5.4) runs the embedded TURN of its local node's calls, beside its
+media socket (`turn_port` 3478 in `MoquiEdgeConf.xml`, relays to its own media port). The local node gives the legs
+their credentials, and the edge node's TURN checks them with its own `turn_auth_secret`, which the two do not share as
+configuration. So the edge node tells its secret to the local node in the answer to the link's Hello, on an up
+connection whose keys both ends pinned (never in a Hello, which a check before pairing also gets). The local node keeps
+it in memory, never logged, stored or shown, replaced by each new link and forgotten at unpairing, and `make#IceServers`
+signs the edge node's TURN URLs with it (`mediaNodeId`); `turn_external_urls` get a second entry signed with the local
+node's own. Changing the edge node's secret takes effect for the local node at the next link; credentials signed with
+the old one stop working on the edge node at once.
+
+The other choice, the local node's secret sent to the edge node, would put a secret the local node also uses for its own
+media nodes and any coturn on the cloud host; the edge node's secret only ever opens the edge node's TURN.
+
 ## coturn instead
 
 coturn (BSD-3-Clause) can do the relaying, on its own machine. Set it up for the same credentials and the same peer

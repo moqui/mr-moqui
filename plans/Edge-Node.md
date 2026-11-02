@@ -1,18 +1,19 @@
 # Edge Node
 
-Status 2026-11-02: E0–E4, E5a, E5b, E6 and E10 built; E7–E9 (calls, SIP, XMPP) and E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
+Status 2026-11-02: E0–E4, E5a, E5b, E6, E7 and E10 built; E8 and E9 (SIP, XMPP) and E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
 its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
 access. Mail crosses the link, with the MTA in moqui on the edge node by default (E5b) or Postfix and Rspamd beside it
 (E5a); the manual check at a large provider is pending. Chat bridges' webhooks and MMS files go through the edge node
-(E6); a real Telnyx round trip is pending. Every question in [§8](#8-decisions) is
+(E6); a real Telnyx round trip is pending. Calls have their media on the edge node, with its TURN, and recordings are
+queued to the local node (E7); real outside browsers over the internet are pending. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
 built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
-(E5b)"), E6's in §5.4 ("As built (E6)"), and E10's, the wizard's Discover, Apply and Test, in
+(E5b)"), E6's in §5.4 ("As built (E6)"), E7's in §5.4 ("As built (E7)"), and E10's, the wizard's Discover, Apply and Test, in
 [§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)"). A real local node attached through the wizard on a
 served Maximal build, with real DNS, is pending.
 
@@ -205,13 +206,13 @@ again, with the transport-verified mark (today `WEBHOOK_MARK`) set from the queu
 
 | Access | Entities and files | R/W | Class |
 |---|---|---|---|
-| the heartbeat, `CallServices.register#MediaNode` | `CallMediaNode` | W | link (the local node keeps the row from link liveness and Hello) |
+| the heartbeat, `CallServices.register#MediaNode` | `CallMediaNode` | W | link (the local node keeps the row from link liveness and Hello; E7: `edgeLinked`) |
 | the driver, `CallServices.note#MediaEvent` | `CallLeg`, `CallConnection`, `CallSession` | R/W | delegate |
 | the driver, `cluster::send_to` for `rtc-signal` | `ClusterMember` | R | link |
 | the recorder's spool (`runtime/tmp/call-recording`), then `CallRecordingServices.store#RecordingSegment` (through `store#RecordingFile`) and `note#RecorderEnd` | recording, track and segment rows, files under `dbresource://moqui/call/recording/` | W | queue (the segment file with its service call) |
-| captions: `speaker_of` | `CallLeg`, `CallParticipant`, `UserAccount` | R | delegate (a new service, since the reads are in Rust) |
-| captions: `store`, `create#moqui.call.CallTranscript` (entity-auto) | `CallTranscript` | W | delegate (a wrapping service, not a generic create granted to `_EDGE_`) |
-| captions: `llm_hooks::transcribe` (a Rust hook) | `LlmCall`, the user's quota | R/W | delegate (a wrapping service); the audio chunks go over the link |
+| captions: `speaker_of` | `CallLeg`, `CallParticipant`, `UserAccount` | R | delegate (E7: `CallCaptionServices.get#CaptionSpeaker`) |
+| captions: `store`, `create#moqui.call.CallTranscript` (entity-auto) | `CallTranscript` | W | delegate (E7: `store#CallTranscript`, not a generic create granted to `_EDGE_`) |
+| captions: `llm_hooks::transcribe` (a Rust hook) | `LlmCall`, the user's quota | R/W | delegate (E7: `transcribe#CaptionAudio`); the audio chunks go over the link as base64 |
 | TURN (`turn.rs`) | none: `turn_auth_secret` only | | edge node |
 | browser signaling on `/notws` (`notws/rtc.rs`), binding a leg, `get#IceServers` | call state | R/W | stays local (through web access) |
 
@@ -812,6 +813,64 @@ release.
   accepted ([decision 6](#8-decisions)). A local media node, cascading to the edge node for outside legs, stays a
   later option. W7 needs the shared database today, so edge-mode cascading is new work.
 
+**As built (E7).**
+- **Hello.** New fields (additive): `Hello.media_address` (8) and `turn_urls` (9), the edge node's while its media
+  socket is up (`moqui_core::edge::media::set_advert` from `rtc::start`), and `HelloReply.turn_secret` (3). `EdgeInfo`
+  keeps the edge node's `instance_id`, `media_address` and `turn_urls`; `get#LinkStatus` shows the last two.
+- **The row.** The edge node registers no `CallMediaNode` (`rtc::start` skips the register loop on
+  `edge::settings(factory).edge_node`). The local node's dialer writes it with `register#MediaNode` (new `edgeLinked`,
+  a new `CallMediaNode.edgeLinked` field) as each link comes up and every `ping_every` (15 s) while it lasts, a task
+  of the link's `Work`; a link down leaves it to go stale (60 s), so a short loss ends no call, a longer one ends them
+  as "media server lost" (`expire#Calls`). An edge node without media has its row removed at the next link, and
+  unpairing removes it. `Calls.js` `liveMediaNodes` puts `edgeLinked` rows first, so a paired node's new calls have
+  their media on the edge node even with a media node of its own.
+- **Signaling seam.** `moqui_core::edge::signal`: a route per node at the other end of a link (the dialer adds its edge
+  node's by instance id when the link is up; the edge node each local node's as its down connection attaches; a guard
+  removes it with the link). `cluster::send_to` asks it first, so the browsers' frames (`notws/rtc.rs` forward), the
+  driver's replies and relay messages, `send#MediaControl` and E8's `send#SipControl` go over the link. A route hands
+  the message to a bounded queue (1,024, `overloaded` when full) that one task sends on a client-streaming call, new
+  RPCs `Link.Signal` and `LocalLink.Signal` (`edge_link/signal.rs`), so messages keep their order without a round trip
+  each; a call the link lost is opened again for the next message, and what it carried is not sent again (one try, as
+  the cluster's direct send). The receiver publishes each, in order, on its bus (`signal::receive`, `rtc-signal` only).
+  The design named a hook on `EdgeLink`; a route registry instead works for any dialer (a test's too) and needs no
+  lookup of the link per message.
+- **Delegated:** `CallServices.note#MediaEvent`, and new `CallCaptionServices.get#CaptionSpeaker` (Rust in
+  `call_media.rs`, replacing the host's entity reads in `speaker_of`, on every node), `store#CallTranscript` (replacing
+  the entity-auto create; it checks the leg is the call's) and `transcribe#CaptionAudio` (the WAV chunk as base64, at
+  most 4 MiB; the user must be a participant of the call; a provider's refusal comes back as `errorCode`, so captions
+  keep its code). An edge node's captions use `DelegatedTranscriber`; other nodes call `llm_hooks::transcribe` as
+  before. In MoquiDefaultConf.xml's `<edge>`, granted to `_EDGE_`.
+- **Queued:** recordings, kind `callRecording` (edge to local), handler `CallRecordingServices.receive#EdgeRecording`
+  (runs only as `_edge_`). The edge node's recorder queues each closed segment with its parameters as the payload and
+  the file as content, keyed `<callRecordingId>/<file>`, and its end (`note#RecorderEnd`) keyed `<id>/end`, all under
+  the conversation `callRecording:<id>`, for the only paired node. `store#RecordingSegment` takes `fromLocation`
+  instead of `tempPath`, and `store#RecordingFile` copies a `fromLocation` only under `CONTENT_IN`. An edge node's
+  segments are at most 32 MiB (`Limits::for_edge`), and MoquiEdgeConf.xml sets `call_recording_segment_mb` 16.
+- **TURN.** The edge node's `turn_auth_secret` goes to the local node in the Hello answer only (a Hello also answers
+  Probe before pairing), kept in memory (`edge::media::set_peer_turn`), never logged or stored, forgotten at unpairing.
+  `make#IceServers` (new `mediaNodeId`, which `Calls.js` passes) signs the edge node's TURN URLs with it and
+  `turn_external_urls` with the local node's own, as two entries. Chosen over sending the local node's secret to the
+  edge node, which would put a secret that also opens the local node's other TURN servers on the cloud host.
+  `turn_allowed_peers` needs nothing: the edge node's own media port is the default peer.
+- **Conf.** MoquiEdgeConf.xml sets `rtc_media_port` 10000, `rtc_media_host` 0.0.0.0, `turn_port` 3478 and
+  `call_recording_segment_mb` 16; `rtc_public_address` goes in `.env` (the media socket does not start without it when
+  binding every address).
+- **Test.** `tests/it/edge_call.rs` (about 6 s): the edge node in a child process of the test binary, as W7's leg node
+  (the media driver, the socket bindings and the bus are process globals), on a database of its own, paired by the
+  local node's real instance id. An outside browser stand-in relayed by the edge node's TURN, with the credential the
+  local node signed (each node with its own `turn_auth_secret`), and an office one on UDP: the row from the link, the
+  call's media node the edge node, the answer from its media socket, media both ways, both legs' `joinedDate` set on the
+  local node by the delegated `note#MediaEvent`, and a recording on the edge node whose two tracks and mix are stored
+  on the local node as Ogg files. Both browsers signal on the local node's `/notws` directly; through web access is
+  E2's test. Unit tests: `edge/signal_tests.rs`, `call_media_tests.rs` (the content location check, the ICE server's
+  credential), `recorder_tests.rs` (an edge node's segment cap). Specs: `Calls.spec.js` (the edge node's row preferred,
+  removed at unpairing), `CallRecording.spec.js` (`receive#EdgeRecording`: refused for another user and for a location
+  outside the queue's copies, a segment stored, the end failing the recording).
+- **Not done.** Captions through the edge node are not run end to end (no transcription provider in the tests); a
+  link down fails a delegated media event or caption at once, and the call goes on. Several local nodes on one edge
+  node (decision 1): routes are per node, but recordings go to the only paired node and delegated calls need one link.
+  Real browsers over the internet, with the edge node's real address, are to be checked by hand.
+
 **Push.** No change. The local node sends Web Push itself.
 
 ### 5.5 mr-pass on the edge node, gRPC by default
@@ -925,7 +984,7 @@ release.
 
 Built in E1 as `runtime/conf/MoquiEdgeConf.xml`: `instance_purpose` production, `node_role=edge`, web protection, and
 the entity facade's crypt-pass. The properties of what is not built yet are comments in it, each with its phase:
-`channels_webhooks_enabled` (E6) and the rtc and TURN ports (E7). E4 set `pass_backend_url=edge:`, so mr-pass calls
+`channels_webhooks_enabled` (E6, now set) and the rtc and TURN ports (E7, now set). E4 set `pass_backend_url=edge:`, so mr-pass calls
 its local node over the link. E3 filled in its `<edge>` element: the queue's limits, with the
 delegated services and replicated sets as commented examples for the comms phases; E5a moved mail's entries to
 MoquiDefaultConf.xml and set the listener to LMTP. The draft below is the target. The listeners that need the
@@ -1205,7 +1264,7 @@ Its actions are pause, resync and unpair.
 | **E5a** | Mail through the edge node, with Postfix and Rspamd beside it: the recipient list, LMTP into the edge node queue, outbound submission, delivery reports | MX at the edge node. Mail sent while the local node is down arrives after. Unknown recipients are refused while it is down. Outbound mail is DKIM-signed and passes DMARC at a large provider. Bounces reach the Outbox |
 | **E5b** | The MTA in moqui: port 25, SPF, DKIM, DMARC and ARC, DKIM signing, the MX delivery queue, DSNs, TLS policy; Rspamd still external, over HTTP. The same checks on internal mail. Becomes the default | E5a's cases pass with no Postfix. Internal mail carries verified DKIM and `Authentication-Results` |
 | **E6** | Chat bridges and SMS through the edge node | An SMS sent while the local node is away is delivered after. MMS media is served by the edge node. Met in `tests/it/edge_chat.rs`, with a fake Telnyx; a real Telnyx round trip is pending |
-| **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
+| **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node. Built. Met in `tests/it/edge_call.rs` with str0m stand-ins (the outside one relayed by the edge node's TURN); real browsers over the internet are pending |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |
 | **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
@@ -1221,8 +1280,8 @@ When it is built (done in E10 unless marked):
 - **Run-Deploy:** a topology row and a section, "A local server with an edge node"; the new properties; the PASS
   section's transport. Done.
 - **Guides:** Attack-Surface (done); Mail-Inbound, the edge node as the gateway, then the MTA in moqui (done); SMS and
-  Chat-Bridges, the webhook URL on the edge node and MMS (done); SIP, WebRTC and TURN, the edge node as edge and media
-  node (not yet: with E7 and E8).
+  Chat-Bridges, the webhook URL on the edge node and MMS (done); WebRTC, TURN and Call-Recording, the edge node as
+  media node (done in E7); SIP, the edge node as SIP edge (not yet: with E8).
 - **mr-pass:** `docs/Deployment.md`, the edge node as PASS server. Done.
 - **Plans:**
   - Comms-Framework: C3b's and C6's split between edge node and local node. Its line "this plan adds no new mail

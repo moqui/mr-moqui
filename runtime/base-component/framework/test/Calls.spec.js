@@ -10,6 +10,7 @@ const B = "CALLS_SPEC_B"
 const C = "CALLS_SPEC_C"
 const D = "CALLS_SPEC_D"
 const NODE = "calls-spec-node"
+const EDGE_NODE = "calls-spec-edge-node"
 const SESSION = "moqui.call.CallSession"
 const LEG = "moqui.call.CallLeg"
 
@@ -83,7 +84,7 @@ spec({
     },
     cleanupSpec() {
         endAll()
-        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).deleteAll())
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", "in", [NODE, EDGE_NODE]).deleteAll())
     }
 })
 
@@ -539,5 +540,31 @@ feature("a leg in the call gets its TURN servers with a credential of its own; n
         ringing.iceServers.length == 0
         ringing.reasonCode == "notAdmitted"
         stranger.reasonCode == "notFound"
+    }
+})
+
+feature("a new call's media goes to the edge node, whose row the edge link keeps, before a newer media node", {
+    when() {
+        // the edge node's row (plans/Edge-Node.md §5.4), its heartbeat older than the other media node's
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
+            edgeLinked: true}))
+        age("moqui.call.CallMediaNode", {instanceId: EDGE_NODE}, "heartbeatDate", 5000)
+        nodeUp()
+        const started = as(A, "start#Call", {calleeUserIdList: [B]})
+        const row = session(started.callSessionId)
+        const edgeRow = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).one())
+        const other = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).one())
+        as(A, "end#Call", {callSessionId: started.callSessionId})
+        // unpairing removes the edge node's row
+        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, edgeLinked: true, stopping: true}))
+        const gone = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).count())
+        return {started, row, edgeRow, other, gone}
+    },
+    then({started, row, edgeRow, other, gone}) {
+        started.errors == ""
+        edgeRow.edgeLinked == "Y"
+        other.edgeLinked == "N"
+        row.mediaNodeId == EDGE_NODE
+        gone == 0
     }
 })

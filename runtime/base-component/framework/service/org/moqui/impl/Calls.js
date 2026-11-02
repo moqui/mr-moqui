@@ -130,10 +130,14 @@ function callLink(callSessionId) {
   return appRoot() + '/Calls/Call?callSessionId=' + encodeURIComponent(callSessionId)
 }
 
-/** The live media nodes, newest heartbeat first; one that is draining takes no new call. */
+/**
+ * The live media nodes, this node's edge node first (plans/Edge-Node.md §5.4: a paired node's calls have their media on
+ * the edge node), then newest heartbeat first; one that is draining takes no new call.
+ */
 function liveMediaNodes() {
   const since = new Date(nowMs() - MEDIA_NODE_STALE_MS)
-  return Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', since).orderBy('-heartbeatDate').list())
+  const nodes = Array.from(find(MEDIA_NODE).condition('heartbeatDate', '>=', since).orderBy('-heartbeatDate').list())
+  return nodes.sort((a, b) => (b.edgeLinked === 'Y' ? 1 : 0) - (a.edgeLinked === 'Y' ? 1 : 0))
 }
 
 /**
@@ -1672,7 +1676,7 @@ function markMissedSeen() {
 function iceServersOf(session, leg) {
   const node = session.mediaNodeId ? one(MEDIA_NODE, { instanceId: session.mediaNodeId }) : null
   const out = ec.service.sync().name('org.moqui.impl.CallServices.make#IceServers').parameters({
-    callLegId: leg.callLegId, turnUrls: node?.turnUrls || '',
+    callLegId: leg.callLegId, turnUrls: node?.turnUrls || '', mediaNodeId: session.mediaNodeId,
   }).disableAuthz().call() || {}
   return { iceServers: out.iceServers || [] }
 }
@@ -1704,12 +1708,12 @@ function registerNode(p) {
   }
   if (row) {
     row.setFields({ mediaAddress: p.mediaAddress || row.mediaAddress, turnUrls: p.turnUrls || null, heartbeatDate: now,
-      draining: p.draining ? 'Y' : 'N' }, true, null, null)
+      draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
     row.update()
   } else {
     const created = ec.entity.makeValue(MEDIA_NODE)
     created.setFields({ instanceId: p.instanceId, mediaAddress: p.mediaAddress || null, turnUrls: p.turnUrls || null,
-      startedDate: now, heartbeatDate: now, draining: p.draining ? 'Y' : 'N' }, true, null, null)
+      startedDate: now, heartbeatDate: now, draining: p.draining ? 'Y' : 'N', edgeLinked: p.edgeLinked ? 'Y' : 'N' }, true, null, null)
     created.create()
   }
   return {}

@@ -31,9 +31,11 @@ use moqui_lib::sync::InstallSlot;
 
 pub mod conf;
 pub mod delegate;
+pub mod media;
 pub mod queue;
 pub mod replica;
 pub mod setup;
+pub mod signal;
 
 pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
 pub use setup::{Configured, EdgeOffer, EdgeSetup};
@@ -105,6 +107,13 @@ pub struct EdgeInfo {
     pub features: Vec<String>,
     pub capabilities: Vec<String>,
     pub public_names: Vec<String>,
+    /// The edge node's instance id: the node its calls' media is on (`CallMediaNode.instanceId`) and what
+    /// [`signal`] routes a message for it by (E7).
+    pub instance_id: String,
+    /// The address browsers send the media of its calls to; empty when its media socket is off (E7).
+    pub media_address: String,
+    /// Its embedded TURN listeners as `turn:` and `turns:` URLs; empty without TURN (E7).
+    pub turn_urls: Vec<String>,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.

@@ -39,6 +39,11 @@ message Hello {
   string instance_id = 6;
   // A name to show the operator of the other end.
   string node_name = 7;
+  // The edge node's, when it is a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): the address
+  // browsers send media to (rtc_public_address, else the media socket's), empty when its media socket is off.
+  string media_address = 8;
+  // The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
+  repeated string turn_urls = 9;
 }
 
 message ProbeRequest {}
@@ -72,6 +77,10 @@ message HelloReply {
   Hello hello = 1;
   // The link generation of this up connection; the down connection names it.
   uint64 generation = 2;
+  // The edge node's turn_auth_secret, when its embedded TURN is on (E7): the local node signs its legs' TURN
+  // credentials for the edge node's TURN with it. Only here, on an up connection whose key the edge node pinned, never
+  // in a Hello (which Probe tells anyone); the local node keeps it in memory and never logs or stores it.
+  string turn_secret = 3;
 }
 
 message PingRequest {
@@ -101,6 +110,22 @@ message QueueItem {
   // The attempts made before this one.
   uint32 attempts = 7;
 }
+
+// A message of a cluster topic for one node, which is the link's other end (E7): the rtc-signal frames, replies and
+// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/Edge-Node.md §5.4). The
+// receiver publishes it on its own notification bus, and only on the topics it takes (rtc-signal).
+message SignalMessage {
+  // The link generation the sender is on.
+  uint64 generation = 1;
+  string topic = 2;
+  // The sending process's notification bus id, and the message's id.
+  string origin_id = 3;
+  string message_id = 4;
+  // The message's body, a JSON object that names its target node.
+  string body_json = 5;
+}
+
+message SignalReply {}
 
 // A part of a queued item's content (a body too large for its payload: a message, a media file), sent before the
 // item's Deliver. The receiver keeps it under a location of its own, keyed by the item's id, and the Deliver that
@@ -310,6 +335,8 @@ service Link {
   rpc GetOffer(OfferRequest) returns (Offer);
   // The local node's part of its setup: its host names, mail domains, chat bridges and PASS sites.
   rpc Configure(ConfigureRequest) returns (ConfigureReply);
+  // The local node's messages for the edge node on cluster topics (E7), in order, while the link lasts.
+  rpc Signal(stream SignalMessage) returns (SignalReply);
 }
 
 message LocalHelloRequest {
@@ -332,4 +359,6 @@ service LocalLink {
   rpc Delegate(DelegateRequest) returns (DelegateReply);
   // The content of a queued item, before its Deliver.
   rpc PutContent(stream ContentChunk) returns (PutContentReply);
+  // The edge node's messages for the local node on cluster topics (E7), in order, while the link lasts.
+  rpc Signal(stream SignalMessage) returns (SignalReply);
 }

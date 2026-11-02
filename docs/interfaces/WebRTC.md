@@ -257,8 +257,38 @@ it keeps a track to one copy per node, uses the same str0m code and ICE as the b
 and a room ends its own link. A link per node pair carrying many rooms would save ICE and DTLS handshakes but needs its
 own multiplexing of rooms; that waits for a measured need.
 
+### The edge node as media node
+
+A local node behind NAT with an edge node ([Edge-Node](../../plans/Edge-Node.md) §5.4) has its calls' media on the edge
+node, which browsers and phones outside and in the office reach at its fixed address. The two share no database, so
+the edge node is not a member of the local node's cluster:
+
+- **Its row.** The edge node registers no `CallMediaNode` row (it has no call state). Its link Hello names its media
+  address and TURN URLs, and the local node keeps its row from the link: written as the link comes up and every 15
+  seconds while it lasts (`edgeLinked` Y), so a link down past the media nodes' grace (60 seconds) ends its calls with
+  "media server lost", and unpairing removes it. New calls prefer that row to the local node's own media node, if it has
+  one (office calls go through the edge node too; plans decision 6).
+- **Signaling.** The browsers' sockets stay on the local node (through web access from outside). A frame, reply or
+  control for the edge node's instance id goes over the link (`Link.Signal` up, `LocalLink.Signal` down, one ordered
+  stream each way per link) instead of the cluster's sender: `moqui_core::edge::signal`, the seam in
+  `cluster::send_to`. As the cluster's direct send it is one try from a bounded queue (1,024), `overloaded` when full.
+- **The edge node's services.** Its media events (`note#MediaEvent`) and its captions' reads, writes and transcription
+  (`CallCaptionServices.get#CaptionSpeaker`, `store#CallTranscript`, `transcribe#CaptionAudio`, the audio chunk as
+  base64) are delegated to the local node, which has the call state and the agent runtime's quota; its recordings are
+  queued ([Call-Recording](Call-Recording.md)). With the link down they fail at once as "local node offline", and
+  the media goes on.
+- **TURN** runs on the edge node; the local node signs its credentials with the edge node's secret ([TURN](TURN.md)).
+
+Settings: `rtc_media_port`, `rtc_media_host` 0.0.0.0, `rtc_public_address` and `turn_port` on the edge node
+(`MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
+between the edge node and a local media node is later work.
+
 ## Tests
 
+- `cargo test -p moqui-host --test it edge_call`: an outside browser stand-in relayed by the edge node's TURN and an
+  office one on UDP in one call, both signaling on the local node's `/notws`, the edge node in a child process: the edge
+  node's row kept from the link, the answer from its media socket, media both ways, the media events noted on the local
+  node, and a recording made on the edge node whose segments reach the local node. About 6 seconds.
 - `cargo test -p moqui-rtc`: the media gate on an in-memory network with simulated time. It covers two and five parties,
   simulcast layers following the bandwidth estimate, audio only below the floor, renegotiation both ways and glare, ICE
   restart, ICE-TCP, generations, and media taken out and put in.

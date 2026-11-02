@@ -749,7 +749,14 @@ fn tcp_peer(ws: Ws, call: &str, leg: &str, media_tcp: SocketAddr) -> Peer {
 }
 
 /// A peer whose datagrams all go through a TURN allocation: its one candidate is the relayed address.
-fn relayed_peer(ws: Ws, call: &str, leg: &str, turn_server: SocketAddr, username: &str, password: &str) -> Peer {
+pub(crate) fn relayed_peer(
+    ws: Ws,
+    call: &str,
+    leg: &str,
+    turn_server: SocketAddr,
+    username: &str,
+    password: &str,
+) -> Peer {
     use turn_client_proto::api::{TurnClientApi, TurnEvent};
     let mut peer = Peer::new(ws, call, leg);
     let start = Instant::now();
@@ -800,7 +807,7 @@ fn relayed_peer(ws: Ws, call: &str, leg: &str, turn_server: SocketAddr, username
     peer
 }
 
-fn ice_servers(out: &std::collections::BTreeMap<String, Value>) -> (Vec<String>, String, String) {
+pub(crate) fn ice_servers(out: &std::collections::BTreeMap<String, Value>) -> (Vec<String>, String, String) {
     let Some(Value::List(list)) = out.get("iceServers") else {
         return (Vec::new(), String::new(), String::new());
     };
@@ -971,7 +978,7 @@ fn ice_tcp_and_a_turn_relay_carry_a_call_when_udp_does_not() {
 }
 
 /// The `call` helper's map values, for the lists `find#Recordings` gives.
-fn list_of(value: Option<&Value>) -> Vec<std::collections::BTreeMap<String, Value>> {
+pub(crate) fn list_of(value: Option<&Value>) -> Vec<std::collections::BTreeMap<String, Value>> {
     match value {
         Some(Value::List(list)) => list
             .iter()

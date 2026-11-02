@@ -1167,6 +1167,15 @@
         <!-- attaching a local node (E10): the round trips of the Edge Node wizard's Test step, which the edge node
             answers back on the queue -->
         <queue-kind name="edgeEcho" service="org.moqui.impl.EdgeServices.receive#EdgeEcho"/>
+        <!-- calls with the edge node as media node (E7): its media events and its captions' reads, writes and
+            transcription run on the local node, which has the call state and the agent runtime's quota; its recordings'
+            segments and their end go through the queue, in the recording's order. The signaling goes over the link
+            itself (Link.Signal), not one of these. -->
+        <delegate service="org.moqui.impl.CallServices.note#MediaEvent"/>
+        <delegate service="org.moqui.impl.CallCaptionServices.get#CaptionSpeaker"/>
+        <delegate service="org.moqui.impl.CallCaptionServices.store#CallTranscript"/>
+        <delegate service="org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio"/>
+        <queue-kind name="callRecording" service="org.moqui.impl.CallRecordingServices.receive#EdgeRecording"/>
     </edge>
 
     <!-- Log files: dir (moqui_log_dir). A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at max-size-mb or when the day

@@ -82,6 +82,8 @@ fn put_edge(out: &mut BTreeMap<String, Value>, edge: &EdgeInfo) {
     out.insert("features".to_string(), strings(&edge.features));
     out.insert("capabilities".to_string(), strings(&edge.capabilities));
     out.insert("publicNames".to_string(), strings(&edge.public_names));
+    out.insert("mediaAddress".to_string(), Value::string(&edge.media_address));
+    out.insert("turnUrls".to_string(), strings(&edge.turn_urls));
     out.insert("compatible".to_string(), Value::Bool(edge.compatible));
     out.insert("message".to_string(), Value::string(&edge.message));
 }
