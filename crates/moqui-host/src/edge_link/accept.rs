@@ -482,6 +482,17 @@ impl EdgeServer {
             hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
             hello.capabilities.push(super::offer::CALLS_AREA.to_string());
         }
+        // its SIP engine's addresses, from which the local node keeps its SipNode row (E8)
+        if let Some(sip) = self
+            .factory
+            .upgrade()
+            .and_then(|factory| moqui_core::edge::media::sip_advert(&factory))
+        {
+            hello.sip_address = sip.sip_address;
+            hello.sip_tls_address = sip.tls_address;
+            hello.sip_domain = sip.domain;
+            hello.sip_registrar = sip.registrar;
+        }
         hello
     }
 
@@ -954,12 +965,20 @@ impl EdgeServer {
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
         let (node, send, generation) = self.only_link()?;
         let mut client = super::local_link_client(send);
+        // a conf entry may wait less than the link does (E8: routing a call that rings); the local node is told, and
+        // does no work past it
+        let wait = call.timeout.map_or(super::queue::ANSWER_TIMEOUT, |wait| {
+            wait.min(super::queue::ANSWER_TIMEOUT)
+        });
         let request = DelegateRequest {
             generation,
             service: call.service.clone(),
             parameters_json: call.parameters.to_string(),
             caller_json: call.caller.to_string(),
             operation_id: call.operation_id.clone(),
+            timeout_ms: call
+                .timeout
+                .map_or(0, |_| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
         };
         let started = Instant::now();
         let mut attributes = moqui_core::entity::document::Document::new();
@@ -967,7 +986,7 @@ impl EdgeServer {
             "moqui.artifact.name".to_string(),
             moqui_lib::object::Value::string(&call.service),
         );
-        let answered = tokio::time::timeout(super::queue::ANSWER_TIMEOUT, client.delegate(request)).await;
+        let answered = tokio::time::timeout(wait, client.delegate(request)).await;
         self.telemetry.record_duration(
             "moqui.edgelink.delegate.duration",
             started.elapsed().as_secs_f64(),
@@ -993,8 +1012,10 @@ impl EdgeServer {
             Err(_) => {
                 self.telemetry
                     .add_counter("moqui.edgelink.delegate.errors", 1, attributes);
+                // named as offline too, so a caller with a fallback (the SIP engine, E8) takes it as the node away
                 return Err(Error::new(format!(
-                    "the local node did not answer the call of {} in time",
+                    "{}: the local node did not answer the call of {} in time",
+                    moqui_core::edge::OFFLINE,
                     call.service
                 )));
             }

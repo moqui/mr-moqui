@@ -649,8 +649,9 @@ An edge node is a small server in the cloud in front of a local server, which di
 open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
 edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
 beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
-their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, and XMPP
-clients through its tunnel ports. Phones (SIP) do not go through it yet.
+their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
+clients through its tunnel ports, and phone calls (SIP trunks and outside phones), with a voicemail fallback while the
+local node is away.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
@@ -750,6 +751,16 @@ node's own names.
   calls' signaling over it, signs TURN credentials with the edge node's secret (told on the link,
   [TURN](interfaces/TURN.md#on-an-edge-node)) and stores the recordings the edge node queues
   ([Call-Recording](interfaces/Call-Recording.md)).
+- **Phones (SIP).** Set `sip_port` (5060) and `sip_tls_port` (5061), `sip_host` 0.0.0.0 and `sip_public_address` in the
+  edge node's `.env` (with `sip_registrar_enabled=true` for desk and soft phones outside the office), and open those
+  ports and `sip_rtp_ports` (UDP 20000-20999). Set up trunks and numbers on the local node as usual (System, Voice):
+  the edge node gets the trunks by replication and registers them, the local node keeps its SIP node's row from the
+  link, routes each call there, and stores its voicemail, which the edge node records and queues. Phones' passwords
+  stay on the local node, which checks each sign-in. While the local node is away a call is answered from its number's
+  fallback: the user's mobile (when they ring it with their calls) or a ring group's outside number, then a message
+  that arrives when the link is back; a number with neither gets 480, so set the trunk provider's failover number too.
+  The fallbacks are written as the numbers, greetings and boxes change, and every minute while the link is up
+  ([SIP](interfaces/SIP.md#behind-an-edge-node), [Voicemail](interfaces/Voicemail.md#while-the-local-node-is-away)).
 - **SSH.** Set `edge_ssh_tunnel_port` on the edge node (and `edge_ssh_tunnel_host`, empty for every address). The edge
   node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
   local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than

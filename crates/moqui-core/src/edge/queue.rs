@@ -255,6 +255,39 @@ pub fn enqueue(
              larger body as its content"
         )));
     }
+    let direction = outbound(&settings);
+    let node = match (
+        settings.edge_node,
+        paired_node_id.map(str::trim).filter(|id| !id.is_empty()),
+    ) {
+        (true, Some(node)) => node.to_string(),
+        (true, None) => only_paired_node(facade)?,
+        (false, _) => local_node_id(factory),
+    };
+    let key = item.idempotency_key.trim();
+    let (id, key) = if key.is_empty() {
+        let id = crate::entity::uuid_v4()?;
+        (id.clone(), id)
+    } else {
+        (keyed_id(&node, direction, key), key.to_string())
+    };
+    // a key queued already is that item: its content is not read again (E8: a greeting queued each minute)
+    if !item.idempotency_key.trim().is_empty() {
+        let existing = transaction(facade, TransactionAttribute::UseOrBegin, || {
+            facade
+                .find(QUEUE_ITEM)?
+                .eq("queueItemId", Value::string(&id))
+                .select_field("queueItemId")
+                .disable_authz()
+                .one()
+        })?;
+        if existing.is_some() {
+            return Ok(Enqueued {
+                queue_item_id: id,
+                created: false,
+            });
+        }
+    }
     let content = match (&item.content, item.content_location.as_deref().map(str::trim)) {
         (Some(content), _) => Some(std::borrow::Cow::Borrowed(content.as_slice())),
         (None, Some(location)) if !location.is_empty() => {
@@ -274,22 +307,6 @@ pub fn enqueue(
         )));
     }
     let size = payload_size + content_size;
-    let direction = outbound(&settings);
-    let node = match (
-        settings.edge_node,
-        paired_node_id.map(str::trim).filter(|id| !id.is_empty()),
-    ) {
-        (true, Some(node)) => node.to_string(),
-        (true, None) => only_paired_node(facade)?,
-        (false, _) => local_node_id(factory),
-    };
-    let key = item.idempotency_key.trim();
-    let (id, key) = if key.is_empty() {
-        let id = crate::entity::uuid_v4()?;
-        (id.clone(), id)
-    } else {
-        (keyed_id(&node, direction, key), key.to_string())
-    };
     let created = transaction(facade, TransactionAttribute::UseOrBegin, || {
         let existing = facade
             .find(QUEUE_ITEM)?

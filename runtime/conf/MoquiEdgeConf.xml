@@ -68,6 +68,20 @@
     <default-property name="turn_port" value="3478"/>
     <default-property name="call_recording_segment_mb" value="16"/>
 
+    <!-- SIP (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): trunks and outside phones reach this node's SIP engine, whose
+        media is the call media above. Set in .env to take them (each listener is off until its port is set):
+                                     <default-property name="sip_port" value="5060"/>
+                                     <default-property name="sip_tls_port" value="5061"/>
+                                     <default-property name="sip_host" value="0.0.0.0"/>
+                                     <default-property name="sip_public_address" value="(this node's address)"/>
+        and sip_registrar_enabled=true for desk and soft phones outside the office (their digest answers are checked on
+        the local node, which keeps the verifiers: they sign in only while it is reachable). The trunks are the local
+        node's, replicated here (voiceTrunks), so they register and take calls while it is away; each call is routed
+        there (delegated), its voicemail recorded here and queued. While the local node is away a call is answered from
+        its number's replicated fallback (voiceFallbacks): the outside number first, then a message, queued; else 480,
+        so the trunk's own failover acts. Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP,
+        20000-20999), to the trunk provider's addresses where it publishes them. -->
+
     <!-- The link's queue is the only data here that matters: unpause the backup_EmbeddedDatabase_daily job (System ›
         Service Jobs) and set its mirror (docs/Run-Deploy.md, backups). -->
 
@@ -77,8 +91,9 @@
         days (both nodes should keep the same period), and at most 1 GB of it; then the oldest fails, logged. A payload
         is at most 1 MiB, and a larger body goes as its content. What the edge node delegates, the queue kinds and the
         sets a local node replicates are in MoquiDefaultConf.xml, read by both ends (mail's since E5a, chat's since
-        E6); a later phase adds its own there, with grants for _EDGE_, as:
-            <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" allow-anonymous="true"/>   (E8)
+        E6, calls' since E7, SIP's since E8), with grants for _EDGE_; an entry may wait less than the link for its
+        answer, as SIP's routing does while the caller's phone rings:
+            <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
         To check a delegated call end to end, list org.moqui.impl.EdgeServices.echo#Delegate on both nodes. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
 </moqui-conf>

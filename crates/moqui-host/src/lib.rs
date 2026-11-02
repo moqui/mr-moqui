@@ -98,8 +98,14 @@ mod tui_cmd;
 pub mod tui_remote;
 pub mod types;
 pub mod usage;
-// The request-worker handoff of the SSH server, the SMTP listener, the XMPP server and the edge link.
-#[cfg(any(feature = "ssh", feature = "inbound-smtp", feature = "xmpp", feature = "edge"))]
+// The request-worker handoff of the SSH server, the SMTP listener, the XMPP server, the edge link and the SIP engine.
+#[cfg(any(
+    feature = "ssh",
+    feature = "inbound-smtp",
+    feature = "xmpp",
+    feature = "edge",
+    feature = "sip"
+))]
 mod worker;
 
 mod cluster_edge;
@@ -129,8 +135,6 @@ mod rtc;
 #[cfg(not(feature = "rtc"))]
 #[path = "rtc_off.rs"]
 mod rtc;
-#[cfg(feature = "rtc")]
-mod speech_local;
 #[cfg(feature = "sip")]
 mod sip;
 #[cfg(not(feature = "sip"))]
@@ -138,6 +142,8 @@ mod sip;
 mod sip;
 #[cfg(feature = "axum")]
 mod source_body;
+#[cfg(feature = "rtc")]
+mod speech_local;
 #[cfg(feature = "axum")]
 mod systemd_notify;
 #[cfg(all(feature = "axum", feature = "tui"))]

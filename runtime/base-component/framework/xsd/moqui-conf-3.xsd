@@ -1647,6 +1647,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <xs:documentation>When the edge node has no definition of the service, a caller with no user
                             is refused unless this is true (a comms engine's webhook).</xs:documentation>
                         </xs:annotation></xs:attribute>
+                        <xs:attribute name="timeout-seconds" type="xs:string"><xs:annotation>
+                            <xs:documentation>How long the edge node waits for the local node's answer, when shorter
+                            than the link's answer timeout (60 seconds): for a caller that cannot wait that long, such
+                            as the SIP engine routing a call while the caller's phone rings. Past it the call fails as
+                            the local node not answering in time.</xs:documentation>
+                        </xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="queue-kind">

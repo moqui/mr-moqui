@@ -47,13 +47,31 @@ function isAdmin() {
   return !!ec.user.userId && ec.user.hasPermission('VoiceAdmin')
 }
 
-/** Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on). */
+/**
+ * The live SIP node of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8), whose row the link keeps from
+ * its Hello with its realm and registrar switch; null when there is none. Its registrar is the phones'.
+ */
+function edgeSipNode() {
+  return rows(SIP_NODE).find((n) => n.edgeLinked === 'Y' && ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS) || null
+}
+
+/**
+ * Whether the registrar is on: sip_registrar_enabled (off by default, even with the SIP listeners on); behind an edge
+ * node, the edge node's (its row), whose registrar the phones use.
+ */
 function registrarOn() {
+  const edge = edgeSipNode()
+  if (edge) return edge.registrarEnabled === 'Y'
   return yes(property('sip_registrar_enabled').toLowerCase())
 }
 
-/** The realm of the verifiers and the domain phones register to, as the SIP engine takes it (moqui-host sip settings). */
+/**
+ * The realm of the verifiers and the domain phones register to, as the SIP engine takes it (moqui-host sip settings);
+ * behind an edge node, the realm its registrar challenges with (its row's sipDomain).
+ */
 function domain() {
+  const edge = edgeSipNode()
+  if (edge && !blank(edge.sipDomain)) return edge.sipDomain
   return property('sip_domain') || property('sip_public_address') || 'moqui'
 }
 
@@ -239,14 +257,69 @@ function deviceAuth(p) {
   return { sipDeviceId: device.sipDeviceId, username: device.username, credentialRevision: Number(device.credentialRevision || 1), verifierList }
 }
 
+// ---------- the registrar of this node's edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+
+/** How long after a digest answer checked here the edge node may store the phone's binding or place its call. */
+const EDGE_DIGEST_MS = 60000
+
+const isEdgeCaller = () => ec.user.username === '_edge_'
+
+/** Whether the caller may act as SIP node instanceId: anyone, or the edge node's delegate user as its own node. */
+function edgeNodeAllowed(instanceId) {
+  if (!isEdgeCaller()) return true
+  const node = blank(instanceId) ? null : one(SIP_NODE, { instanceId })
+  return !!node && node.edgeLinked === 'Y'
+}
+
+/** Whether the edge node's delegate user had a digest answer of this device checked here just now (or any other caller). */
+function edgeDigestFresh(device) {
+  return !isEdgeCaller() || (ms(device.edgeDigestDate) || 0) >= nowMs() - EDGE_DIGEST_MS
+}
+
+/**
+ * A phone's digest answer to the edge node's registrar, checked against its verifier here, so the verifiers never leave
+ * this node: matched, with the device, when the response is right; matched false and nothing else when not.
+ */
+function checkDigest(p) {
+  // the edge node's (E8): only for the realm its registrar challenges with, which its phones' verifiers are for
+  if (isEdgeCaller() && String(p.realm || '') !== domain()) return { matched: false }
+  const auth = deviceAuth({ username: p.username, realm: p.realm })
+  const verifier = (auth.verifierList || []).find((v) => String(v.algorithm).toUpperCase() === String(p.algorithm || '').toUpperCase())
+  let expected = ''
+  if (verifier) {
+    expected = ec.service.sync().name('org.moqui.impl.SipDeviceServices.compute#SipDigestResponse').parameters({
+      algorithm: verifier.algorithm, ha1: verifier.ha1, nonce: p.nonce, nc: p.nc || null, cnonce: p.cnonce || null,
+      qop: p.qop || null, ha2: p.ha2 }).disableAuthz().call()?.response || ''
+  }
+  if (!expected || expected !== String(p.response || '').toLowerCase()) return { matched: false }
+  if (isEdgeCaller()) {
+    // an answer the edge node kept, sent again (an old nonce, or a count taken before), signs nobody in
+    const fresh = ec.service.sync().name('org.moqui.impl.SipDeviceServices.claim#SipDigestNonce')
+      .parameters({ sipDeviceId: auth.sipDeviceId, nonce: p.nonce, nc: p.nc || null }).disableAuthz().call()?.fresh
+    if (!fresh) {
+      ec.logger.warn(`SIP device ${auth.sipDeviceId}: the edge node sent an answer with an old or used nonce, refused`)
+      return { matched: false }
+    }
+    const device = find(DEVICE).condition('sipDeviceId', auth.sipDeviceId).forUpdate(true).one()
+    if (device) {
+      device.set('edgeDigestDate', ec.user.nowTimestamp)
+      device.update()
+    }
+  }
+  return { matched: true, sipDeviceId: auth.sipDeviceId, username: auth.username, credentialRevision: auth.credentialRevision }
+}
+
 /** A binding the engine added, refreshed or removed; one of an older revision or of a removed device is not kept. */
 function storeRegistration(p) {
+  if (!edgeNodeAllowed(p.instanceId)) return refuse('notAllowed', 'The edge node keeps the bindings of its own SIP node only')
   const row = one(REGISTRATION, { sipRegistrationId: p.sipRegistrationId })
+  if (row && isEdgeCaller() && row.instanceId !== p.instanceId) return refuse('notAllowed', 'Not a binding of the edge node')
   if (p.change === 'removed') {
     if (row) row.delete()
     return {}
   }
   const device = one(DEVICE, { sipDeviceId: p.sipDeviceId })
+  if (device && !edgeDigestFresh(device)) return refuse('notAllowed', 'The edge node had no digest answer of this phone checked')
   if (!device || device.statusId !== 'SdsActive' || Number(p.credentialRevision || 0) !== Number(device.credentialRevision)) {
     if (row) row.delete()
     return {}
@@ -352,6 +425,10 @@ function receiveDeviceCall(p) {
   if (!registrarOn()) return refuse('notAllowed', 'The registrar is off')
   const device = p.sipDeviceId ? one(DEVICE, { sipDeviceId: p.sipDeviceId }) : null
   if (!device || device.statusId !== 'SdsActive') return refuse('notAllowed', 'This phone was removed')
+  // the edge node's engine (E8): only on its own SIP node, for a phone whose answer to its challenge was checked here
+  if (!edgeNodeAllowed(p.instanceId) || !edgeDigestFresh(device)) {
+    return refuse('notAllowed', 'The edge node had no digest answer of this phone checked')
+  }
   const account = one('moqui.security.UserAccount', { userId: device.userId })
   if (!account || account.disabled === 'Y') return refuse('notAllowed', 'This phone was removed')
   try {
@@ -376,7 +453,7 @@ function receiveDeviceCall(p) {
 }
 
 const operations = {
-  create, rotate, revoke, findDevices, deviceAuth, storeRegistration, expireRegistrations, ringDevices, receiveDeviceCall,
+  create, rotate, revoke, findDevices, deviceAuth, checkDigest, storeRegistration, expireRegistrations, ringDevices, receiveDeviceCall,
 }
 
 function execute(op, parameters) {

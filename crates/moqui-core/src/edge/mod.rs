@@ -120,6 +120,14 @@ pub struct EdgeInfo {
     pub turn_urls: Vec<String>,
     /// When its media socket started (epoch milliseconds), 0 when it is off (E7).
     pub media_started_ms: i64,
+    /// Its SIP engine's address for UDP and TCP, and for TLS; empty when off (E8). The local node keeps the edge
+    /// node's `SipNode` row from them.
+    pub sip_address: String,
+    pub sip_tls_address: String,
+    /// Its registrar's realm, and whether its registrar is on (E8): the local node's phones' verifiers are for that
+    /// realm, and its phones ring only with the registrar on.
+    pub sip_domain: String,
+    pub sip_registrar: bool,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.
@@ -205,9 +213,12 @@ pub struct DelegateCall {
     pub caller: serde_json::Value,
     /// An id for the call, in both nodes' logs.
     pub operation_id: String,
+    /// How long the edge node waits for the answer, when its conf entry sets one shorter than the link's (E8).
+    pub timeout: Option<std::time::Duration>,
 }
 
-/// The local node's answer to a [`DelegateCall`]: the service's result, or the errors it added.
+/// The local node's answer to a [`DelegateCall`]: the service's result, with the errors it added (a refusal's
+/// `reasonCode` comes back beside its error, as a call on the node itself returns both).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DelegateAnswer {
     pub result: serde_json::Value,

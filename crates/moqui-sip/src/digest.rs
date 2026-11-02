@@ -295,6 +295,9 @@ pub enum Verdict {
     Replay,
     /// A nonce this process did not issue, for another realm, or a wrong response: a failed attempt.
     Invalid,
+    /// The answer could not be checked now: whoever holds the verifiers did not answer (an edge node's local node away,
+    /// plans/Edge-Node.md §5.4 "Voice (SIP)"). Not a failed attempt; the request is answered 503.
+    Unavailable,
 }
 
 /// The server side: nonces to challenge with, and the checks of an answer.
@@ -381,35 +384,25 @@ impl NonceBook {
     /// answer's algorithm ([`ha1`]), as the registrar keeps a phone's credentials (§5.2 "Verifiers"). `None` when there
     /// is no such user or no verifier for that algorithm, which is checked the same way so the time does not tell.
     pub fn verify_ha1(&mut self, auth: &Authorization, method: &str, verifier: Option<&str>, now_secs: u64) -> Verdict {
+        let matched = ResponseCheck::of(auth, method).is_some_and(|check| check.matches(verifier));
+        self.verify_checked(auth, matched, now_secs)
+    }
+
+    /// [`NonceBook::verify_ha1`] with the response already checked against the verifier elsewhere (`matched`, from
+    /// [`ResponseCheck::matches`]): by the node that holds the verifiers, for a registrar that holds none (an edge
+    /// node's, plans/Edge-Node.md §5.4 "Voice (SIP)"). The nonce, its realm, its lifetime and its counts are checked
+    /// here, as they are this book's.
+    pub fn verify_checked(&mut self, auth: &Authorization, matched: bool, now_secs: u64) -> Verdict {
         let Some(issued) = self.issued_at(&auth.nonce) else {
             return Verdict::Invalid;
         };
-        if !auth.realm.eq_ignore_ascii_case(&self.realm) {
+        if !auth.realm.eq_ignore_ascii_case(&self.realm) || auth.algorithm.is_none() {
             return Verdict::Invalid;
         }
-        let Some(algorithm) = auth.algorithm else {
+        let Some(count) = nonce_count(auth) else {
             return Verdict::Invalid;
         };
-        let known = verifier.is_some();
-        let ha1 = match verifier {
-            Some(v) => v.to_ascii_lowercase(),
-            None => algorithm.hash("\u{0}no verifier"),
-        };
-        let ha2 = algorithm.hash(&format!("{method}:{}", auth.uri));
-        let (expected, count) = match (&auth.qop, &auth.nc, &auth.cnonce) {
-            (Some(qop), Some(nc), Some(cnonce)) if qop.eq_ignore_ascii_case("auth") => {
-                let Ok(count) = u32::from_str_radix(nc, 16) else {
-                    return Verdict::Invalid;
-                };
-                (
-                    algorithm.hash(&format!("{ha1}:{}:{nc}:{cnonce}:auth:{ha2}", auth.nonce)),
-                    count,
-                )
-            }
-            (None, _, _) => (algorithm.hash(&format!("{ha1}:{}:{ha2}", auth.nonce)), 0),
-            _ => return Verdict::Invalid,
-        };
-        if !constant_eq(expected.as_bytes(), auth.response.as_bytes()) || !known {
+        if !matched {
             return Verdict::Invalid;
         }
         if now_secs.saturating_sub(issued) > self.lifetime_secs {
@@ -447,6 +440,72 @@ impl NonceBook {
         let lifetime = self.lifetime_secs;
         self.seen
             .retain(|_, (issued, _)| now_secs.saturating_sub(*issued) <= lifetime);
+    }
+}
+
+/// An answer's nonce count: its `nc` with qop auth (hex), 0 without qop; none for any other shape, which never verifies.
+fn nonce_count(auth: &Authorization) -> Option<u32> {
+    match (&auth.qop, &auth.nc, &auth.cnonce) {
+        (Some(qop), Some(nc), Some(_)) if qop.eq_ignore_ascii_case("auth") => u32::from_str_radix(nc, 16).ok(),
+        (None, _, _) => Some(0),
+        _ => None,
+    }
+}
+
+/// What an answer's response is computed from besides the HA1, so that whoever holds the verifier can check it: the
+/// local node, for an edge node's registrar, which keeps the nonces but no verifier (plans/Edge-Node.md §5.4 "Voice
+/// (SIP)", decision 4). `ha2` is H(method:uri).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseCheck {
+    pub algorithm: Algorithm,
+    pub nonce: String,
+    /// With qop auth: its `nc` and `cnonce`; none without qop.
+    pub qop_auth: Option<(String, String)>,
+    pub ha2: String,
+    /// The answer's response, lower case.
+    pub response: String,
+}
+
+impl ResponseCheck {
+    /// The check of `auth` for `method`; none for an answer no verifier makes right (no algorithm, another qop, a qop
+    /// without its count and cnonce, a count that is not hex).
+    pub fn of(auth: &Authorization, method: &str) -> Option<ResponseCheck> {
+        let algorithm = auth.algorithm?;
+        nonce_count(auth)?;
+        let qop_auth = match (&auth.qop, &auth.nc, &auth.cnonce) {
+            (Some(_), Some(nc), Some(cnonce)) => Some((nc.clone(), cnonce.clone())),
+            _ => None,
+        };
+        Some(ResponseCheck {
+            algorithm,
+            nonce: auth.nonce.clone(),
+            qop_auth,
+            ha2: algorithm.hash(&format!("{method}:{}", auth.uri)),
+            response: auth.response.to_ascii_lowercase(),
+        })
+    }
+
+    /// The response a phone with this verifier (HA1) gives.
+    pub fn expected(&self, ha1: &str) -> String {
+        let ha1 = ha1.to_ascii_lowercase();
+        match &self.qop_auth {
+            Some((nc, cnonce)) => {
+                let text = format!("{ha1}:{}:{nc}:{cnonce}:auth:{}", self.nonce, self.ha2);
+                self.algorithm.hash(&text)
+            }
+            None => self.algorithm.hash(&format!("{ha1}:{}:{}", self.nonce, self.ha2)),
+        }
+    }
+
+    /// Whether the response is right for `verifier`; with none it is checked against a stand-in the same way, so the
+    /// time does not tell whether there is one.
+    pub fn matches(&self, verifier: Option<&str>) -> bool {
+        let known = verifier.is_some();
+        let ha1 = match verifier {
+            Some(v) => v.to_string(),
+            None => self.algorithm.hash("\u{0}no verifier"),
+        };
+        constant_eq(self.expected(&ha1).as_bytes(), self.response.as_bytes()) && known
     }
 }
 

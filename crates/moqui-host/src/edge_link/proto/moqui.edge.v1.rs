@@ -34,6 +34,20 @@ pub struct Hello {
     /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
     #[prost(uint64, tag = "10")]
     pub media_started_ms: u64,
+    /// The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+    /// TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
+    /// from them, so its phone calls are routed to the edge node's engine.
+    #[prost(string, tag = "11")]
+    pub sip_address: ::prost::alloc::string::String,
+    #[prost(string, tag = "12")]
+    pub sip_tls_address: ::prost::alloc::string::String,
+    /// The edge node's SIP engine's realm (its sip_domain, else sip_public_address, else moqui), which its registrar
+    /// challenges phones with, and whether its registrar is on (sip_registrar_enabled): the local node makes its phones'
+    /// verifiers for that realm and rings them only with it on (E8).
+    #[prost(string, tag = "13")]
+    pub sip_domain: ::prost::alloc::string::String,
+    #[prost(bool, tag = "14")]
+    pub sip_registrar: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}
@@ -257,10 +271,14 @@ pub struct DelegateRequest {
     /// An id for the call, in both nodes' logs.
     #[prost(string, tag = "5")]
     pub operation_id: ::prost::alloc::string::String,
+    /// How long the edge node waits for the answer, in milliseconds (0: the link's own timeout). The local node does no
+    /// work past it, and rolls back a call that ran past it, so a call the edge node gave up on leaves nothing behind (E8).
+    #[prost(uint64, tag = "6")]
+    pub timeout_ms: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DelegateReply {
-    /// The service's result, a JSON object, when it added no errors.
+    /// The service's result, a JSON object; with errors, what it returned beside them (a refusal's reasonCode, E8).
     #[prost(string, tag = "1")]
     pub result_json: ::prost::alloc::string::String,
     /// The errors the service added, or why the local node refused the call.

@@ -451,6 +451,7 @@ pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64
 /// compromised edge node must not reach any socket of this server, so it is delivered only to a socket that bound a
 /// leg of that call whose media is on `edge`: the frame names the call (`callSessionId`, topic `rtc:<call>`) and the
 /// leg (`to`, else `callLegId`), and the message targets this node.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub(crate) fn deliver_edge_reply(edge: &str, message: &TopicMessage) -> Result<(), String> {
     let Some(factory) = lock(factory_ref()).upgrade() else {
         return Err("the server is stopping".to_string());

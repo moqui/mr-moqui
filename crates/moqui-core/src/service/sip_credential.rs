@@ -32,7 +32,135 @@ pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, make_sip_credential)?;
+    rust_service!(map, compute_sip_digest_response)?;
+    rust_service!(map, claim_sip_digest_nonce)?;
     Ok(())
+}
+
+/// The oldest an edge node's nonce may be when its answer is checked here: moqui-sip's nonce lifetime (300 s) and a
+/// little for the clocks.
+const NONCE_MAX_AGE_SECS: i64 = 330;
+/// How far ahead of this node's clock a nonce may say it was made.
+const NONCE_SKEW_SECS: i64 = 30;
+
+/// The answers (device, nonce, nonce count) checked here lately, each until its nonce is too old to be taken anyway.
+#[derive(Default)]
+struct SeenAnswers(std::sync::Mutex<std::collections::HashMap<String, i64>>);
+
+/// When an edge node's registrar issued `nonce` (epoch seconds): moqui-sip's `NonceBook::nonce` format, base64url of
+/// the time (8 bytes, big-endian), 8 random bytes and a MAC under the edge node's key, which this node does not hold.
+fn nonce_time(nonce: &str) -> Option<i64> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(nonce.trim())
+        .ok()?;
+    let time: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+    (bytes.len() == 32).then(|| i64::try_from(u64::from_be_bytes(time)).unwrap_or(i64::MAX))
+}
+
+/// Whether an answer may be taken now (`now_secs`): its nonce made at most [`NONCE_MAX_AGE_SECS`] ago and not ahead of
+/// this clock past [`NONCE_SKEW_SECS`], and the key (device, nonce, nonce count) not taken before; a taken key is kept
+/// until its nonce is too old anyway.
+fn claim(
+    seen: &std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    key: &str,
+    issued: i64,
+    now_secs: i64,
+) -> bool {
+    if issued > now_secs + NONCE_SKEW_SECS || now_secs - issued > NONCE_MAX_AGE_SECS {
+        return false;
+    }
+    let mut seen = moqui_lib::sync::lock(seen);
+    seen.retain(|_, until| *until > now_secs);
+    if seen.contains_key(key) {
+        return false;
+    }
+    seen.insert(key.to_string(), issued + NONCE_MAX_AGE_SECS + NONCE_SKEW_SECS);
+    true
+}
+
+/// `claim#SipDigestNonce` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): before a phone's answer that the edge node's
+/// registrar sent is taken here, its nonce's age and its first use. The response covers the nonce, so the edge node
+/// cannot change the time in it after the phone answered; refusing an old one and a repeated (`sipDeviceId`, `nonce`,
+/// `nc`) means an answer the edge node kept cannot be sent again later to sign the phone in. `fresh` false otherwise.
+fn claim_sip_digest_nonce(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let text = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|v| !is_empty(v))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let (device, nonce, nc) = (text("sipDeviceId"), text("nonce"), text("nc"));
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| LibError::new("claim#SipDigestNonce needs an execution context"))?;
+    let seen = factory.extension(|_| SeenAnswers::default());
+    let now = crate::user::now_millis() / 1000;
+    let fresh = !device.is_empty()
+        && nonce_time(&nonce).is_some_and(|issued| claim(&seen.0, &format!("{device}|{nonce}|{nc}"), issued, now));
+    Ok(BTreeMap::from([("fresh".to_string(), Value::Bool(fresh))]))
+}
+
+/// `compute#SipDigestResponse` (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): the response a phone's digest answer must
+/// have, from its verifier `ha1` and what the edge node's registrar sent (`nonce`, `nc`, `cnonce`, `qop`, and `ha2`, its
+/// H(method:uri)), as moqui-sip's `NonceBook::verify_ha1` computes it: H(ha1:nonce:nc:cnonce:auth:ha2) with qop auth,
+/// H(ha1:nonce:ha2) with none. Empty for an algorithm other than SHA-256, SHA-512-256 or MD5, or another qop.
+fn compute_sip_digest_response(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let text = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|v| !is_empty(v))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let response = digest_response(
+        &text("algorithm"),
+        &text("ha1").to_ascii_lowercase(),
+        &text("nonce"),
+        Some(text("qop")).filter(|qop| !qop.is_empty()).as_deref(),
+        &text("nc"),
+        &text("cnonce"),
+        &text("ha2"),
+    );
+    Ok(BTreeMap::from([(
+        "response".to_string(),
+        Value::string(response.unwrap_or_default()),
+    )]))
+}
+
+/// The digest of `text` under `algorithm` (RFC 7616's names), hex; none for another algorithm.
+fn digest_hex(algorithm: &str, text: &str) -> Option<String> {
+    Some(match algorithm.trim().to_ascii_uppercase().as_str() {
+        "SHA-256" => hex(&Sha256::digest(text.as_bytes())),
+        "SHA-512-256" => hex(&sha2::Sha512_256::digest(text.as_bytes())),
+        "MD5" => hex(&Md5::digest(text.as_bytes())),
+        _ => return None,
+    })
+}
+
+/// The expected response of a digest answer, as moqui-sip's `NonceBook::verify_ha1` computes it.
+fn digest_response(
+    algorithm: &str,
+    ha1: &str,
+    nonce: &str,
+    qop: Option<&str>,
+    nc: &str,
+    cnonce: &str,
+    ha2: &str,
+) -> Option<String> {
+    match qop {
+        Some(qop) if qop.eq_ignore_ascii_case("auth") && !nc.is_empty() && !cnonce.is_empty() => {
+            digest_hex(algorithm, &format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}"))
+        }
+        None => digest_hex(algorithm, &format!("{ha1}:{nonce}:{ha2}")),
+        Some(_) => None,
+    }
 }
 
 /// The password's characters: letters and digits without the ones read alike (0 O 1 l I), which a person types into a

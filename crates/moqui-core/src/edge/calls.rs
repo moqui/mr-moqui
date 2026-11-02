@@ -43,6 +43,7 @@ pub const PROBE_LEG: &str = "edgeSetupProbe";
 
 const MEDIA_NODE: &str = "moqui.call.CallMediaNode";
 const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNode";
+const REGISTER_SIP_NODE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
 const MAKE_ICE_SERVERS: &str = "org.moqui.impl.CallServices.make#IceServers";
 
 /// Whether new calls may have their media on the edge node ([`CALLS_ENABLED`]).
@@ -113,6 +114,39 @@ pub fn register_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
         ("stopping".to_string(), Value::Bool(stopping)),
     ]);
     let written = internal(|| crate::service::sync(REGISTER_MEDIA_NODE, &parameters).map(drop));
+    drop(allowed);
+    written
+}
+
+/// Write or remove (`stopping`) the `SipNode` row of the edge node `edge` (its SIP engine, plans/Edge-Node.md §5.4
+/// "Voice (SIP)", E8), as the link keeps it from its Hello, under the lock of [`register_row`]: a write is refused
+/// unless the edge node's link came up and the node has not unpaired since ([`allow_row`], [`forget_rows`], which
+/// removes this row too).
+///
+/// # Errors
+///
+/// Returns why the row was not written.
+pub fn register_sip_row(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
+    let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| "no execution context to write the SIP node row in".to_string())?;
+    let keeper = factory.extension(|_| Keeper::default());
+    let allowed = moqui_lib::sync::lock(&keeper.0);
+    if !stopping && allowed.as_deref() != Some(edge.instance_id.as_str()) {
+        return Err(format!(
+            "the link to the edge node {} is not up or this node unpaired, so its SIP node row is not written",
+            edge.instance_id
+        ));
+    }
+    let parameters = std::collections::BTreeMap::from([
+        ("instanceId".to_string(), Value::string(&edge.instance_id)),
+        ("sipAddress".to_string(), Value::string(&edge.sip_address)),
+        ("tlsAddress".to_string(), Value::string(&edge.sip_tls_address)),
+        ("sipDomain".to_string(), Value::string(&edge.sip_domain)),
+        ("registrarEnabled".to_string(), Value::Bool(edge.sip_registrar)),
+        ("edgeLinked".to_string(), Value::Bool(true)),
+        ("stopping".to_string(), Value::Bool(stopping)),
+    ]);
+    let written = internal(|| crate::service::sync(REGISTER_SIP_NODE, &parameters).map(drop));
     drop(allowed);
     written
 }

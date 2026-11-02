@@ -23,6 +23,8 @@
 //!   `turn_auth_secret`, so `make#IceServers` signs the credentials of that node's TURN URLs with it ([`turn_secret`]).
 //!   The secret comes only in the up connection's Hello answer, on a link whose keys both ends pinned; it is never
 //!   logged, stored or shown.
+//! - Its SIP engine (E8) tells its addresses the same way ([`set_sip_advert`]), and the local node keeps its `SipNode`
+//!   row from the Hello.
 
 use std::sync::Mutex;
 
@@ -50,6 +52,33 @@ pub fn set_advert(factory: &ExecutionContextFactory, advert: Option<MediaAdvert>
 /// What this node's media node advertises, while its media socket is up.
 pub fn advert(factory: &ExecutionContextFactory) -> Option<MediaAdvert> {
     lock(&factory.extension(|_| Advert::default()).0).clone()
+}
+
+/// What an edge node's SIP engine advertises (E8): the addresses trunks and phones reach it at.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SipAdvert {
+    /// For UDP and TCP, `host:port`; empty when that listener is off.
+    pub sip_address: String,
+    /// For TLS, `host:port`; empty when off.
+    pub tls_address: String,
+    /// The realm its registrar challenges phones with (`sip_domain`, else `sip_public_address`, else `moqui`).
+    pub domain: String,
+    /// Its registrar is on (`sip_registrar_enabled`).
+    pub registrar: bool,
+}
+
+#[derive(Default)]
+struct SipAdverts(Mutex<Option<SipAdvert>>);
+
+/// On an edge node, as its SIP engine starts (or `None` as it stops): what its Hello tells its local nodes, which keep
+/// its `SipNode` row from it instead of the engine registering one (plans/Edge-Node.md §5.4 "Voice (SIP)").
+pub fn set_sip_advert(factory: &ExecutionContextFactory, advert: Option<SipAdvert>) {
+    *lock(&factory.extension(|_| SipAdverts::default()).0) = advert;
+}
+
+/// What this node's SIP engine advertises, while it runs.
+pub fn sip_advert(factory: &ExecutionContextFactory) -> Option<SipAdvert> {
+    lock(&factory.extension(|_| SipAdverts::default()).0).clone()
 }
 
 /// The edge node's TURN secret on a local node, by the edge node's instance id.
