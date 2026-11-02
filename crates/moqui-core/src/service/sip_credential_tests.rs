@@ -52,3 +52,25 @@ fn a_credential_keeps_only_verifiers_and_md5_only_for_a_legacy_device() {
     assert_eq!(algorithms, vec!["SHA-256", "MD5"]);
     assert!(credential(&BTreeMap::new()).is_err(), "a realm is needed");
 }
+
+/// RFC 2617 §3.5's example answer, computed as the local node checks its edge node's registrar's answers (E8).
+#[test]
+fn the_digest_response_is_rfc_2617_s_example() {
+    let ha1 = hex(&Md5::digest(b"Mufasa:testrealm@host.com:Circle Of Life"));
+    let ha2 = hex(&Md5::digest(b"GET:/dir/index.html"));
+    let nonce = "dcd98b7102dd2f0e8b11d0f600bfb0c093";
+    assert_eq!(
+        digest_response("MD5", &ha1, nonce, Some("auth"), "00000001", "0a4f113b", &ha2).as_deref(),
+        Some("6629fae49393a05397450978507c4ef1")
+    );
+    // a qop it does not know, or another algorithm, is no response
+    assert_eq!(
+        digest_response("MD5", &ha1, nonce, Some("auth-int"), "00000001", "0a4f113b", &ha2),
+        None
+    );
+    assert_eq!(digest_response("SHA-1", &ha1, nonce, None, "", "", &ha2), None);
+    assert_eq!(
+        digest_response("SHA-256", "a", "n", None, "", "", "b"),
+        Some(hex(&Sha256::digest(b"a:n:b")))
+    );
+}

@@ -40,8 +40,15 @@
 //!   keys, a queue's music and ticks, ringback during a ring step or a blind transfer, hold music, a transfer's timer,
 //!   a merge's move to another room (the controls `route`, `ringback`, `connect`, `transferTimer`, `move`), and a desk
 //!   phone's REFER.
+//! - **On an edge node** (plans/Edge-Node.md §5.4 "Voice (SIP)", E8, `edge.rs`, `fallback.rs`): the voice services it
+//!   calls run on the local node (delegated), its trunks come from the replicated copy, it registers no `SipNode` (the
+//!   local node keeps its row from the link's Hello), its messages and the greetings it plays cross the link's queue,
+//!   and a call whose routing finds the local node away is answered from the number's fallback: its outside number,
+//!   then a message, or 480.
 
 mod audio;
+mod edge;
+mod fallback;
 mod ivr;
 mod leg;
 mod phones;
@@ -288,6 +295,14 @@ enum Command {
         token: u64,
         audio: Prompt,
     },
+    /// The trunks did not load: try again (the `attempt`th time).
+    ReloadRetry {
+        attempt: u32,
+    },
+    /// E8: a fallback's forward rang its time unanswered.
+    FallbackTimeout {
+        leg: String,
+    },
 }
 
 fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
@@ -302,11 +317,16 @@ pub(crate) struct SipNode {
     stop: Arc<AtomicBool>,
     register: Option<JoinHandle<()>>,
     _signal: Option<moqui_core::notify::Subscription>,
+    /// On an edge node, the factory whose Hello tells its addresses (E8), cleared when the engine stops.
+    advertised: Option<std::sync::Weak<ExecutionContextFactory>>,
 }
 
 impl Drop for SipNode {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        if let Some(factory) = self.advertised.take().and_then(|factory| factory.upgrade()) {
+            moqui_core::edge::media::set_sip_advert(&factory, None);
+        }
         *lock(engine()) = None;
         self.ua.shutdown();
         if let Some(t) = self.register.take() {
@@ -448,10 +468,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         }
     };
     let own = crate::rtc::own_node(factory);
+    let edge_node = edge::is_edge(factory);
     let engine = Engine {
         factory: Arc::clone(factory),
         ua: ua.clone(),
         own: own.clone(),
+        edge: edge_node,
         ports,
         public: settings.public,
         legs: HashMap::new(),
@@ -467,6 +489,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         next_tick: 0,
         loops: HashMap::new(),
         next_loop: 0,
+        fallbacks: HashMap::new(),
+        forwards: HashMap::new(),
     };
     runtime.spawn(engine.run(events, commands));
     let stop = Arc::new(AtomicBool::new(false));
@@ -478,14 +502,31 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         ),
         ("tlsAddress", bound.tls.map(|a| public_of(a, settings.public))),
     ];
-    let register = {
+    let addresses: Vec<(&'static str, String)> = addresses
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
+        .collect();
+    // an edge node registers no SipNode: its Hello tells its addresses and the local node keeps the row (E8)
+    let register = if edge_node {
+        let address = |key: &str| {
+            addresses
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        moqui_core::edge::media::set_sip_advert(
+            factory,
+            Some(moqui_core::edge::media::SipAdvert {
+                sip_address: address("sipAddress"),
+                tls_address: address("tlsAddress"),
+            }),
+        );
+        None
+    } else {
         let factory = Arc::clone(factory);
         let stop = Arc::clone(&stop);
         let rtp_ports = settings.rtp_ports.clone();
-        let addresses: Vec<(&'static str, String)> = addresses
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
-            .collect();
         std::thread::Builder::new()
             .name("moqui-sip-register".to_string())
             .spawn(move || register_loop(&factory, &own, &addresses, &rtp_ports, &stop))
@@ -506,6 +547,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         stop,
         register,
         _signal: signal,
+        advertised: edge_node.then(|| Arc::downgrade(factory)),
     })
 }
 
@@ -654,6 +696,8 @@ struct Leg {
     media: LegMedia,
     local: LocalMedia,
     caller: String,
+    /// An inbound leg's number called (E.164 when it is one): the number a fallback or a queued message is for (E8).
+    dialed: String,
     answered: bool,
     /// A desk or soft phone's leg (V4): its device (`sipDeviceId`), whose legs `dropDevice` hangs up.
     device: Option<String>,
@@ -669,6 +713,8 @@ struct Engine {
     factory: Arc<ExecutionContextFactory>,
     ua: Ua,
     own: String,
+    /// An edge node's engine (E8): its services run on the local node, and the fallback answers while that is away.
+    edge: bool,
     ports: Arc<PortRange>,
     public: Option<IpAddr>,
     legs: HashMap<String, Leg>,
@@ -688,6 +734,10 @@ struct Engine {
     next_tick: u64,
     loops: HashMap<String, u64>,
     next_loop: u64,
+    /// E8 (`fallback.rs`): the inbound legs answered from their number's fallback while the local node is away, and
+    /// each forward's outbound leg with its inbound one.
+    fallbacks: HashMap<String, fallback::FallbackCall>,
+    forwards: HashMap<String, String>,
 }
 
 /// The ring timers of the inbound legs (V3): a leg has at most one that counts, the one armed last, so a timer a later step
@@ -793,7 +843,12 @@ fn number(body: &Json, key: &str) -> Option<u64> {
 
 impl Engine {
     async fn run(mut self, mut events: UnboundedReceiver<UaEvent>, mut commands: UnboundedReceiver<Command>) {
-        self.reload().await;
+        if !self.reload().await {
+            self.retry_reload(1);
+        }
+        if self.edge {
+            self.watch_trunks();
+        }
         loop {
             tokio::select! {
                 event = events.recv() => match event {
@@ -808,8 +863,15 @@ impl Engine {
         }
     }
 
-    /// Fire and forget: a note for the services.
+    /// Fire and forget: a note for the services. A call the fallback answered (E8) is none of theirs.
     fn note(&self, name: &'static str, parameters: Json) {
+        if parameters
+            .get("callSessionId")
+            .and_then(Json::as_str)
+            .is_some_and(edge::is_fallback)
+        {
+            return;
+        }
         let factory = Arc::clone(&self.factory);
         tokio::spawn(async move {
             if let Err(err) = call_service(&factory, name, parameters).await {
@@ -826,12 +888,53 @@ impl Engine {
         );
     }
 
-    async fn reload(&mut self) {
-        let config = match call_service(&self.factory, CONFIG_SERVICE, serde_json::json!({})).await {
+    /// The trunks did not load at start: tried again after a wait that doubles from 2 s to a minute, until they do.
+    fn retry_reload(&self, attempt: u32) {
+        let wait = Duration::from_secs((1_u64 << attempt.min(6)).min(60));
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            let _ = commands.send(Command::ReloadRetry { attempt });
+        });
+    }
+
+    /// On an edge node (E8): load the trunks again when a batch of their replicated set is applied, which is how a
+    /// trunk or the policy changed on the local node reaches this engine, with the link up or after it comes back.
+    fn watch_trunks(&self) {
+        let (factory, commands) = (Arc::downgrade(&self.factory), self.commands.clone());
+        tokio::spawn(async move {
+            // the count is of this process: the start's load read the copies before any batch came
+            let mut seen = 0;
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let Some(factory) = factory.upgrade() else { return };
+                let Some(count) = edge::trunks_applied(&factory).await else {
+                    continue;
+                };
+                if count != seen
+                    && commands
+                        .send(Command::Control(serde_json::json!({"action": "reload"})))
+                        .is_err()
+                {
+                    return;
+                }
+                seen = count;
+            }
+        });
+    }
+
+    /// Loads the trunks and the policy (on an edge node from the replicated copy, E8); false when they did not load.
+    async fn reload(&mut self) -> bool {
+        let loaded = if self.edge {
+            edge::engine_config(&self.factory).await
+        } else {
+            call_service(&self.factory, CONFIG_SERVICE, serde_json::json!({})).await
+        };
+        let config = match loaded {
             Ok(config) => config,
             Err(err) => {
                 tracing::error!("SIP: the trunks did not load, calls wait for a reload: {err}");
-                return;
+                return false;
             }
         };
         let policy = config.get("policy").cloned().unwrap_or(Json::Null);
@@ -923,6 +1026,7 @@ impl Engine {
         }
         tracing::info!("SIP: {} trunks", trunks.len());
         self.ua.set_trunks(trunks).await;
+        true
     }
 
     async fn event(&mut self, event: UaEvent) {
@@ -945,6 +1049,8 @@ impl Engine {
                     Ok(settled) => {
                         entry.media.send(LegCommand::Settled(Box::new(settled)));
                         self.note_leg(&room, &leg, "answered", Some(200), "");
+                        // E8: a fallback's forward answered: the caller is answered too
+                        self.forward_answered(&leg);
                     }
                     Err(err) => {
                         tracing::warn!("SIP leg {leg}: the answer did not settle: {err}");
@@ -958,7 +1064,10 @@ impl Engine {
                 self.voicemail.remove(&leg);
                 self.forget_ivr(&leg);
                 self.ring_timers.clear(&leg);
-                let Some(entry) = self.legs.remove(&leg) else { return };
+                let removed = self.legs.remove(&leg);
+                // E8: one leg of a fallback's forward ended: the other hangs up, or the caller goes on to a message
+                self.fallback_leg_ended(&leg);
+                let Some(entry) = removed else { return };
                 let (event, code) = ended_event(reason);
                 self.note_leg(&entry.room, &leg, event, code, &format!("{reason:?}"));
             }
@@ -1025,7 +1134,19 @@ impl Engine {
         let mut ring_seconds = None;
         let mut step = None;
         let mut ivr_answer = None;
-        let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
+        let routed = call_service(&self.factory, RECEIVE_SERVICE, parameters).await;
+        // E8: an edge node whose local node is away (no link, or no answer in time) answers from the number's fallback
+        if let Err(err) = &routed {
+            if self.edge && edge::is_offline(err) {
+                tracing::warn!(
+                    "SIP call from {} to {to}: the local node is away ({err}); the number's fallback answers",
+                    call.source
+                );
+                self.answer_from_fallback(call, to, from, srtp_required).await;
+                return;
+            }
+        }
+        let decided = match routed {
             Ok(out) => {
                 let room = text(&out, "callSessionId");
                 let leg = text(&out, "callLegId");
@@ -1051,35 +1172,61 @@ impl Engine {
                 return;
             }
         };
+        if !self.ring_inbound(call, &room, &leg, &from, &to, srtp_required) {
+            return;
+        }
+        // V5: an IVR menu or a queue answers the call itself
+        if let Some(answer) = ivr_answer {
+            self.start_ivr(&leg, answer);
+            return;
+        }
+        match (voicemail_now, ring_seconds) {
+            (Some(reason), _) => self.start_voicemail(&leg, &reason, step),
+            (None, Some(seconds)) => self.ring_timer(&leg, seconds, step),
+            (None, None) => {}
+        }
+    }
+
+    /// Rings an inbound call as leg `leg` of room `room`: its offer answered, its media started, the user agent told to
+    /// ring it. False when it was refused instead (488, 503, or decided too late), noted to the services.
+    fn ring_inbound(
+        &mut self,
+        call: IncomingCall,
+        room: &str,
+        leg: &str,
+        from: &str,
+        to: &str,
+        srtp_required: bool,
+    ) -> bool {
         let offer = match sdp::parse(&call.offer) {
             Ok(offer) => offer,
             Err(err) => {
                 let _ = call.reply.send(Decision::Reject(488));
-                self.note_leg(&room, &leg, "failed", Some(488), &err.to_string());
-                return;
+                self.note_leg(room, leg, "failed", Some(488), &err.to_string());
+                return false;
             }
         };
         if srtp_required && !offer.secure {
             let _ = call.reply.send(Decision::Reject(488));
             self.note_leg(
-                &room,
-                &leg,
+                room,
+                leg,
                 "failed",
                 Some(488),
                 "plain RTP offered to a trunk whose profile requires SRTP",
             );
-            return;
+            return false;
         }
         let started = self.local_media(offer.secure).and_then(|(socket, local)| {
             let (answer, settled) = sdp::answer(&offer, &local).map_err(|e| e.to_string())?;
             let notes = self.notes_sender();
-            let media = LegMedia::start(&room, &leg, socket, Some(settled), notes)?;
+            let media = LegMedia::start(room, leg, socket, Some(settled), notes)?;
             Ok((answer, media, local))
         });
         match started {
             Ok((answer, media, local)) => {
                 let ring = Decision::Ring {
-                    leg: leg.clone(),
+                    leg: leg.to_string(),
                     answer,
                 };
                 if call.reply.send(ring).is_err() {
@@ -1087,16 +1234,17 @@ impl Engine {
                     // the leg's media goes, and the call ends
                     tracing::warn!("SIP call {leg}: decided too late, the call was refused");
                     drop(media);
-                    self.note_leg(&room, &leg, "failed", Some(480), "decided too late");
-                    return;
+                    self.note_leg(room, leg, "failed", Some(480), "decided too late");
+                    return false;
                 }
                 self.legs.insert(
-                    leg.clone(),
+                    leg.to_string(),
                     Leg {
-                        room,
+                        room: room.to_string(),
                         media,
                         local,
-                        caller: from,
+                        caller: from.to_string(),
+                        dialed: to.to_string(),
                         answered: false,
                         device: None,
                         srtp_local: None,
@@ -1104,21 +1252,13 @@ impl Engine {
                         held: false,
                     },
                 );
-                // V5: an IVR menu or a queue answers the call itself
-                if let Some(answer) = ivr_answer {
-                    self.start_ivr(&leg, answer);
-                    return;
-                }
-                match (voicemail_now, ring_seconds) {
-                    (Some(reason), _) => self.start_voicemail(&leg, &reason, step),
-                    (None, Some(seconds)) => self.ring_timer(&leg, seconds, step),
-                    (None, None) => {}
-                }
+                true
             }
             Err(err) => {
                 tracing::warn!("SIP call {leg}: its media did not start: {err}");
                 let _ = call.reply.send(Decision::Reject(503));
-                self.note_leg(&room, &leg, "failed", Some(503), &err);
+                self.note_leg(room, leg, "failed", Some(503), &err);
+                false
             }
         }
     }
@@ -1195,6 +1335,12 @@ impl Engine {
             Command::Routed { leg, result } => self.routed(&leg, result),
             Command::QueueTick { leg, generation } => self.queue_tick(&leg, generation),
             Command::LoopReady { leg, token, audio } => self.loop_ready(&leg, token, audio),
+            Command::ReloadRetry { attempt } => {
+                if !self.reload().await {
+                    self.retry_reload(attempt + 1);
+                }
+            }
+            Command::FallbackTimeout { leg } => self.forward_timed_out(&leg),
             Command::RingTimeout { leg, generation } => {
                 let Some(step) = self.ring_timers.fire(&leg, generation) else {
                     return;
@@ -1296,7 +1442,9 @@ impl Engine {
                     let _ = commands.send(Command::Prompt { leg, prompt });
                 });
             }
-            "reload" => self.reload().await,
+            "reload" => {
+                self.reload().await;
+            }
             // V2: its user declined it (CallServices decline#Call); V3: of the plan's step stepToken, so one sent for a
             // step the plan has left does nothing
             "voicemail" => {
@@ -1368,6 +1516,7 @@ impl Engine {
                 media,
                 local,
                 caller: String::new(),
+                dialed: to.clone(),
                 answered: true,
                 device: None,
                 srtp_local: None,

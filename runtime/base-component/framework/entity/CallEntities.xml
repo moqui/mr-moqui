@@ -50,6 +50,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="endReasonEnumId" type="id"/>
         <field name="mediaNodeId" type="text-medium"/>
         <field name="mediaGeneration" type="number-integer" default="1"/>
+        <field name="voicemailBoxId" type="id"><description>A phone call that went to voicemail: the box begin#Voicemail
+            chose, which a message the SIP engine of the call's edge node queued is stored in (E8)</description></field>
+        <field name="voicemailAccessBoxId" type="id"><description>A phone call whose caller gave a box's PIN
+            (check#VoicemailPin): the box whose messages the call may play and act on (E8)</description></field>
         <field name="encryptionMode" type="text-short"/>
         <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
         <relationship type="one" title="CallSessionKind" related="moqui.basic.Enumeration" short-alias="kind">

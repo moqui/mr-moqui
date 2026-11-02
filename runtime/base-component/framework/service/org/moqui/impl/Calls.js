@@ -1125,6 +1125,25 @@ function edgeCallerAllowed(session, leg) {
   return !!node && node.edgeLinked === 'Y'
 }
 
+/**
+ * For the engine services of the other modules (Voice.js, Voicemail.js, SipDevices.js, Ivr.js, CallQueues.js,
+ * CallTransfers.js; plans/Edge-Node.md §5.4 "Voice (SIP)", E8): whether the caller may act for a call (callSessionId, or
+ * a leg's, callLegId) or as a node (instanceId): anyone but the edge link's delegate user, which may only for a call
+ * whose media is on this node's edge node, or as that node.
+ */
+function edgeAllowed(p) {
+  if (ec.user.username !== '_edge_') return { allowed: true }
+  if (p.instanceId) {
+    const node = one(MEDIA_NODE, { instanceId: p.instanceId })
+    return { allowed: !!node && node.edgeLinked === 'Y' }
+  }
+  const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
+  const callSessionId = p.callSessionId || leg?.callSessionId
+  const session = callSessionId ? one(SESSION, { callSessionId }) : null
+  if (!session || (leg && leg.callSessionId !== session.callSessionId)) return { allowed: false }
+  return { allowed: edgeCallerAllowed(session, leg) }
+}
+
 function mediaEvent(p) {
   const leg = one(LEG, { callLegId: p.callLegId })
   if (!leg) return {}
@@ -2480,7 +2499,7 @@ const operations = {
   start, startPhone, phoneEvent, phoneToVoicemail, answer, decline, join, leave, end, bind, heartbeat, release, mediaEvent, expire, expireItem, get, active,
   registerNode, capabilities, history, countMissed, markMissedSeen, createLink, findLinks, revokeLink, checkToken, openLink,
   guestJoin, guestState, guestBind, guestLeave, admit: (p) => admitOrDeny(p, true), deny: (p) => admitOrDeny(p, false),
-  removeParticipant, iceServers, guestIceServers, registerDevice, setRoomEncryption, deviceRevoked,
+  removeParticipant, iceServers, guestIceServers, registerDevice, setRoomEncryption, deviceRevoked, edgeAllowed,
 }
 
 function execute(op, parameters) {

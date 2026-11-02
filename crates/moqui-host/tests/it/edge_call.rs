@@ -54,7 +54,7 @@ const PASSWORD: &str = "Edge-callee-77!";
 const LOCAL_SECRET: &str = "local-node-turn-secret";
 const EDGE_SECRET: &str = "edge-node-turn-secret";
 
-fn pem(label: &str, der: &[u8]) -> String {
+pub(crate) fn pem(label: &str, der: &[u8]) -> String {
     let text = base64::engine::general_purpose::STANDARD.encode(der);
     let lines: Vec<&str> = text
         .as_bytes()
@@ -65,7 +65,7 @@ fn pem(label: &str, der: &[u8]) -> String {
 }
 
 /// A test authority's root, and a `localhost` certificate and key (PEM) it signed.
-fn certs() -> (CertificateDer<'static>, String, String) {
+pub(crate) fn certs() -> (CertificateDer<'static>, String, String) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -83,23 +83,34 @@ fn certs() -> (CertificateDer<'static>, String, String) {
     )
 }
 
-/// The edge node, in its child process.
-struct EdgeNode {
+/// The edge node, in its child process (shared with `edge_sip.rs`).
+pub(crate) struct EdgeNode {
     child: Child,
-    node: String,
-    code: String,
-    media: SocketAddr,
-    runtime: PathBuf,
+    pub(crate) node: String,
+    pub(crate) code: String,
+    pub(crate) media: SocketAddr,
+    pub(crate) runtime: PathBuf,
+    /// Its ready line, whose other fields [`EdgeNode::field`] reads.
+    line: String,
 }
 
 impl EdgeNode {
     /// Start the edge node's process; [`EdgeNode::ready`] waits for it.
     fn spawn(https_port: u16, cert: &str, key: &str) -> (Child, std::sync::mpsc::Receiver<Option<String>>) {
-        let setup = json!({"port": https_port, "cert": cert, "key": key}).to_string();
+        let setup = json!({"port": https_port, "cert": cert, "key": key});
+        EdgeNode::spawn_test(EDGE_TEST, EDGE_ENV, &setup)
+    }
+
+    /// Start the test `test` of this binary as an edge node's process, given `setup` in the variable `env`.
+    pub(crate) fn spawn_test(
+        test: &str,
+        env: &str,
+        setup: &serde_json::Value,
+    ) -> (Child, std::sync::mpsc::Receiver<Option<String>>) {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([EDGE_TEST, "--exact", "--nocapture", "--test-threads", "1"])
-            .env("MOQUI_TEST_OWN_PROCESS", EDGE_TEST)
-            .env(EDGE_ENV, setup)
+            .args([test, "--exact", "--nocapture", "--test-threads", "1"])
+            .env("MOQUI_TEST_OWN_PROCESS", test)
+            .env(env, setup.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -120,7 +131,7 @@ impl EdgeNode {
         (child, ready_rx)
     }
 
-    fn ready(mut child: Child, ready: &std::sync::mpsc::Receiver<Option<String>>) -> EdgeNode {
+    pub(crate) fn ready(mut child: Child, ready: &std::sync::mpsc::Receiver<Option<String>>) -> EdgeNode {
         let line = match ready.recv_timeout(EDGE_START) {
             Ok(Some(line)) => line,
             outcome => {
@@ -129,20 +140,28 @@ impl EdgeNode {
                 panic!("the edge node did not start: {outcome:?}");
             }
         };
-        let field = |name: &str| {
-            line.split_whitespace()
-                .find_map(|kv| kv.strip_prefix(&format!("{name}=")))
-                .unwrap_or_default()
-                .to_string()
-        };
+        let field = |name: &str| field_of(&line, name);
         EdgeNode {
             child,
             node: field("node"),
             code: field("code"),
             media: field("media").parse().unwrap(),
             runtime: PathBuf::from(field("runtime")),
+            line: line.clone(),
         }
     }
+
+    /// A field of its ready line (`name=value`).
+    pub(crate) fn field(&self, name: &str) -> String {
+        field_of(&self.line, name)
+    }
+}
+
+fn field_of(line: &str, name: &str) -> String {
+    line.split_whitespace()
+        .find_map(|kv| kv.strip_prefix(&format!("{name}=")))
+        .unwrap_or_default()
+        .to_string()
 }
 
 impl Drop for EdgeNode {
@@ -209,7 +228,7 @@ fn edge_node_process() {
 }
 
 /// A row of `entity` on the local node by its key, read with authorization off.
-fn field(entity: &str, key: &str, id: &str, name: &str) -> String {
+pub(crate) fn field(entity: &str, key: &str, id: &str, name: &str) -> String {
     let _authz =
         moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
     moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity())
@@ -226,7 +245,7 @@ fn field(entity: &str, key: &str, id: &str, name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
+pub(crate) fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     let started = Instant::now();
     while !check() {
         assert!(started.elapsed() < limit, "{what}");

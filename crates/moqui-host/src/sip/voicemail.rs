@@ -202,6 +202,8 @@ pub(crate) struct Machine {
     wait: u32,
     keyed: bool,
     idles: u32,
+    /// `*` in the greeting opens nothing (an edge node's fallback, E8).
+    no_access: bool,
 }
 
 impl Machine {
@@ -210,6 +212,14 @@ impl Machine {
         let mut machine = Machine::new(Phase::Greeting, false);
         let play = machine.play(vec![Say::Greeting, Say::Beep]);
         (machine, vec![play])
+    }
+
+    /// A message an edge node's fallback takes while its local node is away (E8): as [`Machine::deposit`], but `*`
+    /// opens no phone access, which needs the local node.
+    pub(crate) fn deposit_only() -> (Machine, Vec<Action>) {
+        let (mut machine, actions) = Machine::deposit();
+        machine.no_access = true;
+        (machine, actions)
     }
 
     /// A caller on the access number: the box number first.
@@ -231,6 +241,7 @@ impl Machine {
             wait: 0,
             keyed: false,
             idles: 0,
+            no_access: false,
         }
     }
 
@@ -291,7 +302,7 @@ impl Machine {
                 self.phase = Phase::Recording;
                 vec![Action::Record]
             }
-            (Phase::Greeting, Event::Digit('*')) => {
+            (Phase::Greeting, Event::Digit('*')) if !self.no_access => {
                 self.phase = Phase::Pin;
                 self.digits.clear();
                 vec![self.play(vec![Say::EnterPin])]
@@ -533,14 +544,31 @@ pub(super) fn location_bytes_job(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     location: &str,
 ) -> Result<Vec<u8>, String> {
+    call_audio_job(factory, location, None)
+}
+
+/// [`location_bytes_job`], for the call `call` when it plays a saved message: on an edge node a file it does not have
+/// comes from the local node (E8, `edge.rs` `fetch_audio`), a greeting or prompt kept here for the next time.
+pub(super) fn call_audio_job(
+    factory: &Arc<moqui_core::context::ExecutionContextFactory>,
+    location: &str,
+    call: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let job = {
-        let (factory, location) = (Arc::clone(factory), location.to_string());
+        let (factory, location, call) = (Arc::clone(factory), location.to_string(), call.map(str::to_string));
         move || {
             // the engine's own read of a greeting, a message or a prompt, as internal work
             let _authz = moqui_core::context::ExecutionContext::with_current(
                 moqui_core::context::ExecutionContext::disable_authz,
             );
-            factory.resource().location_bytes(&location)
+            match factory.resource().location_bytes(&location) {
+                Ok(None) if super::edge::is_edge(&factory) => {
+                    super::edge::fetch_audio(&factory, &location, call.as_deref())
+                        .map(Some)
+                        .map_err(moqui_core::context::Error::new)
+                }
+                read => read,
+            }
         }
     };
     let rx = factory
@@ -560,6 +588,7 @@ fn audio_for(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     say: &Say,
     greeting: Option<&str>,
+    call: &str,
 ) -> Option<Vec<i16>> {
     let (location, max_seconds) = match say {
         Say::Message(location) => (location.clone(), MAX_PLAY_SECONDS),
@@ -578,7 +607,8 @@ fn audio_for(
             )
         }
     };
-    match location_bytes_job(factory, &location).and_then(|bytes| audio::decode_audio(&bytes, max_seconds)) {
+    let message_of = matches!(say, Say::Message(_)).then_some(call);
+    match call_audio_job(factory, &location, message_of).and_then(|bytes| audio::decode_audio(&bytes, max_seconds)) {
         Ok(pcm) => Some(pcm),
         Err(err) => {
             // the default prompt's file is optional; a user's greeting or a message that does not play is logged
@@ -624,10 +654,17 @@ impl Engine {
         let Some(entry) = self.legs.get(&leg) else { return };
         let room = entry.room.clone();
         let caller = entry.caller.clone();
+        let dialed = entry.dialed.clone();
         let out = match result {
             Ok(out) => out,
             Err(err) => {
                 let code = err.split(':').next().unwrap_or_default();
+                // E8: the local node went away while the call rang: its number's fallback takes a message (once)
+                if self.edge && super::edge::is_offline(&err) && reason != "fallback" {
+                    tracing::warn!("SIP leg {leg}: the local node is away ({err}); the number's fallback answers");
+                    self.message_from_fallback(&leg);
+                    return;
+                }
                 // stale: a timer or control of a step the plan has already left (V3), which changes nothing
                 if matches!(code, "answered" | "callEnded" | "stale") {
                     tracing::debug!("SIP leg {leg}: not to voicemail ({reason}): {err}");
@@ -656,22 +693,29 @@ impl Engine {
         // V5: no ringback or music under the greeting
         self.set_loop(&leg, None);
         let max_ms = super::number(&out, "maxSeconds").unwrap_or(120) * 1000;
+        // E8: the fallback's message, while the local node is away, opens no phone access
+        let fallback = super::flag(&out, "fallback");
         let (machine, actions) = if text(&out, "mode") == "access" {
             Machine::access()
+        } else if fallback {
+            Machine::deposit_only()
         } else {
             Machine::deposit()
         };
         let from_number = Some(text(&out, "fromNumber"))
             .filter(|n| !n.is_empty())
             .unwrap_or(caller);
+        // the call, unless the fallback made it (a call the local node never heard of); the number called, which the
+        // local node finds the box of for a message an edge node queued without one
+        let call_id = (!super::edge::is_fallback(&room)).then(|| room.clone());
         let call = VmCall {
             machine,
             room: room.clone(),
             box_id: Some(text(&out, "voicemailBoxId")).filter(|b| !b.is_empty()),
             greeting: Some(text(&out, "greetingLocation")).filter(|g| !g.is_empty()),
             max_ms,
-            target: serde_json::json!({"voicemailBoxId": text(&out, "voicemailBoxId"), "callSessionId": room,
-                "fromNumber": from_number, "fromName": text(&out, "fromName")}),
+            target: serde_json::json!({"voicemailBoxId": text(&out, "voicemailBoxId"), "callSessionId": call_id,
+                "fromNumber": from_number, "fromName": text(&out, "fromName"), "toNumber": dialed}),
         };
         tracing::info!("SIP leg {leg}: to voicemail ({reason})");
         self.voicemail.insert(leg.clone(), call);
@@ -722,6 +766,19 @@ impl Engine {
     pub(super) fn voicemail_recorded(&mut self, leg: &str, recorded: Recorded) {
         let path = recorded.plan.path.to_string_lossy().to_string();
         match &recorded.error {
+            // E8: an edge node's message goes to the local node on the queue, routed or not, with its audio
+            None if recorded.duration_ms >= MIN_MESSAGE_MS && self.edge => {
+                let target = &recorded.plan.target;
+                let received_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let payload = serde_json::json!({"callSessionId": target.get("callSessionId"),
+                    "toNumber": target.get("toNumber"), "fromNumber": target.get("fromNumber"),
+                    "fromName": target.get("fromName"), "durationMs": recorded.duration_ms, "receivedMs": received_ms});
+                let (factory, path) = (Arc::clone(&self.factory), recorded.plan.path.clone());
+                tokio::spawn(async move { super::edge::queue_voicemail(&factory, &path, payload).await });
+            }
             None if recorded.duration_ms >= MIN_MESSAGE_MS => {
                 let mut parameters = recorded.plan.target.clone();
                 if let Json::Object(map) = &mut parameters {
@@ -755,10 +812,11 @@ impl Engine {
                     let factory = Arc::clone(&self.factory);
                     let commands = self.commands.clone();
                     let greeting = call.greeting.clone();
+                    let room = call.room.clone();
                     let leg = leg.to_string();
                     tokio::spawn(async move {
                         let built = tokio::task::spawn_blocking(move || {
-                            render(&says, &mut |say| audio_for(&factory, say, greeting.as_deref()))
+                            render(&says, &mut |say| audio_for(&factory, say, greeting.as_deref(), &room))
                         })
                         .await;
                         if let Ok(pcm) = built {
@@ -816,9 +874,11 @@ impl Engine {
                 }
                 Action::Act { voicemail_id, op } => {
                     let Some(box_id) = call.box_id.clone() else { continue };
+                    // the call too, which an edge node's must have opened the box on (E8)
                     self.note(
                         ACT_SERVICE,
-                        serde_json::json!({"voicemailBoxId": box_id, "voicemailId": voicemail_id, "op": op}),
+                        serde_json::json!({"voicemailBoxId": box_id, "voicemailId": voicemail_id, "op": op,
+                            "callSessionId": call.room}),
                     );
                 }
                 Action::Wait(wait) => {

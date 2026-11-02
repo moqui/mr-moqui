@@ -32,12 +32,12 @@ const NUMBER: &str = "+15551230000";
 const OUTSIDE: &str = "+15557770000";
 
 /// The provider's signaling and media, message by message.
-struct Trunk {
-    sip: UdpSocket,
-    rtp: UdpSocket,
+pub(crate) struct Trunk {
+    pub(crate) sip: UdpSocket,
+    pub(crate) rtp: UdpSocket,
 }
 
-fn values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
+pub(crate) fn values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
     headers
         .iter()
         .filter(|h| h.name().eq_ignore_ascii_case(name))
@@ -46,7 +46,7 @@ fn values(headers: &rsipstack::sip::Headers, name: &str) -> Vec<String> {
 }
 
 impl Trunk {
-    fn new() -> Trunk {
+    pub(crate) fn new() -> Trunk {
         let sip = UdpSocket::bind("127.0.0.1:0").unwrap();
         sip.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -54,11 +54,11 @@ impl Trunk {
         Trunk { sip, rtp }
     }
 
-    fn addr(&self) -> SocketAddr {
+    pub(crate) fn addr(&self) -> SocketAddr {
         self.sip.local_addr().unwrap()
     }
 
-    fn recv(&self, until: Instant) -> Option<(SipMessage, SocketAddr)> {
+    pub(crate) fn recv(&self, until: Instant) -> Option<(SipMessage, SocketAddr)> {
         let mut buf = vec![0u8; 8192];
         while Instant::now() < until {
             let Ok((len, from)) = self.sip.recv_from(&mut buf) else {
@@ -74,7 +74,7 @@ impl Trunk {
         None
     }
 
-    fn request(&self, method: &str) -> (Request, SocketAddr) {
+    pub(crate) fn request(&self, method: &str) -> (Request, SocketAddr) {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
             match self.recv(until) {
@@ -85,7 +85,7 @@ impl Trunk {
         }
     }
 
-    fn response(&self, code: u16) -> Response {
+    pub(crate) fn response(&self, code: u16) -> Response {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
             match self.recv(until) {
@@ -96,11 +96,11 @@ impl Trunk {
         }
     }
 
-    fn send(&self, text: &str, to: SocketAddr) {
+    pub(crate) fn send(&self, text: &str, to: SocketAddr) {
         self.sip.send_to(text.as_bytes(), to).unwrap();
     }
 
-    fn reply(&self, req: &Request, to: SocketAddr, code: u16, extra: &str, body: &str) {
+    pub(crate) fn reply(&self, req: &Request, to: SocketAddr, code: u16, extra: &str, body: &str) {
         let vias: String = values(&req.headers, "Via")
             .iter()
             .map(|v| format!("Via: {v}\r\n"))
@@ -128,13 +128,13 @@ impl Trunk {
         self.send(&text, to);
     }
 
-    fn local_media(&self) -> LocalMedia {
+    pub(crate) fn local_media(&self) -> LocalMedia {
         let at = self.rtp.local_addr().unwrap();
         LocalMedia::new(at.ip(), at.port(), None)
     }
 }
 
-fn tone(tick: usize) -> Vec<i16> {
+pub(crate) fn tone(tick: usize) -> Vec<i16> {
     (0..960)
         .map(|i| (8000.0 * (2.0 * std::f64::consts::PI * 440.0 * (tick * 960 + i) as f64 / 48_000.0).sin()) as i16)
         .collect()

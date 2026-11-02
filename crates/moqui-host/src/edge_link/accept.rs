@@ -479,6 +479,15 @@ impl EdgeServer {
             hello.turn_urls = advert.turn_urls;
             hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
         }
+        // its SIP engine's addresses, from which the local node keeps its SipNode row (E8)
+        if let Some(sip) = self
+            .factory
+            .upgrade()
+            .and_then(|factory| moqui_core::edge::media::sip_advert(&factory))
+        {
+            hello.sip_address = sip.sip_address;
+            hello.sip_tls_address = sip.tls_address;
+        }
         hello
     }
 
@@ -964,7 +973,11 @@ impl EdgeServer {
             "moqui.artifact.name".to_string(),
             moqui_lib::object::Value::string(&call.service),
         );
-        let answered = tokio::time::timeout(super::queue::ANSWER_TIMEOUT, client.delegate(request)).await;
+        // a conf entry may wait less than the link does (E8: routing a call that rings)
+        let wait = call.timeout.map_or(super::queue::ANSWER_TIMEOUT, |wait| {
+            wait.min(super::queue::ANSWER_TIMEOUT)
+        });
+        let answered = tokio::time::timeout(wait, client.delegate(request)).await;
         self.telemetry.record_duration(
             "moqui.edgelink.delegate.duration",
             started.elapsed().as_secs_f64(),
@@ -990,8 +1003,10 @@ impl EdgeServer {
             Err(_) => {
                 self.telemetry
                     .add_counter("moqui.edgelink.delegate.errors", 1, attributes);
+                // named as offline too, so a caller with a fallback (the SIP engine, E8) takes it as the node away
                 return Err(Error::new(format!(
-                    "the local node did not answer the call of {} in time",
+                    "{}: the local node did not answer the call of {} in time",
+                    moqui_core::edge::OFFLINE,
                     call.service
                 )));
             }

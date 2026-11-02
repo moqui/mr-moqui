@@ -176,7 +176,8 @@ pub(crate) fn encode_ogg_opus(pcm: &[i16], serial: u32) -> Result<Vec<u8>, Strin
 /// Where the admin's IVR prompts and hold music are kept (V5, Ivr.js PROMPT_ROOT); converted as greetings are.
 const PROMPT_ROOT: &str = "dbresource://moqui/call/prompt/";
 
-fn greeting_location(location: &str) -> bool {
+/// A greeting's or prompt's location: what the SIP engine of an edge node may get from its local node and keep (E8).
+pub(super) fn greeting_location(location: &str) -> bool {
     [GREETING_ROOT, PROMPT_ROOT].iter().any(|root| under(root, location))
 }
 

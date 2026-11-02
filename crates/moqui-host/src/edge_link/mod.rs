@@ -251,6 +251,8 @@ pub(crate) fn hello(
         media_address: String::new(),
         turn_urls: Vec::new(),
         media_started_ms: 0,
+        sip_address: String::new(),
+        sip_tls_address: String::new(),
     }
 }
 
@@ -269,6 +271,8 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         media_address: hello.media_address.clone(),
         turn_urls: hello.turn_urls.clone(),
         media_started_ms: i64::try_from(hello.media_started_ms).unwrap_or(0),
+        sip_address: hello.sip_address.clone(),
+        sip_tls_address: hello.sip_tls_address.clone(),
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }

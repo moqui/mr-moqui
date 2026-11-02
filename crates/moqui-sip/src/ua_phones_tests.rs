@@ -40,6 +40,8 @@ struct Directory {
     devices: Mutex<HashMap<String, PhoneDevice>>,
     /// How many times it was asked: a service call each in the host.
     lookups: std::sync::atomic::AtomicUsize,
+    /// Whoever checks the answers cannot be asked (an edge node's local node away).
+    away: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -47,6 +49,26 @@ impl DeviceDirectory for Directory {
     async fn device(&self, username: &str) -> Option<PhoneDevice> {
         self.lookups.fetch_add(1, Ordering::Relaxed);
         lock(&self.devices).get(username).cloned()
+    }
+
+    async fn verify(
+        &self,
+        username: &str,
+        check: &digest::ResponseCheck,
+    ) -> Result<Option<(PhoneDevice, bool)>, String> {
+        if self.away.load(Ordering::Relaxed) {
+            return Err("the local node is away".to_string());
+        }
+        let Some(device) = self.device(username).await else {
+            return Ok(None);
+        };
+        let verifier = device
+            .verifiers
+            .iter()
+            .find(|(a, _)| *a == check.algorithm)
+            .map(|(_, h)| h.clone());
+        let matched = check.matches(verifier.as_deref());
+        Ok(Some((device, matched)))
     }
 }
 
@@ -371,6 +393,33 @@ async fn a_phone_registers_with_sha_256_and_md5_is_refused_for_a_standard_device
         .await;
     assert_eq!(code(&legacy), 200);
     h.ua.shutdown();
+}
+
+/// An edge node's registrar while its local node is away (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): the answer
+/// cannot be checked, so the REGISTER is answered 503 and is no failed attempt; past the guard's limit the phone still
+/// registers once it can be checked again.
+#[tokio::test]
+async fn an_answer_that_cannot_be_checked_is_503_and_no_failed_attempt() {
+    let mut h = Harness::start(RegistrarLimits::default()).await;
+    let phone = UdpPhone::new().await;
+    h.directory.away.store(true, Ordering::Relaxed);
+    for attempt in 0..4u32 {
+        let call_id = format!("away-{attempt}");
+        let (refused, _) = phone
+            .register(
+                h.udp,
+                &Reg {
+                    call_id: &call_id,
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert_eq!(code(&refused), 503);
+    }
+    h.directory.away.store(false, Ordering::Relaxed);
+    let (ok, _) = phone.register(h.udp, &Reg::default()).await;
+    assert_eq!(code(&ok), 200, "not blocked: none of the four counted");
+    h.binding(BindingChange::Added).await;
 }
 
 #[tokio::test]

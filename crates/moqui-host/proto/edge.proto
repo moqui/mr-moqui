@@ -47,6 +47,11 @@ message Hello {
   // The edge node's: when its media socket started (epoch milliseconds), 0 when it is off. The local node keeps it as
   // the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
   uint64 media_started_ms = 10;
+  // The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+  // TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
+  // from them, so its phone calls are routed to the edge node's engine.
+  string sip_address = 11;
+  string sip_tls_address = 12;
 }
 
 message ProbeRequest {}
@@ -189,7 +194,7 @@ message DelegateRequest {
 }
 
 message DelegateReply {
-  // The service's result, a JSON object, when it added no errors.
+  // The service's result, a JSON object; with errors, what it returned beside them (a refusal's reasonCode, E8).
   string result_json = 1;
   // The errors the service added, or why the local node refused the call.
   repeated string errors = 2;

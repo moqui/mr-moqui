@@ -410,7 +410,7 @@ fn delegate_checked(
         }
         None => {}
     }
-    crate::edge::delegate::send(name, parameters)
+    crate::edge::delegate::send(name, parameters, entry.timeout)
 }
 
 /// [`sync`] with per-call overrides of authorization and the transaction attribute.

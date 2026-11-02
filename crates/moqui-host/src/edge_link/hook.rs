@@ -355,13 +355,19 @@ impl EdgeLink for Hook {
         let factory = self.factory()?;
         moqui_core::edge::media::clear_peer_turn(&factory);
         if let Some(facade) = factory.entity() {
-            let removed = facade.find("moqui.call.CallMediaNode").and_then(|find| {
-                find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
-                    .disable_authz()
-                    .delete_all()
-            });
-            if let Err(err) = removed {
-                tracing::warn!("Unpaired, but the edge node's call media row was not removed: {err}");
+            // its call media row (E7) and its SIP engine's (E8)
+            for (entity, what) in [
+                ("moqui.call.CallMediaNode", "call media"),
+                ("moqui.call.SipNode", "SIP node"),
+            ] {
+                let removed = facade.find(entity).and_then(|find| {
+                    find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
+                        .disable_authz()
+                        .delete_all()
+                });
+                if let Err(err) = removed {
+                    tracing::warn!("Unpaired, but the edge node's {what} row was not removed: {err}");
+                }
             }
         }
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN, NODE_ID])?;

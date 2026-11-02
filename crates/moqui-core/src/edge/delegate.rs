@@ -75,12 +75,17 @@ pub(crate) fn listed(name: &str) -> Option<super::conf::Delegate> {
 /// Send a delegated call of `name` and wait for the local node's answer: its result, or its errors added to this
 /// context's messages. The caller's transaction, if any, stays open while it waits (at most the link's answer
 /// timeout, 60 s).
-pub(crate) fn send(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
+pub(crate) fn send(
+    name: &str,
+    parameters: &BTreeMap<String, Value>,
+    timeout: Option<std::time::Duration>,
+) -> Result<BTreeMap<String, Value>, Error> {
     let call = DelegateCall {
         service: name.to_string(),
         parameters: parameters_json(parameters),
         caller: caller_json(),
         operation_id: crate::entity::uuid_v4().map_err(Error::from)?,
+        timeout,
     };
     let link = super::link().map_err(|_| Error::new(format!("{OFFLINE}: this host has no edge link")))?;
     let answer = link.delegate(&call).map_err(Error::from)?;
@@ -91,8 +96,8 @@ pub(crate) fn send(name: &str, parameters: &BTreeMap<String, Value>) -> Result<B
                 messages.add_error(error.clone());
             }
         });
-        return Ok(BTreeMap::new());
     }
+    // with its errors the result is what the service returned beside them (a refusal's reasonCode), as on this node
     Ok(result_map(&answer.result))
 }
 
@@ -164,20 +169,15 @@ pub fn run(factory: &ExecutionContextFactory, call: &DelegateCall) -> DelegateAn
     match crate::service::sync(&service, &parameters) {
         Ok(result) => {
             let errors = ExecutionContext::with_current(|ctx| ctx.message().errors().to_vec()).unwrap_or_default();
-            if errors.is_empty() {
-                let object: serde_json::Map<String, serde_json::Value> = result
-                    .iter()
-                    .map(|(name, value)| (name.clone(), to_json(value)))
-                    .collect();
-                DelegateAnswer {
-                    result: serde_json::Value::Object(object),
-                    errors: Vec::new(),
-                }
-            } else {
-                DelegateAnswer {
-                    result: serde_json::Value::Null,
-                    errors,
-                }
+            // the result goes with the errors too: a refusal names its reasonCode beside its error (E8), which a caller
+            // such as the SIP engine tells apart
+            let object: serde_json::Map<String, serde_json::Value> = result
+                .iter()
+                .map(|(name, value)| (name.clone(), to_json(value)))
+                .collect();
+            DelegateAnswer {
+                result: serde_json::Value::Object(object),
+                errors,
             }
         }
         Err(err) => refused(err.message().to_string()),

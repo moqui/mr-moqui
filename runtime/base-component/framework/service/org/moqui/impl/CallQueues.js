@@ -59,6 +59,14 @@ function ivr(op, parameters) {
 }
 
 /** A refusal: an error for the user and a reason code for the caller. */
+/**
+ * Anyone, or the edge link's delegate user for a call whose media is on this node's edge node (Calls.js edgeAllowed;
+ * plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP engine routes only its own calls.
+ */
+function edgeAllowed(p) {
+  return ec.user.username !== '_edge_' || !!(ec.resource.script(CALLS).execute('edgeAllowed', p) || {}).allowed
+}
+
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
   return { reasonCode }
@@ -271,6 +279,7 @@ function tick(p) {
   // the call, then the entry)
   const seen = p.callQueueEntryId ? one(ENTRY, { callQueueEntryId: p.callQueueEntryId }) : null
   if (!seen || seen.statusId !== 'CqeWaiting') return { mode: 'done' }
+  if (!edgeAllowed({ callSessionId: seen.callSessionId })) return { mode: 'done', reasonCode: 'notAllowed' }
   lockQueue(seen.callQueueId)
   const session = find(SESSION).condition('callSessionId', seen.callSessionId).forUpdate(true).one()
   const entry = find(ENTRY).condition('callQueueEntryId', p.callQueueEntryId).forUpdate(true).one()

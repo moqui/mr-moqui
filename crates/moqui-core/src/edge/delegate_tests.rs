@@ -42,6 +42,7 @@ fn a_local_node_refuses_a_service_its_own_conf_does_not_list() {
         parameters: serde_json::json!({"message": "hi"}),
         caller: serde_json::json!({"username": "visitor"}),
         operation_id: "op-1".to_string(),
+        timeout: None,
     };
     let answer = run(ctx.factory(), &call);
     assert_eq!(answer.result, serde_json::Value::Null);
@@ -68,6 +69,7 @@ fn nothing_the_edge_node_sends_changes_the_user_a_delegated_call_runs_as() {
         }),
         caller: serde_json::json!({"username": "visitor", "userId": null}),
         operation_id: "op-2".to_string(),
+        timeout: None,
     };
     let parameters = received_parameters(&call);
     let names: Vec<&str> = parameters.keys().map(String::as_str).collect();

@@ -56,6 +56,14 @@ function voice(op, parameters) {
 }
 
 /** A refusal: an error for the user and a reason code for the caller. */
+/**
+ * Anyone, or the edge link's delegate user for a call whose media is on this node's edge node (Calls.js edgeAllowed;
+ * plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP engine routes only its own calls.
+ */
+function edgeAllowed(p) {
+  return ec.user.username !== '_edge_' || !!(ec.resource.script(CALLS).execute('edgeAllowed', p) || {}).allowed
+}
+
 function refuse(reasonCode, text) {
   ec.message.addError(ec.l10n.localize(text))
   return { reasonCode }
@@ -360,6 +368,7 @@ function expire(p) {
   const { row, session } = lockTransfer(p.callTransferId)
   if (!row || row.statusId !== 'CtsRinging') return { mode: 'done' }
   if (!session || session.statusId === 'CssEnded') return { mode: 'done' }
+  if (!edgeAllowed({ callSessionId: session.callSessionId })) return { mode: 'done', reasonCode: 'notAllowed' }
   if (row.targetTypeEnumId === 'CtgUser') calls('closeOffers', { callSessionId: row.callSessionId })
   else dropTarget(row)
   row.setFields({ statusId: 'CtsFailed', endedDate: ec.user.nowTimestamp }, true, null, null)
@@ -419,6 +428,7 @@ function sessionEnded(p) {
 function refer(p) {
   const leg = p.callLegId ? one(LEG, { callLegId: p.callLegId }) : null
   if (!leg || leg.legTypeEnumId !== 'CltSipDevice' || leg.statusId !== 'ClsAnswered') return refuse('notFound', 'Call not found')
+  if (!edgeAllowed({ callLegId: leg.callLegId })) return refuse('notFound', 'Call not found')
   const participant = one(PARTICIPANT, { callParticipantId: leg.callParticipantId })
   const account = participant?.userId ? one(ACCOUNT, { userId: participant.userId }) : null
   if (!account || account.disabled === 'Y') return refuse('notFound', 'Call not found')

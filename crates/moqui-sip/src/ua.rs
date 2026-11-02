@@ -1589,6 +1589,11 @@ impl Inner {
                 let _ = tx.reply_with(code, headers, None).await;
                 None
             }
+            // whoever holds the verifiers could not be asked (an edge node's local node away): no failed attempt
+            Some((Verdict::Unavailable, _)) => {
+                let _ = tx.reply(StatusCode::ServiceUnavailable).await;
+                None
+            }
             Some(_) => {
                 let username = given.map(|a| a.username).unwrap_or_default();
                 let blocked = match source {

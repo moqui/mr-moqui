@@ -34,6 +34,13 @@ pub struct Hello {
     /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
     #[prost(uint64, tag = "10")]
     pub media_started_ms: u64,
+    /// The edge node's, when its SIP engine runs (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): its SIP address for UDP and
+    /// TCP, and for TLS (the public address and port), empty when off. The local node keeps the edge node's SipNode row
+    /// from them, so its phone calls are routed to the edge node's engine.
+    #[prost(string, tag = "11")]
+    pub sip_address: ::prost::alloc::string::String,
+    #[prost(string, tag = "12")]
+    pub sip_tls_address: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}
@@ -260,7 +267,7 @@ pub struct DelegateRequest {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DelegateReply {
-    /// The service's result, a JSON object, when it added no errors.
+    /// The service's result, a JSON object; with errors, what it returned beside them (a refusal's reasonCode, E8).
     #[prost(string, tag = "1")]
     pub result_json: ::prost::alloc::string::String,
     /// The errors the service added, or why the local node refused the call.

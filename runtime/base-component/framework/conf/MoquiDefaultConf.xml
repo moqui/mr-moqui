@@ -1187,6 +1187,39 @@
         <delegate service="org.moqui.impl.CallCaptionServices.store#CallTranscript"/>
         <delegate service="org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio"/>
         <queue-kind name="callRecording" service="org.moqui.impl.CallRecordingServices.receive#EdgeRecording"/>
+        <!-- SIP on the edge node (E8): its engine's routing, registrar, IVR and voicemail decisions run on the local
+            node, which has the numbers, the users and the boxes. Routing waits less than the user agent does for a
+            call it rings (10 s), so a local node that does not answer still leaves time for the fallback. The phones'
+            digest verifiers stay here: the registrar sends their answers to check#SipDeviceDigest instead. -->
+        <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.impl.VoiceServices.note#PhoneLeg"/>
+        <delegate service="org.moqui.impl.VoiceServices.note#TrunkStatus"/>
+        <delegate service="org.moqui.impl.VoiceServices.record#AuthFailure"/>
+        <delegate service="org.moqui.impl.VoiceServices.get#CallAudio" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.SipDeviceServices.check#SipDeviceDigest" timeout-seconds="5"/>
+        <delegate service="org.moqui.impl.SipDeviceServices.store#SipRegistration"/>
+        <delegate service="org.moqui.impl.SipDeviceServices.receive#DeviceCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.impl.IvrServices.route#IvrCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.CallQueueServices.tick#QueueCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.CallTransferServices.expire#CallTransfer"/>
+        <delegate service="org.moqui.impl.CallTransferServices.refer#Call" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.VoicemailServices.begin#Voicemail" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.VoicemailServices.check#VoicemailPin" timeout-seconds="10"/>
+        <delegate service="org.moqui.impl.VoicemailServices.act#PhoneVoicemail"/>
+        <delegate service="org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio" timeout-seconds="10"/>
+        <!-- the messages its engine records (edge to local; the local node finds the box and tells its owner), and the
+            boxes' greetings, which its fallback plays while the local node is away (local to edge) -->
+        <queue-kind name="voicemail" service="org.moqui.impl.VoicemailServices.receive#EdgeVoicemail"/>
+        <queue-kind name="callAudio" service="org.moqui.impl.VoiceServices.store#EdgeCallAudio"/>
+        <!-- its engine's trunks and policy (get#EngineConfig on the edge node reads the copy, so the trunks register
+            and take calls while the local node is away), and each number's fallback for that time -->
+        <replicate set="voiceTrunks">
+            <entity name="moqui.call.VoiceTrunk" fields="name,host,port,transportEnumId,mediaEncryptionEnumId,providerProfileEnumId,authJson,registerFlag,emergencyCapable,inboundAddresses,fromDomain,disabled"/>
+            <entity name="moqui.call.VoicePolicy" fields="internationalEnabled,premiumEnabled,maxConcurrentCalls,authFailureLimit,authFailureWindowSeconds,authBlockSeconds,homeCountryCode,emergencyNumbers,premiumPrefixes"/>
+        </replicate>
+        <replicate set="voiceFallbacks">
+            <entity name="moqui.call.PhoneNumberFallback" fields="voiceTrunkId,voicemailFlag,greetingLocation,forwardNumber,forwardSeconds"/>
+        </replicate>
     </edge>
 
     <!-- Log files: dir (moqui_log_dir). A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at max-size-mb or when the day

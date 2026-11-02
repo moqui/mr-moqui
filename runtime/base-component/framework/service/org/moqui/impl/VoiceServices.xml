@@ -135,8 +135,52 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="tlsAddress"/>
             <parameter name="rtpPorts"/>
             <parameter name="stopping" type="Boolean" default="false"/>
+            <parameter name="edgeLinked" type="Boolean" default="false"><description>The row of this node's edge node,
+                kept by the edge link from its Hello and liveness (plans/Edge-Node.md §5.4, E8). Never a row an engine
+                registered, nor the reverse (refused, notAllowed).</description></parameter>
         </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('registerNode', context))</script></actions>
+    </service>
+
+    <!-- ========== SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8) ========== -->
+
+    <service verb="refresh" noun="PhoneFallbacks" authenticate="false" allow-remote="false">
+        <description>Internal (the edge link while it is up, every minute, and the services that change a number, a
+            greeting or a box): writes each number's PhoneNumberFallback, what the edge node's SIP engine does with its
+            calls while this node is away: ring forwardNumber first (a ring group's outside fallback, or the user's
+            mobile they ring with their calls and may forward to, checked against the fraud policy), then take a message
+            (voicemailFlag, with the box's greetingLocation). Only the rows that changed are written, and a number with
+            nothing to fall back to has none. On a paired local node, each greeting named is queued to the edge node
+            (callAudio, keyed by its location, so each goes once). phoneNumber: only that number's.</description>
+        <in-parameters><parameter name="phoneNumber"/></in-parameters>
+        <out-parameters>
+            <parameter name="writtenCount" type="Integer"/>
+            <parameter name="removedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/Voice.js').execute('refreshFallbacks', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CallAudio" type="rust" location="moqui_core::service::call_media::get_call_audio"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (the SIP engine of this node's edge node, E8): the bytes of a greeting or a prompt it is to
+            play and does not have (location under dbresource://moqui/call/voicemail/greeting/ or
+            dbresource://moqui/call/prompt/), as audioBase64; nothing for any other location or one with no file. The
+            engine keeps a copy (their names are stamped, never written again).</description>
+        <in-parameters><parameter name="location" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="audioBase64"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="EdgeCallAudio" type="rust" location="moqui_core::service::call_media::store_edge_call_audio"
+            allow-remote="false">
+        <description>On an edge node, the queue kind callAudio: a greeting or prompt of its local node (the item's
+            content), kept at its own location (payload location, under dbresource://moqui/call/voicemail/greeting/ or
+            dbresource://moqui/call/prompt/), which the SIP engine's fallback plays while the local node is away. Any
+            other location is refused, and so is a local node.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
     </service>
 
     <service verb="get" noun="EngineConfig" authenticate="false" allow-remote="false">

@@ -22,6 +22,10 @@
 //! `org.moqui.impl.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
 //! recordings' `dbresource://` root, and `org.moqui.impl.VoicemailServices.store#VoicemailFile` (V2) a message the SIP
 //! engine recorded into the voicemail root.
+//!
+//! SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): `VoiceServices.get#CallAudio` and
+//! `VoicemailServices.get#PhoneVoicemailAudio` give the edge node's engine a greeting or prompt, or a saved message for
+//! the call that opened its box, and `VoiceServices.store#EdgeCallAudio` keeps a greeting its local node queued.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -40,6 +44,9 @@ pub(in crate::service) fn register(
     rust_service!(map, make_ice_servers)?;
     rust_service!(map, store_recording_file)?;
     rust_service!(map, store_voicemail_file)?;
+    rust_service!(map, get_call_audio)?;
+    rust_service!(map, get_phone_voicemail_audio)?;
+    rust_service!(map, store_edge_call_audio)?;
     rust_service!(map, send_sip_control)?;
     rust_service!(map, get_caption_speaker)?;
     rust_service!(map, transcribe_caption_audio)?;
@@ -129,12 +136,177 @@ const VOICEMAIL_SPOOL: &str = "tmp/voicemail";
 const VOICEMAIL_ROOT: &str = "dbresource://moqui/call/voicemail/";
 
 /// `store#VoicemailFile`: a message the SIP engine spooled (`tempPath`, under [`VOICEMAIL_SPOOL`]) to `contentLocation`
-/// (under [`VOICEMAIL_ROOT`]), as `store#RecordingFile`; an empty `contentLocation` only deletes the spooled file.
+/// (under [`VOICEMAIL_ROOT`]), as `store#RecordingFile`; an empty `contentLocation` only deletes the spooled file. Or,
+/// on a local node, a message its edge node's engine recorded (`fromLocation`, under the queue's
+/// [`crate::edge::queue::CONTENT_IN`]; E8), copied there.
 fn store_voicemail_file(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    store_spooled(parameters, VOICEMAIL_SPOOL, VOICEMAIL_ROOT, "voicemail", true)
+    let from = parameters
+        .get("fromLocation")
+        .filter(|v| !is_empty(v))
+        .map(to_plain_string);
+    match from {
+        Some(from) => store_received(parameters, &from, VOICEMAIL_ROOT, "voicemail"),
+        None => store_spooled(parameters, VOICEMAIL_SPOOL, VOICEMAIL_ROOT, "voicemail", true),
+    }
+}
+
+/// Where greetings are kept (`GREETING_ROOT` in moqui-host `src/sip/audio.rs`).
+const GREETING_ROOT: &str = "dbresource://moqui/call/voicemail/greeting/";
+/// Where the admin's IVR prompts and hold music are kept (`PROMPT_ROOT` there).
+const PROMPT_ROOT: &str = "dbresource://moqui/call/prompt/";
+/// The most audio one answer carries: a minute of greeting or ten of a message in Ogg Opus is far under it.
+const MAX_CALL_AUDIO: usize = 8 * 1024 * 1024;
+
+/// Whether the SIP engine of an edge node may have the audio at `location` from its local node, and keep a copy: a
+/// greeting or a prompt (E8), whose names are stamped and never written again.
+fn is_shared_call_audio(location: &str) -> bool {
+    under(location, GREETING_ROOT) || under(location, PROMPT_ROOT)
+}
+
+/// The bytes at `location` as base64 in `audioBase64`, or `reasonCode` notFound (no file there, or too large).
+fn audio_answer(location: &str) -> Result<BTreeMap<String, Value>, LibError> {
+    use base64::Engine as _;
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| LibError::new("reading call audio needs an execution context"))?;
+    let bytes = {
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+        factory.resource().location_bytes(location)
+    }
+    .map_err(|e| LibError::new(format!("the call audio {location}: {e}")))?;
+    let mut out = BTreeMap::new();
+    match bytes {
+        Some(bytes) if bytes.len() <= MAX_CALL_AUDIO => {
+            out.insert(
+                "audioBase64".to_string(),
+                Value::string(base64::engine::general_purpose::STANDARD.encode(bytes)),
+            );
+        }
+        Some(bytes) => {
+            tracing::warn!("the call audio {location} is {} bytes, too large to send", bytes.len());
+            out.insert("reasonCode".to_string(), Value::string("notFound"));
+        }
+        None => {
+            out.insert("reasonCode".to_string(), Value::string("notFound"));
+        }
+    }
+    Ok(out)
+}
+
+/// `org.moqui.impl.VoiceServices.get#CallAudio` (E8): a greeting or prompt (`location`) the edge node's SIP engine is to
+/// play and does not have, as base64. Any other location is not found.
+fn get_call_audio(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let location = parameters.get("location").map(to_plain_string).unwrap_or_default();
+    let location = location.trim();
+    if !is_shared_call_audio(location) {
+        return Ok(BTreeMap::from([("reasonCode".to_string(), Value::string("notFound"))]));
+    }
+    audio_answer(location)
+}
+
+/// `org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio` (E8): a message (`audioLocation`) the edge node's SIP
+/// engine plays to a caller, as base64, only on a call (`callSessionId`) that has not ended, whose media is on that
+/// edge node when the edge node asks, and whose caller gave the message's box's PIN (`CallSession.voicemailAccessBoxId`,
+/// set by `check#VoicemailPin`). Anything else is not found.
+fn get_phone_voicemail_audio(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let text = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|v| !is_empty(v))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let not_found = || Ok(BTreeMap::from([("reasonCode".to_string(), Value::string("notFound"))]));
+    let (call, location) = (text("callSessionId"), text("audioLocation"));
+    if call.is_empty() || !under(&location, VOICEMAIL_ROOT) || under(&location, GREETING_ROOT) {
+        return not_found();
+    }
+    let field = |row: &crate::entity::EntityValue, name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+    let Some(session) = facade
+        .find("moqui.call.CallSession")?
+        .eq("callSessionId", Value::string(&call))
+        .disable_authz()
+        .one()?
+    else {
+        return not_found();
+    };
+    let opened = field(&session, "voicemailAccessBoxId");
+    if opened.is_empty() || field(&session, "statusId") == "CssEnded" || !edge_caller_allowed(facade, &call, None)? {
+        return not_found();
+    }
+    let voicemail = facade
+        .find("moqui.call.Voicemail")?
+        .eq("audioLocation", Value::string(&location))
+        .eq("voicemailBoxId", Value::string(&opened))
+        .disable_authz()
+        .limit(1)
+        .list()?;
+    if voicemail.values().is_empty() {
+        return not_found();
+    }
+    audio_answer(&location)
+}
+
+/// `org.moqui.impl.VoiceServices.store#EdgeCallAudio` (E8), the queue kind `callAudio` on an edge node: a greeting or
+/// prompt of its local node (the item's content at `contentLocation`), kept at its own location (the payload's
+/// `location`), which the SIP engine reads as on the local node. Refused on a local node, from anyone but the queue,
+/// and for any other location.
+fn store_edge_call_audio(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .ok_or_else(|| LibError::new("storing call audio needs an execution context"))?;
+    if !crate::edge::settings(&factory).edge_node {
+        return Err(LibError::new(
+            "store#EdgeCallAudio runs on an edge node, not on a local node",
+        ));
+    }
+    if crate::user::current_username().ok().flatten().as_deref() != Some(crate::edge::delegate::EDGE_USERNAME) {
+        return Err(LibError::new("only the edge link's queue stores call audio"));
+    }
+    let item = parameters.get("queueItemId").map(to_plain_string).unwrap_or_default();
+    let payload: serde_json::Value =
+        serde_json::from_str(&parameters.get("payload").map(to_plain_string).unwrap_or_default())
+            .map_err(|e| LibError::new(format!("call audio item {item}: its payload is not JSON: {e}")))?;
+    let location = payload["location"].as_str().unwrap_or_default().trim().to_string();
+    if !is_shared_call_audio(&location) {
+        return Err(LibError::new(format!(
+            "call audio item {item}: {location} is not a greeting or prompt location"
+        )));
+    }
+    let from = parameters
+        .get("contentLocation")
+        .filter(|v| !is_empty(v))
+        .map(to_plain_string)
+        .unwrap_or_default();
+    if !under(&from, crate::edge::queue::CONTENT_IN) {
+        return Err(LibError::new(format!("call audio item {item} came without its file")));
+    }
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    let bytes = factory
+        .resource()
+        .location_bytes(&from)
+        .map_err(|e| LibError::new(format!("call audio item {item}: {e}")))?
+        .ok_or_else(|| LibError::new(format!("call audio item {item}: its file is not there")))?;
+    let size = bytes.len() as u64;
+    factory
+        .resource()
+        .write_from(&location, &mut std::io::Cursor::new(bytes), Some(size))
+        .map_err(|e| LibError::new(format!("call audio {location} was not stored: {}", e.message())))?;
+    tracing::info!("call audio item {item}: {location} ({size} bytes) kept for the SIP engine");
+    Ok(BTreeMap::from([(
+        "byteSize".to_string(),
+        Value::I64(i64::try_from(size).unwrap_or(i64::MAX)),
+    )]))
 }
 
 /// A spooled file under `spool` (in the runtime directory) to a location under `root`, then the spooled file deleted;

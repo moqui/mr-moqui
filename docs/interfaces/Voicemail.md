@@ -152,6 +152,20 @@ Delete moves a message to the trash; deleting it there, Empty trash, or `expire_
 trash longer than `voicemail_trash_days`, 30 by default; 0 keeps them) delete it for good: its audio file, its
 transcripts and its row.
 
+## While the local node is away
+
+Behind an edge node ([SIP](SIP.md#behind-an-edge-node), plans/Edge-Node.md §5.4, decision 4, E8) the edge node's
+engine records every message and queues it to the local node with its audio (kind `voicemail`), which stores it
+(`receive#EdgeVoicemail`) and tells its owner as above. The box is the one `begin#Voicemail` chose for the call, or,
+when the local node did not route it, the called number's own: the user's (made when they have none), or the ring
+group's fallback box.
+
+While the local node is away the edge node takes the message itself, from the number's replicated fallback: the box's
+greeting (copied to the edge node ahead, else the default), the beep and the recording; `*` opens no phone access, and
+the access number is refused (480). The message waits on the edge node's queue, at most `queue-retention-days` (14),
+and arrives once, with its notices, when the link is back; its `receivedDate` is when the caller left it. A call the
+local node routed whose voicemail starts after it went away takes a message the same way.
+
 ## Properties
 
 | Property | Default | |
@@ -173,6 +187,8 @@ transcripts and its row.
 - **Ring groups.** A group's box has no PIN or greeting of its own to set in the screens yet (the default greeting
   plays), and no phone access.
 - **Forward and reply by email**, Zimbra's other voicemail actions, are not here; download and Call back are.
+- **Behind an edge node,** the fallback follows no call handling rules or schedules, and phone access waits for the
+  local node.
 
 ## Tests
 
@@ -186,6 +202,9 @@ transcripts and its row.
 - `./moq test framework --spec SipDevice`: a user with registered phones and a box: the tab and both phones still ring
   past `call_ring_seconds`, voicemail times them all out, and a decline on one phone stops the others and goes to
   voicemail.
+- `cargo test -p moqui-host --test it edge_sip::`: a message routed by the local node and one left while it was away,
+  both recorded on the edge node and stored on the local node ([SIP, Tests](SIP.md#tests)); `./moq test framework
+  --spec EdgeVoice`: `receive#EdgeVoicemail` only from the queue, in the number's box.
 - `./moq test framework --spec Voicemail`: busy and unanswered routing, begin and decline, private audio refused for
   another user with the same id, the PIN with its refusal and its limits per box and per source, the notices
   (attachments off by default), a failed transcription and its retry, the trash's retention, greeting uploads.

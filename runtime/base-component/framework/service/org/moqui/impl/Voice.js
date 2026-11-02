@@ -449,6 +449,8 @@ function receive(p) {
   const account = access || group || menu || queue ? null : one('moqui.security.UserAccount', { userId: number.routeId })
   if (!access && !group && !menu && !queue && (!account || account.disabled === 'Y')) return { reasonCode: 'notFound' }
   if (!voiceNodes().some((n) => n.instanceId === p.instanceId)) return { reasonCode: 'voiceUnavailable' }
+  // the edge node's engine (E8) takes calls only as itself
+  if (!edgeAllowed({ instanceId: p.instanceId })) return refuse('notAllowed', 'The edge node takes calls only on its own SIP engine')
   if (countPhoneCalls({}) >= pol.maxConcurrentCalls) return { reasonCode: 'busy' }
   const e164 = toE164(p.fromNumber, pol.homeCountryCode)
   const from = e164 || cleanNumber(p.fromNumber) || ec.l10n.localize('Unknown number')
@@ -571,6 +573,9 @@ function dialForward(p) {
 }
 
 function noteLeg(p) {
+  if (!edgeAllowed({ callSessionId: p.callSessionId, callLegId: p.callLegId })) {
+    return refuse('notAllowed', 'The edge node notes only the legs of calls whose media is on it')
+  }
   if (p.event === 'dtmf') return phoneKeys(p)
   if (p.event === 'ringing') return {}
   return calls('phoneEvent', p)
@@ -656,6 +661,13 @@ function myCallerIds() {
 function registerNode(p) {
   const row = one(SIP_NODE, { instanceId: p.instanceId })
   const now = ec.user.nowTimestamp
+  // the edge link keeps only its edge node's row (plans/Edge-Node.md §5.4, E8), as CallServices register#MediaNode: never
+  // a row an engine registered, and an engine's own heartbeat never takes a link-kept row over or ends it
+  const linked = !!row && row.edgeLinked === 'Y'
+  if (row && yes(p.edgeLinked) !== linked) {
+    ec.logger.warn(`SIP node ${p.instanceId}: a ${yes(p.edgeLinked) ? 'link-kept' : 'registered'} heartbeat for a row the ${linked ? 'edge link keeps' : 'engine registers'} is refused`)
+    return refuse('notAllowed', `SIP node ${p.instanceId} is not ${yes(p.edgeLinked) ? "this node's edge node" : 'a node of this cluster'}`)
+  }
   if (yes(p.stopping)) {
     if (row) row.delete()
     return {}
@@ -666,10 +678,169 @@ function registerNode(p) {
     row.update()
   } else {
     const created = ec.entity.makeValue(SIP_NODE)
-    created.setFields(Object.assign({ instanceId: p.instanceId, startedDate: now }, fields), true, null, null)
+    created.setFields(Object.assign({ instanceId: p.instanceId, startedDate: now, edgeLinked: flag(p.edgeLinked) }, fields), true, null, null)
     created.create()
   }
   return {}
+}
+
+/**
+ * Whether the caller may act for a call (callSessionId, callLegId) or as a node (instanceId): anyone but the edge link's
+ * delegate user, which may only for a call whose media is on this node's edge node, or as that node (Calls.js
+ * edgeAllowed; plans/Edge-Node.md §5.4 "Voice (SIP)", E8).
+ */
+function edgeAllowed(p) {
+  return ec.user.username !== '_edge_' || !!calls('edgeAllowed', p).allowed
+}
+
+// ---------- SIP on the edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) ----------
+
+const FALLBACK = 'moqui.call.PhoneNumberFallback'
+const BOX = 'moqui.call.VoicemailBox'
+const FALLBACK_FIELDS = ['voiceTrunkId', 'voicemailFlag', 'greetingLocation', 'forwardNumber', 'forwardSeconds']
+/** Where greetings are kept: only these are queued to the edge node. */
+const GREETING_ROOT = 'dbresource://moqui/call/voicemail/greeting/'
+/** Ring groups whose fallback is another group are followed this many times at most. */
+const MAX_GROUP_HOPS = 5
+
+/** A location under root with no empty, . or .. part (call_media.rs under). */
+function under(location, root) {
+  const text = String(location || '')
+  if (!text.startsWith(root)) return false
+  const rest = text.slice(root.length)
+  return rest !== '' && !rest.split('/').some((part) => part === '' || part === '.' || part === '..')
+}
+
+/** How long the edge node rings a number it forwards to (call_forward_ring_seconds, 10 to 120). */
+function forwardRingSeconds() {
+  const seconds = Number(String(System.getProperty('call_forward_ring_seconds') || '').trim() || 30)
+  return Math.min(Math.max(Number.isNaN(seconds) ? 30 : Math.round(seconds), 10), 120)
+}
+
+/**
+ * What the edge node does with a call to number while this node is away, or null for nothing (480, so the trunk's own
+ * failover acts): a user's number rings their mobile first when they ring it with their calls and may forward to it,
+ * then takes a message; a ring group's fallback (followed through other groups) takes a message in the group's box, or
+ * forwards to its outside number. The rules and schedules need this node, so they are not followed.
+ */
+function fallbackOf(number) {
+  const out = { voiceTrunkId: number.voiceTrunkId || null, voicemailFlag: 'N', greetingLocation: null, forwardNumber: null, forwardSeconds: null }
+  if (blank(number.routeId)) return null
+  if (number.routeTypeEnumId === 'PnrUser') {
+    const userId = number.routeId
+    const account = one('moqui.security.UserAccount', { userId })
+    if (!account || account.disabled === 'Y') return null
+    const handling = one('moqui.call.CallHandlingSetting', { userId })
+    if (handling && handling.ringMobile === 'Y' && !blank(handling.mobileNumber)) {
+      const check = forwardCheck({ phoneNumber: handling.mobileNumber, userId })
+      if (check.allowed) Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds() })
+    }
+    const box = find(BOX).condition('userId', userId).one()
+    return Object.assign(out, { voicemailFlag: 'Y', greetingLocation: box?.greetingLocation || null })
+  }
+  if (number.routeTypeEnumId !== 'PnrRingGroup') return null
+  let groupId = number.routeId
+  for (let hop = 0; hop < MAX_GROUP_HOPS && groupId; hop++) {
+    const group = one('moqui.call.RingGroup', { ringGroupId: groupId })
+    if (!group) return null
+    if (group.fallbackTypeEnumId === 'RgfVoicemail') {
+      const box = find(BOX).condition('ringGroupId', group.ringGroupId).one()
+      return Object.assign(out, { voicemailFlag: 'Y', greetingLocation: box?.greetingLocation || null })
+    }
+    if (group.fallbackTypeEnumId === 'RgfNumber') {
+      const check = forwardCheck({ phoneNumber: group.fallbackId, byAdmin: true })
+      return check.allowed ? Object.assign(out, { forwardNumber: check.number, forwardSeconds: forwardRingSeconds() }) : null
+    }
+    if (group.fallbackTypeEnumId !== 'RgfGroup') return null
+    groupId = group.fallbackId
+  }
+  return null
+}
+
+/** Queues a greeting to the edge node (callAudio, keyed by its location: each goes once); one that fails is logged. */
+function queueCallAudio(location) {
+  ec.message.pushErrors()
+  try {
+    ec.service.sync().name('org.moqui.impl.EdgeServices.enqueue#Item').parameters({ kind: 'callAudio',
+      conversationKey: 'callAudio:' + location, idempotencyKey: 'callAudio:' + location, payload: JSON.stringify({ location }),
+      contentLocation: location }).disableAuthz().call()
+    if (ec.message.hasError()) ec.logger.error(`Greeting ${location} not queued for the edge node: ${ec.message.errorsString}`)
+  } catch (err) {
+    ec.logger.error(`Greeting ${location} not queued for the edge node: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
+/**
+ * A number's route, box or greeting changed: on a paired node, its fallback is written again now (the edge link also
+ * writes them all every minute); a failure is logged and the change goes on. phoneNumber null: every number.
+ */
+function fallbackChanged(phoneNumber) {
+  if (String(System.getProperty('edge_node_url') || '').trim() === '') return
+  ec.message.pushErrors()
+  try {
+    refreshFallbacks({ phoneNumber })
+  } catch (err) {
+    ec.logger.error(`The fallback of ${phoneNumber || 'the numbers'} was not written: ${err && err.message ? err.message : err}`)
+  } finally {
+    ec.message.clearErrors()
+    ec.message.popErrors()
+  }
+}
+
+/** The numbers' fallbacks written where they changed (all, or p.phoneNumber's), and their greetings queued when paired. */
+function refreshFallbacks(p) {
+  const numbers = !blank(p.phoneNumber) ? [one(NUMBER, { phoneNumber: p.phoneNumber })].filter((n) => n) : rows(NUMBER)
+  const wanted = new Map()
+  for (const number of numbers) {
+    try {
+      const fallback = fallbackOf(number)
+      if (fallback) wanted.set(number.phoneNumber, fallback)
+    } catch (err) {
+      // one number that does not resolve keeps its row as it was, and the others go on
+      wanted.set(number.phoneNumber, null)
+      ec.logger.error(`The fallback of number ${number.phoneNumber} was not worked out: ${err && err.message ? err.message : err}`)
+    }
+  }
+  const existing = !blank(p.phoneNumber) ? rows(FALLBACK, { phoneNumber: p.phoneNumber }) : rows(FALLBACK)
+  const same = (row, want) => FALLBACK_FIELDS.every((field) => String(row[field] ?? '') === String(want[field] ?? ''))
+  let writtenCount = 0
+  let removedCount = 0
+  const greetings = new Set()
+  for (const row of existing) {
+    if (wanted.has(row.phoneNumber) && wanted.get(row.phoneNumber) === null) {
+      if (row.greetingLocation) greetings.add(row.greetingLocation)
+      wanted.delete(row.phoneNumber)
+      continue
+    }
+    const want = wanted.get(row.phoneNumber)
+    wanted.delete(row.phoneNumber)
+    if (!want) {
+      row.delete()
+      removedCount++
+      continue
+    }
+    if (want.greetingLocation) greetings.add(want.greetingLocation)
+    if (same(row, want)) continue
+    row.setFields(want, true, null, null)
+    row.update()
+    writtenCount++
+  }
+  for (const [phoneNumber, want] of wanted) {
+    if (!want) continue
+    if (want.greetingLocation) greetings.add(want.greetingLocation)
+    const created = ec.entity.makeValue(FALLBACK)
+    created.setFields(Object.assign({ phoneNumber }, want), true, null, null)
+    created.create()
+    writtenCount++
+  }
+  // the edge node plays them while this node is away: on a paired node, each one there (a name is stamped, so once)
+  if (String(System.getProperty('edge_node_url') || '').trim() !== '') {
+    for (const location of greetings) if (under(location, GREETING_ROOT)) queueCallAudio(location)
+  }
+  return { writtenCount, removedCount }
 }
 
 function engineConfig() {
@@ -970,6 +1141,7 @@ function storeNumber(p) {
   }
   // its route or its bridge may have changed: who its texts reach
   if (row) syncPairRooms(phoneNumber)
+  fallbackChanged(phoneNumber)
   return { phoneNumber }
 }
 
@@ -981,6 +1153,7 @@ function deleteNumber(p) {
   find(GRANT).condition('phoneNumber', row.phoneNumber).deleteAll()
   syncPairRooms(row.phoneNumber, true)
   row.delete()
+  fallbackChanged(row.phoneNumber)
   return {}
 }
 
@@ -1217,7 +1390,7 @@ const operations = {
   place: (p) => place(p), receive, noteLeg, notifyPhoneLeg, sendDtmf, hold: (p) => holdOrResume(p, 'hold'), resume: (p) => holdOrResume(p, 'resume'),
   // a registered phone's call (SipDevices.js receiveDeviceCall), on its own SIP engine's node; not a service
   placeFromDevice: (p) => place(p, p.instanceId || null),
-  myCallerIds, registerNode, syncPairRooms: (p) => { syncPairRooms(p.phoneNumber, p.deleted === true); return {} },
+  myCallerIds, registerNode, refreshFallbacks, fallbackChanged: (p) => { fallbackChanged(p.phoneNumber || null); return {} }, syncPairRooms: (p) => { syncPairRooms(p.phoneNumber, p.deleted === true); return {} },
   // V3 (CallHandling.js): forwards, and the dialer's country code
   forwardCheck, dialForward, grants: (p) => ({ numberList: grantsOf(p.userId) }), homeCountry: () => ({ homeCountryCode: policy().homeCountryCode }), engineConfig,
   // C4-SMS (Sms.js): the policy, and a number's class and E.164 form by the same rules as a call's
