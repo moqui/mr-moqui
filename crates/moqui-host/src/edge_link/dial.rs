@@ -13,15 +13,21 @@
  */
 
 //! The local node's dialer (plans/Edge-Node.md §5.1): it opens the up connection (this node the HTTP/2 client, Hello
-//! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`] and its web app, [`super::down`]), keeps them alive with HTTP/2
-//! PINGs and a Ping that measures the round trip, and dials again with a backoff when either drops. A panic in one
-//! attempt is caught and logged, and the loop goes on (docs/dev/Practices-Rust.md §8).
+//! first) and then the down connection (this node the HTTP/2 server of [`LocalLink`] and its web app,
+//! [`super::down`]), keeps them alive with HTTP/2 PINGs and a Ping that measures the round trip, and dials again with a
+//! backoff when either drops. A panic in one attempt is caught and logged, and the loop goes on
+//! (docs/dev/Practices-Rust.md §8).
+//!
+//! While the link is up the local node also serves the edge node's delegated calls and queued items (§5.2, as the user
+//! `_EDGE_`, through `moqui_core::edge`), and sends its own outbox and replicated sets up ([`super::queue`],
+//! [`super::replicate`]). These need the server's factory, which comes with [`LocalConfig::web`].
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use moqui_core::edge::{EdgeInfo, LinkState, LinkStatus};
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::edge::{DelegateCall, EdgeInfo, LinkState, LinkStatus};
 use moqui_core::telemetry::Telemetry;
 use moqui_lib::sync::lock;
 use tokio::io::AsyncWriteExt as _;
@@ -29,11 +35,13 @@ use tokio::sync::watch;
 use tonic::{Request, Response, Status};
 
 use super::pair::{client_config, dial_tls, parse_url, Identity, ServerTrust};
-use super::proto::link_client::LinkClient;
 use super::proto::local_link_server::{LocalLink, LocalLinkServer};
-use super::proto::{HelloRequest, LocalHelloReply, LocalHelloRequest, PingReply, PingRequest, UnpairRequest};
+use super::proto::{
+    DelegateReply, DelegateRequest, DeliverReply, DeliverRequest, HelloRequest, LocalHelloReply, LocalHelloRequest,
+    PingReply, PingRequest, UnpairRequest,
+};
 use super::{
-    check_versions, edge_info, hello, jitter, read_answer, Answer, H2Channel, LinkError, LocalConfig, LINK_VERSION,
+    check_versions, edge_info, hello, jitter, read_answer, Answer, LinkClient, LinkError, LocalConfig, LINK_VERSION,
     ROLE_DOWN, ROLE_UP,
 };
 use crate::tls_pin::parse_hex;
@@ -41,7 +49,7 @@ use crate::tls_pin::parse_hex;
 /// An open up connection with its Hello done: the edge node's gRPC client, and the generation the edge node gave it.
 /// Dropping it closes the connection.
 pub struct UpLink {
-    client: LinkClient<H2Channel>,
+    client: LinkClient,
     pub generation: u64,
     /// The edge node, as its Hello said.
     pub edge: EdgeInfo,
@@ -158,7 +166,7 @@ async fn connect_up_with(config: &LocalConfig, prepared: &Prepared) -> Result<Up
         }
         let _ = ended_tx.send(true);
     });
-    let mut client = LinkClient::with_origin(H2Channel(send), super::origin());
+    let mut client = super::link_client(send);
     let request = HelloRequest {
         hello: Some(hello(&config.instance_id, &config.node_name, &[], &[])),
     };
@@ -200,6 +208,8 @@ async fn connect_up_with(config: &LocalConfig, prepared: &Prepared) -> Result<Up
 struct LocalService {
     current: Arc<AtomicU64>,
     hello: super::proto::Hello,
+    /// The server the queue and delegated calls run on; none without [`LocalConfig::web`].
+    factory: Option<Weak<ExecutionContextFactory>>,
 }
 
 #[tonic::async_trait]
@@ -219,9 +229,54 @@ impl LocalLink for LocalService {
         self.fenced(generation)?;
         Ok(Response::new(PingReply { generation }))
     }
+
+    async fn deliver(&self, request: Request<DeliverRequest>) -> Result<Response<DeliverReply>, Status> {
+        let request = request.into_inner();
+        self.fenced(request.generation)?;
+        let factory = self.factory()?;
+        let item = super::queue::from_proto(request.item.unwrap_or_default());
+        let node = factory
+            .upgrade()
+            .map(|factory| moqui_core::edge::queue::local_node_id(&factory))
+            .ok_or_else(|| Status::unavailable("the server is stopping"))?;
+        let applied = super::queue::receive(&factory, &node, item).await;
+        Ok(Response::new(super::queue::reply(&applied)))
+    }
+
+    async fn delegate(&self, request: Request<DelegateRequest>) -> Result<Response<DelegateReply>, Status> {
+        let request = request.into_inner();
+        self.fenced(request.generation)?;
+        let factory = self.factory()?;
+        let json = |text: &str| serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+        let call = DelegateCall {
+            parameters: json(&request.parameters_json),
+            caller: json(&request.caller_json),
+            service: request.service,
+            operation_id: request.operation_id,
+        };
+        let answer = crate::worker::on_pool(&factory, move |factory| {
+            Ok(moqui_core::edge::delegate::run(factory, &call))
+        })
+        .await
+        .map_err(|err| Status::internal(err.message().to_string()))?;
+        Ok(Response::new(DelegateReply {
+            result_json: if answer.result.is_null() {
+                String::new()
+            } else {
+                answer.result.to_string()
+            },
+            errors: answer.errors,
+        }))
+    }
 }
 
 impl LocalService {
+    fn factory(&self) -> Result<Weak<ExecutionContextFactory>, Status> {
+        self.factory
+            .clone()
+            .ok_or_else(|| Status::unavailable("this node serves no queue or delegated calls on its edge link"))
+    }
+
     fn fenced(&self, generation: u64) -> Result<(), Status> {
         if generation == self.current.load(Ordering::Acquire) {
             Ok(())
@@ -255,7 +310,10 @@ async fn connect_down(
     let grpc = LocalLinkServer::new(LocalService {
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
-    });
+        factory: config.web.as_ref().map(super::down::LocalWeb::factory),
+    })
+    .max_decoding_message_size(super::MAX_MESSAGE)
+    .max_encoding_message_size(super::MAX_MESSAGE);
     // the link's calls, and this node's web app and tunnels (plans/Edge-Node.md §5.3)
     let builder = super::down::builder(config.keepalive, config.web.as_ref());
     let service = super::down::service(grpc, config.web.clone());
@@ -277,7 +335,7 @@ struct Shared {
     status: Mutex<LinkStatus>,
     /// The current up connection's generation, which the down connection's calls must name.
     current: Arc<AtomicU64>,
-    up: Mutex<Option<LinkClient<H2Channel>>>,
+    up: Mutex<Option<LinkClient>>,
 }
 
 impl Shared {
@@ -324,7 +382,23 @@ impl Dialer {
         });
         let (stop, stop_rx) = watch::channel(false);
         let timeout = config.connect_timeout;
-        runtime.spawn(run(config, prepared, Arc::clone(&shared), stop_rx, shutdown, telemetry));
+        // replication notes writes from now on, and keeps its notes across links and dialers (plans/Edge-Node.md §5.2)
+        let replica = config
+            .web
+            .as_ref()
+            .and_then(|web| web.factory().upgrade())
+            .and_then(|factory| {
+                let settings = moqui_core::edge::settings(&factory);
+                let facade = factory.entity()?;
+                moqui_core::edge::replica::enable(&facade, &settings.sets)
+            });
+        let links = Links {
+            prepared,
+            shared: Arc::clone(&shared),
+            telemetry,
+            replica,
+        };
+        runtime.spawn(run(config, links, stop_rx, shutdown));
         Ok(Self { shared, stop, timeout })
     }
 
@@ -364,14 +438,21 @@ enum Ended {
     Refused(String),
 }
 
-async fn run(
-    config: LocalConfig,
+/// What each link of a dialer shares.
+#[derive(Clone)]
+struct Links {
     prepared: Arc<Prepared>,
     shared: Arc<Shared>,
-    mut stop: watch::Receiver<bool>,
-    mut shutdown: watch::Receiver<bool>,
     telemetry: Option<Arc<Telemetry>>,
-) {
+    replica: Option<Arc<moqui_core::edge::replica::Replica>>,
+}
+
+async fn run(config: LocalConfig, links: Links, mut stop: watch::Receiver<bool>, mut shutdown: watch::Receiver<bool>) {
+    let Links {
+        ref shared,
+        ref telemetry,
+        ..
+    } = links;
     let mut attempt: u32 = 0;
     let mut refusals: u32 = 0;
     loop {
@@ -384,14 +465,7 @@ async fn run(
                 status.state = LinkState::Connecting;
             }
         });
-        let once = tokio::spawn(link_once(
-            config.clone(),
-            Arc::clone(&prepared),
-            Arc::clone(&shared),
-            stop.clone(),
-            shutdown.clone(),
-            telemetry.clone(),
-        ));
+        let once = tokio::spawn(link_once(config.clone(), links.clone(), stop.clone(), shutdown.clone()));
         let ended = match once.await {
             Ok(ended) => ended,
             Err(err) if err.is_panic() => {
@@ -459,12 +533,16 @@ async fn run(
 
 async fn link_once(
     config: LocalConfig,
-    prepared: Arc<Prepared>,
-    shared: Arc<Shared>,
+    links: Links,
     mut stop: watch::Receiver<bool>,
     mut shutdown: watch::Receiver<bool>,
-    telemetry: Option<Arc<Telemetry>>,
 ) -> Ended {
+    let Links {
+        prepared,
+        shared,
+        telemetry,
+        replica,
+    } = links;
     let failed = |error: LinkError| match error {
         LinkError::Refused(message) => Ended::Refused(message),
         LinkError::Failed(error) => Ended::Lost { linked: false, error },
@@ -487,6 +565,8 @@ async fn link_once(
         None => return Ended::Stopped,
     };
     *lock(&shared.up) = Some(up.client.clone());
+    // the outbox and the replicated sets go up while this link lasts
+    let _work = Work::start(&config, &up, replica, telemetry.clone());
     let connected = moqui_core::user::now_millis();
     shared.update(|status| {
         status.state = LinkState::Linked;
@@ -538,6 +618,71 @@ async fn link_once(
                 }
             }
         }
+    }
+}
+
+/// The tasks that send this node's work up one link: its outbox and its replicated sets. Dropped with the link.
+struct Work(Vec<tokio::task::JoinHandle<()>>);
+
+impl Drop for Work {
+    fn drop(&mut self) {
+        for task in &self.0 {
+            task.abort();
+        }
+    }
+}
+
+impl Work {
+    fn start(
+        config: &LocalConfig,
+        up: &UpLink,
+        replica: Option<Arc<moqui_core::edge::replica::Replica>>,
+        telemetry: Option<Arc<Telemetry>>,
+    ) -> Self {
+        let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) else {
+            return Self(Vec::new());
+        };
+        let Some(node) = factory
+            .upgrade()
+            .map(|factory| moqui_core::edge::queue::local_node_id(&factory))
+        else {
+            return Self(Vec::new());
+        };
+        let mut tasks = Vec::new();
+        let client = up.client.clone();
+        let generation = up.generation;
+        let owner = format!("{}/{generation}", config.instance_id);
+        let send = move |item: moqui_core::edge::queue::QueueItem| {
+            let mut client = client.clone();
+            async move {
+                let request = DeliverRequest {
+                    generation,
+                    item: Some(super::queue::to_proto(&item)),
+                };
+                match client.deliver(request).await {
+                    Ok(reply) => Ok(super::queue::applied(&reply.into_inner())),
+                    Err(status) => super::queue::delivery_error(&status),
+                }
+            }
+        };
+        tasks.push(tokio::spawn(super::queue::deliver(
+            factory.clone(),
+            node,
+            moqui_core::edge::queue::TO_EDGE,
+            owner,
+            telemetry,
+            send,
+        )));
+        if let Some(replica) = replica {
+            let sender = super::replicate::Sender {
+                factory,
+                replica,
+                client: up.client.clone(),
+                timeout: super::queue::ANSWER_TIMEOUT,
+            };
+            tasks.push(tokio::spawn(sender.run()));
+        }
+        Self(tasks)
     }
 }
 

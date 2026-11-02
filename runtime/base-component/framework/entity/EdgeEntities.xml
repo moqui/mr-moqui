@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (plans/Edge-Node.md §5.1, §5.7): what an edge node keeps of the local nodes paired with it. Every row
-    that belongs to one local node is keyed by its pairedNodeId, the local node's instance id (decision 1), so several
-    local nodes on one edge node can come later. A local node keeps its own side (the URL, its key and the edge node's
-    pin) in runtime/.env, not here. The services are org.moqui.impl.EdgeServices; the link is
-    crates/moqui-host/src/edge_link/. No Java counterpart. -->
+<!-- The edge link (plans/Edge-Node.md §5.1, §5.2, §5.7): what an edge node keeps of the local nodes paired with it, and
+    the queues and receipts both ends keep. Every row that belongs to one local node is keyed by its pairedNodeId, the
+    local node's instance id (decision 1), so several local nodes on one edge node can come later. A local node keeps
+    its own side of the link (the URL, its key and the edge node's pin) in runtime/.env, not here. The services are
+    org.moqui.impl.EdgeServices; the link is crates/moqui-host/src/edge_link/. No Java counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="EdgePairingCode" package="moqui.edge" use="transactional" cache="never">
@@ -71,5 +71,138 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" title="EdgeHostMode" related="moqui.basic.Enumeration" short-alias="mode">
             <key-map field-name="modeEnumId"/></relationship>
         <index name="EDGE_HOST_NODE"><index-field name="pairedNodeId"/></index>
+    </entity>
+
+    <!-- ========== How work crosses the link (plans/Edge-Node.md §5.2): queue and replicate ========== -->
+    <entity entity-name="EdgeQueueItem" package="moqui.edge" use="transactional" cache="never">
+        <description>One unit of work queued for the other end of the link: on an edge node the items for a local node
+            (EqdToLocal), on a local node its outbox for the edge node (EqdToEdge). pairedNodeId is the local node of
+            the pair: on an edge node the paired node's id (decision 1), on a local node its own instance id.
+            queueItemId is a UUID, so the receiver's receipt stays unique when this database is lost and made again;
+            sequenceNum orders the items, and the items of one conversationKey (a room, a mailbox, a phone number) are
+            delivered one at a time in that order: a head that failed holds the ones after it until it is delivered or
+            fails for good. idempotencyKey is unique per node and direction: enqueuing it again returns the item there
+            is. kind names the receiver's handler service (the edge queue-kind conf). The payload is text (JSON), or
+            contentLocation names a large body. statusEnumId: EqsPending, EqsDelivered (the receiver applied it, or had
+            already), EqsFailed (the receiver refused it maxAttempts times, or it waited past the retention period or
+            the size cap; kept for inspection the retention period from failedDate). A delivery holds the row
+            (leaseOwner until leaseExpiresDate) while it waits for the answer.</description>
+        <field name="queueItemId" type="id" is-pk="true"/>
+        <field name="pairedNodeId" type="id" not-null="true"/>
+        <field name="directionEnumId" type="id" not-null="true"/>
+        <field name="sequenceNum" type="number-integer" not-null="true"/>
+        <field name="kind" type="text-short" not-null="true"/>
+        <field name="conversationKey" type="text-medium" not-null="true"/>
+        <field name="idempotencyKey" type="text-medium" not-null="true"/>
+        <field name="payload" type="text-very-long"/>
+        <field name="contentLocation" type="text-medium"/>
+        <field name="payloadSize" type="number-integer"/>
+        <field name="statusEnumId" type="id" not-null="true"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpiresDate" type="date-time"/>
+        <field name="lastErrorText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="deliveredDate" type="date-time"/>
+        <field name="failedDate" type="date-time"/>
+        <relationship type="one" title="EdgeQueueDirection" related="moqui.basic.Enumeration" short-alias="direction">
+            <key-map field-name="directionEnumId"/></relationship>
+        <relationship type="one" title="EdgeQueueStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="EDGE_QUEUE_IDEM" unique="true">
+            <index-field name="pairedNodeId"/><index-field name="directionEnumId"/><index-field name="idempotencyKey"/>
+        </index>
+        <index name="EDGE_QUEUE_DUE">
+            <index-field name="pairedNodeId"/><index-field name="directionEnumId"/><index-field name="statusEnumId"/>
+            <index-field name="sequenceNum"/>
+        </index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Edge Queue Direction" enumTypeId="EdgeQueueDirection"/>
+            <moqui.basic.Enumeration description="To the local node" enumId="EqdToLocal"
+                    enumCode="toLocal" enumTypeId="EdgeQueueDirection" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="To the edge node" enumId="EqdToEdge"
+                    enumCode="toEdge" enumTypeId="EdgeQueueDirection" sequenceNum="2"/>
+            <moqui.basic.EnumerationType description="Edge Queue Status" enumTypeId="EdgeQueueStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="EqsPending"
+                    enumCode="pending" enumTypeId="EdgeQueueStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Delivered" enumId="EqsDelivered"
+                    enumCode="delivered" enumTypeId="EdgeQueueStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Failed" enumId="EqsFailed"
+                    enumCode="failed" enumTypeId="EdgeQueueStatus" sequenceNum="3"/>
+        </seed-data>
+    </entity>
+
+    <view-entity entity-name="EdgeQueueHead" package="moqui.edge">
+        <description>The head of each conversation key's items: select conversationKey and sequenceNum (the lowest),
+            finding by pairedNodeId, directionEnumId and statusEnumId EqsPending.</description>
+        <member-entity entity-alias="EQI" entity-name="moqui.edge.EdgeQueueItem"/>
+        <alias entity-alias="EQI" name="pairedNodeId"/>
+        <alias entity-alias="EQI" name="directionEnumId"/>
+        <alias entity-alias="EQI" name="statusEnumId"/>
+        <alias entity-alias="EQI" name="conversationKey"/>
+        <alias entity-alias="EQI" name="sequenceNum" function="min"/>
+    </view-entity>
+
+    <view-entity entity-name="EdgeQueueCount" package="moqui.edge">
+        <description>The queue's items counted by the fields selected with them (pairedNodeId, directionEnumId, kind,
+            statusEnumId): how many, the oldest queued, and their payloads' bytes.</description>
+        <member-entity entity-alias="EQI" entity-name="moqui.edge.EdgeQueueItem"/>
+        <alias entity-alias="EQI" name="pairedNodeId"/>
+        <alias entity-alias="EQI" name="directionEnumId"/>
+        <alias entity-alias="EQI" name="kind"/>
+        <alias entity-alias="EQI" name="statusEnumId"/>
+        <alias entity-alias="EQI" name="itemCount" field="queueItemId" function="count"/>
+        <alias entity-alias="EQI" name="oldestCreatedDate" field="createdDate" function="min"/>
+        <alias entity-alias="EQI" name="payloadBytes" field="payloadSize" function="sum"/>
+    </view-entity>
+
+    <entity entity-name="EdgeReceipt" package="moqui.edge" use="transactional" cache="never">
+        <description>A queue item this node applied, from the other end of the link, by the sender's queueItemId:
+            written in the transaction that applied it, so a redelivery (its acknowledgement was lost) finds it and is
+            only acknowledged. pairedNodeId is the local node of the pair, as on EdgeQueueItem. Kept for the queue's
+            retention period.</description>
+        <field name="pairedNodeId" type="id" is-pk="true"/>
+        <field name="queueItemId" type="id" is-pk="true"/>
+        <field name="directionEnumId" type="id"/>
+        <field name="kind" type="text-short"/>
+        <field name="conversationKey" type="text-medium"/>
+        <field name="idempotencyKey" type="text-medium"/>
+        <field name="appliedDate" type="date-time"/>
+        <index name="EDGE_RECEIPT_APPLIED"><index-field name="appliedDate"/></index>
+    </entity>
+
+    <entity entity-name="EdgeReplicaValue" package="moqui.edge" use="transactional" cache="never">
+        <description>On an edge node, the copy of one record of a local node's replicated set (the edge replicate conf):
+            its entity, its primary key and the set's fields of it, as JSON, so the edge node's schema holds none of the
+            business entities. pkHash is the SHA-256 (hex) of the canonical key JSON, by which a value is found;
+            pkJson and fieldsJson are encrypted at rest. replicaEpoch is the local node's snapshot the value was last
+            written under: a full resync writes every value under a new one and then removes those of older
+            ones.</description>
+        <field name="pairedNodeId" type="id" is-pk="true"/>
+        <field name="setName" type="id" is-pk="true"/>
+        <field name="entityName" type="text-medium" is-pk="true"/>
+        <field name="pkHash" type="id-long" is-pk="true"/>
+        <field name="pkJson" type="text-long" encrypt="true"/>
+        <field name="fieldsJson" type="text-very-long" encrypt="true"/>
+        <field name="replicaEpoch" type="text-short"/>
+        <field name="updatedDate" type="date-time"/>
+        <relationship type="one" related="moqui.edge.EdgeClient"/>
+    </entity>
+
+    <entity entity-name="EdgeReplicaCursor" package="moqui.edge" use="transactional" cache="never">
+        <description>On an edge node, how far a local node's replicated set has been applied: the local node's epoch
+            (each full resync starts one) and the sequence of the last batch applied, written in the transaction that
+            applied it. A batch that does not follow the cursor (this database was lost, or the local node restarted)
+            is answered with a request for a full resync. snapshotDate is when the last full resync
+            finished.</description>
+        <field name="pairedNodeId" type="id" is-pk="true"/>
+        <field name="setName" type="id" is-pk="true"/>
+        <field name="replicaEpoch" type="text-short"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="snapshotDate" type="date-time"/>
+        <field name="appliedDate" type="date-time"/>
+        <relationship type="one" related="moqui.edge.EdgeClient"/>
     </entity>
 </entities>

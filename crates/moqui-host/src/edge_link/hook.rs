@@ -12,18 +12,19 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local node's
-//! dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
-//! [`EdgeServer`] with its web front and SSH tunnel port. Pairing writes `edge_node_url`, `edge_node_key` and
-//! `edge_node_pin` to `runtime/.env` and sets them as properties; unpairing removes them (plans/Edge-Node.md §5.1,
-//! §5.3, §5.7).
+//! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local
+//! node's dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
+//! [`EdgeServer`] with its web front, SSH tunnel port and delegated calls; on both, the queue's metrics and retention.
+//! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
+//! unpairing removes them (plans/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
 
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
-    EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, LinkStatus, PairResult, PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
+    DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, LinkStatus, PairResult,
+    PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -57,6 +58,11 @@ pub(crate) fn start(
     down: crate::http::DownServe,
 ) -> Started {
     let edge_node = moqui_core::edge::is_edge_node();
+    // the edge conf is read now, with the role this node started with (plans/Edge-Node.md §5.2)
+    let settings = moqui_core::edge::settings(factory);
+    if settings.edge_node != edge_node {
+        tracing::warn!("node_role changed after this server read its edge conf; it keeps the role it started with");
+    }
     // the web protection, which also admits the SSH tunnel port's connections on an edge node
     let guard = Arc::clone(&down.app.guard);
     if !edge_node {
@@ -108,6 +114,11 @@ pub(crate) fn start(
     let paired = (!edge_node)
         .then(|| LocalConfig::from_properties(&instance_id(factory)))
         .flatten();
+    // the queue's metrics and retention, where the link carries work: an edge node here, a local node when its dialer
+    // starts (Hook::start_dialer)
+    if edge_node {
+        super::queue::maintain(factory, hook.shutdown.clone());
+    }
     if edge_node
         && !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)
             .trim()
@@ -137,9 +148,13 @@ pub(crate) fn start(
     }
 }
 
-/// The listeners have stopped: let go of the app this node's down connections served.
+/// The listeners have stopped: let go of the app this node's down connections served, and of replication's notes.
 pub(crate) fn stopped(factory: &ExecutionContextFactory) {
     super::down::clear(factory);
+    // replication's notes go with the server, as a restart's would
+    if let Some(facade) = factory.entity() {
+        moqui_core::edge::replica::disable(&facade);
+    }
 }
 
 /// The page a terminate host shows while its node's link is down: the text at `edge_offline_page`, else the default.
@@ -191,6 +206,9 @@ impl Hook {
         let factory = self.factory.upgrade();
         if config.web.is_none() {
             config.web = factory.as_deref().and_then(super::down::local_web);
+        }
+        if let Some(factory) = &factory {
+            super::queue::maintain(factory, self.shutdown.clone());
         }
         let telemetry = factory.map(|factory| moqui_core::telemetry::for_factory(&factory));
         let dialer = Dialer::start(config, &self.runtime, self.shutdown.clone(), telemetry)?;
@@ -325,6 +343,16 @@ impl EdgeLink for Hook {
             tracing::info!("Edge node: host {} removed", host_name.trim());
         }
         Ok(removed)
+    }
+
+    fn delegate(&self, call: &DelegateCall) -> Result<DelegateAnswer, Error> {
+        let server = self
+            .server
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| Error::new(format!("{}: this node takes no links", moqui_core::edge::OFFLINE)))?;
+        let call = call.clone();
+        crate::edge::block_on(async move { server.delegate(call).await })?
     }
 
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {

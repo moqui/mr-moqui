@@ -162,17 +162,7 @@ impl Runtime {
 
     /// The attributes `name` keeps: its configured list, or the global one.
     fn metric_attributes(&self, name: &str, attributes: Document) -> Vec<KeyValue> {
-        match self.allowed.get(name) {
-            Some(keys) => attributes
-                .into_iter()
-                .filter_map(|(key, value)| {
-                    keys.iter()
-                        .find(|allowed| allowed.as_str() == key)
-                        .map(|allowed| KeyValue::new(allowed.clone(), metric_value(&key, value)))
-                })
-                .collect(),
-            None => metric_attributes(attributes),
-        }
+        allowed_attributes(self.allowed.get(name).map(Vec::as_slice), attributes)
     }
 
     pub(super) fn start_span(
@@ -293,6 +283,42 @@ impl Runtime {
                     };
                     if let Some(value) = value.filter(|value| value.is_finite()) {
                         observer.observe(value, &[]);
+                    }
+                })
+                .build(),
+        );
+    }
+
+    /// A gauge of several series: each attribute set the callback returns, with its value.
+    pub(super) fn observe_gauge_series(
+        &self,
+        name: &str,
+        callback: impl Fn() -> Vec<(Document, f64)> + Send + Sync + 'static,
+    ) {
+        let mut gauges = lock(&self.gauges);
+        if gauges.len() >= 64 {
+            return;
+        }
+        let gauge_name = name.to_string();
+        let allowed = self.allowed.get(name).cloned();
+        let failed = std::sync::atomic::AtomicBool::new(false);
+        gauges.push(
+            self.meter
+                .f64_observable_gauge(name.to_string())
+                .with_callback(move |observer| {
+                    let series = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(&callback)) {
+                        Ok(series) => series,
+                        Err(_) => {
+                            if !failed.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                tracing::warn!(instrument = %gauge_name,"telemetry gauge callback panicked");
+                            }
+                            Vec::new()
+                        }
+                    };
+                    for (attributes, value) in series {
+                        if value.is_finite() {
+                            observer.observe(value, &allowed_attributes(allowed.as_deref(), attributes));
+                        }
                     }
                 })
                 .build(),
@@ -439,6 +465,9 @@ fn safe_key(key: &str) -> bool {
             | "moqui.visit.id"
             | "http.route"
             | "moqui.operation.name"
+            | "moqui.edgelink.kind"
+            | "moqui.edgelink.direction"
+            | "moqui.edgelink.set"
             | "moqui.operation.outcome"
     )
 }
@@ -562,7 +591,26 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
     "db.system.name",
     "outcome",
     "moqui.operation.name",
+    // the edge link's queue and replication (plans/Edge-Node.md §5.9): names from its conf, never from a request
+    "moqui.edgelink.kind",
+    "moqui.edgelink.direction",
+    "moqui.edgelink.set",
 ];
+
+/// The attributes an instrument keeps: those of its configured list (`keys`), or of the global one.
+fn allowed_attributes(keys: Option<&[opentelemetry::Key]>, attributes: Document) -> Vec<KeyValue> {
+    match keys {
+        Some(keys) => attributes
+            .into_iter()
+            .filter_map(|(key, value)| {
+                keys.iter()
+                    .find(|allowed| allowed.as_str() == key)
+                    .map(|allowed| KeyValue::new(allowed.clone(), metric_value(&key, value)))
+            })
+            .collect(),
+        None => metric_attributes(attributes),
+    }
+}
 
 fn metric_attributes(attributes: Document) -> Vec<KeyValue> {
     attributes

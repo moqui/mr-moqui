@@ -631,8 +631,9 @@ the Dev AIDE loads there.
 ## Edge node
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
-open ([plan](../plans/Edge-Node.md)). For now this is the link and web access: pairing, the link's state and revoking,
-the local node's apps and its SSH server. No mail, chat, calls or PASS go over it yet.
+open ([plan](../plans/Edge-Node.md)). For now this is the link, web access and the ways work crosses it: pairing, the
+link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication. No
+mail, chat, calls or PASS use them yet.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -676,6 +677,16 @@ the local node's apps and its SSH server. No mail, chat, calls or PASS go over i
   node's web protection admits each connection, and it goes down the link to the local node's SSH server, when the
   local node runs one (`ssh_port`). The SSH server's logs and login checks see the client's address. With more than
   one linked node, `edge_ssh_tunnel_node` names the one.
+- **Work over the link** (the `<edge>` conf element, the same on both nodes; [plan](../plans/Edge-Node.md) §5.2). A
+  service listed in `delegate` runs on the local node when called on the edge node, as the user `_EDGE_`, whose grants
+  (the `EDGE_DELEGATE` artifact group) must cover it; it fails at once while the link is down. A `queue-kind` names the
+  service that applies queued items of that kind; what waits for a local node that is away is kept
+  `queue-retention-days` (14, the same on both nodes) up to `queue-max-megabytes`, then the oldest fails, logged; a
+  payload is at most 1 MiB. A `replicate` set is copied to the edge node, read-only there, and sent whole again when
+  the edge node lost its copy. On a clustered local node only the member holding the link sends its outbox and
+  replication. System › Edge Node shows the outbox and the sets, with Pause and Resync; Edge Clients shows each node's
+  queue and sets. The edge node's database now holds the queue: unpause its backup job
+  (`backup_EmbeddedDatabase_daily`).
 
 ## Cluster
 

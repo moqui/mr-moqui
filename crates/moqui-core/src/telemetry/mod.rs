@@ -848,6 +848,21 @@ impl Telemetry {
         let _ = (name, callback);
     }
 
+    /// A gauge of several series, one per attribute set the callback returns (the metric attribute allow-list
+    /// applies). Callbacks must use weak factory references, as for [`Telemetry::observe_gauge`].
+    pub fn observe_gauge_series(
+        &self,
+        name: &str,
+        callback: impl Fn() -> Vec<(Document, f64)> + Send + Sync + 'static,
+    ) {
+        #[cfg(feature = "telemetry")]
+        if let Some(sdk) = &self.sdk {
+            sdk.observe_gauge_series(name, callback);
+            return;
+        }
+        let _ = (name, callback);
+    }
+
     /// External records have already passed authentication and redaction in the receiver.
     pub fn ingest(&self, index: &'static str, documents: Vec<Document>) {
         let _ = self.try_ingest(index, documents);

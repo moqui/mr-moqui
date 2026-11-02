@@ -58,6 +58,13 @@ pub struct LocalWeb {
     factory: Weak<ExecutionContextFactory>,
 }
 
+impl LocalWeb {
+    /// The server's factory, while it runs: what the link's queue, delegated calls and replication work on.
+    pub(crate) fn factory(&self) -> Weak<ExecutionContextFactory> {
+        Weak::clone(&self.factory)
+    }
+}
+
 /// A server's [`LocalWeb`], while its listeners run.
 #[derive(Default)]
 struct Slot(Mutex<Option<LocalWeb>>);

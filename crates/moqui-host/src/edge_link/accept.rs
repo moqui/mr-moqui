@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
-use moqui_core::edge::{EdgeClientInfo, PairingCode};
+use moqui_core::edge::{DelegateAnswer, DelegateCall, EdgeClientInfo, PairingCode};
 use moqui_core::telemetry::Telemetry;
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -46,15 +46,15 @@ use tonic::{Request, Response, Status};
 use super::hosts::{self, Hosts, Route};
 use super::pair::Identity;
 use super::proto::link_server::{Link, LinkServer};
-use super::proto::local_link_client::LocalLinkClient;
 use super::proto::{
-    Hello, HelloReply, HelloRequest, LocalHelloRequest, PairReply, PairRequest, PingReply, PingRequest, ProbeReply,
-    ProbeRequest, UnpairReply, UnpairRequest,
+    DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply, HelloRequest, LocalHelloRequest, PairReply,
+    PairRequest, PingReply, PingRequest, ProbeReply, ProbeRequest, ReplicateReply, ReplicateRequest, UnpairReply,
+    UnpairRequest,
 };
 use super::store::{self, Paired};
 use super::{
-    check_versions, hello, valid_node_id, write_answer, Answer, EdgeConfig, H2Channel, ALPN, ALPN_PAIR, LINK_VERSION,
-    ROLE_CHECK, ROLE_DOWN, ROLE_PAIR, ROLE_UP,
+    check_versions, hello, valid_node_id, write_answer, Answer, EdgeConfig, ALPN, ALPN_PAIR, LINK_VERSION, ROLE_CHECK,
+    ROLE_DOWN, ROLE_PAIR, ROLE_UP,
 };
 use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 
@@ -393,7 +393,10 @@ impl EdgeServer {
     /// Add one to the counter `name`, of a tunnel or forward `kind`.
     pub(crate) fn count(&self, name: &str, kind: &str) {
         let mut attributes = moqui_core::entity::document::Document::new();
-        attributes.insert("kind".to_string(), moqui_lib::object::Value::string(kind));
+        attributes.insert(
+            "moqui.edgelink.kind".to_string(),
+            moqui_lib::object::Value::string(kind),
+        );
         self.telemetry.add_counter(name, 1, attributes);
     }
 
@@ -606,7 +609,7 @@ impl EdgeServer {
             streams: Some(2),
             hello: None,
         };
-        self.serve_h2(stream, LinkServer::new(service), None, limits).await;
+        self.serve_h2(stream, link_server(service), None, limits).await;
     }
 
     async fn serve_up(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, key: Option<String>) {
@@ -666,8 +669,7 @@ impl EdgeServer {
             streams: None,
             hello: Some((self.config.handshake_timeout, helloed)),
         };
-        self.serve_h2(stream, LinkServer::new(service), Some(closed), limits)
-            .await;
+        self.serve_h2(stream, link_server(service), Some(closed), limits).await;
         self.unregister(&node, generation);
         tracing::debug!("Edge link of {node} (generation {generation}) closed");
     }
@@ -791,7 +793,7 @@ impl EdgeServer {
                 _ = shutdown.wait_for(|stopped| *stopped) => {}
             }
         });
-        let mut client = LocalLinkClient::with_origin(H2Channel(send.clone()), super::origin());
+        let mut client = super::local_link_client(send.clone());
         let request = LocalHelloRequest {
             hello: Some(self.hello()),
             generation,
@@ -820,7 +822,10 @@ impl EdgeServer {
                 .filter(|link| link.generation == generation)
             {
                 Some(link) => {
-                    link.down = Some(Down { send, _close: close });
+                    link.down = Some(Down {
+                        send: send.clone(),
+                        _close: close,
+                    });
                     if link.hello.is_none() {
                         link.hello = Some(local);
                     }
@@ -834,7 +839,17 @@ impl EdgeServer {
             return;
         }
         tracing::info!("Edge link of {node} is up (generation {generation}, from {remote})");
+        // the node's queued items go down while this connection lasts (plans/Edge-Node.md §5.2)
+        let delivery = tokio::spawn(super::queue::deliver(
+            Weak::clone(&self.factory),
+            node.clone(),
+            moqui_core::edge::queue::TO_LOCAL,
+            format!("{}/{node}/{generation}", self.config.instance_id),
+            Some(Arc::clone(&self.telemetry)),
+            deliver_down(send, generation),
+        ));
         let _ = driver.await;
+        delivery.abort();
         let mut registry = lock(&self.registry);
         if let Some(link) = registry
             .links
@@ -859,13 +874,95 @@ impl EdgeServer {
                 .ok_or_else(|| format!("{node} has no down connection"))?;
             (down.send.clone(), link.generation)
         };
-        let mut client = LocalLinkClient::with_origin(H2Channel(send), super::origin());
+        let mut client = super::local_link_client(send);
         let started = Instant::now();
         match tokio::time::timeout(self.config.handshake_timeout, client.ping(PingRequest { generation })).await {
             Ok(Ok(_)) => Ok(started.elapsed()),
             Ok(Err(status)) => Err(format!("Ping: {}", status.message())),
             Err(_) => Err(format!("{node} did not answer Ping in time")),
         }
+    }
+
+    /// Run a delegated call on the local node (the only one whose link is up): its answer, or [`OFFLINE`] at once while
+    /// no link is up.
+    ///
+    /// [`OFFLINE`]: moqui_core::edge::OFFLINE
+    pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
+        let offline = || Error::new(moqui_core::edge::OFFLINE);
+        let (node, send, generation) = {
+            let registry = lock(&self.registry);
+            let mut up = registry.links.iter().filter_map(|(node, link)| {
+                let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
+                Some((node.clone(), down.send.clone(), link.generation))
+            });
+            let first = up.next().ok_or_else(offline)?;
+            if up.next().is_some() {
+                return Err(Error::new(
+                    "several local nodes are linked; a delegated call needs one (plans/Edge-Node.md decision 1)",
+                ));
+            }
+            first
+        };
+        let mut client = super::local_link_client(send);
+        let request = DelegateRequest {
+            generation,
+            service: call.service.clone(),
+            parameters_json: call.parameters.to_string(),
+            caller_json: call.caller.to_string(),
+            operation_id: call.operation_id.clone(),
+        };
+        let started = Instant::now();
+        let mut attributes = moqui_core::entity::document::Document::new();
+        attributes.insert(
+            "moqui.artifact.name".to_string(),
+            moqui_lib::object::Value::string(&call.service),
+        );
+        let answered = tokio::time::timeout(super::queue::ANSWER_TIMEOUT, client.delegate(request)).await;
+        self.telemetry.record_duration(
+            "moqui.edgelink.delegate.duration",
+            started.elapsed().as_secs_f64(),
+            attributes.clone(),
+        );
+        let reply = match answered {
+            Ok(Ok(reply)) => reply.into_inner(),
+            Ok(Err(status)) => {
+                self.telemetry
+                    .add_counter("moqui.edgelink.delegate.errors", 1, attributes);
+                tracing::warn!(
+                    "Edge link of {node}: delegated call of {} (operation {}) failed: {}",
+                    call.service,
+                    call.operation_id,
+                    status.message()
+                );
+                return Err(Error::new(format!(
+                    "{}: {}",
+                    moqui_core::edge::OFFLINE,
+                    status.message()
+                )));
+            }
+            Err(_) => {
+                self.telemetry
+                    .add_counter("moqui.edgelink.delegate.errors", 1, attributes);
+                return Err(Error::new(format!(
+                    "the local node did not answer the call of {} in time",
+                    call.service
+                )));
+            }
+        };
+        if !reply.errors.is_empty() {
+            self.telemetry
+                .add_counter("moqui.edgelink.delegate.errors", 1, attributes);
+        }
+        let result = if reply.result_json.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&reply.result_json)
+                .map_err(|err| Error::new(format!("the local node's answer is not JSON: {err}")))?
+        };
+        Ok(DelegateAnswer {
+            result,
+            errors: reply.errors,
+        })
     }
 
     /// The paired nodes with their live links.
@@ -899,6 +996,37 @@ impl EdgeServer {
 
     pub(crate) fn create_pairing_code(&self, valid_minutes: u32) -> Result<PairingCode, Error> {
         store::create_code(&*self.factory()?, valid_minutes)
+    }
+}
+
+/// The edge node's [`Link`] service for one connection, with the link's message limits.
+fn link_server(service: LinkService) -> LinkServer<LinkService> {
+    LinkServer::new(service)
+        .max_decoding_message_size(super::MAX_MESSAGE)
+        .max_encoding_message_size(super::MAX_MESSAGE)
+}
+
+/// Send a queued item down a node's down connection of `generation`.
+fn deliver_down(
+    send: hyper::client::conn::http2::SendRequest<tonic::body::Body>,
+    generation: u64,
+) -> impl FnMut(
+    moqui_core::edge::queue::QueueItem,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<moqui_core::edge::queue::Applied, String>> + Send>,
+> + Send {
+    move |item| {
+        let mut client = super::local_link_client(send.clone());
+        Box::pin(async move {
+            let request = DeliverRequest {
+                generation,
+                item: Some(super::queue::to_proto(&item)),
+            };
+            match client.deliver(request).await {
+                Ok(reply) => Ok(super::queue::applied(&reply.into_inner())),
+                Err(status) => super::queue::delivery_error(&status),
+            }
+        })
     }
 }
 
@@ -1058,6 +1186,40 @@ impl Link for LinkService {
             return Err(Status::failed_precondition("Hello first"));
         }
         Ok(Response::new(PingReply { generation }))
+    }
+
+    async fn deliver(&self, request: Request<DeliverRequest>) -> Result<Response<DeliverReply>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        let item = super::queue::from_proto(request.into_inner().item.unwrap_or_default());
+        let applied = super::queue::receive(&self.server.factory, node, item).await;
+        Ok(Response::new(super::queue::reply(&applied)))
+    }
+
+    async fn replicate(&self, request: Request<ReplicateRequest>) -> Result<Response<ReplicateReply>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        let batch = super::replicate::batch_of(request.into_inner());
+        let set = batch.set_name.clone();
+        let key = node.to_string();
+        let answer = self
+            .server
+            .on_pool(move |factory| {
+                let facade = store::facade(factory)?;
+                moqui_core::edge::replica::apply_batch(&facade, &key, &batch)
+            })
+            .await
+            .map_err(|err| {
+                tracing::error!("Edge link of {node}: a batch of set {set} was not applied: {err}");
+                Status::internal("the edge node could not apply the batch")
+            })?;
+        Ok(Response::new(ReplicateReply {
+            resync: answer == moqui_core::edge::replica::BatchAnswer::Resync,
+        }))
     }
 
     async fn unpair(&self, _request: Request<UnpairRequest>) -> Result<Response<UnpairReply>, Status> {

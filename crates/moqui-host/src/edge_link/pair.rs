@@ -29,10 +29,9 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
-use super::proto::link_client::LinkClient;
 use super::proto::{PairRequest, ProbeRequest};
 use super::{
-    check_versions, edge_info, hello, read_answer, Answer, H2Channel, LinkError, ALPN, ALPN_PAIR, LINK_VERSION,
+    check_versions, edge_info, hello, read_answer, Answer, LinkClient, LinkError, ALPN, ALPN_PAIR, LINK_VERSION,
     ROLE_CHECK, ROLE_PAIR,
 };
 use crate::tls_pin::{hex, parse_hex, Pin, PinVerifier};
@@ -314,7 +313,7 @@ async fn pairing_client(
     config: Arc<rustls::ClientConfig>,
     timeout: Duration,
     role: u8,
-) -> Result<(LinkClient<H2Channel>, tokio::task::JoinHandle<()>), LinkError> {
+) -> Result<(LinkClient, tokio::task::JoinHandle<()>), LinkError> {
     let mut stream = dial_tls(url, config, timeout).await?;
     let roled = async {
         stream.write_all(&[role]).await?;
@@ -336,7 +335,7 @@ async fn pairing_client(
     let driver = tokio::spawn(async move {
         let _ = connection.await;
     });
-    Ok((LinkClient::with_origin(H2Channel(send), super::origin()), driver))
+    Ok((super::link_client(send), driver))
 }
 
 /// The link key fingerprint in a Probe or Pair answer.
@@ -345,10 +344,7 @@ fn link_fingerprint(text: &str) -> Result<[u8; 32], LinkError> {
 }
 
 /// Probe on a check or pairing connection: the edge node's Hello and link key.
-async fn probe(
-    client: &mut LinkClient<H2Channel>,
-    timeout: Duration,
-) -> Result<(super::proto::Hello, [u8; 32]), LinkError> {
+async fn probe(client: &mut LinkClient, timeout: Duration) -> Result<(super::proto::Hello, [u8; 32]), LinkError> {
     let reply = tokio::time::timeout(timeout, client.probe(ProbeRequest {}))
         .await
         .map_err(|_| LinkError::Failed("the edge node did not answer Probe".to_string()))?

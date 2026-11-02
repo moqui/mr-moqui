@@ -12,15 +12,27 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The edge link as the screens and services see it (plans/Edge-Node.md §5.3, §5.7): the link's status, pairing and
-//! unpairing on a local node, and on an edge node its pairing codes, paired local nodes and their public host names. Core has no network stack; a host
-//! built with the `edge` feature installs an [`EdgeLink`] (`crates/moqui-host/src/edge_link/`). With none installed a
-//! call fails with [`NOT_BUILT`]. `org.moqui.impl.EdgeServices` (`crate::service::edge`) calls these.
+//! The edge link as the screens and services see it (plans/Edge-Node.md §5.2, §5.3, §5.7): the link's status, pairing
+//! and unpairing on a local node, and on an edge node its pairing codes, paired local nodes and their public host
+//! names. Core has no network stack; a host built with the `edge` feature installs an [`EdgeLink`]
+//! (`crates/moqui-host/src/edge_link/`). With none installed a call fails with [`NOT_BUILT`].
+//! `org.moqui.impl.EdgeServices` (`crate::service::edge`) calls these.
+//!
+//! How work crosses the link (§5.2) is here too, as far as it needs no network: the `<edge>` conf ([`conf`]), the
+//! service facade's hand-off of delegated calls ([`delegate`]), the queue's rows, receipts and handlers ([`queue`]),
+//! and replication's change notes, batches and copies ([`replica`]). The host's link moves them.
 
 use std::sync::Arc;
 
 use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
+
+pub mod conf;
+pub mod delegate;
+pub mod queue;
+pub mod replica;
+
+pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
 
 /// The message when no edge link is installed.
 pub const NOT_BUILT: &str = "edge link not built into this host";
@@ -157,6 +169,27 @@ pub struct EdgeHostInfo {
     pub mode_enum_id: String,
 }
 
+/// The error of a delegated call while the link to the local node is down.
+pub const OFFLINE: &str = "local node offline";
+
+/// A service call an edge node sends to its local node (§5.2): the parameters and the caller's identity (username and
+/// userId) as JSON data, never a login.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DelegateCall {
+    pub service: String,
+    pub parameters: serde_json::Value,
+    pub caller: serde_json::Value,
+    /// An id for the call, in both nodes' logs.
+    pub operation_id: String,
+}
+
+/// The local node's answer to a [`DelegateCall`]: the service's result, or the errors it added.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DelegateAnswer {
+    pub result: serde_json::Value,
+    pub errors: Vec<String>,
+}
+
 /// The edge link of this process, installed by the host.
 pub trait EdgeLink: Send + Sync {
     /// The local node's link (unpaired on a node with no `edge_node_url`).
@@ -185,6 +218,12 @@ pub trait EdgeLink: Send + Sync {
     fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error>;
     /// On an edge node: remove a host name. False when there was none.
     fn remove_host(&self, host_name: &str) -> Result<bool, Error>;
+    /// On an edge node: run `call` on the local node (the only one linked) and wait for its answer; [`OFFLINE`] at once
+    /// while the link is down. The caller checks the allowlist, and the local node checks its own again.
+    fn delegate(&self, call: &DelegateCall) -> Result<DelegateAnswer, Error> {
+        let _ = call;
+        Err(Error::new(OFFLINE))
+    }
 }
 
 static LINK: InstallSlot<dyn EdgeLink> = InstallSlot::new();

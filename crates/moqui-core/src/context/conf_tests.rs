@@ -202,3 +202,46 @@ fn telemetry_and_report_settings_merge_without_losing_security_limits() {
         Some("0")
     );
 }
+
+#[test]
+fn the_edge_conf_merges_each_child_by_its_key() {
+    let base = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><edge queue-retention-days="14" queue-max-attempts="10">
+                <delegate service="a.B.call#One"/>
+                <queue-kind name="mail" service="a.B.deliver#Mail"/>
+                <replicate set="recipients"><entity name="a.Account" fields="address"/></replicate>
+            </edge></moqui-conf>"#,
+    )
+    .unwrap();
+    let over = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><edge queue-retention-days="7">
+                <delegate service="a.B.call#Two"/>
+                <queue-kind name="mail" service="c.D.deliver#Mail"/>
+                <replicate set="recipients"><entity name="a.Identity" fields="name"/></replicate>
+            </edge></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &over);
+    let edge = base.first_named("edge").unwrap();
+    assert_eq!(edge.attribute("queue-retention-days").as_deref(), Some("7"));
+    assert_eq!(edge.attribute("queue-max-attempts").as_deref(), Some("10"));
+    let delegates: Vec<String> = edge
+        .children_named("delegate")
+        .iter()
+        .filter_map(|node| node.attribute("service"))
+        .collect();
+    assert_eq!(delegates, ["a.B.call#One", "a.B.call#Two"]);
+    let kinds = edge.children_named("queue-kind");
+    assert_eq!(kinds.len(), 1);
+    assert_eq!(kinds[0].attribute("service").as_deref(), Some("c.D.deliver#Mail"));
+    let sets = edge.children_named("replicate");
+    assert_eq!(sets.len(), 1);
+    let entities: Vec<String> = sets[0]
+        .children_named("entity")
+        .iter()
+        .filter_map(|node| node.attribute("name"))
+        .collect();
+    assert_eq!(entities, ["a.Identity"]);
+}

@@ -82,6 +82,174 @@ pub struct PingReply {
 pub struct UnpairRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UnpairReply {}
+/// A queued item (plans/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueueItem {
+    /// A UUID, which the receiver's receipt is keyed by.
+    #[prost(string, tag = "1")]
+    pub queue_item_id: ::prost::alloc::string::String,
+    /// The receiver applies it by the service its edge queue-kind conf names for the kind.
+    #[prost(string, tag = "2")]
+    pub kind: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub conversation_key: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub idempotency_key: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub payload: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub content_location: ::prost::alloc::string::String,
+    /// The attempts made before this one.
+    #[prost(uint32, tag = "7")]
+    pub attempts: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeliverRequest {
+    /// The link generation the sender is on.
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(message, optional, tag = "2")]
+    pub item: ::core::option::Option<QueueItem>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeliverReply {
+    #[prost(enumeration = "deliver_reply::Outcome", tag = "1")]
+    pub outcome: i32,
+    #[prost(string, tag = "2")]
+    pub error: ::prost::alloc::string::String,
+}
+/// Nested message and enum types in `DeliverReply`.
+pub mod deliver_reply {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum Outcome {
+        Unspecified = 0,
+        /// Applied now, in the transaction of its receipt.
+        Applied = 1,
+        /// Applied before: its receipt is there.
+        Duplicate = 2,
+        /// The handler refused it or failed: the sender tries again later.
+        Failed = 3,
+        /// The receiver's delivery is paused: the sender tries again, not counted as an attempt.
+        Paused = 4,
+        /// The receiver cannot take it now (busy, stopping, its delegate user cannot log in): tried again soon, not counted.
+        Unavailable = 5,
+        /// The receiver has no handler or grant for the kind (a version or conf skew): tried again after 10 minutes, not
+        /// counted.
+        NotHandled = 6,
+    }
+    impl Outcome {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Unspecified => "OUTCOME_UNSPECIFIED",
+                Self::Applied => "APPLIED",
+                Self::Duplicate => "DUPLICATE",
+                Self::Failed => "FAILED",
+                Self::Paused => "PAUSED",
+                Self::Unavailable => "UNAVAILABLE",
+                Self::NotHandled => "NOT_HANDLED",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "OUTCOME_UNSPECIFIED" => Some(Self::Unspecified),
+                "APPLIED" => Some(Self::Applied),
+                "DUPLICATE" => Some(Self::Duplicate),
+                "FAILED" => Some(Self::Failed),
+                "PAUSED" => Some(Self::Paused),
+                "UNAVAILABLE" => Some(Self::Unavailable),
+                "NOT_HANDLED" => Some(Self::NotHandled),
+                _ => None,
+            }
+        }
+    }
+}
+/// A service call the edge node runs on the local node, with the input and the result as JSON (decision 7).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DelegateRequest {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    /// The service's full name; the local node runs only the services its own edge conf delegates.
+    #[prost(string, tag = "2")]
+    pub service: ::prost::alloc::string::String,
+    /// The parameters, a JSON object.
+    #[prost(string, tag = "3")]
+    pub parameters_json: ::prost::alloc::string::String,
+    /// The caller on the edge node, as data and never a login: a JSON object of username and userId.
+    #[prost(string, tag = "4")]
+    pub caller_json: ::prost::alloc::string::String,
+    /// An id for the call, in both nodes' logs.
+    #[prost(string, tag = "5")]
+    pub operation_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DelegateReply {
+    /// The service's result, a JSON object, when it added no errors.
+    #[prost(string, tag = "1")]
+    pub result_json: ::prost::alloc::string::String,
+    /// The errors the service added, or why the local node refused the call.
+    #[prost(string, repeated, tag = "2")]
+    pub errors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// One record of a replicated set.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplicaChange {
+    /// The entity's full name.
+    #[prost(string, tag = "1")]
+    pub entity_name: ::prost::alloc::string::String,
+    /// The record's key fields as text, a canonical JSON object.
+    #[prost(string, tag = "2")]
+    pub pk_json: ::prost::alloc::string::String,
+    /// The set's fields of the record, a JSON object; empty with deleted.
+    #[prost(string, tag = "3")]
+    pub fields_json: ::prost::alloc::string::String,
+    #[prost(bool, tag = "4")]
+    pub deleted: bool,
+}
+/// A batch of a replicated set, local node to edge node, after the commits it carries.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ReplicateRequest {
+    #[prost(string, tag = "1")]
+    pub set_name: ::prost::alloc::string::String,
+    /// The local node's epoch of the set: each full send starts one.
+    #[prost(string, tag = "2")]
+    pub epoch: ::prost::alloc::string::String,
+    /// The sequence of the batch before this one in the epoch; 0 starts a full send.
+    #[prost(uint64, tag = "3")]
+    pub base_seq: u64,
+    #[prost(uint64, tag = "4")]
+    pub seq: u64,
+    /// Part of a full send.
+    #[prost(bool, tag = "5")]
+    pub snapshot: bool,
+    /// The last part of a full send: the edge node removes the set's records of older epochs.
+    #[prost(bool, tag = "6")]
+    pub snapshot_end: bool,
+    #[prost(message, repeated, tag = "7")]
+    pub changes: ::prost::alloc::vec::Vec<ReplicaChange>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplicateReply {
+    /// The batch does not follow the edge node's cursor (it lost its copy, or the local node restarted): send the set
+    /// whole, under a new epoch.
+    #[prost(bool, tag = "1")]
+    pub resync: bool,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LocalHelloRequest {
     #[prost(message, optional, tag = "1")]
@@ -274,6 +442,50 @@ pub mod link_client {
             req.extensions_mut().insert(GrpcMethod::new("moqui.edge.v1.Link", "Unpair"));
             self.inner.unary(req, path, codec).await
         }
+        /// An item of the local node's outbox, applied on the edge node by its kind's handler.
+        pub async fn deliver(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeliverRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeliverReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/Deliver",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.Link", "Deliver"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// A batch of a replicated set.
+        pub async fn replicate(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ReplicateRequest>,
+        ) -> std::result::Result<tonic::Response<super::ReplicateReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/Replicate",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.Link", "Replicate"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -313,6 +525,16 @@ pub mod link_server {
             &self,
             request: tonic::Request<super::UnpairRequest>,
         ) -> std::result::Result<tonic::Response<super::UnpairReply>, tonic::Status>;
+        /// An item of the local node's outbox, applied on the edge node by its kind's handler.
+        async fn deliver(
+            &self,
+            request: tonic::Request<super::DeliverRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeliverReply>, tonic::Status>;
+        /// A batch of a replicated set.
+        async fn replicate(
+            &self,
+            request: tonic::Request<super::ReplicateRequest>,
+        ) -> std::result::Result<tonic::Response<super::ReplicateReply>, tonic::Status>;
     }
     /// Served by the edge node; the local node calls it on its up connection. Probe is on a check or pairing connection and
     /// Pair on a pairing connection (ALPN moqui-edge-pair/1, the web certificate); the others on an up connection (ALPN
@@ -608,6 +830,92 @@ pub mod link_server {
                     };
                     Box::pin(fut)
                 }
+                "/moqui.edge.v1.Link/Deliver" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeliverSvc<T: Link>(pub Arc<T>);
+                    impl<T: Link> tonic::server::UnaryService<super::DeliverRequest>
+                    for DeliverSvc<T> {
+                        type Response = super::DeliverReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeliverRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::deliver(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeliverSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.Link/Replicate" => {
+                    #[allow(non_camel_case_types)]
+                    struct ReplicateSvc<T: Link>(pub Arc<T>);
+                    impl<T: Link> tonic::server::UnaryService<super::ReplicateRequest>
+                    for ReplicateSvc<T> {
+                        type Response = super::ReplicateReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ReplicateRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::replicate(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ReplicateSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 _ => {
                     Box::pin(async move {
                         let mut response = http::Response::new(
@@ -774,6 +1082,50 @@ pub mod local_link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Ping"));
             self.inner.unary(req, path, codec).await
         }
+        /// A queued item for the local node, applied by its kind's handler as the user _EDGE_.
+        pub async fn deliver(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeliverRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeliverReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/Deliver",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Deliver"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// A delegated service call, run as the user _EDGE_ with authorization.
+        pub async fn delegate(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DelegateRequest>,
+        ) -> std::result::Result<tonic::Response<super::DelegateReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/Delegate",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Delegate"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -797,6 +1149,16 @@ pub mod local_link_server {
             &self,
             request: tonic::Request<super::PingRequest>,
         ) -> std::result::Result<tonic::Response<super::PingReply>, tonic::Status>;
+        /// A queued item for the local node, applied by its kind's handler as the user _EDGE_.
+        async fn deliver(
+            &self,
+            request: tonic::Request<super::DeliverRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeliverReply>, tonic::Status>;
+        /// A delegated service call, run as the user _EDGE_ with authorization.
+        async fn delegate(
+            &self,
+            request: tonic::Request<super::DelegateRequest>,
+        ) -> std::result::Result<tonic::Response<super::DelegateReply>, tonic::Status>;
     }
     /// Served by the local node on its down connection; the edge node calls it.
     #[derive(Debug)]
@@ -948,6 +1310,94 @@ pub mod local_link_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = PingSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/Deliver" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeliverSvc<T: LocalLink>(pub Arc<T>);
+                    impl<T: LocalLink> tonic::server::UnaryService<super::DeliverRequest>
+                    for DeliverSvc<T> {
+                        type Response = super::DeliverReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeliverRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::deliver(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeliverSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/Delegate" => {
+                    #[allow(non_camel_case_types)]
+                    struct DelegateSvc<T: LocalLink>(pub Arc<T>);
+                    impl<
+                        T: LocalLink,
+                    > tonic::server::UnaryService<super::DelegateRequest>
+                    for DelegateSvc<T> {
+                        type Response = super::DelegateReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DelegateRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::delegate(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DelegateSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

@@ -20,7 +20,9 @@ along with this software (see the LICENSE.md file). If not, see
     operator to compare with what a local node's Connect step shows. On a node that is not an edge node, and in a build
     without the edge link or a process where it is not running (no HTTPS listener started it), a notice instead. The menu cannot leave this screen out by node role, so it is listed on
     every node. Host names (§5.3, get#EdgeHosts, add#EdgeHost, remove#EdgeHost) are the public names this edge node
-    answers for a paired node, each passthrough or terminate. -->
+    answers for a paired node, each passthrough or terminate. Each node's queue (§5.2, get#QueueStatus) shows the items
+    waiting for it and the failed ones, with the oldest waiting; Replicated sets shows each node's sets as this edge
+    node has applied them. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
 
@@ -71,6 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         notEdge = !notBuilt && !notStarted && link.nodeRole !== 'edge'
         isEdge = !notBuilt && !notStarted && !notEdge
         clientList = []
+        cursorList = []
         clientsError = ''
         hostList = []
         nodeOptions = []
@@ -80,16 +83,38 @@ along with this software (see the LICENSE.md file). If not, see
         // a probe (Practices-App-Dev §4): an edge node whose HTTPS listener is off takes no links, and the page says so
         let out = {}
         let hostsOut = {}
+        let queueOut = {}
         ec.message.pushErrors()
         try {
             out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeClients').call() || {}
             if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeHosts').call() || {}
+            if (!ec.message.hasError()) {
+                queueOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#QueueStatus').call() || {}
+            }
             if (ec.message.hasError()) clientsError = ec.message.getErrorsString()
         } finally {
             ec.message.clearErrors()
             ec.message.popErrors()
         }
         if (clientsError) return
+        // each node's queue: the items waiting for it (all kinds) and the failed ones, and the oldest waiting
+        const queues = {}
+        for (const kind of Array.from(queueOut.kindList || [])) {
+            if (kind.directionEnumId !== 'EqdToLocal') continue
+            const queue = queues[kind.pairedNodeId] ||
+                (queues[kind.pairedNodeId] = {pending: 0, failed: 0, oldest: null})
+            queue.pending += Number(kind.pending || 0)
+            queue.failed += Number(kind.failed || 0)
+            if (kind.oldestAgeSeconds != null) queue.oldest = Math.max(queue.oldest ?? 0, Number(kind.oldestAgeSeconds))
+        }
+        const age = (seconds) => seconds == null ? '' : seconds < 120 ? seconds + ' s' : seconds < 7200
+            ? Math.round(seconds / 60) + ' min' : Math.round(seconds / 3600) + ' h'
+        cursorList = Array.from(queueOut.cursorList || []).map((cursor) => ({
+            nodeId: cursor.pairedNodeId, setName: cursor.setName,
+            epochText: cursor.epoch ? String(cursor.epoch).slice(0, 8) : '', seqText: String(cursor.sequenceNum ?? 0),
+            valuesText: String(cursor.values ?? 0),
+            appliedText: cursor.appliedDate ? ec.l10n.format(cursor.appliedDate, '') : '',
+            snapshotText: cursor.snapshotDate ? ec.l10n.format(cursor.snapshotDate, '') : L('Not yet')}))
         clientList = Array.from(out.clientList || []).map((client) => {
             const revoked = client.statusId === 'EdgeClientRevoked'
             const [stateLabel, stateColor] = revoked ? [L('Revoked'), 'negative']
@@ -101,7 +126,15 @@ along with this software (see the LICENSE.md file). If not, see
                 remoteAddress: client.remoteAddress || '',
                 versionText: (client.binaryVersion || '') + (client.linkVersion ? ' · ' + L('link') + ' ' + client.linkVersion : ''),
                 keyFingerprint: client.keyFingerprint || '',
-                keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : ''}
+                keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : '',
+                queueText: (() => {
+                    const queue = queues[client.pairedNodeId]
+                    if (!queue) return L('Empty')
+                    let text = queue.pending + ' ' + L('waiting')
+                    if (queue.oldest != null) text += ' (' + L('oldest') + ' ' + age(queue.oldest) + ')'
+                    if (queue.failed) text += ', ' + queue.failed + ' ' + L('failed')
+                    return text
+                })()}
         })
         nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
         hostList = Array.from(hostsOut.hostList || []).map((host) => {
@@ -176,6 +209,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="remoteAddress"><default-field title="Address"><display/></default-field></field>
                     <field name="versionText"><default-field title="Version"><display/></default-field></field>
                     <field name="keyShort"><default-field title="Key" tooltip="The start of the SHA-256 of the node's key, pinned at pairing"><display/></default-field></field>
+                    <field name="queueText"><default-field title="Queue"
+                            tooltip="Items waiting for the node, sent in order when its link is up; failed ones are kept">
+                        <display/></default-field></field>
                     <field name="tools" align="right"><default-field title="">
                         <link url="pingClient" link-type="hidden-form-link" icon="sym_o_network_ping" text="Ping" style="m-btn-flat"
                                 condition="linked" parameter-map="{pairedNodeId:pairedNodeId}"/>
@@ -190,6 +226,32 @@ along with this software (see the LICENSE.md file). If not, see
                 </form-list>
                 <section name="NoClients" condition="!clientList.length"><widgets>
                     <label type="p" text="No local node is paired yet. Make a pairing code, then pair on the local node." style="m-muted q-pa-sm q-mb-none"/>
+                </widgets></section>
+            </box-body-nopad></container-box>
+
+            <container-box><box-header title="Replicated sets"/><box-body-nopad>
+                <label type="p" style="m-muted q-pa-sm q-mb-none"
+                        text="Records each local node copies here, read-only, to answer from while it is away."/>
+                <form-list name="CursorList" list="cursorList" skip-form="true" paginate="false">
+                    <field name="setName"><default-field title="Set">
+                        <display style="text-weight-medium"/></default-field></field>
+                    <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                    <field name="valuesText" align="right"><default-field title="Records">
+                        <display/></default-field></field>
+                    <field name="epochText"><default-field title="Epoch"
+                            tooltip="The local node's full send these records follow"><display/></default-field></field>
+                    <field name="seqText" align="right"><default-field title="Last batch">
+                        <display/></default-field></field>
+                    <field name="appliedText"><default-field title="Last applied"><display/></default-field></field>
+                    <field name="snapshotText"><default-field title="Last full send"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="setName"/><field-ref name="nodeId"/></column>
+                        <column><field-ref name="valuesText"/><field-ref name="appliedText"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoCursors" condition="!cursorList.length"><widgets>
+                    <label type="p" text="No local node has replicated a set here yet."
+                            style="m-muted q-pa-sm q-mb-none"/>
                 </widgets></section>
             </box-body-nopad></container-box>
 

@@ -12,14 +12,14 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (plans/Edge-Node.md §5.3, §5.7) for the System app: on a local node its Edge Node screen (check, pair,
-    status, unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired local nodes,
-    revoke, their public host names). The
-    bodies are Rust (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/,
-    the edge feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into
-    this host", except get#LinkStatus, which answers state notBuilt (or notStarted in a binary with the link but no
-    HTTP listener). All are internal (allow-remote false) and for an
-    administrator: pairing writes keys to runtime/.env. The model is framework/entity/EdgeEntities.xml. -->
+<!-- The edge link (plans/Edge-Node.md §5.2, §5.3, §5.7) for the System app: on a local node its Edge Node screen
+    (check, pair, status, unpair), and on an edge node (node_role=edge) its Edge Clients screen (pairing codes, paired
+    local nodes, revoke, their public host names); the link's queue and replication on both. The bodies are Rust
+    (crates/moqui-core/src/service/edge.rs) over the host's edge link (crates/moqui-host/src/edge_link/, the edge
+    feature, in Maximal and Enterprise). In a binary without it each service fails with "edge link not built into this
+    host", except get#LinkStatus, which answers state notBuilt (or notStarted in a binary with the link but no HTTP
+    listener). All are internal (allow-remote false) and for an administrator: pairing writes keys to runtime/.env. The
+    model is framework/entity/EdgeEntities.xml. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="get" noun="LinkStatus" type="rust" location="moqui_core::service::edge::get_link_status"
@@ -180,5 +180,114 @@ along with this software (see the LICENSE.md file). If not, see
             is false when there was no such name.</description>
         <in-parameters><parameter name="hostName" required="true"/></in-parameters>
         <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
+    </service>
+
+    <!-- ========== How work crosses the link (plans/Edge-Node.md §5.2): queue and replicate ========== -->
+    <service verb="enqueue" noun="Item" type="rust" location="moqui_core::service::edge::enqueue_item"
+            allow-remote="false">
+        <description>Queue an item for the other end of the link (moqui.edge.EdgeQueueItem): on an edge node for its
+            local node (pairedNodeId, or the only one paired), on a local node for its edge node. It is delivered once
+            the link is up, in order with the other items of its conversationKey, and applied on the receiver once, by
+            the service its edge queue-kind conf names for kind, in the transaction of its receipt. An idempotencyKey
+            queued already returns that item (created false); with none the item's id is its key. The payload is text
+            (JSON), or contentLocation names a large body.</description>
+        <in-parameters>
+            <parameter name="kind" required="true"/>
+            <parameter name="conversationKey" required="true"/>
+            <parameter name="idempotencyKey"/>
+            <parameter name="payload" allow-html="any"/>
+            <parameter name="contentLocation"/>
+            <parameter name="pairedNodeId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queueItemId"/>
+            <parameter name="created" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="QueueStatus" type="rust" location="moqui_core::service::edge::get_queue_status"
+            allow-remote="false" transaction="ignore">
+        <description>The link's queue on this node, by paired node, direction and kind: items waiting, failed, and when
+            the oldest waiting one was queued (of one node with pairedNodeId); whether this node's delivery is paused;
+            on a local node its replicated sets (epoch, last batch acknowledged, changes waiting, whether a full send is
+            due), and on an edge node the cursor of each node's set with its count of records.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters>
+            <parameter name="kindList" type="List"><parameter name="kindStats" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="directionEnumId"/><parameter name="kind"/>
+                <parameter name="pending" type="Long"/><parameter name="failed" type="Long"/>
+                <parameter name="oldestDate" type="Timestamp"/><parameter name="oldestAgeSeconds" type="Long"/>
+            </parameter></parameter>
+            <parameter name="paused" type="Boolean"/>
+            <parameter name="setList" type="List"><parameter name="set" type="Map">
+                <parameter name="setName"/><parameter name="epoch"/><parameter name="acked" type="Long"/>
+                <parameter name="waiting" type="Long"/><parameter name="snapshotNeeded" type="Boolean"/>
+                <parameter name="lastAckDate" type="Timestamp"/><parameter name="lastSnapshotDate" type="Timestamp"/>
+            </parameter></parameter>
+            <parameter name="cursorList" type="List"><parameter name="cursor" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="setName"/><parameter name="epoch"/>
+                <parameter name="sequenceNum" type="Long"/><parameter name="values" type="Long"/>
+                <parameter name="snapshotDate" type="Timestamp"/><parameter name="appliedDate" type="Timestamp"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="pause" noun="QueueDelivery" type="rust" location="moqui_core::service::edge::pause_queue_delivery"
+            allow-remote="false" transaction="ignore">
+        <description>Pause this node's queue delivery (paused true, the default) or resume it: while paused, every
+            delivery from the other end is answered "paused" (it is tried again, and not counted as an attempt) and this
+            node's own items wait. Kept in memory: a restart resumes.</description>
+        <in-parameters><parameter name="paused" type="Boolean" default-value="true"/></in-parameters>
+        <out-parameters><parameter name="paused" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="resync" noun="Replication" type="rust" location="moqui_core::service::edge::resync_replication"
+            allow-remote="false" transaction="ignore">
+        <description>On a local node: send every replicated set to the edge node whole again, under a new epoch; the
+            edge node then removes what the full send did not have. On an edge node: forget the cursors (of one node
+            with pairedNodeId), so each node's next batch asks for its set whole. sets is how many.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters><parameter name="sets" type="Long"/></out-parameters>
+    </service>
+
+    <service verb="get" noun="ReplicaValues" type="rust" location="moqui_core::service::edge::get_replica_values"
+            allow-remote="false" transaction="ignore">
+        <description>On an edge node: the copies of a local node's replicated set (moqui.edge.EdgeReplicaValue), of one
+            entity with entityName, of one record with entityName and pk (its key fields), of one node with
+            pairedNodeId; at most limit. Each has its entity, its key and the set's fields of it.</description>
+        <in-parameters>
+            <parameter name="setName" required="true"/>
+            <parameter name="entityName"/>
+            <parameter name="pk" type="Map"/>
+            <parameter name="pairedNodeId"/>
+            <parameter name="limit" type="Integer" default-value="1000"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valueList" type="List"><parameter name="value" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="entityName"/>
+                <parameter name="pk" type="Map"/><parameter name="fields" type="Map"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <!-- A diagnostic for an operator after pairing: list echo#Delegate in edge delegate on both nodes and call it on
+        the edge node to check a delegated call end to end. It is the first member of the EDGE_DELEGATE artifact group,
+        and changes nothing beyond its answer. -->
+    <service verb="echo" noun="Delegate" allow-remote="false" transaction="ignore">
+        <description>A delegated call's echo: on the local node it answers its message, the user it ran as (_edge_ for a
+            delegated call) and the caller the edge node named. List it in edge delegate on both nodes to use
+            it.</description>
+        <in-parameters>
+            <parameter name="message"/>
+            <parameter name="edgeCaller" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="message"/>
+            <parameter name="username"/>
+            <parameter name="edgeCaller" type="Map"/>
+        </out-parameters>
+        <actions>
+            <set field="username" from="ec.user.username"/>
+        </actions>
     </service>
 </services>

@@ -40,6 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="git-server"/>
                 <xs:element minOccurs="0" ref="dav-server"/>
                 <xs:element minOccurs="0" ref="smtp-server"/>
+                <xs:element minOccurs="0" ref="edge"/>
                 <xs:element minOccurs="0" ref="logging"/>
                 <xs:element minOccurs="0" ref="dev-reload"/>
                 <xs:element minOccurs="0" ref="dev-aide"/>
@@ -1619,6 +1620,78 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="tls-key-file" type="xs:string"><xs:annotation><xs:documentation>The private key PEM file that goes with tls-cert-file.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="chunking" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>CHUNKING (RFC 3030): BDAT.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dsn" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>DSN (RFC 3461): RET, ENVID, NOTIFY and ORCPT are taken and kept, and NOTIFY=SUCCESS gets a "delivered" report.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="edge">
+        <xs:annotation><xs:documentation>How work crosses the edge link between a local node and its edge node
+            (plans/Edge-Node.md §5.2), read by both ends. Each child is merged by its key.
+        </xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="delegate">
+                    <xs:annotation><xs:documentation>A service an edge node (node_role=edge) runs on its local node
+                        instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
+                        queued): the call goes down the link at once and fails with "local node offline" while the link
+                        is down. With the service's definition on the edge node, its authorization and authenticate are
+                        checked there first. The local node runs it as the user _EDGE_, with authorization, and only
+                        when its own conf lists it too. Credentials (auth parameters) are never
+                        passed.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="service" type="xs:string" use="required"/>
+                        <xs:attribute name="allow-anonymous" type="boolean" default="false"><xs:annotation>
+                            <xs:documentation>When the edge node has no definition of the service, a caller with no user
+                            is refused unless this is true (a comms engine's webhook).</xs:documentation>
+                        </xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="queue-kind">
+                    <xs:annotation><xs:documentation>The service that applies a queued item of this kind on its
+                        receiver, as the user _EDGE_, in the transaction that writes the item's receipt first. A node
+                        enqueues only the kinds it lists. A payload is at most 1 MiB. It gets kind, conversationKey,
+                        idempotencyKey, queueItemId, payload and contentLocation; an error it adds fails the item, which
+                        is tried again.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required"/>
+                        <xs:attribute name="service" type="xs:string" use="required"/>
+                    </xs:complexType>
+                </xs:element>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="replicate">
+                    <xs:annotation><xs:documentation>A set of records a local node copies to its edge node, read-only
+                        there (moqui.edge.EdgeReplicaValue): each committed change is sent after commit, and the whole
+                        set again when the edge node has lost its copy.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element minOccurs="1" maxOccurs="unbounded" name="entity">
+                                <xs:complexType>
+                                    <xs:attribute name="name" type="xs:string" use="required"/>
+                                    <xs:attribute name="fields" type="xs:string"><xs:annotation><xs:documentation>The
+                                        fields copied besides the primary key, comma separated: only those the edge node
+                                        needs.</xs:documentation></xs:annotation></xs:attribute>
+                                </xs:complexType>
+                            </xs:element>
+                        </xs:sequence>
+                        <xs:attribute name="set" type="xs:string" use="required"/>
+                    </xs:complexType>
+                </xs:element>
+            </xs:sequence>
+            <xs:attribute name="queue-retention-days" type="non-neg-int-expandable" default="14">
+                <xs:annotation><xs:documentation>Days a delivered or failed item (from its delivery or failure) and a
+                    receipt are kept; an item still waiting after that fails. Both nodes should keep the same period.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
+                <xs:annotation><xs:documentation>The waiting items' payloads at most; past it the oldest fail.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-max-attempts" type="non-neg-int-expandable" default="10">
+                <xs:annotation><xs:documentation>Refusals by the receiver before an item fails for good.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-retry-seconds" type="xs:string" default="5">
+                <xs:annotation><xs:documentation>The wait after the first refusal, doubling up to 10 minutes; a decimal.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
         </xs:complexType>
     </xs:element>
 

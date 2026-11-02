@@ -151,14 +151,26 @@ async fn ask(
 async fn a_forwarded_request_never_reaches_the_link_calls_whatever_its_content_type() {
     let (web, _, _stop) = local("down-grpc");
     let mut send = connect(web).await;
-    // forwarded: the app, which has no such route, and its echo route
-    let (status, _) = ask(&mut send, "/moqui.edge.v1.LocalLink/Ping", Some("203.0.113.9:1")).await;
-    assert_eq!(status, 404);
+    // forwarded: the app, which has no such route, for every call of the link's, the delegated calls and queue
+    // delivery too, and its echo route
+    for call in ["Hello", "Ping", "Deliver", "Delegate"] {
+        let path = format!("/moqui.edge.v1.LocalLink/{call}");
+        let (status, _) = ask(&mut send, &path, Some("203.0.113.9:1")).await;
+        assert_eq!(status, 404, "{path}");
+    }
     let (status, body) = ask(&mut send, "/echo", Some("203.0.113.9:1")).await;
     assert_eq!(status, 405, "{body}");
-    // the edge node's own call: the link's service
-    let (status, _) = ask(&mut send, "/moqui.edge.v1.LocalLink/Ping", None).await;
-    assert_eq!(status, 200);
+    // the edge node's own calls: the link's service
+    for call in ["Ping", "Deliver", "Delegate"] {
+        let path = format!("/moqui.edge.v1.LocalLink/{call}");
+        let (status, _) = ask(&mut send, &path, None).await;
+        assert_eq!(status, 200, "{path}");
+    }
+    // the edge node's Link calls are not served here, forwarded or not
+    let (status, _) = ask(&mut send, "/moqui.edge.v1.Link/Replicate", None).await;
+    assert_eq!(status, 404);
+    let (status, _) = ask(&mut send, "/moqui.edge.v1.Link/Deliver", Some("203.0.113.9:1")).await;
+    assert_eq!(status, 404);
     // gRPC elsewhere, or anything else with no client named, is neither
     let (status, _) = ask(&mut send, "/echo", None).await;
     assert_eq!(status, 404);

@@ -141,6 +141,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     merge_entity_facade(base, over);
     merge_database_list(base, over);
     merge_repository_list(base, over);
+    merge_edge(base, over);
     // elements of settings only: an attribute of the override replaces the base one
     for name in [
         "email-client",
@@ -157,6 +158,22 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     ] {
         base.merge_single_child(over, name);
     }
+}
+
+/// The edge link's conf (plans/Edge-Node.md §5.2): the attributes, and each delegate, queue-kind and replicate by its
+/// key; a replicate of the same set replaces its entities.
+fn merge_edge(base: &MNode, over: &MNode) {
+    let Some(over_edge) = over.first_named("edge") else {
+        return;
+    };
+    let Some(base_edge) = base.first_named("edge") else {
+        base.append_node(over_edge.deep_copy());
+        return;
+    };
+    base_edge.copy_attributes_from(&over_edge);
+    base_edge.merge_children_by_keys(&over_edge, "delegate", &["service"], None);
+    base_edge.merge_children_by_keys(&over_edge, "queue-kind", &["name"], None);
+    base_edge.merge_children_by_keys(&over_edge, "replicate", &["set"], None);
 }
 
 fn merge_server_stats(base: &MNode, over: &MNode) {

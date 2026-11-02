@@ -29,6 +29,9 @@
 //!   [`ROLE_UP`], [`ROLE_DOWN`]) and the edge node answers with a status ([`Answer`]). On **up** the local node is the HTTP/2 client
 //!   of the edge node's [`proto::link_server::Link`]; on **down** the roles flip and the edge node is the client of the
 //!   local node's [`proto::local_link_server::LocalLink`] and of its web app ([`down`]).
+//! - **Work** (§5.2). Delegated service calls and queued items go down (`LocalLink.Delegate`, `LocalLink.Deliver`),
+//!   the local node's outbox and replicated sets go up (`Link.Deliver`, `Link.Replicate`); the rows, receipts and
+//!   change notes are `moqui_core::edge`, the delivery loops [`queue`] and [`replicate`].
 //! - **Web access** (§5.3). The edge node answers for the paired nodes' public host names ([`hosts`]). A terminate
 //!   host's requests go down the link as HTTP/2, WebSockets as extended CONNECT ([`web`]); a passthrough host's
 //!   connection, before any TLS, and the SSH tunnel port's go down as byte tunnels ([`tunnel`]).
@@ -56,6 +59,8 @@ pub(crate) mod hook;
 pub(crate) mod hosts;
 pub mod pair;
 pub(crate) mod proto;
+mod queue;
+mod replicate;
 mod store;
 pub(crate) mod tunnel;
 pub(crate) mod web;
@@ -308,6 +313,28 @@ fn origin() -> http::Uri {
     http::Uri::from_static(ORIGIN)
 }
 
+/// The largest gRPC message either end of the link sends or takes: 16 MiB, well over a queued item's payload
+/// (`moqui_core::edge::queue::MAX_PAYLOAD_BYTES`) and a replication batch (`replica::MAX_BATCH_BYTES`).
+pub(crate) const MAX_MESSAGE: usize = 16 * 1024 * 1024;
+
+/// The edge node's [`proto::link_client::LinkClient`] on a connection, with the link's message limits.
+pub(crate) fn link_client(send: hyper::client::conn::http2::SendRequest<tonic::body::Body>) -> LinkClient {
+    proto::link_client::LinkClient::with_origin(H2Channel(send), origin())
+        .max_decoding_message_size(MAX_MESSAGE)
+        .max_encoding_message_size(MAX_MESSAGE)
+}
+
+/// The local node's [`proto::local_link_client::LocalLinkClient`] on a down connection, with the link's message
+/// limits.
+pub(crate) fn local_link_client(send: hyper::client::conn::http2::SendRequest<tonic::body::Body>) -> LocalLinkClient {
+    proto::local_link_client::LocalLinkClient::with_origin(H2Channel(send), origin())
+        .max_decoding_message_size(MAX_MESSAGE)
+        .max_encoding_message_size(MAX_MESSAGE)
+}
+
+pub(crate) type LinkClient = proto::link_client::LinkClient<H2Channel>;
+pub(crate) type LocalLinkClient = proto::local_link_client::LocalLinkClient<H2Channel>;
+
 /// The edge node's settings, read from properties once at boot.
 #[derive(Clone, Debug)]
 pub struct EdgeConfig {
@@ -416,7 +443,8 @@ pub struct LocalConfig {
     /// TCP connect and TLS handshake, and each call of the link's own.
     pub connect_timeout: Duration,
     /// What the down connection serves besides the link's own calls: this node's web app and its listeners for
-    /// tunnels ([`local_web`]). With none, a forwarded request is answered 503 and a tunnel refused.
+    /// tunnels ([`local_web`]). With none, a forwarded request is answered 503 and a tunnel refused, and the link
+    /// carries no queue, delegated calls or replication (their server is the web app's).
     pub web: Option<LocalWeb>,
 }
 

@@ -579,6 +579,14 @@ impl EntityValue {
         facade.create_or_update_value(self)
     }
 
+    /// Create the row unless its primary key is there: true when this created it. A concurrent transaction inserting
+    /// the same key is waited for, and its row counts as there once it commits (one statement that does not fail on
+    /// the key, [`moqui_db::sql::insert_if_missing`]); where the database has no such statement, a key that is there
+    /// fails as [`Self::create`] does.
+    pub fn create_if_missing(&self, facade: &EntityFacade) -> Result<bool, Error> {
+        facade.create_if_missing(self)
+    }
+
     /// Set the first primary key from the in-memory sequence bank.
     pub fn set_sequenced_id_primary(&mut self, facade: &EntityFacade) -> Result<(), Error> {
         let (field, id) = sequence::assign_primary(facade, &self.entity_name, &self.fields)?;

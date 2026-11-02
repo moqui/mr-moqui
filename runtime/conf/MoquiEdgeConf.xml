@@ -2,14 +2,16 @@
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node. Local
     nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by ALPN). It gives them web access: the host
-    names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port). No comms or PASS go over
-    the link yet. A client-ip-header here needs trusted-proxies, or it is ignored.
+    names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port); delegated calls, the
+    queue and replication (the edge element below). No comms or PASS use them yet. A client-ip-header here needs
+    trusted-proxies, or it is ignored.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
     addresses, ports) go in .env.
-    The HTTPS listener needs a WebPKI certificate, in runtime/cert: local nodes check it when they pair. The links use the edge node's own
-    link key, edge_link_key, generated into .env at the first start. A renewed web certificate does not touch the links;
-    a changed edge_link_key means every local node must pair again. The command is in docs/Run-Deploy.md, Edge node. -->
+    The HTTPS listener needs a WebPKI certificate, in runtime/cert: local nodes check it when they pair. The links use
+    the edge node's own link key, edge_link_key, generated into .env at the first start. A renewed web certificate does
+    not touch the links; a changed edge_link_key means every local node must pair again. The command is in
+    docs/Run-Deploy.md, Edge node. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="instance_purpose" value="production"/>
     <default-property name="node_role" value="edge"/>
@@ -28,5 +30,14 @@
 
     <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
 
-    <!-- E3: queue retention and size cap, delegated services and replicated sets go here. -->
+    <!-- How work crosses the link (plans/Edge-Node.md §5.2): what waits for a local node that is away is kept 14
+        days (both nodes should keep the same period), and at most 1 GB of it; then the oldest fails, logged. A payload
+        is at most 1 MiB. The comms phases add what the edge node delegates and the sets a local node replicates; a
+        local node needs the same entries in its own conf, and grants for _EDGE_. Examples of later phases, not built:
+            <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" allow-anonymous="true"/>   (E8)
+            <queue-kind name="mail" service="org.moqui.impl.EmailServices.deliver#EdgeMail"/>          (E5a)
+            <replicate set="mailRecipients">
+                <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,statusId"/></replicate>
+        To check a delegated call end to end, list org.moqui.impl.EdgeServices.echo#Delegate on both nodes. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
 </moqui-conf>

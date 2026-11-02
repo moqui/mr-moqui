@@ -362,6 +362,57 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
     Ok(AsyncCall::Run(cleaned))
 }
 
+/// A call an edge node delegates to its local node (plans/Edge-Node.md §5.2), after the checks this node can make:
+/// with the service's definition here, its authorization and `authenticate`, as an async call is checked before it is
+/// queued; without one, a caller with no user is refused unless the conf entry allows anonymous callers. The local node
+/// checks its own allowlist and `_EDGE_`'s grants again.
+fn delegate_checked(
+    name: &str,
+    def: Option<&ServiceDef>,
+    entry: &crate::edge::conf::Delegate,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, Value>, Error> {
+    let authz_off = crate::context::ExecutionContext::with_current(|ctx| ctx.authz_disabled()).unwrap_or(true);
+    let user = crate::user::current_username().ok().flatten();
+    match def {
+        Some(def) => {
+            let checked = ExecutionContext::with_current(|ctx| {
+                ctx.push_checked(
+                    "AT_SERVICE",
+                    &def.name,
+                    verb_action(&def.verb),
+                    Authz::required_if(def.authenticate == Authenticate::Required),
+                    Tarpit::Count,
+                    None,
+                )?;
+                ctx.untrack_hit();
+                ctx.pop()
+            });
+            if let Some(Err(err)) = checked {
+                return Err(err);
+            }
+            if def.authenticate == Authenticate::Required
+                && !authz_off
+                && user.is_none()
+                && !crate::user::is_anonymous().unwrap_or(false)
+            {
+                return Err(Error::of_kind(
+                    crate::context::ErrorKind::AuthenticationRequired,
+                    format!("User must be logged in to call service {}", def.name),
+                ));
+            }
+        }
+        None if user.is_none() && !entry.allow_anonymous => {
+            return Err(Error::of_kind(
+                crate::context::ErrorKind::AuthenticationRequired,
+                format!("User must be logged in to call service {name}, which this edge node delegates without its definition"),
+            ));
+        }
+        None => {}
+    }
+    crate::edge::delegate::send(name, parameters)
+}
+
 /// [`sync`] with per-call overrides of authorization and the transaction attribute.
 ///
 /// # Errors
@@ -379,29 +430,40 @@ pub fn sync_with(
     };
     let name = canonical(name);
     let facade = current_facade();
+    // On an edge node a service its conf delegates runs on the local node (plans/Edge-Node.md §5.2); the edge node
+    // may not have its definition.
+    let delegated = crate::edge::delegate::listed(&name);
     // An unknown service is an error first, as Java's `call` looks it up before `callSingle`.
-    let def = resolve(&name, facade.as_ref())?;
+    let (def, delegated) = match (resolve(&name, facade.as_ref()), delegated) {
+        (Ok(def), delegated) => (Some(def), delegated),
+        (Err(_), Some(delegated)) => (None, Some(delegated)),
+        (Err(err), None) => return Err(err),
+    };
+    let label = def.as_ref().map_or(name.as_str(), |def| def.name.as_str());
     // As Java's `callSingle`: with `ignorePreviousError` the errors so far are set aside until the call returns.
     let _set_aside = options.ignore_previous_error.then(ErrorsAside::push);
     if has_error() {
-        tracing::warn!(service = %def.name, "Found error(s) before service {}, so not running service", def.name);
+        tracing::warn!(service = %label, "Found error(s) before service {label}, so not running service");
         return Ok(BTreeMap::new());
     }
     // A transaction marked for rollback runs no more services, unless this one runs in a new transaction.
     if options.require_new_transaction != Some(true) {
         if let Some(tx) = facade.as_ref().and_then(|facade| facade.default_transactions().ok()) {
             if tx.is_rollback_only() {
-                tracing::warn!(service = %def.name, "Transaction marked for rollback, not running service {}", def.name);
+                tracing::warn!(service = %label, "Transaction marked for rollback, not running service {label}");
                 if !options.ignore_previous_error && !has_error() {
-                    add_error(&format!(
-                        "Transaction marked for rollback, not running service {}",
-                        def.name
-                    ));
+                    add_error(&format!("Transaction marked for rollback, not running service {label}"));
                 }
                 return Ok(BTreeMap::new());
             }
         }
     }
+    if let Some(entry) = delegated {
+        return delegate_checked(&name, def.as_deref(), &entry, parameters);
+    }
+    let Some(def) = def else {
+        return Err(Error::new(format!("Service {name} not found")));
+    };
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
     let mut input = std::borrow::Cow::Borrowed(parameters);
@@ -934,7 +996,7 @@ pub fn call(name: &str) -> Result<(), Error> {
     sync(name, &BTreeMap::new()).map(|_| ())
 }
 
-fn canonical(name: &str) -> String {
+pub(crate) fn canonical(name: &str) -> String {
     if name.contains('#') {
         return name.to_string();
     }

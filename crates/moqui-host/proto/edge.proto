@@ -87,6 +87,99 @@ message UnpairRequest {}
 
 message UnpairReply {}
 
+// A queued item (plans/Edge-Node.md §5.2), from the sender's moqui.edge.EdgeQueueItem.
+message QueueItem {
+  // A UUID, which the receiver's receipt is keyed by.
+  string queue_item_id = 1;
+  // The receiver applies it by the service its edge queue-kind conf names for the kind.
+  string kind = 2;
+  string conversation_key = 3;
+  string idempotency_key = 4;
+  string payload = 5;
+  string content_location = 6;
+  // The attempts made before this one.
+  uint32 attempts = 7;
+}
+
+message DeliverRequest {
+  // The link generation the sender is on.
+  uint64 generation = 1;
+  QueueItem item = 2;
+}
+
+message DeliverReply {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    // Applied now, in the transaction of its receipt.
+    APPLIED = 1;
+    // Applied before: its receipt is there.
+    DUPLICATE = 2;
+    // The handler refused it or failed: the sender tries again later.
+    FAILED = 3;
+    // The receiver's delivery is paused: the sender tries again, not counted as an attempt.
+    PAUSED = 4;
+    // The receiver cannot take it now (busy, stopping, its delegate user cannot log in): tried again soon, not counted.
+    UNAVAILABLE = 5;
+    // The receiver has no handler or grant for the kind (a version or conf skew): tried again after 10 minutes, not
+    // counted.
+    NOT_HANDLED = 6;
+  }
+  Outcome outcome = 1;
+  string error = 2;
+}
+
+// A service call the edge node runs on the local node, with the input and the result as JSON (decision 7).
+message DelegateRequest {
+  uint64 generation = 1;
+  // The service's full name; the local node runs only the services its own edge conf delegates.
+  string service = 2;
+  // The parameters, a JSON object.
+  string parameters_json = 3;
+  // The caller on the edge node, as data and never a login: a JSON object of username and userId.
+  string caller_json = 4;
+  // An id for the call, in both nodes' logs.
+  string operation_id = 5;
+}
+
+message DelegateReply {
+  // The service's result, a JSON object, when it added no errors.
+  string result_json = 1;
+  // The errors the service added, or why the local node refused the call.
+  repeated string errors = 2;
+}
+
+// One record of a replicated set.
+message ReplicaChange {
+  // The entity's full name.
+  string entity_name = 1;
+  // The record's key fields as text, a canonical JSON object.
+  string pk_json = 2;
+  // The set's fields of the record, a JSON object; empty with deleted.
+  string fields_json = 3;
+  bool deleted = 4;
+}
+
+// A batch of a replicated set, local node to edge node, after the commits it carries.
+message ReplicateRequest {
+  string set_name = 1;
+  // The local node's epoch of the set: each full send starts one.
+  string epoch = 2;
+  // The sequence of the batch before this one in the epoch; 0 starts a full send.
+  uint64 base_seq = 3;
+  uint64 seq = 4;
+  // Part of a full send.
+  bool snapshot = 5;
+  // The last part of a full send: the edge node removes the set's records of older epochs.
+  bool snapshot_end = 6;
+  repeated ReplicaChange changes = 7;
+}
+
+message ReplicateReply {
+  // The batch does not follow the edge node's cursor (it lost its copy, or the local node restarted): send the set
+  // whole, under a new epoch.
+  bool resync = 1;
+}
+
 // Served by the edge node; the local node calls it on its up connection. Probe is on a check or pairing connection and
 // Pair on a pairing connection (ALPN moqui-edge-pair/1, the web certificate); the others on an up connection (ALPN
 // moqui-edge/1, the link key).
@@ -100,6 +193,10 @@ service Link {
   rpc Ping(PingRequest) returns (PingReply);
   // The local node unpairs: the edge node revokes its key and closes the link.
   rpc Unpair(UnpairRequest) returns (UnpairReply);
+  // An item of the local node's outbox, applied on the edge node by its kind's handler.
+  rpc Deliver(DeliverRequest) returns (DeliverReply);
+  // A batch of a replicated set.
+  rpc Replicate(ReplicateRequest) returns (ReplicateReply);
 }
 
 message LocalHelloRequest {
@@ -116,4 +213,8 @@ message LocalHelloReply {
 service LocalLink {
   rpc Hello(LocalHelloRequest) returns (LocalHelloReply);
   rpc Ping(PingRequest) returns (PingReply);
+  // A queued item for the local node, applied by its kind's handler as the user _EDGE_.
+  rpc Deliver(DeliverRequest) returns (DeliverReply);
+  // A delegated service call, run as the user _EDGE_ with authorization.
+  rpc Delegate(DelegateRequest) returns (DelegateReply);
 }

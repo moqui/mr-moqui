@@ -15,11 +15,28 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Edge Node status (plans/Edge-Node.md §5.7): the link's state, generation, round trip, last connect, links lost and last
     error, and the edge node as its last Hello said (name, the pinned fingerprint of its link key, versions, public names). Unpair
     (org.moqui.impl.EdgeServices.unpair#EdgeNode) revokes this node's key on the edge node and removes the link's settings
-    from runtime/.env. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
+    from runtime/.env. Queue and replication (§5.2, get#QueueStatus): this node's outbox by kind (waiting, failed, the
+    oldest), and each replicated set's epoch, last batch acknowledged and changes waiting; Pause (pause#QueueDelivery)
+    holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
 
+    <transition name="pauseDelivery">
+        <service-call name="org.moqui.impl.EdgeServices.pause#QueueDelivery" in-map="{paused:paused}" out-map="pauseOut"/>
+        <actions><if condition="!ec.message.hasError()"><then>
+            <if condition="pauseOut?.paused"><then><message type="warning">Queue delivery is paused until you resume it</message></then>
+                <else><message type="success">Queue delivery resumed</message></else></if>
+        </then></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="resyncReplication">
+        <service-call name="org.moqui.impl.EdgeServices.resync#Replication" out-map="resyncOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Every replicated set goes to the edge node whole again</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="unpair">
         <service-call name="org.moqui.impl.EdgeServices.unpair#EdgeNode"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Unpaired: the link to the edge node is closed</message></if></actions>
@@ -54,6 +71,33 @@ along with this software (see the LICENSE.md file). If not, see
             versionText: link.binaryVersion ? link.binaryVersion + (link.linkVersion ? ' · ' + L('link') + ' ' + link.linkVersion : '') : '',
             publicNamesText: list(link.publicNames),
             featuresText: list(link.features)}
+        // the queue and replication (plans/Edge-Node.md §5.2): this node's own rows and state, with or without the
+        // link; a probe (Practices-App-Dev §4), so a failure shows on the page instead of failing it
+        let work = {}
+        queueError = ''
+        if (paired) {
+            ec.message.pushErrors()
+            try {
+                work = ec.service.sync().name('org.moqui.impl.EdgeServices.get#QueueStatus').call() || {}
+                if (ec.message.hasError()) queueError = ec.message.getErrorsString()
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+        }
+        queuePaused = !!work.paused
+        const age = (seconds) => seconds == null ? '' : seconds < 120 ? seconds + ' s'
+            : seconds < 7200 ? Math.round(seconds / 60) + ' min' : Math.round(seconds / 3600) + ' h'
+        // a local node's own items all go to the edge node
+        kindList = Array.from(work.kindList || []).filter((kind) => kind.directionEnumId === 'EqdToEdge')
+            .map((kind) => ({kind: kind.kind, pendingText: String(kind.pending ?? 0),
+                failedText: String(kind.failed ?? 0), oldestText: age(kind.oldestAgeSeconds)}))
+        setList = Array.from(work.setList || []).map((set) => ({setName: set.setName,
+            epochText: set.epoch ? String(set.epoch).slice(0, 8) : '', ackedText: String(set.acked ?? 0),
+            waitingText: String(set.waiting ?? 0),
+            stateLabel: set.snapshotNeeded ? L('Full send due') : L('Up to date'),
+            stateColor: set.snapshotNeeded ? 'warning' : 'positive',
+            lastAckText: set.lastAckDate ? ec.l10n.format(set.lastAckDate, '') : L('Not yet')}))
     ]]></script></actions>
     <widgets>
         <section name="NotBuilt" condition="notBuilt"><widgets>
@@ -135,6 +179,70 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
             </box-body></container-box>
+            <container-box><box-header title="Queue and replication"/><box-toolbar>
+                <link url="pauseDelivery" link-type="hidden-form" text="Pause delivery" icon="sym_o_pause"
+                        condition="!queuePaused" parameter-map="{paused:'true'}"
+                        confirmation="Pause queue delivery? Items wait on both nodes until you resume it."/>
+                <link url="pauseDelivery" link-type="hidden-form" text="Resume delivery" icon="sym_o_play_arrow"
+                        condition="queuePaused" parameter-map="{paused:'false'}"/>
+                <link url="resyncReplication" link-type="hidden-form" text="Resync" icon="sym_o_sync"
+                        confirmation="Send every replicated set to the edge node whole again?"/>
+            </box-toolbar><box-body-nopad>
+                <section name="QueueError" condition="queueError"><widgets>
+                    <label type="p" text="${queueError}" style="text-negative q-pa-sm q-mb-none"/>
+                </widgets></section>
+                <section name="QueuePaused" condition="queuePaused"><widgets>
+                    <label type="p" style="text-warning q-pa-sm q-mb-none"
+                            text="Queue delivery is paused: items wait on both nodes until it resumes."/>
+                </widgets></section>
+                <label type="p" style="m-muted q-pa-sm q-mb-none"
+                        text="Items this node queued for the edge node, by kind. Each goes once, in order."/>
+                <form-list name="KindList" list="kindList" skip-form="true" paginate="false">
+                    <field name="kind"><default-field title="Kind">
+                        <display style="text-weight-medium"/></default-field></field>
+                    <field name="pendingText" align="right"><default-field title="Waiting">
+                        <display/></default-field></field>
+                    <field name="failedText" align="right"><default-field title="Failed">
+                        <display/></default-field></field>
+                    <field name="oldestText" align="right"><default-field title="Oldest waiting">
+                        <display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="kind"/><field-ref name="failedText"/></column>
+                        <column><field-ref name="pendingText"/><field-ref name="oldestText"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoKinds" condition="!kindList.length"><widgets>
+                    <label type="p" text="Nothing is waiting for the edge node." style="m-muted q-pa-sm q-mb-none"/>
+                </widgets></section>
+                <label type="p" style="m-muted q-pa-sm q-mb-none"
+                        text="Replicated sets: records the edge node answers from while this node is away."/>
+                <form-list name="SetList" list="setList" skip-form="true" paginate="false">
+                    <field name="setName"><default-field title="Set">
+                        <display style="text-weight-medium"/></default-field></field>
+                    <field name="state"><default-field title="State"><render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square
+                            class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text>
+                    </render-mode></default-field></field>
+                    <field name="epochText"><default-field title="Epoch" tooltip="Each full send starts a new one">
+                        <display/></default-field></field>
+                    <field name="ackedText" align="right"><default-field title="Last batch"
+                            tooltip="The last batch the edge node acknowledged in this epoch">
+                        <display/></default-field></field>
+                    <field name="waitingText" align="right"><default-field title="Changes waiting">
+                        <display/></default-field></field>
+                    <field name="lastAckText"><default-field title="Last acknowledged">
+                        <display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="setName"/><field-ref name="lastAckText"/></column>
+                        <column><field-ref name="state"/><field-ref name="waitingText"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoSets" condition="!setList.length"><widgets>
+                    <label type="p" style="m-muted q-pa-sm q-mb-none"
+                            text="No replicated sets in this node's edge conf, or none since the link started."/>
+                </widgets></section>
+            </box-body-nopad></container-box>
         </widgets></section>
     </widgets>
 </screen>

@@ -12,10 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.EdgeServices` (plans/Edge-Node.md §5.7): the edge link for the System app's Edge Node and Edge
-//! Clients screens, through the host's [`crate::edge::EdgeLink`]. In a host without the `edge` feature each call fails
-//! with [`crate::edge::NOT_BUILT`], except `get#LinkStatus`, which answers `state` notBuilt (or notStarted
-//! in a build with the link that no HTTP listener started) so a screen can say so.
+//! `org.moqui.impl.EdgeServices` (plans/Edge-Node.md §5.2, §5.7): the edge link for the System app's Edge Node and
+//! Edge Clients screens, through the host's [`crate::edge::EdgeLink`]. In a host without the `edge` feature each call
+//! fails with [`crate::edge::NOT_BUILT`], except `get#LinkStatus`, which answers `state` notBuilt (or notStarted in a
+//! build with the link that no HTTP listener started) so a screen can say so. The queue's and replication's services
+//! (`enqueue#Item`, `get#QueueStatus`, `pause#QueueDelivery`, `resync#Replication`, `get#ReplicaValues`) work on the
+//! rows and state in [`crate::edge`] and need no link.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +42,11 @@ pub(in crate::service) fn register(
     rust_service!(map, get_edge_hosts)?;
     rust_service!(map, add_edge_host)?;
     rust_service!(map, remove_edge_host)?;
+    rust_service!(map, enqueue_item)?;
+    rust_service!(map, get_queue_status)?;
+    rust_service!(map, pause_queue_delivery)?;
+    rust_service!(map, resync_replication)?;
+    rust_service!(map, get_replica_values)?;
     Ok(())
 }
 
@@ -244,6 +251,169 @@ fn remove_edge_host(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
     let host_name = required(parameters, "hostName")?;
     let removed = crate::edge::link()?.remove_host(&host_name)?;
     Ok(BTreeMap::from([("removed".to_string(), Value::Bool(removed))]))
+}
+
+fn current_factory() -> Result<std::sync::Arc<crate::context::ExecutionContextFactory>, LibError> {
+    crate::context::ExecutionContext::with_current(|ctx| std::sync::Arc::clone(ctx.factory()))
+        .ok_or_else(|| LibError::new("no execution context"))
+}
+
+/// `enqueue#Item`: queue an item for the other end of the link; an idempotency key queued already returns its item.
+fn enqueue_item(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let factory = current_factory()?;
+    let item = crate::edge::queue::NewItem {
+        kind: required(parameters, "kind")?,
+        conversation_key: required(parameters, "conversationKey")?,
+        idempotency_key: text(parameters, "idempotencyKey").unwrap_or_default(),
+        payload: parameters
+            .get("payload")
+            .filter(|value| !is_empty(value))
+            .map(to_plain_string),
+        content_location: text(parameters, "contentLocation"),
+    };
+    let node = text(parameters, "pairedNodeId");
+    let enqueued = crate::edge::queue::enqueue(&factory, facade, node.as_deref(), &item)?;
+    Ok(BTreeMap::from([
+        ("queueItemId".to_string(), Value::string(&enqueued.queue_item_id)),
+        ("created".to_string(), Value::Bool(enqueued.created)),
+    ]))
+}
+
+fn count(value: impl TryInto<i64>) -> Value {
+    Value::I64(value.try_into().unwrap_or(i64::MAX))
+}
+
+/// `get#QueueStatus`: the queue's depth and oldest item by node, direction and kind; whether delivery is paused; on a
+/// local node its replicated sets, on an edge node the cursors of its nodes' sets.
+fn get_queue_status(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let node = text(parameters, "pairedNodeId");
+    let now = crate::user::now_millis();
+    let kinds = crate::edge::queue::stats(facade, node.as_deref())?;
+    let kind_list = kinds
+        .iter()
+        .map(|kind| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("pairedNodeId".to_string(), Value::string(&kind.paired_node_id));
+            row.insert("directionEnumId".to_string(), Value::string(&kind.direction));
+            row.insert("kind".to_string(), Value::string(&kind.kind));
+            row.insert("pending".to_string(), Value::I64(kind.pending));
+            row.insert("failed".to_string(), Value::I64(kind.failed));
+            row.insert("oldestDate".to_string(), millis(kind.oldest_pending));
+            row.insert(
+                "oldestAgeSeconds".to_string(),
+                kind.oldest_pending
+                    .map_or(Value::Null, |oldest| Value::I64((now - oldest).max(0) / 1000)),
+            );
+            Value::Map(row)
+        })
+        .collect();
+    let set_list = crate::edge::replica::replica(facade)
+        .map(|replica| replica.status())
+        .unwrap_or_default()
+        .iter()
+        .map(|set| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("setName".to_string(), Value::string(&set.name));
+            row.insert("epoch".to_string(), Value::string(&set.epoch));
+            row.insert("acked".to_string(), count(set.acked));
+            row.insert("waiting".to_string(), count(set.waiting));
+            row.insert("snapshotNeeded".to_string(), Value::Bool(set.snapshot_needed));
+            row.insert("lastAckDate".to_string(), millis(set.last_ack));
+            row.insert("lastSnapshotDate".to_string(), millis(set.last_snapshot));
+            Value::Map(row)
+        })
+        .collect();
+    let cursor_list = crate::edge::replica::cursors(facade, node.as_deref())?
+        .iter()
+        .map(|cursor| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("pairedNodeId".to_string(), Value::string(&cursor.paired_node_id));
+            row.insert("setName".to_string(), Value::string(&cursor.set_name));
+            row.insert("epoch".to_string(), Value::string(&cursor.epoch));
+            row.insert("sequenceNum".to_string(), count(cursor.seq));
+            row.insert("values".to_string(), Value::I64(cursor.values));
+            row.insert("snapshotDate".to_string(), millis(cursor.snapshot_date));
+            row.insert("appliedDate".to_string(), millis(cursor.applied_date));
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([
+        ("kindList".to_string(), Value::List(kind_list)),
+        ("paused".to_string(), Value::Bool(crate::edge::queue::paused(facade))),
+        ("setList".to_string(), Value::List(set_list)),
+        ("cursorList".to_string(), Value::List(cursor_list)),
+    ]))
+}
+
+/// `pause#QueueDelivery`: pause (or resume) this node's queue delivery: deliveries to it are answered "paused" and
+/// its own outbox waits.
+fn pause_queue_delivery(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let paused = text(parameters, "paused").is_none_or(|flag| flag == "true" || flag == "Y");
+    crate::edge::queue::set_paused(facade, paused);
+    tracing::info!("Edge queue delivery {}", if paused { "paused" } else { "resumed" });
+    Ok(BTreeMap::from([("paused".to_string(), Value::Bool(paused))]))
+}
+
+/// `resync#Replication`: on a local node, send every replicated set whole again; on an edge node, forget the cursors
+/// (of one node when given), so each node's next batch asks for its set whole.
+fn resync_replication(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let factory = current_factory()?;
+    if crate::edge::settings(&factory).edge_node {
+        let node = text(parameters, "pairedNodeId");
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+        let mut find = facade.find(crate::edge::replica::CURSOR)?.disable_authz();
+        if let Some(node) = &node {
+            find = find.eq("pairedNodeId", Value::string(node));
+        }
+        let forgotten = find.delete_all()?;
+        return Ok(BTreeMap::from([("sets".to_string(), Value::I64(forgotten))]));
+    }
+    let sets = match crate::edge::replica::replica(facade) {
+        Some(replica) => {
+            replica.resync_all();
+            replica.sets().len()
+        }
+        None => 0,
+    };
+    Ok(BTreeMap::from([("sets".to_string(), count(sets))]))
+}
+
+/// `get#ReplicaValues`: on an edge node, the copies of a replicated set (of one entity, or one record by its key).
+fn get_replica_values(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let set = required(parameters, "setName")?;
+    let entity = text(parameters, "entityName");
+    let node = text(parameters, "pairedNodeId");
+    let pk: Option<BTreeMap<String, String>> = match parameters.get("pk") {
+        Some(Value::Map(pk)) => Some(
+            pk.iter()
+                .map(|(field, value)| (field.clone(), to_plain_string(value)))
+                .collect(),
+        ),
+        _ => None,
+    };
+    let values = match (&entity, pk) {
+        (Some(entity), Some(pk)) => crate::edge::replica::get_value(facade, node.as_deref(), &set, entity, &pk)?
+            .into_iter()
+            .collect(),
+        _ => {
+            let limit = text(parameters, "limit")
+                .and_then(|limit| limit.parse().ok())
+                .unwrap_or(1000);
+            crate::edge::replica::list_values(facade, node.as_deref(), &set, entity.as_deref(), limit)?
+        }
+    };
+    let value_list = values
+        .iter()
+        .map(|value| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("pairedNodeId".to_string(), Value::string(&value.paired_node_id));
+            row.insert("entityName".to_string(), Value::string(&value.entity_name));
+            row.insert("pk".to_string(), moqui_lib::json::from_json(&value.pk));
+            row.insert("fields".to_string(), moqui_lib::json::from_json(&value.fields));
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([("valueList".to_string(), Value::List(value_list))]))
 }
 
 #[cfg(test)]

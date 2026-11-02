@@ -93,12 +93,24 @@ moqui_entity::hooks::submit! {
         schedule_feed_receive: crate::service::schedule_feed_receive,
         defined_service_name: crate::service::define::defined_name,
         registration_failures: crate::service::define::registration_failures,
-        cluster_note_write: crate::cluster::note_write,
+        cluster_note_write: note_write,
         trace_statement,
         inline_executor: || {
             ExecutionContext::with_current(|ec| ec.factory().executor() == Executor::Inline).unwrap_or(false)
         },
     }
+}
+
+/// A committed write's observers: the cluster's cache invalidation, and the edge link's replication
+/// (plans/Edge-Node.md §5.2), which notes the record's key for its set after commit.
+fn note_write(
+    facade: &crate::entity::EntityFacade,
+    entity_name: &str,
+    pk_fields: &[String],
+    values: &crate::entity::FieldMap,
+) -> Result<(), crate::context::Error> {
+    crate::edge::replica::note_write(facade, entity_name, pk_fields, values);
+    crate::cluster::note_write(facade, entity_name, pk_fields, values)
 }
 
 /// A statement's duration metric, and its span inside a trace: a scheduler poll or a data load outside any request or

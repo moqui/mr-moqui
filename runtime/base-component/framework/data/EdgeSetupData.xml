@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.impl.EdgeServices, plans/Edge-Node.md): the statuses of a
-    paired local node, and the modes of its public host names. -->
+    paired local node, the modes of its public host names, and the user and grants of delegated calls. -->
 <entity-facade-xml type="seed">
     <moqui.basic.StatusType statusTypeId="EdgeClient" description="Edge Client"/>
     <moqui.basic.StatusItem statusId="EdgeClientActive" statusTypeId="EdgeClient" sequenceNum="1" description="Active" statusColor="positive"/>
@@ -24,4 +24,18 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.EnumerationType enumTypeId="EdgeHostMode" description="Edge Host Mode"/>
     <moqui.basic.Enumeration enumId="EdgeHostPassthrough" enumTypeId="EdgeHostMode" sequenceNum="1" description="Passthrough"/>
     <moqui.basic.Enumeration enumId="EdgeHostTerminate" enumTypeId="EdgeHostMode" sequenceNum="2" description="Terminate"/>
+
+    <!-- The user the local node runs the edge node's delegated calls and queued items as (plans/Edge-Node.md §5.2, §5.8).
+        It has no password, so nobody logs in as it; the caller's identity travels as data. It holds only the
+        EDGE_DELEGATE group, which is granted only the services in the EDGE_DELEGATE artifact group, and the local node
+        also runs only the services its own edge conf lists (delegate, queue-kind). The group starts with the diagnostic
+        org.moqui.impl.EdgeServices.echo#Delegate, which has no effect beyond its answer; the comms phases add theirs. -->
+    <moqui.security.UserAccount userId="_EDGE_" username="_edge_" userFullName="Edge Node"/>
+    <moqui.security.UserGroup userGroupId="EDGE_DELEGATE" description="Edge Node Delegates" groupTypeEnumId="UgtRemoteSystems"/>
+    <moqui.security.UserGroupMember userGroupId="EDGE_DELEGATE" userId="_EDGE_" fromDate="1265184000000"/>
+    <moqui.security.ArtifactGroup artifactGroupId="EDGE_DELEGATE" description="Edge Node Delegated Services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EdgeServices.echo#Delegate"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="EDGE_DELEGATE" userGroupId="EDGE_DELEGATE" artifactGroupId="EDGE_DELEGATE"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

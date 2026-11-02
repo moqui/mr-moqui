@@ -660,7 +660,7 @@ impl MemConn {
                 }],
             ));
         }
-        if !query.group.is_empty() || query.columns.iter().any(|column| column.starts_with(COUNT_COLUMN)) {
+        if !query.group.is_empty() || query.columns.iter().any(|column| aggregate(column).is_some()) {
             matched = group_rows(matched, &query.group, &query.columns);
         }
         matched.sort_by(|left, right| sort_rows(left, right, &query.order));
@@ -1019,8 +1019,9 @@ fn sort_rows(left: &Row, right: &Row, order: &[OrderKey]) -> std::cmp::Ordering 
     std::cmp::Ordering::Equal
 }
 
-/// One row per value of the `group` columns, its first row's columns and each `COUNT("field")` column the rows of the
-/// group whose field is not null. No group columns: one row of all, as `SELECT COUNT("x") FROM ...`.
+/// One row per value of the `group` columns, its first row's columns and each aggregate column: `COUNT("field")` the
+/// rows of the group whose field is not null, `MIN`, `MAX` and `SUM` of the field's values that are not null (null when
+/// there are none). No group columns: one row of all, as `SELECT COUNT("x") FROM ...`.
 fn group_rows(rows: Vec<Row>, group: &[String], columns: &[String]) -> Vec<Row> {
     let mut groups: Vec<(Vec<Value>, Vec<Row>)> = Vec::new();
     for row in rows {
@@ -1041,13 +1042,28 @@ fn group_rows(rows: Vec<Row>, group: &[String], columns: &[String]) -> Vec<Row> 
         .map(|(_, members)| {
             let mut out = members.first().cloned().unwrap_or_default();
             for column in columns {
-                if let Some(field) = column.strip_prefix(COUNT_COLUMN) {
-                    let n = members
-                        .iter()
-                        .filter(|row| row.get(field).is_some_and(|value| !value.is_null()))
-                        .count();
-                    out.insert(column.clone(), Value::I64(i64::try_from(n).unwrap_or(i64::MAX)));
-                }
+                let Some((function, field)) = aggregate(column) else {
+                    continue;
+                };
+                let values = members
+                    .iter()
+                    .filter_map(|row| row.get(field).filter(|value| !value.is_null()));
+                let value = match function {
+                    "COUNT" => Value::I64(i64::try_from(values.count()).unwrap_or(i64::MAX)),
+                    "MIN" => values
+                        .min_by(|left, right| cmp_values(left, right))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "MAX" => values
+                        .max_by(|left, right| cmp_values(left, right))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    _ => values
+                        .filter_map(numeric)
+                        .reduce(|sum, value| sum + value)
+                        .map_or(Value::Null, Value::Decimal),
+                };
+                out.insert(column.clone(), value);
             }
             out
         })
@@ -1115,8 +1131,14 @@ struct SelectQuery {
     offset: bool,
 }
 
-/// A column that counts, `COUNT("field")`, is kept as this prefix and the field.
-const COUNT_COLUMN: &str = "COUNT ";
+/// An aggregate column, `COUNT("field")`, `MIN`, `MAX` or `SUM`, is kept as the function, a space and the field.
+const AGGREGATES: [&str; 4] = ["COUNT", "MIN", "MAX", "SUM"];
+
+/// The function and field of an aggregate column.
+fn aggregate(column: &str) -> Option<(&str, &str)> {
+    let (function, field) = column.split_once(' ')?;
+    AGGREGATES.contains(&function).then_some((function, field))
+}
 
 enum Pred {
     /// `"field" op ?`, or with `upper` `UPPER("field") op UPPER(?)`, a comparison that ignores case.
@@ -1422,13 +1444,15 @@ fn parse_columns(cur: &mut Cur) -> Result<Vec<(String, String)>, Error> {
         if cur.peek_keyword("FROM") {
             break;
         }
-        let column = if cur.eat_keyword("COUNT") {
-            cur.expect_symbol(b'(')?;
-            let field = cur.quoted()?;
-            cur.expect_symbol(b')')?;
-            format!("{COUNT_COLUMN}{field}")
-        } else {
-            cur.quoted()?
+        let function = AGGREGATES.into_iter().find(|function| cur.eat_keyword(function));
+        let column = match function {
+            Some(function) => {
+                cur.expect_symbol(b'(')?;
+                let field = cur.quoted()?;
+                cur.expect_symbol(b')')?;
+                format!("{function} {field}")
+            }
+            None => cur.quoted()?,
         };
         let name = if cur.eat_keyword("AS") {
             cur.quoted()?

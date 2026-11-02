@@ -1,9 +1,10 @@
 # Edge Node
 
-Status 2026-11-01: E2 built, web access over the link; no comms over it yet. Every question in [§8](#8-decisions) is
-decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1 built,
-where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"), [§5.6](#56-moquiedgeconfxml-and-packaging)
-and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in [§5.3](#53-web-access) ("As built").
+Status 2026-11-01: E3 built: delegate, queue and replicate over the link, after E2's web access; no comms use them yet.
+Every question in [§8](#8-decisions) is decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and
+the build cost is in §5.6. What E1 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As
+built"), [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is
+in [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built").
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -350,6 +351,69 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
     lost it.
   - EntitySync's code is the model.
 
+**As built (E3).**
+- **Conf.** One `<edge>` element in moqui-conf (`moqui-conf-3.xsd`, merged by `context/conf.rs` `merge_edge`), read by
+  both ends: `delegate` (by service, with `allow-anonymous`), `queue-kind` (name → handler service), `replicate set`
+  with `entity name fields` children, and the queue's `queue-retention-days` (14), `queue-max-megabytes` (1024),
+  `queue-max-attempts` (10) and `queue-retry-seconds` (5, doubling to 10 minutes). Service names are canonicalized as
+  the service facade does (`create-moqui.X` is `create#moqui.X`). `moqui_core::edge::settings` reads it once per
+  factory with the node's role, so two servers in one test process keep their own; the host reads it when its
+  listeners start.
+- **Code.** What needs no network is in core (`moqui_core::edge::{conf, delegate, queue, replica}`): rows, receipts,
+  handlers, change notes, batches. The host's link moves it: `edge_link/queue.rs` (the delivery loops, metrics,
+  retention), `edge_link/replicate.rs` (the local node's sender), new RPCs `LocalLink.Deliver`, `LocalLink.Delegate`,
+  `Link.Deliver` and `Link.Replicate` (additive). The down connection still takes gRPC only under
+  `/moqui.edge.v1.LocalLink/` with no client named, so a forwarded request reaches none of them. Every message is at
+  most 16 MiB both ways. The loops catch a panic per round and go on.
+- **Delegate.** The service facade (`service::call` `sync_with`) hands a listed synchronous call to the link; an async
+  call or a scheduled job runs where it was queued. The edge node keeps the has-error and rollback-only checks, and with
+  the service's definition checks its authorization and `authenticate` first (as an async call is checked before it is
+  queued); the design said after the lookup, but the edge node may not have the definition, and then a caller with no
+  user is refused unless the entry has `allow-anonymous`. Parameters go as JSON without credentials or `_` names, and
+  the caller (`username`, `userId`) as data; a service that declares `edgeCaller` gets it. The local node drops every
+  credential, `auth` + capital and `_` name again, refuses a service its own conf does not list, logs in `_edge_` (no
+  password; group `EDGE_DELEGATE`, `UgtRemoteSystems`, granted the `EDGE_DELEGATE` artifact group, which starts with
+  the diagnostic `echo#Delegate`) and runs it with authorization. Its errors come back as service errors; with no link
+  the call fails at once with "local node offline". A call inside the caller's transaction holds it while it waits, up
+  to the link's answer timeout (60 s). With several nodes linked a call is refused (decision 1).
+- **Queue.** `moqui.edge.EdgeQueueItem` on both ends (direction `EqdToLocal` on the edge node, `EqdToEdge` for a local
+  node's outbox; `pairedNodeId` is the local node of the pair), `sequenceNum` for order. The item id is a UUID, or for an
+  idempotency key a hash of node, direction and key, so a racing enqueue of one key makes one row and a key queued again
+  after the sender's database was lost is the same item to the receiver. A node enqueues only the kinds its conf
+  lists, and a payload is at most 1 MiB (larger is refused; `contentLocation` is carried as a reference, and moving
+  such bodies over the link is later work). Delivery runs while the link is up, one task per direction and node, woken
+  by a commit; a round reads the head of each key with one grouped query (`EdgeQueueHead`), without payloads, and reads
+  a payload only for the item it claims. The receiver inserts the `moqui.edge.EdgeReceipt` first (insert-if-missing, so
+  an overlapping redelivery waits on its key and then finds it), then runs the kind's handler as `_edge_` in the same
+  transaction, and answers after the commit. **Head of line:** the items of a key go one at a time; a refused head holds
+  the key, retried after the backoff, until it is delivered or fails for good (`queue-max-attempts`). Not counted: no
+  answer, a paused, busy or stopping receiver (retried soon), and a receiver with no handler or grant for the kind
+  (retried every 10 minutes, so a version skew fails nothing). A receiver's refusal of the message itself (too large,
+  malformed) is counted. Retention: delivered items by `deliveredDate`, failed by `failedDate`, and receipts go after
+  the retention period (keep it the same on both nodes); a waiting item past it, or the oldest while the waiting
+  payloads pass the cap, fails with an error naming it. The counts are grouped queries (`EdgeQueueCount`). On a
+  clustered local node only the member that holds the link sends its outbox and replication; a lock row is later
+  work (§2).
+- **Replicate: no change log.** The entity write hook (beside the cluster's, `entity_hooks.rs`) notes a replicated
+  record's key at commit (none on a rollback; a note that cannot wait for the commit sends the set whole); the sender
+  drains the keys of a set into a batch and reads each record as it is then (gone is a delete). The keys wait in memory
+  while the link is down and across dialers; a batch not acknowledged waits again. Each full send starts an epoch (a
+  UUID), and the edge node's `moqui.edge.EdgeReplicaCursor` keeps the last epoch and sequence per node and set, written
+  with the batch; a batch that does not follow it (the edge node lost its database, or the local node restarted and so
+  lost its notes) gets "resync", and the set goes whole, in key order with keyset paging (after the last key, not by
+  offset), after which records of older epochs are removed. A batch is at most 500 records and 4 MiB; a larger one
+  goes in parts, each acknowledged. Each new link sends an empty batch first to check the cursor. A resync asked for
+  during a full send (by the operator, or for more than 10,000 waiting keys) sends the set whole again after it; a set
+  whose sends keep failing is tried again after a backoff from 1 s to 60 s. The copies are
+  `moqui.edge.EdgeReplicaValue` (entity, key hash, `pkJson` and `fieldsJson` encrypted at rest); `get#ReplicaValues`
+  and `moqui_core::edge::replica::{get_value, list_values}` read them.
+- **Status and metrics.** System › Edge Node shows the outbox by kind and each set's epoch, last batch and waiting
+  changes, with Pause (`pause#QueueDelivery`: deliveries to this node are answered "paused" and its outbox waits; in
+  memory) and Resync (`resync#Replication`; on an edge node it forgets the cursors). Edge Clients shows each node's
+  queue and replicated sets. Metrics: `moqui.edgelink.queue.depth` and `.oldest_seconds` by direction and kind
+  (gauges, `Telemetry::observe_gauge_series`), `.queue.delivered`, `.retried`, `.failed`, `.delegate.duration` and
+  `.delegate.errors`, `.replication.waiting` and `.lag_seconds` by set.
+
 ### 5.3 Web access
 
 - **One name everywhere.** `erp.example.com` points at the edge node in public DNS, and at the local node's LAN address
@@ -575,9 +639,10 @@ release.
 Built in E1 as `runtime/conf/MoquiEdgeConf.xml`: `instance_purpose` production, `node_role=edge`, web protection, and
 the entity facade's crypt-pass. The properties of what is not built yet are comments in it, each with its phase:
 `channels_webhooks_enabled` (E6), the rtc and TURN ports (E7), and `pass_backend_url=edge:` (E4; set now, it would send
-mr-pass's REST calls to an address that does not exist). E3's elements have a comment where they go. The draft below is
-the target. The listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP
-domain, LMTP from the gateway.
+mr-pass's REST calls to an address that does not exist). E3 filled in its `<edge>` element: the queue's limits, with the
+delegated services and replicated sets as commented examples for the comms phases. The draft below is the target. The
+listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP domain, LMTP from
+the gateway.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8" ?>
@@ -722,7 +787,8 @@ Its actions are pause, resync and unpair.
   It cannot log in as a user, or read business data beyond what the delegated services return.
 - **Controls:**
   - a key per node, pinned both ways, and a link either side can revoke;
-  - delegated services on an allowlist, run as `_EDGE_` with narrow grants;
+  - delegated services on an allowlist on both nodes, run as `_EDGE_` with narrow grants; no parameter the edge node
+    sends (credentials, `_` names, a caller) changes the user a call runs as;
   - everything from the edge node checked as input from any client;
   - replicated fields kept to the minimum and encrypted at rest;
   - web protection on the edge node, and on the local node by the PROXY address.
