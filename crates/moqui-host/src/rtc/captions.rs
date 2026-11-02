@@ -39,7 +39,10 @@
 //!
 //! The transcriber is a trait ([`Transcriber`]): the `moqui-llm` endpoint ([`moqui_core::llm_hooks::transcribe`]), or
 //! `speech-local` (`call_captions_provider=local`, not built yet, see `crate::speech_local`). With
-//! `call_captions_store=true` each caption is kept as a `CallTranscript` row; by default nothing is stored.
+//! `call_captions_store=true` each caption is kept as a `CallTranscript` row (`store#CallTranscript`); by default
+//! nothing is stored. Speakers are named by `get#CaptionSpeaker`. On an edge node (plans/Edge-Node.md §5.4) those two
+//! run on its local node (delegated), and so does transcription (`transcribe#CaptionAudio`, [`DelegatedTranscriber`]),
+//! where the call's rows and the agent runtime's quota are.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -684,6 +687,15 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
         Arc::new(LocalTranscriber {
             language: settings.language.clone(),
         })
+    } else if moqui_core::edge::settings(factory).edge_node {
+        // the agent runtime, the quota and the LlmCall are the local node's (plans/Edge-Node.md §5.4)
+        Arc::new(DelegatedTranscriber {
+            factory: Arc::clone(factory),
+            room: room.to_string(),
+            user_id: options.user_id.clone(),
+            language: settings.language.clone(),
+            timeout: settings.timeout,
+        })
     } else {
         Arc::new(LlmTranscriber {
             factory: Arc::clone(factory),
@@ -815,18 +827,13 @@ impl Outside for NodeOutside {
     fn store(&mut self, leg: &str, seq: u64, speaker: &Speaker, text: &str) {
         super::note(
             &self.factory,
-            "create#moqui.call.CallTranscript",
+            STORE_SERVICE,
             vec![
                 ("callSessionId", Value::string(&self.room)),
                 ("callLegId", Value::string(leg)),
                 ("segment", Value::I64(i64::try_from(seq).unwrap_or(0))),
                 ("speaker", Value::string(speaker.name.clone().unwrap_or_default())),
-                ("statusId", Value::string("CtsDone")),
                 ("text", Value::string(text)),
-                (
-                    "createdDate",
-                    moqui_core::user::stamp_value(moqui_core::user::now_millis()),
-                ),
             ],
         );
     }
@@ -845,48 +852,43 @@ impl Outside for NodeOutside {
     }
 }
 
-/// The participant of a leg and the name the call shows for them.
+/// The participant of a leg and the name the call shows for them, by `get#CaptionSpeaker` (on an edge node, its local
+/// node's, plans/Edge-Node.md §5.4).
 fn speaker_of(leg: &str) -> Result<Speaker, moqui_core::context::Error> {
-    let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
-        return Ok(Speaker::default());
-    };
-    let text = |row: &moqui_core::entity::EntityValue, name: &str| {
-        row.get(name).map(to_plain_string).filter(|value| !value.is_empty())
-    };
-    let Some(leg_row) = facade
-        .find("moqui.call.CallLeg")?
-        .eq("callLegId", Value::string(leg))
-        .disable_authz()
-        .one()?
-    else {
-        return Ok(Speaker::default());
-    };
-    let Some(participant_id) = text(&leg_row, "callParticipantId") else {
-        return Ok(Speaker::default());
-    };
-    let participant = facade
-        .find("moqui.call.CallParticipant")?
-        .eq("callParticipantId", Value::string(&participant_id))
-        .disable_authz()
-        .one()?;
-    let mut name = participant.as_ref().and_then(|row| text(row, "displayName"));
-    if name.is_none() {
-        if let Some(user_id) = participant.as_ref().and_then(|row| text(row, "userId")) {
-            let account = facade
-                .find("moqui.security.UserAccount")?
-                .eq("userId", Value::string(&user_id))
-                .disable_authz()
-                .one()?;
-            name = account
-                .as_ref()
-                .and_then(|row| text(row, "userFullName").or_else(|| text(row, "username")));
-        }
-    }
+    let parameters = BTreeMap::from([("callLegId".to_string(), Value::string(leg))]);
+    let out = service(SPEAKER_SERVICE, &parameters)?;
+    let text = |name: &str| out.get(name).map(to_plain_string).filter(|value| !value.is_empty());
     Ok(Speaker {
-        participant: Some(participant_id),
-        name,
+        participant: text("callParticipantId"),
+        name: text("name"),
     })
 }
+
+/// A service in this thread's context: its result, or its errors as one, kept apart from the context's own errors,
+/// which stay.
+fn service(
+    name: &str,
+    parameters: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, Value>, moqui_core::context::Error> {
+    ExecutionContext::with_current(|ec| ec.message().push_errors());
+    let out = moqui_core::service::sync(name, parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let mut messages = ec.message();
+        let errors = messages.errors().to_vec();
+        messages.clear_errors();
+        messages.pop_errors();
+        errors
+    })
+    .unwrap_or_default();
+    match out {
+        Ok(_) if !errors.is_empty() => Err(moqui_core::context::Error::new(errors.join("; "))),
+        other => other,
+    }
+}
+
+const SPEAKER_SERVICE: &str = "org.moqui.impl.CallCaptionServices.get#CaptionSpeaker";
+const STORE_SERVICE: &str = "org.moqui.impl.CallCaptionServices.store#CallTranscript";
+const TRANSCRIBE_SERVICE: &str = "org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio";
 
 /// The `moqui-llm` endpoint bound to `transcribe`.
 struct LlmTranscriber {
@@ -911,6 +913,69 @@ impl Transcriber for LlmTranscriber {
                 timeout: Some(self.timeout),
             },
         )
+    }
+}
+
+/// On an edge node: `transcribe#CaptionAudio`, which runs on the local node (delegated), with the chunk as base64.
+struct DelegatedTranscriber {
+    factory: Arc<ExecutionContextFactory>,
+    room: String,
+    user_id: Option<String>,
+    language: Option<String>,
+    timeout: Duration,
+}
+
+impl Transcriber for DelegatedTranscriber {
+    fn transcribe(&self, wav: &[u8]) -> Result<String, SpeechError> {
+        use base64::Engine as _;
+        let mut parameters = BTreeMap::from([
+            ("callSessionId".to_string(), Value::string(&self.room)),
+            (
+                "audioBase64".to_string(),
+                Value::string(base64::engine::general_purpose::STANDARD.encode(wav)),
+            ),
+            (
+                "timeoutSeconds".to_string(),
+                Value::I64(i64::try_from(self.timeout.as_secs()).unwrap_or(20)),
+            ),
+        ]);
+        if let Some(user) = &self.user_id {
+            parameters.insert("userId".to_string(), Value::string(user));
+        }
+        if let Some(language) = &self.language {
+            parameters.insert("language".to_string(), Value::string(language));
+        }
+        let run = || {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            service(TRANSCRIBE_SERVICE, &parameters)
+        };
+        // a caption job runs on the service pool, in a context of its own
+        let out = if ExecutionContext::with_current(|_| ()).is_some() {
+            run()
+        } else {
+            let context = self.factory.new_context();
+            let _entered = context.enter();
+            run()
+        };
+        let out = out.map_err(|err| SpeechError::new("failed", err.message().to_string()))?;
+        let text = |name: &str| out.get(name).map(to_plain_string).unwrap_or_default();
+        match text("errorCode").as_str() {
+            "" => Ok(text("text")),
+            code => Err(SpeechError::new(speech_code(code), text("errorMessage"))),
+        }
+    }
+}
+
+/// A refusal's code as `SpeechError` names it; one it does not know is `failed`.
+fn speech_code(code: &str) -> &'static str {
+    match code {
+        "notBuiltIn" => "notBuiltIn",
+        "notConfigured" => "notConfigured",
+        "invalid" => "invalid",
+        "quota" => "quota",
+        "timeout" => "timeout",
+        "notAllowed" => "notAllowed",
+        _ => "failed",
     }
 }
 

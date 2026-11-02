@@ -40,7 +40,8 @@ use super::pair::{client_config, dial_tls, parse_url, Identity, ServerTrust};
 use super::proto::local_link_server::{LocalLink, LocalLinkServer};
 use super::proto::{
     ContentChunk, DelegateReply, DelegateRequest, DeliverReply, DeliverRequest, HelloRequest, LocalHelloReply,
-    LocalHelloRequest, OfferRequest, PingReply, PingRequest, PutContentReply, UnpairRequest,
+    LocalHelloRequest, OfferRequest, PingReply, PingRequest, PutContentReply, SignalMessage, SignalReply,
+    UnpairRequest,
 };
 use super::{
     check_versions, edge_info, hello, jitter, read_answer, Answer, LinkClient, LinkError, LocalConfig, LINK_VERSION,
@@ -55,6 +56,9 @@ pub struct UpLink {
     pub generation: u64,
     /// The edge node, as its Hello said.
     pub edge: EdgeInfo,
+    /// The edge node's TURN secret from its Hello answer (empty without TURN), which signs the credentials of its TURN
+    /// URLs (`moqui_core::edge::media`); never logged.
+    turn_secret: String,
     ended: watch::Receiver<bool>,
     driver: tokio::task::JoinHandle<()>,
     timeout: Duration,
@@ -199,6 +203,7 @@ async fn connect_up_with(config: &LocalConfig, prepared: &Prepared) -> Result<Up
         client,
         generation: reply.generation,
         edge: edge_info(&edge_hello, &config.pin),
+        turn_secret: reply.turn_secret,
         ended,
         driver,
         timeout: config.connect_timeout,
@@ -212,6 +217,8 @@ struct LocalService {
     hello: super::proto::Hello,
     /// The server the queue and delegated calls run on; none without [`LocalConfig::web`].
     factory: Option<Weak<ExecutionContextFactory>>,
+    /// The edge node's instance id, from its Hello: the only media node whose replies this link delivers (E7).
+    edge_node: String,
 }
 
 #[tonic::async_trait]
@@ -258,6 +265,13 @@ impl LocalLink for LocalService {
             self.fenced(generation)
         })
         .await?;
+        Ok(Response::new(reply))
+    }
+
+    async fn signal(&self, request: Request<tonic::Streaming<SignalMessage>>) -> Result<Response<SignalReply>, Status> {
+        self.factory()?;
+        let take = super::signal::local_takes(&self.edge_node);
+        let reply = super::signal::receive(request.into_inner(), |generation| self.fenced(generation), take).await?;
         Ok(Response::new(reply))
     }
 
@@ -320,6 +334,7 @@ async fn connect_down(
     config: &LocalConfig,
     prepared: &Prepared,
     generation: u64,
+    edge_node: &str,
     current: &Arc<AtomicU64>,
 ) -> Result<DownLink, LinkError> {
     let mut role = vec![ROLE_DOWN];
@@ -330,6 +345,7 @@ async fn connect_down(
         current: Arc::clone(current),
         hello: hello(&config.instance_id, &config.node_name, &[], &[]),
         factory: factory.clone(),
+        edge_node: edge_node.to_string(),
     })
     .max_decoding_message_size(super::MAX_MESSAGE)
     .max_encoding_message_size(super::MAX_MESSAGE);
@@ -361,6 +377,8 @@ struct Shared {
     /// The current up connection's generation, which the down connection's calls must name.
     current: Arc<AtomicU64>,
     up: Mutex<Option<LinkClient>>,
+    /// The edge node's pinned instance id (empty until a first link pins it, for a node paired before E7).
+    pinned: Mutex<String>,
 }
 
 impl Shared {
@@ -404,6 +422,7 @@ impl Dialer {
             }),
             current: Arc::new(AtomicU64::new(0)),
             up: Mutex::new(None),
+            pinned: Mutex::new(config.edge_id.clone()),
         });
         let (stop, stop_rx) = watch::channel(false);
         let timeout = config.connect_timeout;
@@ -502,6 +521,41 @@ pub(crate) async fn configure_on(
         Ok(Err(status)) => Err(format!("the edge node refused the setup: {}", status.message())),
         Err(_) => Err("the edge node did not answer the setup in time".to_string()),
     }
+}
+
+/// The edge node's instance id, from its Hello, before the link carries anything: the one pinned (pinned now when none
+/// was), not this node's own, and no live member of this node's cluster (plans/Edge-Node.md §5.4). An edge node that
+/// took another media node's id would get that node's call signaling and media row; it is refused, as a changed key is.
+async fn check_peer(config: &LocalConfig, shared: &Shared, seen: &str) -> Result<(), String> {
+    let pinned = lock(&shared.pinned).clone();
+    super::check_edge_id(&pinned, seen, &config.instance_id)?;
+    if let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) {
+        let id = seen.to_string();
+        let member = crate::worker::on_pool_without_authz(&factory, move |factory| {
+            if moqui_core::cluster::instance_id(factory).as_deref() == Some(id.as_str()) {
+                return Ok(true);
+            }
+            match factory.entity() {
+                Some(facade) => moqui_core::cluster::is_live_member(factory, &facade, &id),
+                None => Ok(false),
+            }
+        })
+        .await
+        .map_err(|err| format!("the edge node's instance id was not checked: {}", err.message()))?;
+        if member {
+            return Err(format!(
+                "the edge node names {seen}, which is this node or a live member of its cluster"
+            ));
+        }
+    }
+    if pinned.is_empty() {
+        *lock(&shared.pinned) = seen.to_string();
+        if let Some(on_pin) = &config.on_pin {
+            on_pin(seen);
+        }
+        tracing::info!("Edge link: the edge node's instance id {seen} is pinned");
+    }
+    Ok(())
 }
 
 /// How one attempt ended.
@@ -626,8 +680,11 @@ async fn link_once(
     // the connect phase gives way to a stop or a shutdown at once (no await in a branch: a watch's borrow is not Send)
     let connecting = async {
         let up = connect_up_with(&config, &prepared).await?;
+        check_peer(&config, &shared, &up.edge.instance_id)
+            .await
+            .map_err(LinkError::Refused)?;
         shared.current.store(up.generation, Ordering::Release);
-        let down = connect_down(&config, &prepared, up.generation, &shared.current).await?;
+        let down = connect_down(&config, &prepared, up.generation, &up.edge.instance_id, &shared.current).await?;
         Ok::<_, LinkError>((up, down))
     };
     let connected = tokio::select! {
@@ -697,14 +754,81 @@ async fn link_once(
     }
 }
 
-/// The tasks that send this node's work up one link: its outbox and its replicated sets. Dropped with the link.
-struct Work(Vec<tokio::task::JoinHandle<()>>);
+/// The tasks that send this node's work up one link: its outbox, its replicated sets, its messages for the edge node
+/// on cluster topics, and the heartbeat of the edge node's `CallMediaNode` row. Dropped with the link, which also
+/// takes the route of those messages away.
+struct Work {
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    _route: Option<moqui_core::edge::signal::RouteGuard>,
+}
 
 impl Drop for Work {
     fn drop(&mut self) {
-        for task in &self.0 {
+        for task in &self.tasks {
             task.abort();
         }
+    }
+}
+
+/// The service that keeps a media node's row (`moqui.call.CallMediaNode`).
+const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNode";
+
+/// Write or remove (`stopping`) the `CallMediaNode` row of the edge node `edge`, kept by this link, as internal work
+/// in the current context; its errors are taken out of the context.
+fn register_media_node(edge: &EdgeInfo, stopping: bool) -> Result<(), String> {
+    use moqui_lib::object::Value;
+    let parameters = std::collections::BTreeMap::from([
+        ("instanceId".to_string(), Value::string(&edge.instance_id)),
+        ("mediaAddress".to_string(), Value::string(&edge.media_address)),
+        ("turnUrls".to_string(), Value::string(edge.turn_urls.join(","))),
+        ("edgeLinked".to_string(), Value::Bool(true)),
+        (
+            "startedDate".to_string(),
+            if edge.media_started_ms > 0 {
+                moqui_core::user::stamp_value(edge.media_started_ms)
+            } else {
+                Value::Null
+            },
+        ),
+        ("stopping".to_string(), Value::Bool(stopping)),
+    ]);
+    let _authz =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    // its errors apart from the caller's, which stay
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.message().push_errors());
+    let ran = moqui_core::service::sync(REGISTER_MEDIA_NODE, &parameters);
+    let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
+        let mut messages = ec.message();
+        let errors = messages.errors().to_vec();
+        messages.clear_errors();
+        messages.pop_errors();
+        errors
+    })
+    .unwrap_or_default();
+    match ran {
+        Err(err) => Err(err.message().to_string()),
+        Ok(_) if !errors.is_empty() => Err(errors.join("; ")),
+        Ok(_) => Ok(()),
+    }
+}
+
+/// The edge node's `CallMediaNode` row while this link lasts (plans/Edge-Node.md §5.4): written now and again every
+/// `every`, from the link's liveness, so it goes stale (and its calls end, `expire#Calls`) only when the link has been
+/// down past the media nodes' grace. An edge node with no media has its row removed.
+async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration) {
+    let stopping = edge.media_address.is_empty();
+    loop {
+        let row = edge.clone();
+        let registered = crate::worker::on_pool(&factory, move |_| Ok(register_media_node(&row, stopping))).await;
+        match registered {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => tracing::warn!("the edge node's call media row was not kept: {err}"),
+            Err(err) => tracing::warn!("the edge node's call media row was not kept: {}", err.message()),
+        }
+        if stopping {
+            return;
+        }
+        tokio::time::sleep(every).await;
     }
 }
 
@@ -715,16 +839,39 @@ impl Work {
         replica: Option<Arc<moqui_core::edge::replica::Replica>>,
         telemetry: Option<Arc<Telemetry>>,
     ) -> Self {
-        let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) else {
-            return Self(Vec::new());
+        let none = || Self {
+            tasks: Vec::new(),
+            _route: None,
         };
-        let Some(node) = factory
-            .upgrade()
-            .map(|factory| moqui_core::edge::queue::local_node_id(&factory))
-        else {
-            return Self(Vec::new());
+        let Some(factory) = config.web.as_ref().map(super::down::LocalWeb::factory) else {
+            return none();
+        };
+        let Some(node) = factory.upgrade().map(|factory| {
+            // the edge node's TURN checks its own secret: the credentials of its TURN URLs are signed with it
+            moqui_core::edge::media::set_peer_turn(&factory, &up.edge.instance_id, &up.turn_secret);
+            moqui_core::edge::queue::local_node_id(&factory)
+        }) else {
+            return none();
         };
         let mut tasks = Vec::new();
+        // the messages of calls whose media is on the edge node go over this link (moqui_core::edge::signal)
+        let route = (!up.edge.instance_id.is_empty()).then(|| {
+            let (route, queue) = super::signal::route(&up.edge.instance_id, up.generation);
+            let client = up.client.clone();
+            tasks.push(tokio::spawn(super::signal::forward(queue, move |messages| {
+                let mut client = client.clone();
+                let call: super::signal::Call = Box::pin(async move { client.signal(messages).await.map(drop) });
+                call
+            })));
+            route
+        });
+        if !up.edge.instance_id.is_empty() {
+            tasks.push(tokio::spawn(keep_media_node(
+                factory.clone(),
+                up.edge.clone(),
+                config.ping_every,
+            )));
+        }
         let client = up.client.clone();
         let generation = up.generation;
         let owner = format!("{}/{generation}", config.instance_id);
@@ -768,7 +915,7 @@ impl Work {
             };
             tasks.push(tokio::spawn(sender.run()));
         }
-        Self(tasks)
+        Self { tasks, _route: route }
     }
 }
 

@@ -24,6 +24,12 @@
 //! that sent the frame, on this node or by `rtc-signal` to its node. While the socket is up, the node registers itself
 //! every 20 seconds (`register#MediaNode`); a call whose node stops registering ends (`expire#Calls`).
 //!
+//! On an edge node (`node_role=edge`, plans/Edge-Node.md §5.4, E7) the media node is its local node's: it registers
+//! no row of its own, since it has no call state. Its media address and TURN URLs go in its link Hello
+//! (`moqui_core::edge::media::set_advert`), and the local node keeps its `CallMediaNode` row from the link. Its frames,
+//! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are
+//! delegated to the local node, and its recordings' segments are queued there (`recorder.rs`).
+//!
 //! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (a leg node,
 //! the node of its signaling socket). The leg node's SFU links the room to the call's node (its origin) with a relay
 //! link on the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and
@@ -204,10 +210,15 @@ pub(crate) struct RtcNode {
     register: Option<JoinHandle<()>>,
     tcp: Option<JoinHandle<()>>,
     turn: Option<Arc<turn::TurnNode>>,
+    /// On an edge node, the factory whose link Hello advertises this media node, until it stops.
+    advertised: Option<std::sync::Weak<ExecutionContextFactory>>,
 }
 
 impl Drop for RtcNode {
     fn drop(&mut self) {
+        if let Some(factory) = self.advertised.take().and_then(|factory| factory.upgrade()) {
+            moqui_core::edge::media::set_advert(&factory, None);
+        }
         self.stop.store(true, Ordering::Release);
         let _ = command(Command::Stop);
         if let Some(t) = self.register.take() {
@@ -393,7 +404,21 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             return None;
         }
     };
-    let register = {
+    // an edge node registers no row: its local node keeps it from the link, which advertises it (E7)
+    let edge_node = moqui_core::edge::settings(factory).edge_node;
+    let register = if edge_node {
+        let advert = moqui_core::edge::media::MediaAdvert {
+            media_address: public.to_string(),
+            turn_urls: turn_urls
+                .split(',')
+                .filter(|url| !url.is_empty())
+                .map(str::to_string)
+                .collect(),
+            started_ms: moqui_core::user::now_millis(),
+        };
+        moqui_core::edge::media::set_advert(factory, Some(advert));
+        None
+    } else {
         let factory = Arc::clone(factory);
         let stop = Arc::clone(&stop);
         std::thread::Builder::new()
@@ -409,6 +434,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         register,
         tcp: tcp_thread,
         turn: turn_arc,
+        advertised: edge_node.then(|| Arc::downgrade(factory)),
     })
 }
 

@@ -526,9 +526,10 @@ function dropTemp(path) {
 }
 
 function storeSegment(p) {
+  if (!p.tempPath && !p.fromLocation) return refuse('badRequest', 'A segment needs its spooled file or its received copy')
   const recording = one(RECORDING, { callRecordingId: p.callRecordingId })
   if (!recording || recording.statusId === 'CrsFailed') {
-    dropTemp(p.tempPath)
+    if (p.tempPath) dropTemp(p.tempPath)
     return { stored: false }
   }
   const trackKindEnumId = TRACK_KINDS[p.trackKind] || 'CrtAudio'
@@ -547,7 +548,7 @@ function storeSegment(p) {
   segment.setSequencedIdPrimary()
   const contentLocation = `${ROOT}/${recording.callRecordingId}/${segment.callRecordingSegmentId}.${extensionOf(p.contentType)}`
   const moved = ec.service.sync().name('org.moqui.impl.CallRecordingServices.store#RecordingFile')
-    .parameters({ tempPath: p.tempPath, contentLocation }).disableAuthz().call()
+    .parameters({ tempPath: p.tempPath || null, fromLocation: p.fromLocation || null, contentLocation }).disableAuthz().call()
   if (ec.message.hasError()) return { stored: false }
   segment.setFields({
     callRecordingId: recording.callRecordingId, callRecordingTrackId: track.callRecordingTrackId,
@@ -593,6 +594,41 @@ function recorderEnd(p) {
   stopRecording(recording, text, p.outcome !== 'limit')
   ec.logger.warn(`Call recording ${p.callRecordingId} ended by its recorder (${p.outcome}): ${text}`)
   return {}
+}
+
+/**
+ * The edge link's callRecording items (plans/Edge-Node.md §5.4): a segment or the end of a recording whose media node is
+ * this node's edge node, stored here as this node's own recorder's are. Only for the queue, which runs it as _edge_.
+ */
+function receiveEdge(p) {
+  if (ec.user.username !== '_edge_') return refuse('notAllowed', 'Only the edge link queue stores an edge recording')
+  let item
+  try {
+    item = JSON.parse(p.payload || '{}')
+  } catch (err) {
+    return refuse('badRequest', 'The edge recording item is not JSON')
+  }
+  // only a recording of a call whose media is on this node's edge node (plans/Edge-Node.md §5.4)
+  const recordingId = item.op === 'segment' ? item.parameters?.callRecordingId : item.callRecordingId
+  const recording = recordingId ? one(RECORDING, { callRecordingId: recordingId }) : null
+  const session = recording ? one(SESSION, { callSessionId: recording.callSessionId }) : null
+  const node = session?.mediaNodeId ? one('moqui.call.CallMediaNode', { instanceId: session.mediaNodeId }) : null
+  if (recording && (!node || node.edgeLinked !== 'Y')) {
+    return refuse('notAllowed', 'The edge node stores only recordings of calls whose media is on it')
+  }
+  if (item.op === 'segment') {
+    if (!p.contentLocation) return refuse('badRequest', 'The edge recording segment came without its file')
+    const parameters = Object.assign({}, item.parameters || {}, { tempPath: null, fromLocation: p.contentLocation })
+    ec.service.sync().name('org.moqui.impl.CallRecordingServices.store#RecordingSegment').parameters(parameters).disableAuthz().call()
+    return {}
+  }
+  if (item.op === 'end') {
+    ec.service.sync().name('org.moqui.impl.CallRecordingServices.note#RecorderEnd').parameters({
+      callRecordingId: item.callRecordingId, outcome: item.outcome, errorText: item.errorText || null,
+    }).disableAuthz().call()
+    return {}
+  }
+  return refuse('badRequest', 'Unknown edge recording item ' + item.op)
 }
 
 function segmentName(segment, track, names) {
@@ -789,7 +825,7 @@ function expireItem(p) {
 }
 
 const operations = {
-  state, start, stop, pause, resume, ack, withdraw, notifyLeg, legAck, callChange, storeSegment, recorderEnd, find: find_, file, remove,
+  state, start, stop, pause, resume, ack, withdraw, notifyLeg, legAck, callChange, storeSegment, recorderEnd, receiveEdge, find: find_, file, remove,
   expire, expireItem, recordingBytes: (p) => ({ recordingBytes: recordingBytes(p.userId) }),
 }
 

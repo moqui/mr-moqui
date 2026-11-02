@@ -47,8 +47,9 @@ pub(super) struct DirectQueue {
     urls: HashMap<String, (String, Instant)>,
 }
 
-/// Sends `message` on `topic` to the member `instance_id` only: published on this process's bus when that is this
-/// member (or the factory is in no cluster), else queued for one post to that member.
+/// Sends `message` on `topic` to the member `instance_id` only: over the edge link when that is the node at the
+/// link's other end ([`crate::edge::signal`]), published on this process's bus when that is this member (or the
+/// factory is in no cluster), else queued for one post to that member.
 ///
 /// # Errors
 ///
@@ -61,6 +62,11 @@ pub fn send_to(
 ) -> Result<(), Error> {
     if instance_id.is_empty() {
         return Err(Error::new("no member to send to"));
+    }
+    // the other end of an edge link is no member of this cluster: its message goes over the link while it is up
+    // (plans/Edge-Node.md §5.4, E7)
+    if let Some(sent) = crate::edge::signal::send(instance_id, topic, message) {
+        return sent.map_err(|err| Error::new(err.message().to_string()));
     }
     let Some(state) = linked_state(facade) else {
         return notify::publish(topic, message);

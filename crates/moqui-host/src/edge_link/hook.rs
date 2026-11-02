@@ -24,7 +24,7 @@ use std::time::Duration;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
     Configured, DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, EdgeOffer, EdgeSetup,
-    LinkStatus, PairResult, PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
+    LinkStatus, PairResult, PairingCode, NODE_ID, NODE_KEY, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -226,6 +226,18 @@ impl Hook {
         if config.web.is_none() {
             config.web = factory.as_deref().and_then(super::down::local_web);
         }
+        // a node paired before E7 pins its edge node's instance id on its first link, into runtime/.env
+        if config.on_pin.is_none() {
+            if let Ok(env) = self.env_path() {
+                config.on_pin = Some(Arc::new(move |id: &str| {
+                    let set = [(NODE_ID.to_string(), id.to_string())];
+                    match moqui_lib::env::update_dotenv_file(&env, &set, &[]) {
+                        Ok(()) => moqui_lib::env::set_property(NODE_ID, id.to_string()),
+                        Err(err) => tracing::error!("The edge node's instance id was not written to .env: {err}"),
+                    }
+                }));
+            }
+        }
         if let Some(factory) = &factory {
             super::queue::maintain(factory, self.shutdown.clone());
         }
@@ -285,10 +297,14 @@ impl EdgeLink for Hook {
         }
         let paired = crate::edge::block_on(async move { super::pair::pair(&config).await })?
             .map_err(|err| Error::new(err.message().to_string()))?;
+        // its instance id is pinned with its key: never this node's own (a live cluster member's is refused as the
+        // link comes up)
+        super::check_edge_id("", &paired.edge.instance_id, &instance).map_err(Error::new)?;
         let set = [
             (NODE_URL.to_string(), url.trim().to_string()),
             (NODE_KEY.to_string(), paired.key.clone()),
             (NODE_PIN.to_string(), paired.pin.clone()),
+            (NODE_ID.to_string(), paired.edge.instance_id.clone()),
         ];
         moqui_lib::env::update_dotenv_file(&self.env_path()?, &set, &[])?;
         for (name, value) in &set {
@@ -301,6 +317,7 @@ impl EdgeLink for Hook {
             paired.key_fingerprint
         );
         let mut local = LocalConfig::new(url.trim(), &paired.key, &paired.pin, &instance);
+        local.edge_id.clone_from(&paired.edge.instance_id);
         if !host.trim().is_empty() {
             local.node_name = host.trim().to_string();
         }
@@ -317,13 +334,38 @@ impl EdgeLink for Hook {
     }
 
     fn unpair(&self) -> Result<(), Error> {
-        let dialer = lock(&self.dialer).take();
-        let told = match dialer {
-            Some(dialer) => crate::edge::block_on(async move { dialer.unpair().await })?,
+        let dialer = lock(&self.dialer).take().map(Arc::new);
+        let told = match &dialer {
+            Some(dialer) => {
+                let unpairing = Arc::clone(dialer);
+                crate::edge::block_on(async move { unpairing.unpair().await })?
+            }
             None => Ok(()),
         };
-        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN])?;
-        for name in [NODE_URL, NODE_KEY, NODE_PIN] {
+        // the dialer stopped: wait for its link's work to end (the media row's heartbeat among it), then the edge
+        // node is no media node of this node's calls any more: its rows go, whether or not a link came up since this
+        // process started, and so does its TURN secret (plans/Edge-Node.md §5.4)
+        if let Some(dialer) = dialer {
+            let waiting = std::time::Instant::now();
+            while is_linked(&dialer) && waiting.elapsed() < LINK_WAIT {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            drop(dialer);
+        }
+        let factory = self.factory()?;
+        moqui_core::edge::media::clear_peer_turn(&factory);
+        if let Some(facade) = factory.entity() {
+            let removed = facade.find("moqui.call.CallMediaNode").and_then(|find| {
+                find.eq("edgeLinked", moqui_lib::object::Value::string("Y"))
+                    .disable_authz()
+                    .delete_all()
+            });
+            if let Err(err) = removed {
+                tracing::warn!("Unpaired, but the edge node's call media row was not removed: {err}");
+            }
+        }
+        moqui_lib::env::update_dotenv_file(&self.env_path()?, &[], &[NODE_URL, NODE_KEY, NODE_PIN, NODE_ID])?;
+        for name in [NODE_URL, NODE_KEY, NODE_PIN, NODE_ID] {
             moqui_lib::env::clear_property(name);
         }
         // nothing more goes to that edge node: replication stops noting writes, and the outbox fails, kept for

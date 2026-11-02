@@ -38,6 +38,10 @@
 //!   connection, before any TLS, and the SSH and XMPP tunnel ports' go down as byte tunnels ([`tunnel`]).
 //! - **Generations.** Each new up connection bumps the local node's link generation on the edge node; the connections of
 //!   an older one are closed and their calls refused, so a stale connection cannot answer or acknowledge.
+//! - **Calls** (§5.4, E7). An edge node with call media is a media node of its local node's calls: its Hello names its
+//!   media address and TURN URLs, its Hello answer carries its TURN secret, and the local node keeps its
+//!   `CallMediaNode` row from the link ([`dial`]). A message on a cluster topic for the node at the other end (call
+//!   signaling) goes over `Link.Signal` and `LocalLink.Signal` ([`signal`], `moqui_core::edge::signal`).
 //! - **Liveness.** HTTP/2 PINGs every 15 s keep NAT mappings open; a lost link is dialed again with a backoff from 1 s to
 //!   30 s ([`dial`]); a refused node waits up to 10 minutes.
 //!
@@ -64,6 +68,7 @@ mod probe;
 pub(crate) mod proto;
 mod queue;
 mod replicate;
+mod signal;
 mod store;
 pub(crate) mod tunnel;
 pub(crate) mod web;
@@ -177,6 +182,26 @@ pub(crate) async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> std::io
     Ok((Answer::from_code(head[0]), String::from_utf8_lossy(&text).into_owned()))
 }
 
+/// Ok when the edge node's Hello names the id this node pinned for it (`pinned`; any when none is pinned yet), and that
+/// id is not this node's own (`own`), else what to tell the operator. Whether it is a live member of this node's
+/// cluster is checked apart, with the database. An edge node that took another media node's id would get that node's
+/// call signaling and media row (plans/Edge-Node.md §5.4).
+pub(crate) fn check_edge_id(pinned: &str, seen: &str, own: &str) -> Result<(), String> {
+    if seen.is_empty() {
+        return Err("the edge node's Hello names no instance id".to_string());
+    }
+    if !pinned.is_empty() && pinned != seen {
+        return Err(format!(
+            "the edge node's instance id changed from {pinned} to {}, so pair again",
+            seen.chars().take(40).collect::<String>()
+        ));
+    }
+    if seen == own {
+        return Err("the edge node names this node's own instance id".to_string());
+    }
+    Ok(())
+}
+
 /// Ok when `theirs` is at most one link protocol version from `ours`, else what to tell the operator.
 pub fn check_versions(ours: u32, theirs: u32, peer: &str) -> Result<(), String> {
     if theirs == 0 {
@@ -223,6 +248,9 @@ pub(crate) fn hello(
         public_names: public_names.to_vec(),
         instance_id: instance_id.to_string(),
         node_name: node_name.to_string(),
+        media_address: String::new(),
+        turn_urls: Vec::new(),
+        media_started_ms: 0,
     }
 }
 
@@ -237,6 +265,10 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
         features: hello.features.clone(),
         capabilities: hello.capabilities.clone(),
         public_names: hello.public_names.clone(),
+        instance_id: hello.instance_id.clone(),
+        media_address: hello.media_address.clone(),
+        turn_urls: hello.turn_urls.clone(),
+        media_started_ms: i64::try_from(hello.media_started_ms).unwrap_or(0),
         compatible: checked.is_ok(),
         message: checked.err().unwrap_or_default(),
     }
@@ -441,6 +473,9 @@ fn tunnel_bind(port_name: &str, host_name: &str, what: &str) -> Option<std::net:
 }
 
 /// A paired local node's link settings: from `edge_node_url`, `edge_node_key` and `edge_node_pin`, or from a test.
+/// Keeps an edge node's instance id once a first link pinned it ([`LocalConfig::on_pin`]).
+pub type OnPin = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct LocalConfig {
     /// The edge node: `https://host` or `https://host:port`.
@@ -449,6 +484,12 @@ pub struct LocalConfig {
     pub key: String,
     /// SHA-256 of the edge node's link key, hex.
     pub pin: String,
+    /// The edge node's instance id, pinned at pairing (`edge_node_id`): a link whose Hello names another is refused.
+    /// Empty for a node paired before E7: the first id a link names is pinned then ([`LocalConfig::on_pin`]).
+    pub edge_id: String,
+    /// Keeps the id pinned on a first link when [`LocalConfig::edge_id`] was empty (the hook writes it to
+    /// `runtime/.env`); none keeps it only for the dialer's life.
+    pub on_pin: Option<OnPin>,
     /// This node's instance id, which the edge node keys its rows by.
     pub instance_id: String,
     pub node_name: String,
@@ -474,6 +515,8 @@ impl LocalConfig {
             url: url.to_string(),
             key: key.to_string(),
             pin: pin.to_string(),
+            edge_id: String::new(),
+            on_pin: None,
             instance_id: instance_id.to_string(),
             node_name: instance_id.to_string(),
             backoff: Backoff::default(),
@@ -498,6 +541,7 @@ impl LocalConfig {
             &get(moqui_core::edge::NODE_PIN),
             instance_id,
         );
+        config.edge_id = get(moqui_core::edge::NODE_ID);
         let host = get("webapp_http_host");
         if !host.is_empty() {
             config.node_name = host;
@@ -512,6 +556,7 @@ impl std::fmt::Debug for LocalConfig {
             .field("url", &self.url)
             .field("key", &"<redacted>")
             .field("pin", &self.pin)
+            .field("edge_id", &self.edge_id)
             .field("instance_id", &self.instance_id)
             .field("node_name", &self.node_name)
             .field("backoff", &self.backoff)

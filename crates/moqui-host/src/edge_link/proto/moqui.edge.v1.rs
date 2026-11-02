@@ -23,6 +23,17 @@ pub struct Hello {
     /// A name to show the operator of the other end.
     #[prost(string, tag = "7")]
     pub node_name: ::prost::alloc::string::String,
+    /// The edge node's, when it is a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): the address
+    /// browsers send media to (rtc_public_address, else the media socket's), empty when its media socket is off.
+    #[prost(string, tag = "8")]
+    pub media_address: ::prost::alloc::string::String,
+    /// The edge node's: its embedded TURN listeners as turn: and turns: URLs; empty without TURN.
+    #[prost(string, repeated, tag = "9")]
+    pub turn_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The edge node's: when its media socket started (epoch milliseconds), 0 when it is off. The local node keeps it as
+    /// the CallMediaNode row's startedDate, so a recording that began before the edge node restarted is failed.
+    #[prost(uint64, tag = "10")]
+    pub media_started_ms: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProbeRequest {}
@@ -66,6 +77,11 @@ pub struct HelloReply {
     /// The link generation of this up connection; the down connection names it.
     #[prost(uint64, tag = "2")]
     pub generation: u64,
+    /// The edge node's turn_auth_secret, when its embedded TURN is on (E7): the local node signs its legs' TURN
+    /// credentials for the edge node's TURN with it. Only here, on an up connection whose key the edge node pinned, never
+    /// in a Hello (which Probe tells anyone); the local node keeps it in memory and never logs or stores it.
+    #[prost(string, tag = "3")]
+    pub turn_secret: ::prost::alloc::string::String,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PingRequest {
@@ -104,6 +120,27 @@ pub struct QueueItem {
     #[prost(uint32, tag = "7")]
     pub attempts: u32,
 }
+/// A message of a cluster topic for one node, which is the link's other end (E7): the rtc-signal frames, replies and
+/// controls of calls whose media is on the edge node (moqui_core::cluster::send_to, plans/Edge-Node.md §5.4). The
+/// receiver publishes it on its own notification bus, and only on the topics it takes (rtc-signal).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SignalMessage {
+    /// The link generation the sender is on.
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(string, tag = "2")]
+    pub topic: ::prost::alloc::string::String,
+    /// The sending process's notification bus id, and the message's id.
+    #[prost(string, tag = "3")]
+    pub origin_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub message_id: ::prost::alloc::string::String,
+    /// The message's body, a JSON object that names its target node.
+    #[prost(string, tag = "5")]
+    pub body_json: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SignalReply {}
 /// A part of a queued item's content (a body too large for its payload: a message, a media file), sent before the
 /// item's Deliver. The receiver keeps it under a location of its own, keyed by the item's id, and the Deliver that
 /// follows names that location; the receiver removes it once the item is applied.
@@ -729,6 +766,27 @@ pub mod link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.Link", "Configure"));
             self.inner.unary(req, path, codec).await
         }
+        /// The local node's messages for the edge node on cluster topics (E7), in order, while the link lasts.
+        pub async fn signal(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::SignalMessage>,
+        ) -> std::result::Result<tonic::Response<super::SignalReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/Signal",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut().insert(GrpcMethod::new("moqui.edge.v1.Link", "Signal"));
+            self.inner.client_streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -793,6 +851,11 @@ pub mod link_server {
             &self,
             request: tonic::Request<super::ConfigureRequest>,
         ) -> std::result::Result<tonic::Response<super::ConfigureReply>, tonic::Status>;
+        /// The local node's messages for the edge node on cluster topics (E7), in order, while the link lasts.
+        async fn signal(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::SignalMessage>>,
+        ) -> std::result::Result<tonic::Response<super::SignalReply>, tonic::Status>;
     }
     /// Served by the edge node; the local node calls it on its up connection. Probe is on a check or pairing connection and
     /// Pair on a pairing connection (ALPN moqui-edge-pair/1, the web certificate); the others on an up connection (ALPN
@@ -1307,6 +1370,53 @@ pub mod link_server {
                     };
                     Box::pin(fut)
                 }
+                "/moqui.edge.v1.Link/Signal" => {
+                    #[allow(non_camel_case_types)]
+                    struct SignalSvc<T: Link>(pub Arc<T>);
+                    impl<
+                        T: Link,
+                    > tonic::server::ClientStreamingService<super::SignalMessage>
+                    for SignalSvc<T> {
+                        type Response = super::SignalReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::SignalMessage>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::signal(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SignalSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 _ => {
                     Box::pin(async move {
                         let mut response = http::Response::new(
@@ -1542,6 +1652,28 @@ pub mod local_link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "PutContent"));
             self.inner.client_streaming(req, path, codec).await
         }
+        /// The edge node's messages for the local node on cluster topics (E7), in order, while the link lasts.
+        pub async fn signal(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::SignalMessage>,
+        ) -> std::result::Result<tonic::Response<super::SignalReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/Signal",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Signal"));
+            self.inner.client_streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1580,6 +1712,11 @@ pub mod local_link_server {
             &self,
             request: tonic::Request<tonic::Streaming<super::ContentChunk>>,
         ) -> std::result::Result<tonic::Response<super::PutContentReply>, tonic::Status>;
+        /// The edge node's messages for the local node on cluster topics (E7), in order, while the link lasts.
+        async fn signal(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::SignalMessage>>,
+        ) -> std::result::Result<tonic::Response<super::SignalReply>, tonic::Status>;
     }
     /// Served by the local node on its down connection; the edge node calls it.
     #[derive(Debug)]
@@ -1866,6 +2003,53 @@ pub mod local_link_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = PutContentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/Signal" => {
+                    #[allow(non_camel_case_types)]
+                    struct SignalSvc<T: LocalLink>(pub Arc<T>);
+                    impl<
+                        T: LocalLink,
+                    > tonic::server::ClientStreamingService<super::SignalMessage>
+                    for SignalSvc<T> {
+                        type Response = super::SignalReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::SignalMessage>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::signal(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SignalSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

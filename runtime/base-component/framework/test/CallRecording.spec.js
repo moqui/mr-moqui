@@ -11,6 +11,7 @@ const B = "REC_SPEC_B"
 const C = "REC_SPEC_C"
 const D = "REC_SPEC_D"
 const NODE = "rec-spec-node"
+const EDGE_NODE = "rec-spec-edge-node"
 const RECORDING = "moqui.call.CallRecording"
 const CONSENT = "moqui.call.CallRecordingConsent"
 const SEGMENT = "moqui.call.CallRecordingSegment"
@@ -26,7 +27,7 @@ function sys(run) {
 }
 // as the Calls screens' transitions call them: the services check the signed-in user's part in the call themselves
 function as(userId, name, parameters) {
-    ec.user.internalLoginUser(userId.toLowerCase().replace(/_/g, "."))
+    ec.user.internalLoginUser(userId.startsWith("_") ? userId : userId.toLowerCase().replace(/_/g, "."))
     let out = {}
     let thrown = ""
     try {
@@ -410,5 +411,55 @@ feature("a recording whose media node restarted since it began has no recorder: 
         row.statusId == "CrsFailed"
         row.lastErrorText.includes("restarted")
         callNow.call.status == "active"
+    }
+})
+
+feature("an edge node's recorder's segment and end come through the edge link's queue, stored from its copy, for the queue's user only", {
+    when() {
+        setProperty("call_recording_enabled", "true")
+        const started = as(A, calls("start#Call"), {calleeUserIdList: [B]})
+        as(B, calls("answer#Call"), {callSessionId: started.callSessionId})
+        const rec = as(A, "start#Recording", {callSessionId: started.callSessionId})
+        // the queue's copy of the item's content, as the link's receiver keeps it (plans/Edge-Node.md §5.2, §5.4)
+        const received = "dbresource://moqui/edge/content/in/spec-edge-node/spec-edge-item-1.r1"
+        sys(() => ec.resource.getLocationReference(received).putText("OggS an edge node's segment"))
+        const segment = {op: "segment", parameters: {callRecordingId: rec.callRecordingId, trackKind: "audio", source: "microphone",
+            codec: "opus", contentType: "audio/ogg", segmentPeriod: 1, segmentSeq: 1, startOffsetMs: 0, durationMs: 1000}}
+        const item = payload => ({queueItemId: "spec-edge-item-1", pairedNodeId: "spec-edge-node", kind: "callRecording",
+            conversationKey: "callRecording:" + rec.callRecordingId, payload: JSON.stringify(payload), contentLocation: received})
+        const byUser = as(A, "receive#EdgeRecording", item(segment))
+        // the call's media is on another media node, not this node's edge node: refused with the same item
+        const notOnEdge = as("_edge_", "receive#EdgeRecording", item(segment))
+        sys(() => {
+            call(calls("register#MediaNode"), {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000", edgeLinked: true})
+            const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", started.callSessionId).one()
+            s.set("mediaNodeId", EDGE_NODE)
+            s.update()
+        })
+        const byQueue = as("_edge_", "receive#EdgeRecording", item(segment))
+        const outside = as("_edge_", "receive#EdgeRecording", Object.assign(item(segment),
+            {contentLocation: "dbresource://moqui/call/recording/" + rec.callRecordingId + "/elsewhere.ogg"}))
+        const stored = sys(() => Array.from(ec.entity.find(SEGMENT).condition("callRecordingId", rec.callRecordingId).list()))
+        const text = stored.length ? sys(() => ec.resource.getLocationReference(stored[0].contentLocation).getText()) : null
+        const ended = as("_edge_", "receive#EdgeRecording", item({op: "end", callRecordingId: rec.callRecordingId,
+            outcome: "failed", errorText: "the edge node's recorder fell behind"}))
+        const row = recording(rec.callRecordingId)
+        as(A, calls("end#Call"), {callSessionId: started.callSessionId})
+        sys(() => ec.resource.getLocationReference(received).delete())
+        sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).deleteAll())
+        return {rec, byUser, notOnEdge, byQueue, outside, stored, text, ended, row}
+    },
+    then({rec, byUser, notOnEdge, byQueue, outside, stored, text, ended, row}) {
+        rec.recording.state == "recording"
+        byUser.errors.includes("Only the edge link queue")
+        notOnEdge.errors.includes("only recordings of calls whose media is on it")
+        byQueue.errors == ""
+        outside.errors.includes("is not the content of an item the edge link received")
+        stored.length == 1
+        stored[0].contentLocation.startsWith("dbresource://moqui/call/recording/" + rec.callRecordingId + "/")
+        text == "OggS an edge node's segment"
+        ended.errors == ""
+        row.statusId == "CrsFailed"
+        row.lastErrorText.includes("fell behind")
     }
 })

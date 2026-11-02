@@ -300,6 +300,24 @@ pub fn publish(facade: &EntityFacade, topic: &'static str, message: &TopicMessag
 }
 
 /// Whether `facade`'s factory posts to cluster peers, whose sockets may have the users of a notification.
+/// Whether `instance_id` is a live member of this factory's cluster (its heartbeat within the window): an edge node
+/// that names a member's id is refused (plans/Edge-Node.md §5.4).
+///
+/// # Errors
+///
+/// When the member rows cannot be read.
+pub fn is_live_member(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    instance_id: &str,
+) -> Result<bool, Error> {
+    let now = db_now(facade);
+    let window = window_millis(factory);
+    Ok(load_members(facade)?
+        .iter()
+        .any(|member| member.instance_id == instance_id && is_live(member.heartbeat, now, window)))
+}
+
 pub fn is_linked(facade: &EntityFacade) -> bool {
     linked_state(facade).is_some()
 }

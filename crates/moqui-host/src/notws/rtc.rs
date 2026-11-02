@@ -447,6 +447,44 @@ pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64
     });
 }
 
+/// A reply of the edge node `edge`'s media driver for a socket here (plans/Edge-Node.md §5.4, E7), from the link. A
+/// compromised edge node must not reach any socket of this server, so it is delivered only to a socket that bound a
+/// leg of that call whose media is on `edge`: the frame names the call (`callSessionId`, topic `rtc:<call>`) and the
+/// leg (`to`, else `callLegId`), and the message targets this node.
+pub(crate) fn deliver_edge_reply(edge: &str, message: &TopicMessage) -> Result<(), String> {
+    let Some(factory) = lock(factory_ref()).upgrade() else {
+        return Err("the server is stopping".to_string());
+    };
+    if edge.is_empty() || !moqui_core::cluster::for_this_member(&factory, message) {
+        return Err("a reply for another node".to_string());
+    }
+    let body = &message.body;
+    let (Some(socket), Some(frame)) = (body.get("socketId").and_then(Json::as_u64), body.get("frame")) else {
+        return Err("a reply without its socket or frame".to_string());
+    };
+    let text = |k: &str| frame.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    let call = text("callSessionId");
+    let leg = frame
+        .get("to")
+        .and_then(Json::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| text("callLegId"));
+    if call.is_empty() || leg.is_empty() || text("topic") != format!("rtc:{call}") {
+        return Err("a reply that names no call and leg".to_string());
+    }
+    let bound = lock(bindings()).get(&socket).is_some_and(|list| {
+        list.iter()
+            .any(|b| b.call == call && b.leg == leg && b.media_node == edge)
+    });
+    if !bound {
+        return Err(format!(
+            "no socket here bound leg {leg} of call {call} with its media on the edge node"
+        ));
+    }
+    super::push_to_socket(socket, frame.to_string());
+    Ok(())
+}
+
 /// A message on `rtc-signal` for this node: a frame for the media here, a reply for a socket here, or a control
 /// message of the call services.
 fn deliver_signal(message: &TopicMessage) {

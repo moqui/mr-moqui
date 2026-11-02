@@ -16,7 +16,9 @@ use std::time::Duration;
 
 use super::pair::{parse_url, EdgeUrl, Identity};
 use super::store::normalize_code;
-use super::{check_versions, edge_info, hello, read_answer, write_answer, Answer, Backoff, LINK_VERSION};
+use super::{
+    check_edge_id, check_versions, edge_info, hello, read_answer, write_answer, Answer, Backoff, LINK_VERSION,
+};
 
 #[test]
 fn versions_one_apart_link_and_further_apart_are_refused_plainly() {
@@ -168,4 +170,13 @@ fn xmpp_tunnels_go_to_the_named_node_or_else_the_only_one_linked() {
         super::offer::xmpp_node(&config, "b", &linked(&["a", "b"])),
         (false, false)
     );
+}
+
+#[test]
+fn the_edge_node_s_instance_id_is_the_pinned_one_and_never_this_node_s() {
+    assert!(check_edge_id("", "edge-1", "local-1").is_ok(), "pinned on a first link");
+    assert!(check_edge_id("edge-1", "edge-1", "local-1").is_ok());
+    assert!(check_edge_id("edge-1", "member-2", "local-1").is_err_and(|err| err.contains("changed from edge-1")));
+    assert!(check_edge_id("", "local-1", "local-1").is_err_and(|err| err.contains("own instance id")));
+    assert!(check_edge_id("", "", "local-1").is_err());
 }

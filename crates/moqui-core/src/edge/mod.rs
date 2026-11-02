@@ -31,9 +31,11 @@ use moqui_lib::sync::InstallSlot;
 
 pub mod conf;
 pub mod delegate;
+pub mod media;
 pub mod queue;
 pub mod replica;
 pub mod setup;
+pub mod signal;
 
 pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
 pub use setup::{Configured, EdgeOffer, EdgeSetup};
@@ -47,6 +49,9 @@ pub const NODE_ROLE: &str = "node_role";
 pub const NODE_URL: &str = "edge_node_url";
 pub const NODE_KEY: &str = "edge_node_key";
 pub const NODE_PIN: &str = "edge_node_pin";
+/// The edge node's instance id, pinned at pairing beside its key (E7): the node its calls' media is on, which a link
+/// whose Hello names another id is refused for, so an edge node cannot take another media node's id.
+pub const NODE_ID: &str = "edge_node_id";
 /// An edge node's long-lived link key (a generated secret), which its up and down connections present instead of the
 /// web certificate, so a renewed web certificate does not break a link.
 pub const LINK_KEY: &str = "edge_link_key";
@@ -105,6 +110,15 @@ pub struct EdgeInfo {
     pub features: Vec<String>,
     pub capabilities: Vec<String>,
     pub public_names: Vec<String>,
+    /// The edge node's instance id: the node its calls' media is on (`CallMediaNode.instanceId`) and what
+    /// [`signal`] routes a message for it by (E7).
+    pub instance_id: String,
+    /// The address browsers send the media of its calls to; empty when its media socket is off (E7).
+    pub media_address: String,
+    /// Its embedded TURN listeners as `turn:` and `turns:` URLs; empty without TURN (E7).
+    pub turn_urls: Vec<String>,
+    /// When its media socket started (epoch milliseconds), 0 when it is off (E7).
+    pub media_started_ms: i64,
     /// The link versions are close enough to link.
     pub compatible: bool,
     /// Why not, when not compatible.

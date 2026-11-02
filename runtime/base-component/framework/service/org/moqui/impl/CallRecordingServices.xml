@@ -286,7 +286,8 @@ along with this software (see the LICENSE.md file). If not, see
             is stored at dbresource://moqui/call/recording/(callRecordingId)/(segment id).(ogg or webm) through
             store#RecordingFile, with its track (made the first time: by leg and source, or the mix) and segment rows.
             trackEnded: the track's last segment (its leg left, or the recording stopped). A segment of a recording that is
-            gone or failed is dropped with its file.</description>
+            gone or failed is dropped with its file. On a local node, a segment its edge node's recorder queued comes as
+            fromLocation, the queue's copy of its file, instead of tempPath (receive#EdgeRecording).</description>
         <in-parameters>
             <parameter name="callRecordingId" required="true"/>
             <parameter name="callLegId"/>
@@ -300,7 +301,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="durationMs" type="Long"/>
             <parameter name="fromDate" type="Timestamp"/>
             <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="tempPath" required="true"/>
+            <parameter name="tempPath"/>
+            <parameter name="fromLocation"><description>Where this node's edge link queue keeps a received item's content
+                (dbresource://moqui/edge/content/in/), for a segment of an edge node's recorder</description></parameter>
             <parameter name="trackEnded" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
@@ -315,9 +318,13 @@ along with this software (see the LICENSE.md file). If not, see
             authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: moves a recorder's spooled file (tempPath, which must be under the runtime's
             tmp/call-recording) to contentLocation (under dbresource://moqui/call/recording/), and deletes the spooled file.
-            byteSize is what was stored. A path outside the spool, or a location outside the recordings' root, is refused.</description>
+            byteSize is what was stored. A path outside the spool, or a location outside the recordings' root, is refused.
+            Or fromLocation, the content of an item this node's edge link queue received (under
+            dbresource://moqui/edge/content/in/; plans/Edge-Node.md §5.4), copied to contentLocation; the queue removes
+            its copy. Any other location is refused.</description>
         <in-parameters>
-            <parameter name="tempPath" required="true"/>
+            <parameter name="tempPath"/>
+            <parameter name="fromLocation"/>
             <parameter name="contentLocation" required="true"/>
         </in-parameters>
         <out-parameters>
@@ -336,5 +343,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="errorText"/>
         </in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('recorderEnd', context))</script></actions>
+    </service>
+
+    <service verb="receive" noun="EdgeRecording" allow-remote="false">
+        <description>On a local node, the edge link's queue kind callRecording (MoquiDefaultConf.xml edge, plans/Edge-Node.md
+            §5.4): what its edge node's recorder, the media node of this node's calls, made. The payload is a segment
+            ({op: 'segment', parameters} of store#RecordingSegment, its file the item's content at contentLocation) or the
+            recorder's end ({op: 'end', callRecordingId, outcome, errorText} of note#RecorderEnd), queued in the
+            recording's conversation, so the end never overtakes a segment. Run only for the queue, as _edge_; an error
+            rolls the receipt back and the item is tried again.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/CallRecordings.js').execute('receiveEdge', context))</script></actions>
     </service>
 </services>

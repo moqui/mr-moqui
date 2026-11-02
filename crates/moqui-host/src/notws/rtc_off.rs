@@ -46,6 +46,12 @@ pub(super) fn socket_closed(_factory: &Arc<ExecutionContextFactory>, _slot_id: u
 
 pub(crate) fn install(_factory: &Arc<ExecutionContextFactory>, _shutdown: tokio::sync::watch::Receiver<bool>) {}
 
+/// No calls here, so no reply of an edge node's media driver is for a socket of this server.
+#[allow(dead_code, reason = "the edge link's receiver calls it when built with edge")]
+pub(crate) fn deliver_edge_reply(_edge: &str, _message: &moqui_core::notify::TopicMessage) -> Result<(), String> {
+    Err("calls are not built into this server (the rtc feature)".to_string())
+}
+
 /// No `/callws` without calls: a guest's page is told the link does not work.
 pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
     app

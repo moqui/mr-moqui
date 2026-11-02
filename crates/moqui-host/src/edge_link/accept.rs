@@ -49,7 +49,8 @@ use super::proto::link_server::{Link, LinkServer};
 use super::proto::{
     ConfigureReply, ConfigureRequest, ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply,
     HelloRequest, LocalHelloRequest, Offer, OfferRequest, PairReply, PairRequest, PingReply, PingRequest, ProbeReply,
-    ProbeRequest, PutContentReply, ReplicateReply, ReplicateRequest, UnpairReply, UnpairRequest,
+    ProbeRequest, PutContentReply, ReplicateReply, ReplicateRequest, SignalMessage, SignalReply, UnpairReply,
+    UnpairRequest,
 };
 use super::store::{self, Paired};
 use super::{
@@ -466,12 +467,40 @@ impl EdgeServer {
     }
 
     fn hello(&self) -> Hello {
-        hello(
+        let mut hello = hello(
             &self.config.instance_id,
             &self.config.name,
             &self.config.capabilities,
             &self.config.public_names,
-        )
+        );
+        // a media node of its local nodes' calls (plans/Edge-Node.md §5.4, E7): its media address and TURN URLs
+        if let Some(advert) = self.media() {
+            hello.media_address = advert.media_address;
+            hello.turn_urls = advert.turn_urls;
+            hello.media_started_ms = u64::try_from(advert.started_ms).unwrap_or(0);
+        }
+        hello
+    }
+
+    /// What this node's media node advertises, while its media socket is up.
+    fn media(&self) -> Option<moqui_core::edge::media::MediaAdvert> {
+        let factory = self.factory.upgrade()?;
+        moqui_core::edge::media::advert(&factory).filter(|advert| !advert.media_address.is_empty())
+    }
+
+    /// The secret this node's embedded TURN checks credentials with, while it runs: for a local node's Hello answer
+    /// only, so it signs the credentials of this node's TURN URLs (E7). Empty without TURN.
+    fn turn_secret(&self) -> String {
+        if self.media().is_none_or(|advert| advert.turn_urls.is_empty()) {
+            return String::new();
+        }
+        let secret = moqui_lib::env::get_prop_or_env("turn_auth_secret");
+        let secret = secret.trim();
+        if secret.is_empty() || secret.ends_with("CHANGEME") {
+            String::new()
+        } else {
+            secret.to_string()
+        }
     }
 
     /// The generation of `node`'s live link, or 0.
@@ -839,6 +868,14 @@ impl EdgeServer {
             return;
         }
         tracing::info!("Edge link of {node} is up (generation {generation}, from {remote})");
+        // the messages of the node's calls whose media is here go down while this connection lasts (E7)
+        let (route, signals) = super::signal::route(&node, generation);
+        let signal_client = send.clone();
+        let signaling = tokio::spawn(super::signal::forward(signals, move |messages| {
+            let mut client = super::local_link_client(signal_client.clone());
+            let call: super::signal::Call = Box::pin(async move { client.signal(messages).await.map(drop) });
+            call
+        }));
         // the node's queued items go down while this connection lasts (plans/Edge-Node.md §5.2)
         let delivery = tokio::spawn(super::queue::deliver(
             Weak::clone(&self.factory),
@@ -850,6 +887,8 @@ impl EdgeServer {
         ));
         let _ = driver.await;
         delivery.abort();
+        signaling.abort();
+        drop(route);
         let mut registry = lock(&self.registry);
         if let Some(link) = registry
             .links
@@ -1195,6 +1234,7 @@ impl Link for LinkService {
         Ok(Response::new(HelloReply {
             hello: Some(self.server.hello()),
             generation,
+            turn_secret: self.server.turn_secret(),
         }))
     }
 
@@ -1226,6 +1266,19 @@ impl Link for LinkService {
         }
         // the up connection is the generation; the chunks' own is not checked again
         let reply = super::queue::receive_content(&self.server.factory, node, request.into_inner(), |_| Ok(())).await?;
+        Ok(Response::new(reply))
+    }
+
+    async fn signal(&self, request: Request<tonic::Streaming<SignalMessage>>) -> Result<Response<SignalReply>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        // the up connection is the generation; each message's own is not checked again. Only what this node may send
+        // is taken, its frames' replies addressed to itself (E7)
+        let server = Arc::clone(&self.server);
+        let take = super::signal::edge_takes(node, move || server.linked_nodes().len());
+        let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }
 

@@ -23,7 +23,7 @@ use moqui_rtc::audio::opus::OpusEncoder;
 use moqui_rtc::audio::FRAME;
 use moqui_rtc::record::{ClosedSegment, RecordConfig, TrackKind};
 
-use super::{notice_kept, recorders, tell, Control, Ended, Limits, Session, Store};
+use super::{notice_kept, recorders, tell, Control, Ended, Limits, Session, Store, EDGE_SEGMENT_MB};
 use crate::rtc::media::{Kind, OwnedFrame, Source, TapEvent};
 
 /// A store that keeps each segment's bytes, read from its spooled file as it is handed over.
@@ -261,6 +261,29 @@ fn the_limits_come_from_the_properties() {
         limits.record.max_total_bytes,
         2_048 * 1024 * 1024,
         "a bad number is the default"
+    );
+}
+
+#[test]
+fn an_edge_node_s_segments_fit_the_link_queue_s_content() {
+    let props = |name: &str| match name {
+        "call_recording_segment_mb" => "100".to_string(),
+        _ => String::new(),
+    };
+    let edge = Limits::from_properties(&props, false).for_edge();
+    assert_eq!(edge.record.max_segment_bytes, EDGE_SEGMENT_MB * 1024 * 1024);
+    assert!(edge.record.max_segment_bytes < moqui_core::edge::queue::MAX_CONTENT_BYTES as u64);
+    // a smaller setting stays
+    let small = |name: &str| match name {
+        "call_recording_segment_mb" => "16".to_string(),
+        _ => String::new(),
+    };
+    assert_eq!(
+        Limits::from_properties(&small, false)
+            .for_edge()
+            .record
+            .max_segment_bytes,
+        16 * 1024 * 1024
     );
 }
 
