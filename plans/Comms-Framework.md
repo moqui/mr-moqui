@@ -1299,7 +1299,7 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 - **Messages:** the PWA, with web push.
 - **Native chat apps:** XMPP clients (C3a), which push through their own services (XEP-0357), and Element X with C6a.
 - **Native calls:** SIP soft phones registered to Moqui (V4).
-- **A native Moqui app:** later ([Usability](proposals/Usability.md)).
+- **A native Moqui app:** [Mobile-Desktop](Mobile-Desktop.md).
 
 ### 7.3 Verification and rollout
 
