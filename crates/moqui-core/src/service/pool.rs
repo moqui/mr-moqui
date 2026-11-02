@@ -944,6 +944,8 @@ fn worker_loop(shared: Arc<Shared>) {
     }
 }
 
+/// The next work item, counted active under the lock that takes it off the queue, so the pool never looks empty
+/// (nothing queued, nothing active) between the two: `waitWorkerPoolEmpty` would return before the work ran.
 fn next_work(shared: &Shared) -> Option<Work> {
     let mut state = lock(&shared.state);
     loop {
@@ -951,6 +953,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
             return None;
         }
         if let Some(work) = state.queue.pop_front() {
+            state.active += 1;
             if state.stop && state.queue.is_empty() {
                 // Tell the shutdown waiting in `drain` that the queue is empty.
                 shared.wake.notify_all();
@@ -964,8 +967,8 @@ fn next_work(shared: &Shared) -> Option<Work> {
     }
 }
 
+/// Run work `next_work` took, which counted it active.
 fn run_work(shared: &Shared, work: Work) {
-    lock(&shared.state).active += 1;
     match work {
         Work::Job(run) => run_job_work(run),
         Work::Closure(job) => run_closure(shared, job),
@@ -1401,6 +1404,37 @@ mod tests {
             *captured.downcast::<Option<crate::telemetry::TraceContext>>().unwrap(),
             Some(context)
         );
+    }
+
+    /// Work taken off the queue is active at once: there is no moment with nothing queued and nothing active while it
+    /// waits to run (`waitWorkerPoolEmpty` returned before an after-commit send ran).
+    #[test]
+    fn work_taken_off_the_queue_is_counted_active_under_the_same_lock() {
+        let pools = ServicePools::bounded(1, 4);
+        let shared = pools.shared_handle();
+        // The one worker runs a task that waits, so the next is taken here, not by it.
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        pools
+            .submit_task(move || {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv_timeout(Duration::from_secs(10));
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        super::lock(&shared.state)
+            .queue
+            .push_back(super::Work::Task(Box::new(|| {})));
+        let work = super::next_work(&shared).expect("the queued task");
+        let status = pools.status();
+        assert_eq!((status.queued, status.active), (0, 2));
+        super::run_work(&shared, work);
+        release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while pools.status().active > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(pools.status().active, 0);
     }
 
     #[test]
