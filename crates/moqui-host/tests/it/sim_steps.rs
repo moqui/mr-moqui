@@ -130,7 +130,7 @@ fn read_names(read: &Json) -> Vec<String> {
 
 /// Four steps and a read after each: a failed step in the middle is rolled back alone, each step lists only its own
 /// rows, created ids are the sim's negative ones, and production keeps none of it. A user whom a step's service does
-/// not allow gets that step refused.
+/// not allow gets that step refused; the system (no user, authorization disabled) runs them.
 #[test]
 fn steps_run_in_one_sim_each_under_its_own_savepoint() {
     if !crate::common::own_process() {
@@ -228,7 +228,7 @@ fn steps_run_in_one_sim_each_under_its_own_savepoint() {
     let plain = steps::run(
         &factory,
         &StepsRequest {
-            username: "sim.plain",
+            username: Some("sim.plain"),
             label: "a plain user's steps",
             steps: std::slice::from_ref(&call),
             read: None,
@@ -243,6 +243,64 @@ fn steps_run_in_one_sim_each_under_its_own_savepoint() {
         "{error}"
     );
     assert_eq!(names(&factory), ["Production"]);
+
+    // The system (no user, authorization disabled, as a service job runs) runs the steps with authorization disabled;
+    // with no user and authorization on, the call is refused.
+    let system = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let parameters = BTreeMap::from([
+            (
+                "steps".to_string(),
+                Value::List(vec![step("make#Widget", serde_json::json!({"widgetName": "System"}))]),
+            ),
+            ("read".to_string(), step("count#Widgets", serde_json::json!({}))),
+        ]);
+        let out = moqui_core::service::sync("org.moqui.impl.SimServices.run#Steps", &parameters).unwrap();
+        assert!(
+            context.message().errors().is_empty(),
+            "{:?}",
+            context.message().errors()
+        );
+        moqui_lib::json::to_json(&Value::Map(out.into_iter().collect()))
+    };
+    assert_eq!(system["available"], true, "{system}");
+    assert_eq!(system["steps"][0]["ok"], true, "{system}");
+    assert_eq!(read_names(&system), ["Production", "System"], "{system}");
+    assert_eq!(names(&factory), ["Production"]);
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let call = steps::run(
+            &factory,
+            &StepsRequest {
+                username: None,
+                label: "the system's steps",
+                steps: std::slice::from_ref(&call),
+                read: None,
+                read_after_each_step: false,
+            },
+        );
+        assert!(call.available && call.steps[0].ok, "{:?}", call.steps[0].error);
+        let refused = moqui_core::service::sync(
+            "org.moqui.impl.SimServices.run#Steps",
+            &BTreeMap::from([(
+                "steps".to_string(),
+                Value::List(vec![step("make#Widget", serde_json::json!({}))]),
+            )]),
+        );
+        let refused = refused
+            .err()
+            .map(|e| e.to_string())
+            .or_else(|| Some(format!("{:?}", context.message().errors())));
+        assert!(refused.as_deref().unwrap_or_default().contains("logged"), "{refused:?}");
+    }
+    assert_eq!(
+        names(&factory),
+        ["Production"],
+        "production keeps none of the system's steps"
+    );
 
     let took = started.elapsed();
     assert!(took.as_secs() < 10, "the steps took {took:?}");

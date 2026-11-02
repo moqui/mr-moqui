@@ -72,14 +72,16 @@ pub struct StepsRun {
 
 /// What the run asks for.
 pub struct StepsRequest<'a> {
-    pub username: &'a str,
+    /// The user the steps run as; none for the system, with authorization disabled throughout.
+    pub username: Option<&'a str>,
     pub label: &'a str,
     pub steps: &'a [SimCall],
     pub read: Option<&'a SimCall>,
     pub read_after_each_step: bool,
 }
 
-/// Run `request`'s steps in one sim run on a thread of its own, logged in as its user.
+/// Run `request`'s steps in one sim run on a thread of its own, logged in as its user, or as the system (no user,
+/// authorization disabled) with none.
 pub fn run(factory: &Arc<ExecutionContextFactory>, request: &StepsRequest<'_>) -> StepsRun {
     std::thread::scope(|scope| {
         scope.spawn(|| in_sim(factory, request)).join().unwrap_or_else(|_| {
@@ -126,13 +128,17 @@ fn in_sim(factory: &Arc<ExecutionContextFactory>, request: &StepsRequest<'_>) ->
     }
     let context = factory.new_context();
     let _entered = context.enter();
-    {
-        let _authz = context.disable_authz();
-        if let Err(error) = moqui_core::user::internal_login_user(request.username) {
-            tracing::warn!("the sim run of {} could not log in: {error}", request.label);
-            return StepsRun::default();
+    let _system = match request.username {
+        Some(username) => {
+            let _authz = context.disable_authz();
+            if let Err(error) = moqui_core::user::internal_login_user(username) {
+                tracing::warn!("the sim run of {} could not log in: {error}", request.label);
+                return StepsRun::default();
+            }
+            None
         }
-    }
+        None => Some(context.disable_authz()),
+    };
     if let Err(error) = cache::enter_sim(&facade) {
         tracing::warn!("the sim run of {} could not enter the sim: {error}", request.label);
         return StepsRun::default();
@@ -434,16 +440,21 @@ fn read_value(read: &Result<BTreeMap<String, Value>, String>) -> Value {
     }
 }
 
-/// `run#Steps`: the steps in one sim run as the current user. A step that is not a `{serviceName, parameters}` map
-/// fails alone.
+/// `run#Steps`: the steps in one sim run as the current user. With no user and authorization disabled, as internal work
+/// such as a service job runs, they run as the system: no user and authorization disabled. A step that is not a
+/// `{serviceName, parameters}` map fails alone.
 fn run_steps(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Result<BTreeMap<String, Value>, Error> {
     let factory = ExecutionContext::with_current(|context| Arc::clone(context.factory()))
         .ok_or_else(|| Error::new("run#Steps needs an execution context"))?;
     let username = moqui_core::user::current_username()
         .ok()
         .flatten()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| Error::new("run#Steps needs a logged-in user"))?;
+        .filter(|name| !name.is_empty());
+    if username.is_none() && !ExecutionContext::with_current(|context| context.authz_disabled()).unwrap_or(false) {
+        return Err(Error::new(
+            "run#Steps needs a logged-in user, or authorization disabled to run as the system",
+        ));
+    }
     let inputs = list_of(parameters.get("steps"));
     let steps: Vec<SimCall> = inputs.iter().map(|input| sim_call(input).unwrap_or_default()).collect();
     let read = map_of(parameters.get("read")).as_ref().and_then(sim_call);
@@ -459,7 +470,7 @@ fn run_steps(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Re
     let ran = run(
         &factory,
         &StepsRequest {
-            username: &username,
+            username: username.as_deref(),
             label: &label,
             steps: &steps,
             read: read.as_ref(),
