@@ -1,8 +1,9 @@
 # Edge Node
 
-Status 2026-11-01: E0–E4 built; the E4 two-runtime acceptance run (mr-pass over gRPC direct, on the link, and REST) is
-pending. mr-pass reaches its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and
-replicate and E2's web access; no comms use the link yet. Every question in [§8](#8-decisions) is
+Status 2026-11-01: E0–E4 built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct; the run
+on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches its authority
+over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web access; no comms
+use the link yet. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
