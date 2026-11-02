@@ -271,6 +271,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
+| `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
+| `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of relayed mail, `bounce+<item>@` it, whose bounces the LMTP listener takes back to the message; empty sends from the message's own sender |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -632,8 +634,9 @@ the Dev AIDE loads there.
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
 open ([plan](../plans/Edge-Node.md)). For now this is the link, web access and the ways work crosses it: pairing, the
-link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication, and
-mr-pass's calls to the local node as its PASS authority. No mail, chat or calls use them yet.
+link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication,
+mr-pass's calls to the local node as its PASS authority, and mail with Postfix and Rspamd beside the edge node. No chat
+or calls use them yet.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -682,7 +685,8 @@ mr-pass's calls to the local node as its PASS authority. No mail, chat or calls 
   (the `EDGE_DELEGATE` artifact group) must cover it; it fails at once while the link is down. A `queue-kind` names the
   service that applies queued items of that kind; what waits for a local node that is away is kept
   `queue-retention-days` (14, the same on both nodes) up to `queue-max-megabytes`, then the oldest fails, logged; a
-  payload is at most 1 MiB. A `replicate` set is copied to the edge node, read-only there, and sent whole again when
+  payload is at most 1 MiB, and a larger body (up to 64 MiB, a mail message) crosses as the item's content. A
+  `replicate` set is copied to the edge node, read-only there, and sent whole again when
   the edge node lost its copy. On a clustered local node only the member holding the link sends its outbox and
   replication. System › Edge Node shows the outbox and the sets, with Pause and Resync; Edge Clients shows each node's
   queue and sets. The edge node's database now holds the queue: unpause its backup job
@@ -693,6 +697,43 @@ mr-pass's calls to the local node as its PASS authority. No mail, chat or calls 
   set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
   `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
   edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
+- **Mail** ([plan](../plans/Edge-Node.md) §5.4). Postfix and Rspamd run on the edge node's host and do the internet side
+  ([Mail-Inbound](interfaces/Mail-Inbound.md) has the gateway's rules). Point the domains' MX at the edge node; SPF,
+  DKIM and DMARC records name it.
+  - **In.** Postfix hands mail for the local node's domains to the edge node's LMTP listener (MoquiEdgeConf.xml has
+    `protocol="lmtp"`; set `smtp_listen_port` in `.env`, for example 10024). The listener answers `RCPT TO` from the
+    local node's accounts, replicated to the edge node (`mailRecipients`), so an unknown address is refused while the
+    local node is away too, and queues each message for the local node, which delivers it as its own listener would.
+    Set `smtp_authserv_id` on the local node to Rspamd's authserv-id, so only its `Authentication-Results` are kept.
+  - **Out.** On the local node, give `SYSTEM` and the accounts an `EmailServer` with `smtpHost` `edge:`. A send is
+    queued for the edge node, which relays it to Postfix on `edge_mail_relay_port` (10025), and Postfix signs it with
+    DKIM through Rspamd and delivers it. While Postfix is not reached the message waits in the queue. Set
+    `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and the edge node sends each
+    message from `bounce+<item>@` that domain, so a remote server's later bounce names the message. A refusal, at the
+    relay or by a later bounce, puts a mail client's message back in its Outbox with the reply as its send error, as
+    does a message the local node could not hand to the edge node within the queue's retention period.
+
+  ```
+  # /etc/postfix/main.cf (the listener answers RCPT TO itself, so no reject_unverified_recipient)
+  mynetworks = 127.0.0.0/8 [::1]/128
+  relay_domains = example.com, bounces.example.com
+  transport_maps = hash:/etc/postfix/transport    # example.com and bounces.example.com  lmtp:inet:127.0.0.1:10024
+  smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+  smtpd_milters = inet:127.0.0.1:11332            # Rspamd: SPF, DKIM, DMARC and spam in; DKIM signing out
+  non_smtpd_milters = inet:127.0.0.1:11332
+  milter_default_action = accept
+  # /etc/postfix/master.cf: the relay port the edge node sends to, for this host only
+  127.0.0.1:10025 inet n - n - - smtpd
+    -o mynetworks=127.0.0.0/8
+    -o smtpd_client_restrictions=permit_mynetworks,reject
+    -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  # /etc/rspamd/local.d/dkim_signing.conf: sign mail from this host for the domains
+  selector = "moqui";
+  path = "/var/lib/rspamd/dkim/$domain.$selector.key";
+  sign_local = true;
+  # /etc/rspamd/local.d/milter_headers.conf: Authentication-Results with the edge node's authserv-id
+  use = ["authentication-results", "x-spam-status"];
+  ```
 
 ## Cluster
 

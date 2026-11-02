@@ -455,7 +455,7 @@ fn work_crosses_the_link_once_and_in_order_and_survives_a_cut() {
         &edge,
         &format!("{SERVICES}.enqueue#Item"),
         &[
-            ("kind", Value::string("mail")),
+            ("kind", Value::string("unlisted")),
             ("conversationKey", Value::string("D")),
             ("payload", Value::string("x")),
         ],

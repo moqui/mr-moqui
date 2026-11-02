@@ -1648,12 +1648,19 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="queue-kind">
                     <xs:annotation><xs:documentation>The service that applies a queued item of this kind on its
                         receiver, as the user _EDGE_, in the transaction that writes the item's receipt first. A node
-                        enqueues only the kinds it lists. A payload is at most 1 MiB. It gets kind, conversationKey,
-                        idempotencyKey, queueItemId, payload and contentLocation; an error it adds fails the item, which
-                        is tried again.</xs:documentation></xs:annotation>
+                        enqueues only the kinds it lists. A payload is at most 1 MiB, a larger body is its content. It gets kind, conversationKey,
+                        idempotencyKey, queueItemId, pairedNodeId, payload and contentLocation (where the receiver
+                        kept the item's content); an error it adds fails the item, which is tried again and counted,
+                        and a result retryLater (the reason) rolls it back to wait, not counted.</xs:documentation></xs:annotation>
                     <xs:complexType>
                         <xs:attribute name="name" type="xs:string" use="required"/>
                         <xs:attribute name="service" type="xs:string" use="required"/>
+                        <xs:attribute name="failed-service" type="xs:string">
+                            <xs:annotation><xs:documentation>Called on the sender for an item of this kind that failed
+                                for good (its last refusal, the retention period, the size cap, unpairing), with
+                                queueItemId, kind, conversationKey, payload and error, so the failure is not
+                                silent.</xs:documentation></xs:annotation>
+                        </xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="replicate">

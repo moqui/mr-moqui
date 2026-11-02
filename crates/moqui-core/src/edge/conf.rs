@@ -57,6 +57,9 @@ pub struct EdgeSettings {
     pub delegates: BTreeMap<String, Delegate>,
     /// The handler service of each queue kind.
     pub kinds: BTreeMap<String, String>,
+    /// The service a sender calls for an item of the kind that failed for good (`queue-kind` `failed-service`), so a
+    /// failure is not silent: after its last refusal, past the retention period or the size cap, or at unpairing.
+    pub failed: BTreeMap<String, String>,
     pub sets: Vec<ReplicaSet>,
     pub retention_days: u32,
     pub max_bytes: u64,
@@ -74,6 +77,7 @@ impl Default for EdgeSettings {
             edge_node: false,
             delegates: BTreeMap::new(),
             kinds: BTreeMap::new(),
+            failed: BTreeMap::new(),
             sets: Vec::new(),
             retention_days: 14,
             max_bytes: 1024 * 1024 * 1024,
@@ -137,6 +141,10 @@ impl EdgeSettings {
             if name.is_empty() || service.is_empty() {
                 tracing::error!("an edge queue-kind needs a name and a service; one without is left out");
                 continue;
+            }
+            let failed = kind.attribute("failed-service").unwrap_or_default().trim().to_string();
+            if !failed.is_empty() {
+                settings.failed.insert(name.clone(), failed);
             }
             settings.kinds.insert(name, service);
         }

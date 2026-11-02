@@ -16,8 +16,10 @@
 //! each conversation key in order (`moqui_core::edge::queue`) and sends it, on an edge node down to the local node
 //! (`LocalLink.Deliver`), on a local node up to the edge node (`Link.Deliver`). The receiver applies it with its
 //! receipt and answers applied, duplicate, failed or paused; no answer (the link dropped) is not counted as an attempt.
-//! Each item's failure is logged with its id and the loop goes on (AGENTS.md); a panic in a round is caught. Also the
-//! receiving side's handler of a delivery, the queue's metrics and its retention pass.
+//! An item with content sends it first, in chunks (`LocalLink.PutContent`, `Link.PutContent`), and its delivery names
+//! where the receiver kept it. Each item's failure is logged with its id and the loop goes on (AGENTS.md); a panic in a
+//! round is caught. Also the receiving side's handlers of content and a delivery, the queue's metrics and its
+//! retention pass.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex, Weak};
@@ -41,6 +43,17 @@ const IDLE_POLL: Duration = Duration::from_secs(2);
 const MAINTENANCE: Duration = Duration::from_secs(15);
 /// How many maintenance rounds go between retention passes.
 const CLEAN_EVERY: u32 = 40;
+/// The bytes of one `PutContent` chunk, well under the link's message limit.
+const CHUNK: usize = 1024 * 1024;
+/// The slowest uplink a delivery with content allows for (bytes a second): the answer timeout grows by the time its
+/// content takes at this rate, so a large body on a slow link is not cut off and sent again forever.
+const SLOWEST_UPLINK: u64 = 32 * 1024;
+
+/// How long a delivery with `content_size` bytes of content may take: [`ANSWER_TIMEOUT`] for the answer, and the
+/// content's time at [`SLOWEST_UPLINK`].
+fn delivery_timeout(content_size: usize) -> Duration {
+    ANSWER_TIMEOUT + Duration::from_secs(content_size as u64 / SLOWEST_UPLINK)
+}
 
 pub(crate) fn to_proto(item: &QueueItem) -> proto::QueueItem {
     proto::QueueItem {
@@ -96,15 +109,111 @@ pub(crate) fn applied(reply: &proto::DeliverReply) -> Applied {
     }
 }
 
-/// A Deliver call's gRPC error: a request the receiver refused for itself (too large, malformed) is a counted refusal;
-/// anything else (the link, a timeout) is no answer.
+/// A Deliver or PutContent call's gRPC error: a request the receiver refused for itself (too large, malformed) is a
+/// counted refusal; a receiver without the call (an older version) does not handle it yet; anything else (the link, a
+/// timeout) is no answer.
 pub(crate) fn delivery_error(status: &tonic::Status) -> Result<Applied, String> {
     match status.code() {
         tonic::Code::ResourceExhausted | tonic::Code::InvalidArgument | tonic::Code::OutOfRange => Ok(Applied::Failed(
             format!("the receiver refused it: {}", status.message()),
         )),
+        tonic::Code::Unimplemented => Ok(Applied::NotHandled(format!(
+            "the receiver does not take it: {}",
+            status.message()
+        ))),
         _ => Err(format!("Deliver: {}", status.message())),
     }
+}
+
+/// An item's content as the chunks of a `PutContent` call on link generation `generation`.
+pub(crate) fn content_chunks(
+    generation: u64,
+    queue_item_id: &str,
+    content: &[u8],
+) -> impl futures_util::Stream<Item = proto::ContentChunk> + Send + 'static {
+    let total_size = content.len() as u64;
+    let mut chunks: Vec<proto::ContentChunk> = content
+        .chunks(CHUNK)
+        .map(|data| proto::ContentChunk {
+            generation,
+            queue_item_id: queue_item_id.to_string(),
+            data: data.to_vec(),
+            total_size: 0,
+        })
+        .collect();
+    match chunks.first_mut() {
+        Some(first) => first.total_size = total_size,
+        // empty content is still content: one empty chunk names the item
+        None => chunks.push(proto::ContentChunk {
+            generation,
+            queue_item_id: queue_item_id.to_string(),
+            data: Vec::new(),
+            total_size: 0,
+        }),
+    }
+    futures_util::stream::iter(chunks)
+}
+
+/// Take the content of an item local node `node`'s link sends before its delivery, and keep it on this node: the
+/// location the delivery names. `generation` checks each chunk's link generation (the local node's own, on the down
+/// connection). A chunk of another item, content over [`queue::MAX_CONTENT_BYTES`] or an id that cannot name a file
+/// is refused for itself (a counted refusal on the sender).
+pub(crate) async fn receive_content(
+    factory: &Weak<ExecutionContextFactory>,
+    node: &str,
+    mut stream: tonic::Streaming<proto::ContentChunk>,
+    generation: impl Fn(u64) -> Result<(), tonic::Status>,
+) -> Result<proto::PutContentReply, tonic::Status> {
+    let mut id: Option<String> = None;
+    let mut content = Vec::new();
+    while let Some(chunk) = stream.message().await? {
+        generation(chunk.generation)?;
+        match &id {
+            None => {
+                queue::received_location(node, &chunk.queue_item_id)
+                    .map_err(|err| tonic::Status::invalid_argument(err.message().to_string()))?;
+                let total = usize::try_from(chunk.total_size).unwrap_or(usize::MAX);
+                if total > queue::MAX_CONTENT_BYTES {
+                    return Err(tonic::Status::resource_exhausted(format!(
+                        "an item's content is at most {} bytes, and this one is {total}",
+                        queue::MAX_CONTENT_BYTES
+                    )));
+                }
+                content.reserve(total);
+                id = Some(chunk.queue_item_id);
+            }
+            Some(first) if *first != chunk.queue_item_id => {
+                return Err(tonic::Status::invalid_argument(
+                    "the chunks of one call are of one item",
+                ));
+            }
+            Some(_) => {}
+        }
+        if content.len() + chunk.data.len() > queue::MAX_CONTENT_BYTES {
+            return Err(tonic::Status::resource_exhausted(format!(
+                "an item's content is at most {} bytes",
+                queue::MAX_CONTENT_BYTES
+            )));
+        }
+        content.extend_from_slice(&chunk.data);
+    }
+    let Some(id) = id else {
+        return Err(tonic::Status::invalid_argument("no content was sent"));
+    };
+    let keeping = node.to_string();
+    let item = id.clone();
+    let kept = on_pool(factory, move |factory| {
+        let facade = factory
+            .entity()
+            .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
+        queue::store_received(&facade, &keeping, &item, &content)
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!("Edge queue item {id} of {node}: its content was not kept: {err}");
+        tonic::Status::unavailable("the content could not be kept now")
+    })?;
+    Ok(proto::PutContentReply { content_location: kept })
 }
 
 /// Apply a delivered item on this node's request pool, for local node `node`.
@@ -164,7 +273,7 @@ pub(crate) async fn deliver<S, F>(
     telemetry: Option<Arc<Telemetry>>,
     mut send: S,
 ) where
-    S: FnMut(QueueItem) -> F + Send,
+    S: FnMut(QueueItem, Option<Vec<u8>>) -> F + Send,
     F: Future<Output = Result<Applied, String>> + Send,
 {
     let Some(wake) = factory.upgrade().map(|factory| wake_of(&factory)) else {
@@ -214,7 +323,7 @@ async fn round<S, F>(
     send: &mut S,
 ) -> Result<Option<Duration>, String>
 where
-    S: FnMut(QueueItem) -> F,
+    S: FnMut(QueueItem, Option<Vec<u8>>) -> F,
     F: Future<Output = Result<Applied, String>>,
 {
     let lookup = node.to_string();
@@ -255,10 +364,27 @@ where
                 continue;
             }
         };
-        let outcome = match tokio::time::timeout(ANSWER_TIMEOUT, send(item.clone())).await {
-            Ok(Ok(applied)) => Outcome::Answered(applied),
-            Ok(Err(error)) => Outcome::Lost(error),
-            Err(_) => Outcome::Lost("the receiver did not answer in time".to_string()),
+        let reading = item.clone();
+        let content = on_pool(factory, move |factory| {
+            let facade = factory
+                .entity()
+                .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
+            queue::read_content(&facade, &reading)
+        })
+        .await;
+        let outcome = match content {
+            // the item's own content is missing or unreadable: its fault, so counted
+            Err(err) => Outcome::Answered(Applied::Failed(err)),
+            Ok(content) => match tokio::time::timeout(
+                delivery_timeout(content.as_ref().map_or(0, Vec::len)),
+                send(item.clone(), content),
+            )
+            .await
+            {
+                Ok(Ok(applied)) => Outcome::Answered(applied),
+                Ok(Err(error)) => Outcome::Lost(error),
+                Err(_) => Outcome::Lost("the receiver did not answer in time".to_string()),
+            },
         };
         let finishing = (item, outcome, Arc::clone(&settings));
         let step = on_pool(factory, move |factory| {

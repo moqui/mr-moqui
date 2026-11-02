@@ -310,7 +310,9 @@ impl EdgeLink for Hook {
         if let Some(facade) = self.factory()?.entity() {
             moqui_core::edge::replica::disable(&facade);
             let queue = moqui_core::edge::queue::TO_EDGE;
-            match moqui_core::edge::queue::fail_pending(&facade, queue, "unpaired", moqui_core::user::now_millis()) {
+            let settings = moqui_core::edge::settings(&*self.factory()?);
+            let now = moqui_core::user::now_millis();
+            match moqui_core::edge::queue::fail_pending(&facade, &settings, queue, "unpaired", now) {
                 Ok(0) => {}
                 Ok(count) => tracing::warn!("Unpaired: {count} queued items for the edge node failed (unpaired)"),
                 Err(err) => tracing::error!("Unpaired, but the queued items for the edge node were not failed: {err}"),

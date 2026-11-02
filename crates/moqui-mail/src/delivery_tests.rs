@@ -20,7 +20,10 @@
 
 use moqui_lib::object::Value;
 
-use super::delivery::{deliver, find_recipient, Envelope, Options, Outcome, RecipientDsn, Recipients, Report};
+use super::delivery::{
+    deliver, find_recipient, Envelope, Options, Outcome, RecipientAccount, RecipientDsn, RecipientIdentity,
+    RecipientMap, Recipients, Report,
+};
 use super::sync_tests::{
     alice, by_message_id, field, folder_id, install, map, now, ok, one, out_text, rows, setup, stamp, text, update,
 };
@@ -203,6 +206,63 @@ fn recipients_are_hosted_and_shared_accounts_by_address_identity_and_plus_tag() 
     assert_eq!(find("nobody@example.com", "+"), None);
     assert_eq!(find("postmaster", "+"), None);
     let _ = (synced, support);
+
+    // the edge node's map from copies of the same rows answers alike
+    let copies = recipient_map(&facade);
+    for (address, plus) in [
+        ("sales@example.com", "+"),
+        ("SALES@EXAMPLE.COM", "+"),
+        ("sales+news@example.com", "+"),
+        ("sales-news@example.com", "+-"),
+        ("sales+news@example.com", ""),
+        ("+news@example.com", "+"),
+        ("support@example.com", "+"),
+        ("orders@example.com", "+"),
+        ("orders+x@example.com", "+"),
+        ("later@example.com", "+"),
+        ("external-alias@example.com", "+"),
+        ("alice@example.com", "+"),
+        ("team@example.com", "+"),
+        ("old@example.com", "+"),
+        ("nobody@example.com", "+"),
+        ("postmaster", "+"),
+    ] {
+        assert_eq!(
+            copies.find(address, plus),
+            find(address, plus),
+            "{address} with {plus:?}"
+        );
+    }
+}
+
+/// A [`RecipientMap`] of every account, identity and server row, as the edge node builds one from its copies.
+fn recipient_map(facade: &EntityFacade) -> RecipientMap {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let list = |entity: &str| facade.find(entity).unwrap().list().unwrap().values().to_vec();
+    let stores: Vec<String> = list("moqui.basic.email.EmailServer")
+        .iter()
+        .filter(|row| !field(row, "storeHost").is_empty())
+        .map(|row| field(row, "emailServerId"))
+        .collect();
+    let accounts: Vec<RecipientAccount> = list(ACCOUNT)
+        .iter()
+        .map(|row| RecipientAccount {
+            email_account_id: field(row, "emailAccountId"),
+            email_address: field(row, "emailAddress"),
+            account_kind_enum_id: field(row, "accountKindEnumId"),
+            status_id: field(row, "statusId"),
+            has_store_server: stores.contains(&field(row, "emailServerId")),
+        })
+        .collect();
+    let identities: Vec<RecipientIdentity> = list("moqui.basic.email.EmailIdentity")
+        .iter()
+        .map(|row| RecipientIdentity {
+            email_identity_id: field(row, "emailIdentityId"),
+            email_address: field(row, "emailAddress"),
+            email_account_id: field(row, "emailAccountId"),
+        })
+        .collect();
+    RecipientMap::new(&accounts, &identities)
 }
 
 /// One message to two accounts (one of them by two addresses) is stored once in each Inbox, with the trace fields,

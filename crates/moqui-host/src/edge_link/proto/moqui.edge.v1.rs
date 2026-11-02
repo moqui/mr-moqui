@@ -97,11 +97,35 @@ pub struct QueueItem {
     pub idempotency_key: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
     pub payload: ::prost::alloc::string::String,
+    /// In a Deliver, where the receiver kept the item's content (PutContent's reply); empty when it has none.
     #[prost(string, tag = "6")]
     pub content_location: ::prost::alloc::string::String,
     /// The attempts made before this one.
     #[prost(uint32, tag = "7")]
     pub attempts: u32,
+}
+/// A part of a queued item's content (a body too large for its payload: a message, a media file), sent before the
+/// item's Deliver. The receiver keeps it under a location of its own, keyed by the item's id, and the Deliver that
+/// follows names that location; the receiver removes it once the item is applied.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ContentChunk {
+    /// The link generation the sender is on.
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    /// The item the content is of; the same in every chunk of one call.
+    #[prost(string, tag = "2")]
+    pub queue_item_id: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    /// The whole content's size in bytes, on the first chunk.
+    #[prost(uint64, tag = "4")]
+    pub total_size: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PutContentReply {
+    /// Where the receiver keeps the content, which the item's Deliver names as its content_location.
+    #[prost(string, tag = "1")]
+    pub content_location: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeliverRequest {
@@ -464,6 +488,31 @@ pub mod link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.Link", "Deliver"));
             self.inner.unary(req, path, codec).await
         }
+        /// The content of an outbox item, before its Deliver.
+        pub async fn put_content(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::ContentChunk>,
+        ) -> std::result::Result<
+            tonic::Response<super::PutContentReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/PutContent",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.Link", "PutContent"));
+            self.inner.client_streaming(req, path, codec).await
+        }
         /// A batch of a replicated set.
         pub async fn replicate(
             &mut self,
@@ -530,6 +579,11 @@ pub mod link_server {
             &self,
             request: tonic::Request<super::DeliverRequest>,
         ) -> std::result::Result<tonic::Response<super::DeliverReply>, tonic::Status>;
+        /// The content of an outbox item, before its Deliver.
+        async fn put_content(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::ContentChunk>>,
+        ) -> std::result::Result<tonic::Response<super::PutContentReply>, tonic::Status>;
         /// A batch of a replicated set.
         async fn replicate(
             &self,
@@ -873,6 +927,53 @@ pub mod link_server {
                     };
                     Box::pin(fut)
                 }
+                "/moqui.edge.v1.Link/PutContent" => {
+                    #[allow(non_camel_case_types)]
+                    struct PutContentSvc<T: Link>(pub Arc<T>);
+                    impl<
+                        T: Link,
+                    > tonic::server::ClientStreamingService<super::ContentChunk>
+                    for PutContentSvc<T> {
+                        type Response = super::PutContentReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::ContentChunk>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::put_content(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = PutContentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/moqui.edge.v1.Link/Replicate" => {
                     #[allow(non_camel_case_types)]
                     struct ReplicateSvc<T: Link>(pub Arc<T>);
@@ -1126,6 +1227,31 @@ pub mod local_link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "Delegate"));
             self.inner.unary(req, path, codec).await
         }
+        /// The content of a queued item, before its Deliver.
+        pub async fn put_content(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<Message = super::ContentChunk>,
+        ) -> std::result::Result<
+            tonic::Response<super::PutContentReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.LocalLink/PutContent",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.LocalLink", "PutContent"));
+            self.inner.client_streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1159,6 +1285,11 @@ pub mod local_link_server {
             &self,
             request: tonic::Request<super::DelegateRequest>,
         ) -> std::result::Result<tonic::Response<super::DelegateReply>, tonic::Status>;
+        /// The content of a queued item, before its Deliver.
+        async fn put_content(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::ContentChunk>>,
+        ) -> std::result::Result<tonic::Response<super::PutContentReply>, tonic::Status>;
     }
     /// Served by the local node on its down connection; the edge node calls it.
     #[derive(Debug)]
@@ -1409,6 +1540,53 @@ pub mod local_link_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.LocalLink/PutContent" => {
+                    #[allow(non_camel_case_types)]
+                    struct PutContentSvc<T: LocalLink>(pub Arc<T>);
+                    impl<
+                        T: LocalLink,
+                    > tonic::server::ClientStreamingService<super::ContentChunk>
+                    for PutContentSvc<T> {
+                        type Response = super::PutContentReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::ContentChunk>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as LocalLink>::put_content(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = PutContentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.client_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

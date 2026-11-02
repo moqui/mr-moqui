@@ -36,6 +36,9 @@
 //!
 //! The Received field's `with` is the protocol spoken: SMTP, ESMTP, ESMTPS, LMTP, LMTPS, UTF8SMTP, UTF8LMTPS and so on.
 //!
+//! On an edge node (`node_role=edge`) the listener takes mail for its local node's accounts and queues it for the
+//! local node instead of storing it ([`queue`], plans/Edge-Node.md §5.4).
+//!
 //! `RCPT TO` is answered from the accounts ([`moqui_mail::delivery::find_recipient`]): an address of a
 //! hosted or shared account is accepted, any other refused with 550 there, so nothing is accepted that would bounce
 //! later. After `DATA` the message is stored once per account ([`moqui_mail::delivery::deliver`]); a store
@@ -61,6 +64,9 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::proxy_header::ProxyError;
+
+#[path = "smtp_queue.rs"]
+mod queue;
 
 /// The longest command line, with its CRLF. RFC 5321 asks for 512; extensions make it longer.
 const MAX_COMMAND: usize = 4096;
@@ -257,13 +263,7 @@ impl SmtpConfig {
             command_timeout: Duration::from_secs(number("command-timeout", 300)),
             session_timeout: Duration::from_secs(number("session-timeout", 1800)),
             proxy_protocol: flag("proxy-protocol", false),
-            plus_separator: match setting("plus-separator") {
-                none if none.eq_ignore_ascii_case("none") => String::new(),
-                characters => characters
-                    .chars()
-                    .filter(|ch| !ch.is_whitespace() && *ch != '@')
-                    .collect(),
-            },
+            plus_separator: inbound::plus_separator(&setting("plus-separator")),
             spam_headers: list("spam-headers"),
             authserv_id: setting_or_property("authserv-id", "smtp_authserv_id"),
             lmtp,
@@ -333,24 +333,22 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     let address = listener
         .local_addr()
         .map_err(|err| Error::new("the SMTP listener has no address").with_source(err))?;
-    if config.authserv_id.is_empty() {
+    let edge_mode = moqui_core::edge::settings(factory).edge_node;
+    if config.authserv_id.is_empty() && !edge_mode {
         tracing::warn!(
             "smtp_authserv_id is empty: Authentication-Results fields are kept as they came, the gateway's not told \
              from a forged one"
         );
     }
-    let backend = FactoryBackend {
-        factory: Arc::downgrade(factory),
-        delimiters: config.plus_separator.clone(),
-        options: Options {
-            spam_headers: config.spam_headers.clone(),
-            authserv_id: config.authserv_id.clone(),
-        },
-    };
     let (shutdown, watch) = tokio::sync::watch::channel(false);
     tracing::info!(
-        "{} listener on {address} for hosted and shared accounts, from {}{}{}",
+        "{} listener on {address} for {}, from {}{}{}",
         if config.lmtp { "LMTP" } else { "SMTP" },
+        if edge_mode {
+            "the local node's hosted and shared accounts, queued for it"
+        } else {
+            "hosted and shared accounts"
+        },
         config
             .allowed
             .iter()
@@ -364,7 +362,20 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
             _ => "",
         }
     );
-    crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+    if edge_mode {
+        let backend = queue::QueueBackend::new(Arc::downgrade(factory), config.plus_separator.clone());
+        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+    } else {
+        let backend = FactoryBackend {
+            factory: Arc::downgrade(factory),
+            delimiters: config.plus_separator.clone(),
+            options: Options {
+                spam_headers: config.spam_headers.clone(),
+                authserv_id: config.authserv_id.clone(),
+            },
+        };
+        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+    }
     *moqui_lib::sync::lock(&factory.extension(|_| SmtpAddress::default()).0) = Some(address);
     Ok(Some(SmtpServer { address, shutdown }))
 }

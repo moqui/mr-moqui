@@ -22,6 +22,8 @@
 //! its plus tag (`sales+news@` is `sales@`), the delimiters being the listener's `smtp-server` `plus-separator` characters. One
 //! address is one account: when several accounts claim it at the same step, the one made first (the lowest sequenced
 //! id) gets the mail and a warning names the others, so an identity added later cannot read another account's mail.
+//! [`RecipientMap`] answers by the same rules from copies of the rows held in memory: an edge node's replicated set
+//! `mailRecipients` (plans/Edge-Node.md §5.4).
 //!
 //! Delivery, once per account however many of its addresses were recipients:
 //!
@@ -46,7 +48,7 @@
 //! `multipart/report` (RFC 3464) to the envelope sender, from the null reverse path, through the outgoing server of the
 //! first such account. A failure needs no DSN from here: the listener refuses at the time and the gateway reports it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
@@ -69,21 +71,7 @@ const KINDS: [&str; 2] = ["EakHosted", "EakShared"];
 ///
 /// Returns an error when the database cannot be read; the listener answers that with a temporary failure.
 pub fn find_recipient(facade: &EntityFacade, address: &str, delimiters: &str) -> Result<Option<String>, LibError> {
-    let address = address.trim().to_lowercase();
-    let Some((local, domain)) = address.rsplit_once('@') else {
-        return Ok(None);
-    };
-    if local.is_empty() || domain.is_empty() {
-        return Ok(None);
-    }
-    let mut candidates = vec![address.clone()];
-    if let Some((base, _)) = local
-        .split_once(|ch| delimiters.contains(ch))
-        .filter(|(base, _)| !base.is_empty())
-    {
-        candidates.push(format!("{base}@{domain}"));
-    }
-    for candidate in &candidates {
+    for candidate in &recipient_candidates(address, delimiters) {
         if let Some(id) = by_account_address(facade, candidate)? {
             return Ok(Some(id));
         }
@@ -94,13 +82,147 @@ pub fn find_recipient(facade: &EntityFacade, address: &str, delimiters: &str) ->
     Ok(None)
 }
 
+/// The addresses a recipient is looked up by, in order: the address in lower case, then without its plus tag (the
+/// part of the local part from the first of `delimiters`). None for an address without a local part and a domain.
+#[must_use]
+pub fn recipient_candidates(address: &str, delimiters: &str) -> Vec<String> {
+    let address = address.trim().to_lowercase();
+    let Some((local, domain)) = address.rsplit_once('@') else {
+        return Vec::new();
+    };
+    if local.is_empty() || domain.is_empty() {
+        return Vec::new();
+    }
+    let mut candidates = vec![address.clone()];
+    if let Some((base, _)) = local
+        .split_once(|ch| delimiters.contains(ch))
+        .filter(|(base, _)| !base.is_empty())
+    {
+        candidates.push(format!("{base}@{domain}"));
+    }
+    candidates
+}
+
+/// Whether the listener delivers to an account of this kind and status: hosted or shared, not removed, with no
+/// incoming (IMAP or POP) server, since an account the sync feeds would get every message twice.
+fn kind_receives(kind: &str, status: &str, has_store_server: bool) -> bool {
+    KINDS.contains(&kind) && status != "EasRemoved" && !has_store_server
+}
+
 /// Whether the listener delivers to this account: hosted or shared, not removed, no incoming server.
 fn receives(facade: &EntityFacade, row: &EntityValue) -> Result<bool, LibError> {
     let kind = field_text(row, "accountKindEnumId");
-    if !KINDS.contains(&kind.as_str()) || field_text(row, "statusId") == "EasRemoved" {
+    if !kind_receives(&kind, &field_text(row, "statusId"), false) {
         return Ok(false);
     }
     Ok(account_info(facade, row)?.server.is_none())
+}
+
+/// What routing reads of an `EmailAccount`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecipientAccount {
+    pub email_account_id: String,
+    pub email_address: String,
+    pub account_kind_enum_id: String,
+    pub status_id: String,
+    /// Its `EmailServer` has a `storeHost`: the sync feeds it.
+    pub has_store_server: bool,
+}
+
+/// What routing reads of an `EmailIdentity`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecipientIdentity {
+    pub email_identity_id: String,
+    pub email_address: String,
+    pub email_account_id: String,
+}
+
+/// [`find_recipient`] from copies of the rows held in memory (an edge node's replicated `mailRecipients`), by the
+/// same rules: an account's own address first, then an identity's, each for the address and then without its plus
+/// tag; the account made first wins when several claim one address.
+#[derive(Clone, Debug, Default)]
+pub struct RecipientMap {
+    /// Lower-case address → the ids of the accounts with it as their address that the listener delivers to.
+    by_account: HashMap<String, Vec<String>>,
+    /// Lower-case address → (identity id, account id) of the identities with it whose account takes mail.
+    by_identity: HashMap<String, Vec<(String, String)>>,
+}
+
+impl RecipientMap {
+    #[must_use]
+    pub fn new(accounts: &[RecipientAccount], identities: &[RecipientIdentity]) -> Self {
+        let mut map = Self::default();
+        let mut receiving = HashSet::new();
+        for account in accounts {
+            if !kind_receives(
+                &account.account_kind_enum_id,
+                &account.status_id,
+                account.has_store_server,
+            ) {
+                continue;
+            }
+            receiving.insert(account.email_account_id.as_str());
+            let address = account.email_address.trim().to_lowercase();
+            if !address.is_empty() {
+                map.by_account
+                    .entry(address)
+                    .or_default()
+                    .push(account.email_account_id.clone());
+            }
+        }
+        for identity in identities {
+            let address = identity.email_address.trim().to_lowercase();
+            if address.is_empty() || !receiving.contains(identity.email_account_id.as_str()) {
+                continue;
+            }
+            map.by_identity
+                .entry(address)
+                .or_default()
+                .push((identity.email_identity_id.clone(), identity.email_account_id.clone()));
+        }
+        for ids in map.by_account.values_mut() {
+            ids.sort_by(|left, right| made_order(left, right));
+        }
+        for identities in map.by_identity.values_mut() {
+            identities.sort_by(|left, right| made_order(&left.0, &right.0));
+        }
+        map
+    }
+
+    /// The account mail to `address` goes to, or none.
+    #[must_use]
+    pub fn find(&self, address: &str, delimiters: &str) -> Option<String> {
+        for candidate in &recipient_candidates(address, delimiters) {
+            if let Some(ids) = self.by_account.get(candidate) {
+                if let Some(id) = first_claim(ids.clone(), candidate, "its address") {
+                    return Some(id);
+                }
+            }
+            if let Some(identities) = self.by_identity.get(candidate) {
+                let mut ids: Vec<String> = Vec::new();
+                for (_, account_id) in identities {
+                    if !ids.contains(account_id) {
+                        ids.push(account_id.clone());
+                    }
+                }
+                if let Some(id) = first_claim(ids, candidate, "an identity") {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+
+    /// The number of addresses it knows, accounts' and identities'.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_account.len() + self.by_identity.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_account.is_empty() && self.by_identity.is_empty()
+    }
 }
 
 /// Sequenced ids in the order they were made: shorter first, then by text.
@@ -202,6 +324,37 @@ pub struct Options {
     pub spam_headers: Vec<String>,
     /// The gateway's authserv-id: only its `Authentication-Results` are kept. Empty keeps them all as they came.
     pub authserv_id: String,
+}
+
+/// The plus-addressing characters of an `smtp-server` `plus-separator` setting: `none` turns plus addressing off, and
+/// whitespace and `@` are not separators.
+#[must_use]
+pub fn plus_separator(setting: &str) -> String {
+    if setting.trim().eq_ignore_ascii_case("none") {
+        return String::new();
+    }
+    setting.chars().filter(|ch| !ch.is_whitespace() && *ch != '@').collect()
+}
+
+/// What delivery trusts and the plus-addressing characters, from the conf's `smtp-server` as the listener reads them:
+/// for mail the listener of an edge node queued, delivered here.
+#[must_use]
+pub fn listener_options(factory: &moqui_core::context::ExecutionContextFactory) -> (Options, String) {
+    let setting = |name: &str| factory.conf_setting("smtp-server", name);
+    let authserv_id = match setting("authserv-id") {
+        id if !id.is_empty() => id,
+        _ => moqui_lib::env::get_prop_or_env("smtp_authserv_id").trim().to_string(),
+    };
+    let options = Options {
+        spam_headers: setting("spam-headers")
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect(),
+        authserv_id,
+    };
+    (options, plus_separator(&setting("plus-separator")))
 }
 
 /// An account and the recipient addresses that named it.

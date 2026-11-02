@@ -36,6 +36,14 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.ArtifactGroup artifactGroupId="EDGE_DELEGATE" description="Edge Node Delegated Services"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EdgeServices.echo#Delegate"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <!-- mail through the edge node (E5a): the handlers of the queue kinds mail and mailStatus on a local node, mailOut on
+        an edge node; each refuses to run on the other role -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.deliver#EdgeMail"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.deliver#EdgeOutboundMail"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.note#EdgeMailStatus"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="EDGE_DELEGATE" userGroupId="EDGE_DELEGATE" artifactGroupId="EDGE_DELEGATE"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

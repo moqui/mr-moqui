@@ -261,6 +261,15 @@ fn current_factory() -> Result<std::sync::Arc<crate::context::ExecutionContextFa
 /// `enqueue#Item`: queue an item for the other end of the link; an idempotency key queued already returns its item.
 fn enqueue_item(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let factory = current_factory()?;
+    // only a dbresource:// file, which the entity facade reads under the caller's own authorization of the call, and
+    // never a file or component path of the server's
+    if let Some(location) = text(parameters, "contentLocation") {
+        if !location.trim().starts_with("dbresource://") {
+            return Err(LibError::new(format!(
+                "contentLocation {location} is not a dbresource:// location"
+            )));
+        }
+    }
     let item = crate::edge::queue::NewItem {
         kind: required(parameters, "kind")?,
         conversation_key: required(parameters, "conversationKey")?,
@@ -269,6 +278,7 @@ fn enqueue_item(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> 
             .get("payload")
             .filter(|value| !is_empty(value))
             .map(to_plain_string),
+        content: None,
         content_location: text(parameters, "contentLocation"),
     };
     let node = text(parameters, "pairedNodeId");

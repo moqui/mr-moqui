@@ -190,7 +190,9 @@ along with this software (see the LICENSE.md file). If not, see
             the link is up, in order with the other items of its conversationKey, and applied on the receiver once, by
             the service its edge queue-kind conf names for kind, in the transaction of its receipt. An idempotencyKey
             queued already returns that item (created false); with none the item's id is its key. The payload is text
-            (JSON), or contentLocation names a large body.</description>
+            (JSON) of at most 1 MiB; contentLocation names a larger body (a dbresource:// file, up to 64 MiB), copied
+            into the item here and sent over the link before it, and its handler gets where the receiver kept
+            it.</description>
         <in-parameters>
             <parameter name="kind" required="true"/>
             <parameter name="conversationKey" required="true"/>

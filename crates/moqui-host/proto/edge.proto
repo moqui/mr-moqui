@@ -96,9 +96,28 @@ message QueueItem {
   string conversation_key = 3;
   string idempotency_key = 4;
   string payload = 5;
+  // In a Deliver, where the receiver kept the item's content (PutContent's reply); empty when it has none.
   string content_location = 6;
   // The attempts made before this one.
   uint32 attempts = 7;
+}
+
+// A part of a queued item's content (a body too large for its payload: a message, a media file), sent before the
+// item's Deliver. The receiver keeps it under a location of its own, keyed by the item's id, and the Deliver that
+// follows names that location; the receiver removes it once the item is applied.
+message ContentChunk {
+  // The link generation the sender is on.
+  uint64 generation = 1;
+  // The item the content is of; the same in every chunk of one call.
+  string queue_item_id = 2;
+  bytes data = 3;
+  // The whole content's size in bytes, on the first chunk.
+  uint64 total_size = 4;
+}
+
+message PutContentReply {
+  // Where the receiver keeps the content, which the item's Deliver names as its content_location.
+  string content_location = 1;
 }
 
 message DeliverRequest {
@@ -195,6 +214,8 @@ service Link {
   rpc Unpair(UnpairRequest) returns (UnpairReply);
   // An item of the local node's outbox, applied on the edge node by its kind's handler.
   rpc Deliver(DeliverRequest) returns (DeliverReply);
+  // The content of an outbox item, before its Deliver.
+  rpc PutContent(stream ContentChunk) returns (PutContentReply);
   // A batch of a replicated set.
   rpc Replicate(ReplicateRequest) returns (ReplicateReply);
 }
@@ -217,4 +238,6 @@ service LocalLink {
   rpc Deliver(DeliverRequest) returns (DeliverReply);
   // A delegated service call, run as the user _EDGE_ with authorization.
   rpc Delegate(DelegateRequest) returns (DelegateReply);
+  // The content of a queued item, before its Deliver.
+  rpc PutContent(stream ContentChunk) returns (PutContentReply);
 }

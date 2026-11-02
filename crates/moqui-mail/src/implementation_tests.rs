@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 
-use super::{field_text, host_in, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
+use super::{field_text, host_in, smtp_delivery_outcome, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
 #[cfg(feature = "imap")]
 #[cfg(feature = "imap")]
 use crate::inbound::{header_one, parse_rfc822, read_line_bytes, FakeGuard, Inbound, FAKE_DELETED};
@@ -94,6 +94,28 @@ fn seed(facade: &EntityFacade, context: &moqui_core::context::ExecutionContext, 
         row.set(*name, Value::string(*value));
     }
     row.create(facade).expect("create");
+}
+
+/// A server that was not reached is safe to try again: nothing was sent. lettre's errors are made by sending.
+#[test]
+fn a_server_not_reached_is_retryable() {
+    // a port nothing listens on: the connection is refused
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .unwrap();
+    let transport = lettre::SmtpTransport::builder_dangerous("127.0.0.1")
+        .port(port)
+        .timeout(Some(std::time::Duration::from_secs(2)))
+        .build();
+    let envelope = lettre::address::Envelope::new(None, vec!["a@example.com".parse().unwrap()]).unwrap();
+    let err = lettre::Transport::send_raw(&transport, &envelope, b"Subject: x\r\n\r\nx\r\n").unwrap_err();
+    let wrapped = moqui_core::context::Error::new(err.to_string()).with_source(err);
+    assert_eq!(smtp_delivery_outcome(&wrapped), "retryable");
+    assert_eq!(
+        smtp_delivery_outcome(&moqui_core::context::Error::new("not SMTP")),
+        "uncertain"
+    );
 }
 
 #[test]

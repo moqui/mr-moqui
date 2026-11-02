@@ -593,8 +593,31 @@ fn number(row: &EntityValue, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction.
+/// The batches each set had applied on this edge node, counted from its start.
+#[derive(Default)]
+struct AppliedCounts(Mutex<BTreeMap<String, u64>>);
+
+/// How many batches of set `set_name` this edge node has applied since it started (of any node): a reader that keeps
+/// something built from the set's copies (the mail listener's recipients) builds it again when the count moves.
+pub fn applied_count(facade: &EntityFacade, set_name: &str) -> u64 {
+    facade.with_slot_read(AppliedCounts::default, |counts| {
+        lock(&counts.0).get(set_name).copied().unwrap_or(0)
+    })
+}
+
+/// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction; once it commits, the
+/// set's [`applied_count`] moves.
 pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
+    let answer = apply_batch_rows(facade, node, batch)?;
+    if answer == BatchAnswer::Applied {
+        facade.with_slot(AppliedCounts::default, |counts| {
+            *lock(&counts.0).entry(batch.set_name.clone()).or_insert(0) += 1;
+        });
+    }
+    Ok(answer)
+}
+
+fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
     transaction(facade, VALUE, TransactionAttribute::ForceNew, || {
         let cursor = facade
             .find(CURSOR)?

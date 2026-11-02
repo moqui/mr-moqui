@@ -1,14 +1,16 @@
 # Edge Node
 
-Status 2026-11-01: E0–E4 built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct; the run
-on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches its authority
-over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web access; no comms
-use the link yet. Every question in [§8](#8-decisions) is
+Status 2026-11-01: E0–E4 and E5a built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct;
+the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches its
+authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
+access. Mail crosses the link with Postfix and Rspamd beside the edge node (E5a); its manual check at a large
+provider is pending. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
-built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built").
+built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
+[§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -386,8 +388,7 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   node's outbox; `pairedNodeId` is the local node of the pair), `sequenceNum` for order. The item id is a UUID, or for an
   idempotency key a hash of node, direction and key, so a racing enqueue of one key makes one row and a key queued again
   after the sender's database was lost is the same item to the receiver. A node enqueues only the kinds its conf
-  lists, and a payload is at most 1 MiB (larger is refused; `contentLocation` is carried as a reference, and moving
-  such bodies over the link is later work). Delivery runs while the link is up, one task per direction and node, woken
+  lists, and a payload is at most 1 MiB (larger is refused; a larger body is the item's content, below, since E5a). Delivery runs while the link is up, one task per direction and node, woken
   by a commit; a round reads the head of each key with one grouped query (`EdgeQueueHead`), without payloads, and reads
   a payload only for the item it claims. The receiver inserts the `moqui.edge.EdgeReceipt` first (insert-if-missing, so
   an overlapping redelivery waits on its key and then finds it), then runs the kind's handler as `_edge_` in the same
@@ -413,6 +414,23 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   whose sends keep failing is tried again after a backoff from 1 s to 60 s. The copies are
   `moqui.edge.EdgeReplicaValue` (entity, key hash, `pkJson` and `fieldsJson` encrypted at rest); `get#ReplicaValues`
   and `moqui_core::edge::replica::{get_value, list_values}` read them.
+- **Content (E5a).** A body too large for the payload (a mail message; later MMS media) is the item's content, up to
+  64 MiB, counted with the payload in `queue-max-megabytes`. `enqueue` takes the bytes, or a location it reads, and
+  keeps them at `dbresource://moqui/edge/content/out/<itemId>` in the transaction of the row. Before each `Deliver`
+  the sender streams them in 1 MiB chunks over a new client-streaming RPC (`Link.PutContent` and
+  `LocalLink.PutContent`, additive), and the receiver keeps them at `dbresource://moqui/edge/content/in/<node>/<itemId>`;
+  each upload with a suffix of its own, so a delivery that ended late cannot remove a newer upload; the `Deliver` then
+  names that location, which the receiver checks is its own for the item before the handler gets it as
+  `contentLocation`. The receiver removes its copy once the delivery is answered, applied or not, since each attempt
+  sends the content again; the sender's copy goes with the item at retention, and a received copy never answered goes
+  after the retention period. The answer timeout grows with the content (60 s plus its time at 32 KiB/s). A receiver
+  without `PutContent` (a version skew) answers unimplemented, which is "not handled", tried again every 10 minutes.
+  `enqueue#Item` takes only a `dbresource://` `contentLocation`.
+- **Handlers (E5a).** A handler also gets `pairedNodeId`. A result `retryLater` (the reason) rolls the receipt back and
+  answers unavailable: the item waits, not counted, to the end of the retention period, for a cause that is not the
+  item's (a relay or database away); an error is a counted refusal. A `queue-kind` may name a `failed-service`, which
+  the sender calls for an item of the kind that failed for good (its last refusal, the retention period, the size cap,
+  unpairing), so the failure is not silent.
 - **Unpair and revoke.** A local node that unpairs stops noting writes for replication (`replica::disable`, so its
   `.replication.waiting` and `.lag_seconds` stop growing) and fails its pending outbox (`EqdToEdge`) with
   lastErrorText "unpaired", kept for inspection the retention period rather than delivered to whichever edge node it
@@ -551,6 +569,59 @@ release.
     reached"; it is safe, since nothing was sent. The ambiguous lost-connection case stays as it is.
 - **IMAP and POP sync, and OAuth refresh,** stay on the local node. The OAuth sign-in redirect comes back to the local
   node's own host name through web access.
+
+**As built (E5a).**
+- **Kinds and set.** The `<edge>` entries are in MoquiDefaultConf.xml, since both ends need them: queue kinds `mail`,
+  `mailOut` and `mailStatus`, and the replicated set `mailRecipients` (`EmailAccount` address, kind, status and server;
+  `EmailIdentity` address and account; `EmailServer` `storeHost`, so an account the sync feeds is not a recipient). The
+  handlers are `org.moqui.impl.EmailServices` services with Rust bodies in `moqui-mail/src/edge_mail.rs`, granted to
+  `_EDGE_`; each refuses to run on the other role.
+- **Recipients.** `EdgeReplicaValue` has no index on field values, so the edge node's listener keeps the copies in
+  memory as a `RecipientMap` per local node (`moqui-mail` `delivery.rs`, the same rules as `find_recipient`, plus tags
+  included). It builds them again when a batch of the set is applied (`replica::applied_count`). Until the set has been
+  sent whole once, an address not in it gets 451, not 550 (per node). Only nodes paired now are answered for: an
+  address only a revoked node's kept copies have gets 451, so the gateway holds the mail while the node may pair
+  again.
+- **In.** On `node_role=edge` the listener's backend is `QueueBackend` (`moqui-host/src/smtp_queue.rs`). After the
+  data it queues one `mail` item per local node: the envelope and the recipient addresses with their DSN parameters as
+  the payload, never account ids; the message as content; the idempotency key from the Message-ID (or the message's
+  hash) and the sorted addresses, so Postfix's retry is the same item; the conversation key the first recipient's
+  account. Each recipient is answered 250 once the item commits, 451 if it fails. The local node's `deliver#EdgeMail`
+  resolves the addresses again with `find_recipient` and calls `delivery::deliver` unchanged; a store that fails fails
+  the item, and the retry stores nothing twice (the Message-ID check).
+- **Out.** An `EmailServer` with `smtpHost` `edge:` (as `pass_backend_url=edge:`) makes a send queue a `mailOut` item
+  in the caller's transaction, with the built message as content, so the send never waits on the link. The message is
+  Sent once it is queued; a queue failure is `deliveryOutcome` retryable. The edge node's `deliver#EdgeOutboundMail`
+  relays it with lettre to the MTA beside it (`edge_mail_relay_host`, `edge_mail_relay_port`, default
+  127.0.0.1:10025), from the VERP sender `bounce+<item id>@<edge_mail_bounce_domain>` when that is set; Postfix signs
+  it with DKIM through Rspamd. Not reached, a 4xx or a lost connection answers `retryLater`: the item waits, not
+  counted. A 5xx, or an address or envelope the relay could never take, is a bounce. The answer goes back as
+  `mailStatus` for the `mailOut` item id, queued in a transaction of its own right after the relay; an apply that finds
+  it queued does not relay again, so a later rollback never sends twice. No "deferred" status is sent.
+- **Bounces later.** A remote MX's delivery status notification comes back by mail to the VERP address. Postfix routes
+  the bounce domain to the LMTP listener, which takes `bounce+<id>` only when it holds the receipt of that `mailOut`
+  item from a paired node, reads the `message/delivery-status` part (failed outranks delayed; each recipient's status
+  and diagnostic) and queues a `mailStatus` for that node instead of mail.
+- **Status.** The local node's `note#EdgeMailStatus` finds its own `mailOut` item by id (nothing the edge node names is
+  trusted for the message) and, for a bounce, puts a mail client message back in the Outbox (`ES_READY` with
+  `sendError`, no folder) or marks a template's message `ES_BOUNCED`, only while the message is still `ES_SENT` with
+  the Message-ID it went out with, so one sent again or cancelled is left. `mailOut` has a failed-service,
+  `fail#EdgeOutboundMail`, which does the same with the reason for an item that failed for good on the local node
+  (unpairing, the retention period).
+- **Not reached.** A direct SMTP send whose server was not reached (refused, not resolved, connect timeout)
+  now has `deliveryOutcome` `retryable`, so callers that retry (the forum's `DeliveryWorker.js`) do. `send#EmailMessage`
+  returns `deliveryOutcome` too. A connection lost after it was made, or a TLS handshake that failed (lettre's network
+  error), stays `uncertain`.
+- **Conf.** MoquiEdgeConf.xml turns the listener to LMTP from Postfix on this host (`smtp_allowed_addresses`
+  127.0.0.1); it starts when `.env` sets `smtp_listen_port`. Run-Deploy has the Postfix and Rspamd snippet. A store
+  that fails on the local node answers `retryLater` too; a message that is not mail is a counted error, logged.
+- **Test.** `tests/it/edge_mail.rs`: RCPT for known and unknown addresses; with the link down unknown still refused
+  and known queued; stored once when it is back; a message over 1 MiB crosses as content; outbound with the relay not
+  reached (the item waits, not counted), then through a fake relay from the VERP sender; a 5xx back as a bounce in the
+  Outbox; a later notification to the VERP address bounces the accepted message, and a bounce address of an item the
+  edge node never relayed is refused.
+- **Manual, not automated.** Outbound mail DKIM-signed and passing DMARC at a large provider, with real DNS and
+  Postfix with Rspamd: to be checked once on a deployed edge node, as E4's two-runtime check was.
 
 **Chat bridges and SMS.**
 - The provider's webhook URL is the edge node's, `/channels/{chatBridgeId}/webhook`.
@@ -715,9 +786,10 @@ Built in E1 as `runtime/conf/MoquiEdgeConf.xml`: `instance_purpose` production, 
 the entity facade's crypt-pass. The properties of what is not built yet are comments in it, each with its phase:
 `channels_webhooks_enabled` (E6) and the rtc and TURN ports (E7). E4 set `pass_backend_url=edge:`, so mr-pass calls
 its local node over the link. E3 filled in its `<edge>` element: the queue's limits, with the
-delegated services and replicated sets as commented examples for the comms phases. The draft below is the target. The
-listeners that need the operator's own choices stay off until `.env` sets them: SIP ports, the XMPP domain, LMTP from
-the gateway.
+delegated services and replicated sets as commented examples for the comms phases; E5a moved mail's entries to
+MoquiDefaultConf.xml and set the listener to LMTP. The draft below is the target. The listeners that need the
+operator's own choices stay off until `.env` sets them: SIP ports, the XMPP domain, LMTP from the gateway
+(`smtp_listen_port`).
 
 ```xml
 <?xml version="1.0" encoding="UTF-8" ?>

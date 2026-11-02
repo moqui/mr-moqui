@@ -3,9 +3,10 @@
 <!-- An edge node (plans/Edge-Node.md): the production conf for a small cloud instance in front of a local node. Local
     nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by ALPN). It gives them web access: the host
     names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port); delegated calls, the
-    queue and replication (the edge element below); and mr-pass's authority, the local node over the link
-    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO). No comms use
-    them yet. A client-ip-header here needs trusted-proxies, or it is ignored.
+    queue and replication (the edge element below); mr-pass's authority, the local node over the link
+    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); and mail, with
+    Postfix and Rspamd beside it (the smtp-server below; docs/Run-Deploy.md, Edge node mail). A client-ip-header here
+    needs trusted-proxies, or it is ignored.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
     addresses, ports) go in .env.
@@ -19,6 +20,19 @@
     <default-property name="webapp_web_protection" value="true"/>
     <!-- mr-pass calls its local node as the PASS authority over gRPC down the link (plans/Edge-Node.md §5.5) -->
     <default-property name="pass_backend_url" value="edge:"/>
+
+    <!-- Mail (plans/Edge-Node.md §5.4, E5a): Postfix on this host takes port 25 (SPF, DKIM, DMARC and Rspamd's verdict)
+        and hands each message for the local node's domains to the LMTP listener below, on smtp_listen_port (set it in
+        .env, as 10024; the listener is off while it is empty). The listener answers RCPT TO from the local node's
+        replicated accounts, so an unknown address is refused while the local node is away too, and queues each message
+        for the local node. Mail the local node sends through an EmailServer with smtpHost edge: is relayed to Postfix
+        on edge_mail_relay_port, which signs it with DKIM (Rspamd) and delivers it, from bounce+(item)@ the domain
+        edge_mail_bounce_domain names (set it in .env, and route that domain to the LMTP listener too), so a later
+        bounce comes back to the message. -->
+    <default-property name="smtp_allowed_addresses" value="127.0.0.1,::1"/>
+    <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
+    <default-property name="edge_mail_relay_port" value="10025"/>
+    <smtp-server protocol="lmtp"/>
 
     <!-- Not built yet; each is turned on by the phase that uses it:
         E6, chat bridges and SMS:    <default-property name="channels_webhooks_enabled" value="true"/>
@@ -34,12 +48,10 @@
 
     <!-- How work crosses the link (plans/Edge-Node.md §5.2): what waits for a local node that is away is kept 14
         days (both nodes should keep the same period), and at most 1 GB of it; then the oldest fails, logged. A payload
-        is at most 1 MiB. The comms phases add what the edge node delegates and the sets a local node replicates; a
-        local node needs the same entries in its own conf, and grants for _EDGE_. Examples of later phases, not built:
+        is at most 1 MiB, and a larger body goes as its content. What the edge node delegates, the queue kinds and the
+        sets a local node replicates are in MoquiDefaultConf.xml, read by both ends (mail's since E5a); a later phase
+        adds its own there, with grants for _EDGE_, as:
             <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" allow-anonymous="true"/>   (E8)
-            <queue-kind name="mail" service="org.moqui.impl.EmailServices.deliver#EdgeMail"/>          (E5a)
-            <replicate set="mailRecipients">
-                <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,statusId"/></replicate>
         To check a delegated call end to end, list org.moqui.impl.EdgeServices.echo#Delegate on both nodes. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
 </moqui-conf>

@@ -41,6 +41,7 @@ fn item(key: &str, idempotency: &str) -> NewItem {
         conversation_key: key.to_string(),
         idempotency_key: idempotency.to_string(),
         payload: Some(format!("{key}:{idempotency}")),
+        content: None,
         content_location: None,
     }
 }
@@ -230,8 +231,14 @@ fn an_unpaired_outbox_fails_with_its_reason_and_stays_for_inspection() {
     let (ctx, facade) = open();
     enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();
     enqueue(ctx.factory(), &facade, None, &item("b", "2")).unwrap();
-    assert_eq!(fail_pending(&facade, TO_LOCAL, "unpaired", now_millis()).unwrap(), 0);
-    assert_eq!(fail_pending(&facade, TO_EDGE, "unpaired", now_millis()).unwrap(), 2);
+    assert_eq!(
+        fail_pending(&facade, &settings(), TO_LOCAL, "unpaired", now_millis()).unwrap(),
+        0
+    );
+    assert_eq!(
+        fail_pending(&facade, &settings(), TO_EDGE, "unpaired", now_millis()).unwrap(),
+        2
+    );
     let stats = stats(&facade, None).unwrap();
     assert_eq!((stats[0].pending, stats[0].failed), (0, 2));
     let rows = facade.find(QUEUE_ITEM).unwrap().disable_authz().list().unwrap();
@@ -245,4 +252,135 @@ fn an_unpaired_outbox_fails_with_its_reason_and_stays_for_inspection() {
     .unwrap()
     .due
     .is_empty());
+}
+
+#[test]
+fn content_is_kept_with_its_item_counted_in_the_cap_and_removed_with_it() {
+    let (ctx, facade) = open();
+    // the content's files are DbResource rows; the in-memory database has every table
+    facade.assume_db_tables();
+    let body = vec![b'x'; MAX_PAYLOAD_BYTES + 10];
+    let with_content = NewItem {
+        content: Some(body.clone()),
+        ..item("mail", "m-1")
+    };
+    let queued = enqueue(ctx.factory(), &facade, None, &with_content).unwrap();
+    let row = facade
+        .find(QUEUE_ITEM)
+        .unwrap()
+        .eq("queueItemId", Value::string(&queued.queue_item_id))
+        .disable_authz()
+        .one()
+        .unwrap()
+        .unwrap();
+    let location = text(&row, "contentLocation");
+    assert_eq!(location, format!("{CONTENT_OUT}{}", queued.queue_item_id));
+    assert_eq!(
+        number(&row, "payloadSize") as usize,
+        body.len() + "mail:m-1".len(),
+        "the content counts toward the cap"
+    );
+    let claimed = claim(
+        &facade,
+        &due_heads(&facade, &local_node_id(ctx.factory()), TO_EDGE, now_millis())
+            .unwrap()
+            .due[0],
+        "test",
+        now_millis(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(read_content(&facade, &claimed).unwrap(), Some(body.clone()));
+    // only this node's own copy is read, and too much content is refused at enqueue
+    let elsewhere = QueueItem {
+        content_location: "dbresource://moqui/rich-text/x.png".to_string(),
+        ..claimed.clone()
+    };
+    assert!(read_content(&facade, &elsewhere).is_err());
+    let too_big = NewItem {
+        content: Some(vec![0; MAX_CONTENT_BYTES + 1]),
+        ..item("mail", "m-2")
+    };
+    assert!(enqueue(ctx.factory(), &facade, None, &too_big).is_err());
+
+    // the receiver's copy: by node and item id, which must be plain names
+    let kept = store_received(&facade, "edge-1", &queued.queue_item_id, &body).unwrap();
+    assert!(kept.starts_with(&format!("{CONTENT_IN}edge-1/{}.", queued.queue_item_id)));
+    assert!(is_received("edge-1", &queued.queue_item_id, &kept));
+    let again = store_received(&facade, "edge-1", &queued.queue_item_id, &body).unwrap();
+    assert_ne!(
+        again, kept,
+        "each upload is its own, so a late apply removes only its own"
+    );
+    assert!(store_received(&facade, "edge-1", "../out/x", b"x").is_err());
+    assert!(received_location("..", "x").is_err());
+    // a delivery naming content this node did not keep for that item is refused, before any handler runs
+    for wrong in [
+        location.clone(),
+        format!("{CONTENT_IN}edge-2/{}.x", queued.queue_item_id),
+        format!("{CONTENT_IN}edge-1/other.x"),
+        format!("{CONTENT_IN}edge-1/{}./x", queued.queue_item_id),
+    ] {
+        let refused = apply(
+            ctx.factory(),
+            "edge-1",
+            &QueueItem {
+                content_location: wrong.clone(),
+                ..claimed.clone()
+            },
+        );
+        assert!(
+            matches!(&refused, Applied::Failed(error) if error.contains("not where this node keeps")),
+            "{wrong}: {refused:?}"
+        );
+    }
+    assert!(remove_content(&facade, &again, "the test"));
+
+    // delivered, then past the retention period: the item goes with its content, and the receiver's copy that was
+    // never answered goes too
+    finish(
+        &facade,
+        &settings(),
+        &claimed,
+        &Outcome::Answered(Applied::Applied),
+        now_millis(),
+    )
+    .unwrap();
+    let later = now_millis() + 15 * 86_400_000;
+    let cleaned = clean(&facade, &settings(), later).unwrap();
+    assert_eq!(cleaned.removed, 1);
+    assert_eq!(facade.read_db_resource_bytes(&location).unwrap(), None);
+    assert_eq!(facade.read_db_resource_bytes(&kept).unwrap(), None);
+}
+
+/// An item that fails for good tells its kind's failed-service on the sender, so the failure is not silent.
+#[test]
+fn a_kind_with_a_failed_service_is_told_when_its_item_fails_for_good() {
+    let (ctx, facade) = open();
+    let path = std::env::temp_dir().join(format!("moqui-edge-failed-{}.xml", std::process::id()));
+    std::fs::write(
+        &path,
+        r#"<services><service verb="fail" noun="EdgeQueueTest">
+            <in-parameters><parameter name="queueItemId"/><parameter name="kind"/><parameter name="conversationKey"/>
+                <parameter name="payload"/><parameter name="error"/></in-parameters>
+            <actions><script>ec.message.addMessage('told ' + kind + ' ' + payload + ': ' + error)</script></actions>
+        </service></services>"#,
+    )
+    .unwrap();
+    let _entered = ctx.enter();
+    crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    let told = EdgeSettings {
+        failed: BTreeMap::from([(KIND.to_string(), "fail#EdgeQueueTest".to_string())]),
+        ..settings()
+    };
+    enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();
+    assert_eq!(
+        fail_pending(&facade, &told, TO_EDGE, "unpaired", now_millis()).unwrap(),
+        1
+    );
+    let messages = ctx.message().messages().to_vec();
+    assert!(
+        messages.iter().any(|line| line == "told test a:1: unpaired"),
+        "{messages:?}"
+    );
 }

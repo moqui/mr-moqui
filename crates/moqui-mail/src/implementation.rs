@@ -211,10 +211,10 @@ pub(super) fn send_template(
             }
         }
     }
-    if let Err(err) = deliver(facade, &letter, &server) {
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
         note_message(format!("Error sending email: {err}"));
         let mut out = ids(&email_message_id, "");
-        out.insert("deliveryOutcome".into(), Value::string(smtp_delivery_outcome(&err)));
+        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
         return Ok(out);
     }
     if !email_message_id.is_empty() {
@@ -363,8 +363,10 @@ pub(super) fn send_message(
     if let Err(err) = stored_attachments(facade, &email_message_id, &mut letter) {
         return Ok(send_failed(&email_message_id, &err));
     }
-    if let Err(err) = deliver(facade, &letter, &server) {
-        return Ok(send_failed(&email_message_id, &err));
+    if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+        let mut out = send_failed(&email_message_id, &err);
+        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
+        return Ok(out);
     }
     if status == "ES_READY" || status == "ES_BOUNCED" {
         if client {
@@ -787,7 +789,8 @@ fn bare_address(text: &str) -> &str {
 }
 
 pub(super) fn require_host(host: &str) -> Result<(), Error> {
-    if host_allowed(host) {
+    // the edge node is this deployment's own; it relays to the internet itself
+    if super::edge_mail::is_edge_host(host) || host_allowed(host) {
         Ok(())
     } else {
         Err(Error::new(format!(
@@ -1306,9 +1309,25 @@ pub(super) fn header_value(headers: &str, name: &str) -> String {
     found.unwrap_or_default()
 }
 
-fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
+/// Send `letter` (of message `email_message_id`, when it has a row) through `server`: by SMTP, or through the edge
+/// node for a server whose `smtpHost` is `edge:` (queued, in the caller's transaction; the edge node's answer comes
+/// back to the row, `edge_mail.rs`).
+fn deliver(facade: &EntityFacade, letter: &Letter, server: &EntityValue, email_message_id: &str) -> Result<(), Error> {
     if captured(letter) {
         return Ok(());
+    }
+    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+        let message = build_lettre(letter)?;
+        let to: Vec<String> = message.envelope().to().iter().map(ToString::to_string).collect();
+        let from = message.envelope().from().map(ToString::to_string).unwrap_or_default();
+        return super::edge_mail::enqueue_outbound(
+            facade,
+            email_message_id,
+            &letter.message_id,
+            &from,
+            &to,
+            message.formatted(),
+        );
     }
     lettre_send(facade, letter, server)
 }
@@ -1353,6 +1372,9 @@ pub(super) fn send_built(
     let host = field_text(&server, "smtpHost");
     if host.is_empty() {
         return Err(Error::new(format!("email server {server_id} has no SMTP host")));
+    }
+    if super::edge_mail::is_edge_host(&host) {
+        return super::edge_mail::enqueue_outbound(facade, "", "", "", &[to.to_string()], raw.to_vec());
     }
     require_host(&host)?;
     let recipient = to
@@ -1426,13 +1448,25 @@ fn smtp_send_retry(
     }
 }
 
-/// An explicit SMTP rejection may be retried or treated as permanent. A lost connection is ambiguous:
-/// the provider may already have accepted DATA, so a caller must not automatically send it again.
+/// The `deliveryOutcome` of a send through `server` that failed with `error`: through the edge node it was not queued
+/// (not paired, the kind not listed), so nothing was sent and it is retryable; else as [`smtp_delivery_outcome`].
+fn delivery_outcome(server: &EntityValue, error: &Error) -> &'static str {
+    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+        "retryable"
+    } else {
+        smtp_delivery_outcome(error)
+    }
+}
+
+/// An explicit SMTP rejection may be retried or treated as permanent, and so may a server that was not reached
+/// (refused, not resolved, the connect timed out): nothing was sent. A connection lost after
+/// it was made is ambiguous: the provider may already have accepted DATA, so a caller must not automatically send it
+/// again.
 fn smtp_delivery_outcome(error: &Error) -> &'static str {
     let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(source) = current {
         if let Some(smtp) = source.downcast_ref::<lettre::transport::smtp::Error>() {
-            return if smtp.is_transient() {
+            return if smtp.is_transient() || not_reached(smtp) {
                 "retryable"
             } else if smtp.is_permanent() {
                 "permanent"
@@ -1443,6 +1477,13 @@ fn smtp_delivery_outcome(error: &Error) -> &'static str {
         current = source.source();
     }
     "uncertain"
+}
+
+/// The server was not reached: lettre's connection error, which it raises only while it resolves the name and
+/// connects, before a command is sent (a TLS handshake that fails is its network error, left uncertain). lettre has no
+/// test for it but its text, which `a_server_not_reached_is_retryable` pins.
+fn not_reached(error: &lettre::transport::smtp::Error) -> bool {
+    error.to_string().starts_with("Connection error")
 }
 
 /// How SMTP signs in: not at all (no `mailUsername`), with the password, or for an EatOAuth2 server with XOAUTH2 and
@@ -1924,6 +1965,9 @@ fn smtp_step(facade: &EntityFacade, server: &EntityValue) -> TestStep {
     let host = field_text(server, "smtpHost");
     if host.is_empty() {
         return TestStep::failed("smtp", "The server has no SMTP host".to_string());
+    }
+    if super::edge_mail::is_edge_host(&host) {
+        return TestStep::passed("smtp", "Mail goes out through the edge node's queue".to_string());
     }
     let port = field_text(server, "smtpPort");
     let place = if port.is_empty() {

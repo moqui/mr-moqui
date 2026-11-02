@@ -1101,15 +1101,30 @@
     <!-- How work crosses the edge link (plans/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
-        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB. A receiver's refusal
+        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
+        64 MiB, counted in the cap) is the item's content, sent over the link before it. A receiver's refusal
         is tried again after queue-retry-seconds, doubling up to 10 minutes, and fails the item after
         queue-max-attempts. Children, each merged by its key: delegate (service, allow-anonymous) lists the services an
         edge node runs on its local node for a synchronous call, and a local node runs only those; queue-kind (name)
         names the service that applies an item of that kind on its receiver, and a node queues only the kinds it lists;
         replicate (set) names the entities and fields a local node copies to its edge node, read-only there. A local
         node runs each delegated call and queued item as the user _EDGE_, whose grants (the EDGE_DELEGATE artifact
-        group) must cover the service too. The comms phases add their entries; MoquiEdgeConf.xml has examples. -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
+        group) must cover the service too. The comms phases add their entries here, since both ends need them.
+        Mail (E5a, plans/Edge-Node.md §5.4): an edge node's listener queues what it takes as mail for the local node,
+        answering RCPT TO from the replicated mailRecipients; a local node's EmailServer with smtpHost edge: queues its
+        sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
+        VERP address); a mailOut that fails for good puts its message back in the Outbox. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5">
+        <queue-kind name="mail" service="org.moqui.impl.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mailOut" service="org.moqui.impl.EmailServices.deliver#EdgeOutboundMail"
+                failed-service="org.moqui.impl.EmailServices.fail#EdgeOutboundMail"/>
+        <queue-kind name="mailStatus" service="org.moqui.impl.EmailServices.note#EdgeMailStatus"/>
+        <replicate set="mailRecipients">
+            <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,accountKindEnumId,statusId,emailServerId"/>
+            <entity name="moqui.basic.email.EmailIdentity" fields="emailAddress,emailAccountId"/>
+            <entity name="moqui.basic.email.EmailServer" fields="storeHost"/>
+        </replicate>
+    </edge>
 
     <!-- Log files: dir (moqui_log_dir). A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at max-size-mb or when the day
         changes, and only the newest max-files rolled files of each kind are kept. -->

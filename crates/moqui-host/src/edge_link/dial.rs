@@ -37,8 +37,8 @@ use tonic::{Request, Response, Status};
 use super::pair::{client_config, dial_tls, parse_url, Identity, ServerTrust};
 use super::proto::local_link_server::{LocalLink, LocalLinkServer};
 use super::proto::{
-    DelegateReply, DelegateRequest, DeliverReply, DeliverRequest, HelloRequest, LocalHelloReply, LocalHelloRequest,
-    PingReply, PingRequest, UnpairRequest,
+    ContentChunk, DelegateReply, DelegateRequest, DeliverReply, DeliverRequest, HelloRequest, LocalHelloReply,
+    LocalHelloRequest, PingReply, PingRequest, PutContentReply, UnpairRequest,
 };
 use super::{
     check_versions, edge_info, hello, jitter, read_answer, Answer, LinkClient, LinkError, LocalConfig, LINK_VERSION,
@@ -241,6 +241,22 @@ impl LocalLink for LocalService {
             .ok_or_else(|| Status::unavailable("the server is stopping"))?;
         let applied = super::queue::receive(&factory, &node, item).await;
         Ok(Response::new(super::queue::reply(&applied)))
+    }
+
+    async fn put_content(
+        &self,
+        request: Request<tonic::Streaming<ContentChunk>>,
+    ) -> Result<Response<PutContentReply>, Status> {
+        let factory = self.factory()?;
+        let node = factory
+            .upgrade()
+            .map(|factory| moqui_core::edge::queue::local_node_id(&factory))
+            .ok_or_else(|| Status::unavailable("the server is stopping"))?;
+        let reply = super::queue::receive_content(&factory, &node, request.into_inner(), |generation| {
+            self.fenced(generation)
+        })
+        .await?;
+        Ok(Response::new(reply))
     }
 
     async fn delegate(&self, request: Request<DelegateRequest>) -> Result<Response<DelegateReply>, Status> {
@@ -659,9 +675,19 @@ impl Work {
         let client = up.client.clone();
         let generation = up.generation;
         let owner = format!("{}/{generation}", config.instance_id);
-        let send = move |item: moqui_core::edge::queue::QueueItem| {
+        let send = move |mut item: moqui_core::edge::queue::QueueItem, content: Option<Vec<u8>>| {
             let mut client = client.clone();
             async move {
+                item.content_location = match content {
+                    Some(content) => {
+                        let chunks = super::queue::content_chunks(generation, &item.queue_item_id, &content);
+                        match client.put_content(chunks).await {
+                            Ok(reply) => reply.into_inner().content_location,
+                            Err(status) => return super::queue::delivery_error(&status),
+                        }
+                    }
+                    None => String::new(),
+                };
                 let request = DeliverRequest {
                     generation,
                     item: Some(super::queue::to_proto(&item)),

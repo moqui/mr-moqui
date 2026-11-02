@@ -47,9 +47,9 @@ use super::hosts::{self, Hosts, Route};
 use super::pair::Identity;
 use super::proto::link_server::{Link, LinkServer};
 use super::proto::{
-    DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply, HelloRequest, LocalHelloRequest, PairReply,
-    PairRequest, PingReply, PingRequest, ProbeReply, ProbeRequest, ReplicateReply, ReplicateRequest, UnpairReply,
-    UnpairRequest,
+    ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply, HelloRequest, LocalHelloRequest,
+    PairReply, PairRequest, PingReply, PingRequest, ProbeReply, ProbeRequest, PutContentReply, ReplicateReply,
+    ReplicateRequest, UnpairReply, UnpairRequest,
 };
 use super::store::{self, Paired};
 use super::{
@@ -1014,18 +1014,28 @@ fn link_server(service: LinkService) -> LinkServer<LinkService> {
         .max_encoding_message_size(super::MAX_MESSAGE)
 }
 
-/// Send a queued item down a node's down connection of `generation`.
+/// The answer to one delivery down a node's down connection.
+type DeliveryAnswer =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<moqui_core::edge::queue::Applied, String>> + Send>>;
+
+/// Send a queued item, with its content first, down a node's down connection of `generation`.
 fn deliver_down(
     send: hyper::client::conn::http2::SendRequest<tonic::body::Body>,
     generation: u64,
-) -> impl FnMut(
-    moqui_core::edge::queue::QueueItem,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<moqui_core::edge::queue::Applied, String>> + Send>,
-> + Send {
-    move |item| {
+) -> impl FnMut(moqui_core::edge::queue::QueueItem, Option<Vec<u8>>) -> DeliveryAnswer + Send {
+    move |mut item, content| {
         let mut client = super::local_link_client(send.clone());
         Box::pin(async move {
+            item.content_location = match content {
+                Some(content) => {
+                    let chunks = super::queue::content_chunks(generation, &item.queue_item_id, &content);
+                    match client.put_content(chunks).await {
+                        Ok(reply) => reply.into_inner().content_location,
+                        Err(status) => return super::queue::delivery_error(&status),
+                    }
+                }
+                None => String::new(),
+            };
             let request = DeliverRequest {
                 generation,
                 item: Some(super::queue::to_proto(&item)),
@@ -1204,6 +1214,19 @@ impl Link for LinkService {
         let item = super::queue::from_proto(request.into_inner().item.unwrap_or_default());
         let applied = super::queue::receive(&self.server.factory, node, item).await;
         Ok(Response::new(super::queue::reply(&applied)))
+    }
+
+    async fn put_content(
+        &self,
+        request: Request<tonic::Streaming<ContentChunk>>,
+    ) -> Result<Response<PutContentReply>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        // the up connection is the generation; the chunks' own is not checked again
+        let reply = super::queue::receive_content(&self.server.factory, node, request.into_inner(), |_| Ok(())).await?;
+        Ok(Response::new(reply))
     }
 
     async fn replicate(&self, request: Request<ReplicateRequest>) -> Result<Response<ReplicateReply>, Status> {
