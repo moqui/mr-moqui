@@ -100,6 +100,9 @@ struct SetState {
     waiting_since: Option<i64>,
     last_ack: Option<i64>,
     last_snapshot: Option<i64>,
+    /// The last full send had no records: the set was held back (`super::sip::withheld`), so the edge node's copy is
+    /// empty.
+    sent_empty: bool,
 }
 
 /// A set's state for the status screen and the metrics.
@@ -362,6 +365,30 @@ impl Replica {
             set.last_ack = Some(now);
             set.last_snapshot = Some(now);
         }
+    }
+
+    /// The last full send of set `index` had no records (`empty`), or had them: what [`Replica::hold`] compares with.
+    pub fn sent_whole(&self, index: usize, empty: bool) {
+        if let Some(set) = lock(&self.state).get_mut(index) {
+            set.sent_empty = empty;
+        }
+    }
+
+    /// Whether set `index` is to go empty now (`empty`, the set held back) or whole: when that differs from its last
+    /// full send, and none is due already, a full send is due. True when it made one due.
+    pub fn hold(&self, index: usize, empty: bool) -> bool {
+        let due = match lock(&self.state).get_mut(index) {
+            Some(set) if set.sent_empty != empty && !set.snapshot_needed && !set.epoch.is_empty() => {
+                set.snapshot_needed = true;
+                set.resyncs += 1;
+                true
+            }
+            _ => false,
+        };
+        if due {
+            self.wake();
+        }
+        due
     }
 
     /// Send set `index` whole again: the edge node asked, or the operator did.

@@ -262,7 +262,11 @@ pub(crate) fn offer(
         calls.other_nodes = linked.iter().any(|other| other != node);
     }
     if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
-        (sip.fallbacks, sip.other_nodes) = sip_copies(factory, node)?;
+        // a count that does not read leaves the rest of the offer: no fallbacks said, other nodes as the links say
+        (sip.fallbacks, sip.other_nodes) = sip_copies(factory, node).unwrap_or_else(|err| {
+            tracing::error!("Edge offer to {node}: the SIP copies were not counted: {err}");
+            (0, linked.iter().any(|other| other != node))
+        });
     }
     Ok(offer)
 }

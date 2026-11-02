@@ -97,9 +97,28 @@ pub struct SipTrunkState {
 #[derive(Default)]
 struct SipTrunks(Mutex<Vec<SipTrunkState>>);
 
-/// On an edge node, as its SIP engine loads its trunks (empty as it stops): each `loaded` until it answers.
+/// On an edge node, as its SIP engine loads its trunks (empty as it stops): a new trunk is `loaded` until it answers;
+/// one it had loaded before keeps the state it had, as a reload (any batch of `voiceTrunks`) does not make a failing
+/// trunk work.
 pub fn set_sip_trunks(factory: &ExecutionContextFactory, trunks: Vec<SipTrunkState>) {
-    *lock(&factory.extension(|_| SipTrunks::default()).0) = trunks;
+    let slot = factory.extension(|_| SipTrunks::default());
+    let mut held = lock(&slot.0);
+    let merged = merge_sip_trunks(&held, trunks);
+    *held = merged;
+}
+
+/// `trunks` with the state of each one `before` had (by id).
+pub fn merge_sip_trunks(before: &[SipTrunkState], trunks: Vec<SipTrunkState>) -> Vec<SipTrunkState> {
+    trunks
+        .into_iter()
+        .map(|mut trunk| {
+            if let Some(old) = before.iter().find(|old| old.voice_trunk_id == trunk.voice_trunk_id) {
+                trunk.state.clone_from(&old.state);
+                trunk.error.clone_from(&old.error);
+            }
+            trunk
+        })
+        .collect()
 }
 
 /// On an edge node, a trunk's registration or ping answered: its state now.

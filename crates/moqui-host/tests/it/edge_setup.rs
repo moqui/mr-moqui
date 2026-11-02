@@ -784,7 +784,23 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         &[("pairedNodeId", OTHER), ("statusId", "EdgeClientRevoked")],
     );
     assert!(!link.offer().unwrap().sip.other_nodes);
-    let trunk_port = crate::common::free_port();
+    // a fake trunk on loopback that answers the engine's OPTIONS pings, until the walk ends
+    let fake = crate::sip::Trunk::new();
+    let trunk_port = fake.addr().port();
+    let answering = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let pings = {
+        let answering = Arc::clone(&answering);
+        std::thread::spawn(move || {
+            while answering.load(std::sync::atomic::Ordering::Acquire) {
+                let until = Instant::now() + Duration::from_millis(200);
+                if let Some((rsipstack::sip::SipMessage::Request(req), from)) = fake.recv(until) {
+                    if req.method.to_string() == "OPTIONS" {
+                        fake.reply(&req, from, 200, "", "");
+                    }
+                }
+            }
+        })
+    };
     let trunk_id = to_plain_string(
         &call(
             local,
@@ -822,6 +838,11 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     );
     let loaded = offered_trunks();
     assert_eq!(loaded[0].name, "Setup trunk", "{loaded:?}");
+    wait_until(Duration::from_secs(10), "the trunk answers the engine's ping", || {
+        offered_trunks()
+            .iter()
+            .any(|trunk| trunk.voice_trunk_id == trunk_id && trunk.state == "ok")
+    });
     show(
         "EdgeNode/Pair/Discover",
         &[
@@ -907,8 +928,8 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         assert_eq!(tested[check]["ok"], "true", "{check}: {tested:?}");
     }
     assert!(
-        tested["sipTrunks"]["message"].contains("Setup trunk (loaded)"),
-        "{tested:?}"
+        tested["sipTrunks"]["message"].contains("Setup trunk (ok)"),
+        "a reload (Apply's full sends) keeps the trunk's state: {tested:?}"
     );
     assert!(
         tested["sipFallbacks"]["message"].contains("each of the 1 numbers"),
@@ -937,6 +958,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         "The set voiceTrunks goes to the edge node empty",
         "The set voiceFallbacks goes to the edge node empty",
         "stays but takes no new call",
+        "No phone is registered at the edge node's registrar",
     ] {
         assert!(
             off.iter()
@@ -977,6 +999,8 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         offered_trunks().iter().any(|trunk| trunk.voice_trunk_id == trunk_id) && copies(edge, "voiceFallbacks") == 1
     });
     assert_eq!(active()["active"], Value::Bool(true));
+    answering.store(false, std::sync::atomic::Ordering::Release);
+    pings.join().unwrap();
 }
 
 /// The edge node's instance id, as the local node pinned it from its Hello.

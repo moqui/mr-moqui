@@ -23,7 +23,8 @@
 //! link sends both sets empty (a full send with no records, so the edge node's copy is emptied and its engine loads
 //! again with no trunks and answers no number), and `Voice.js` `voiceNodes` and `SipDevices.js` `edgeSipNode` leave
 //! out the edge node's link-kept `SipNode` row, which stays: no new call goes to the edge node's engine, and its
-//! registrar signs no phone in. Calls already on it go on.
+//! registrar signs no phone in, no phone rings through a binding there (`SipDevices.js` `liveSipNodes`), and Apply
+//! removes its bindings ([`remove_edge_bindings`]). Calls already on it go on.
 
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
@@ -48,6 +49,7 @@ const TRUNK: &str = "moqui.call.VoiceTrunk";
 const NUMBER: &str = "moqui.call.PhoneNumber";
 const FALLBACK: &str = "moqui.call.PhoneNumberFallback";
 const DEVICE: &str = "moqui.call.SipDevice";
+const REGISTRATION: &str = "moqui.call.SipRegistration";
 
 /// Whether phones go through the edge node ([`SIP_ENABLED`]).
 pub fn sip_enabled() -> bool {
@@ -284,19 +286,36 @@ pub fn trunk_check(local: &[(String, String)], offer: &SipOffer) -> (Option<bool
     if !failed.is_empty() {
         return (Some(false), format!("Failed on the edge node: {}", failed.join(", ")));
     }
-    let states: Vec<String> = offer
+    let ours: Vec<&super::media::SipTrunkState> = offer
         .trunks
         .iter()
         .filter(|trunk| local.iter().any(|(id, _)| *id == trunk.voice_trunk_id))
-        .map(|trunk| {
-            let name = if trunk.name.is_empty() {
-                &trunk.voice_trunk_id
-            } else {
-                &trunk.name
-            };
-            format!("{name} ({})", trunk.state)
-        })
         .collect();
+    let named = |trunk: &super::media::SipTrunkState| {
+        let name = if trunk.name.is_empty() {
+            &trunk.voice_trunk_id
+        } else {
+            &trunk.name
+        };
+        format!("{name} ({})", trunk.state)
+    };
+    // loaded and not answered yet (or let go) is not confirmed: only a registration or a ping's answer is
+    let waiting: Vec<String> = ours
+        .iter()
+        .filter(|trunk| trunk.state != "registered" && trunk.state != "ok")
+        .map(|trunk| named(trunk))
+        .collect();
+    if !waiting.is_empty() {
+        return (
+            Some(false),
+            format!(
+                "Loaded on the edge node, but not answering yet: {}. A trunk answers its registration, or its first \
+                 ping, within seconds: test again",
+                waiting.join(", ")
+            ),
+        );
+    }
+    let states: Vec<String> = ours.iter().map(|trunk| named(trunk)).collect();
     (
         Some(true),
         format!(
@@ -401,6 +420,8 @@ pub fn apply(
             "This node's trunks and fallbacks are not sent to the edge node, and its SIP engine takes no new call"
         },
     )];
+    // what holds now: a property set at start overrides the file (the line above says so), and the rest follows it
+    let on = sip_enabled();
     let replica = super::replica::replica(facade);
     let status = replica.as_ref().map(|replica| replica.status()).unwrap_or_default();
     if let Some(replica) = &replica {
@@ -429,6 +450,20 @@ pub fn apply(
     };
     lines.push(SetupLine::new("sip", ok, text));
     if !on {
+        // the bindings of phones registered at the edge node's registrar go: none of them rings from here now
+        lines.push(match remove_edge_bindings(facade, &edge.instance_id) {
+            Ok(0) => SetupLine::new("sip", true, "No phone is registered at the edge node's registrar"),
+            Ok(count) => SetupLine::new(
+                "sip",
+                true,
+                format!("The bindings of {count} phones registered at the edge node's registrar are removed"),
+            ),
+            Err(err) => SetupLine::new(
+                "sip",
+                false,
+                format!("The bindings at the edge node's registrar were not removed: {err}"),
+            ),
+        });
         return lines;
     }
     if offer.registrar {
@@ -486,6 +521,24 @@ pub fn apply(
         Err(err) => SetupLine::new("sip", false, format!("This node's numbers were not read: {err}")),
     });
     lines
+}
+
+/// Remove the `SipRegistration` rows of the edge node `instance_id` (its registrar's bindings), as phones are turned
+/// off: how many.
+///
+/// # Errors
+///
+/// Returns the entity facade's error.
+pub fn remove_edge_bindings(facade: &EntityFacade, instance_id: &str) -> Result<i64, Error> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    if instance_id.is_empty() {
+        return Ok(0);
+    }
+    facade
+        .find(REGISTRATION)?
+        .eq("instanceId", Value::string(instance_id))
+        .disable_authz()
+        .delete_all()
 }
 
 /// The edge node of a link that is up, as its last Hello said, when it runs a SIP engine, or why there is none.

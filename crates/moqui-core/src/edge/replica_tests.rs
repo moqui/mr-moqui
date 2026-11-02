@@ -187,6 +187,31 @@ fn a_delete_or_a_resync_during_a_full_send_is_sent_after_it() {
 }
 
 #[test]
+fn a_set_held_back_or_let_go_is_sent_whole_once_against_its_last_full_send() {
+    let (_ctx, facade) = open();
+    let replica = enable(&facade, &[groups()]).unwrap();
+    assert!(!replica.hold(0, true), "no full send yet: one is due anyway");
+    let Work::Snapshot { epoch, resyncs } = replica.next(0) else {
+        panic!("a full send")
+    };
+    replica.sent_whole(0, false);
+    replica.snapshot_done(0, &epoch, 2, resyncs);
+    replica.acked(0, &epoch, 2);
+    assert!(!replica.hold(0, false), "as last sent: nothing due");
+    assert_eq!(replica.next(0), Work::Idle);
+    // held back since (the setting changed, by Apply or by hand): a full send, once
+    assert!(replica.hold(0, true));
+    assert!(!replica.hold(0, true), "due already");
+    let Work::Snapshot { epoch, resyncs } = replica.next(0) else {
+        panic!("a full send, empty")
+    };
+    replica.sent_whole(0, true);
+    replica.snapshot_done(0, &epoch, 1, resyncs);
+    assert!(!replica.hold(0, true));
+    assert!(replica.hold(0, false), "let go again: sent whole");
+}
+
+#[test]
 fn a_batch_goes_in_parts_by_size() {
     let changes: Vec<Change> = (0..5)
         .map(|n| Change {

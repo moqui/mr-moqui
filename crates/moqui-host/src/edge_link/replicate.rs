@@ -121,17 +121,14 @@ impl Sender {
                 .get(index)
                 .is_some_and(|set| moqui_core::edge::sip::withheld(&set.name))
         };
-        let mut withheld: Vec<bool> = (0..sets).map(|index| held(index, &self.replica)).collect();
         loop {
             let notified = wake.notified();
             let mut busy = false;
             for index in 0..sets {
-                // a set held back, or let go again, goes whole (empty while held back)
+                // a set held back, or let go again, goes whole (empty while held back): compared with what its last
+                // full send was, kept with the set's state, so no change of the setting is missed
                 let holding = held(index, &self.replica);
-                if holding != withheld[index] {
-                    withheld[index] = holding;
-                    self.replica.resync(index);
-                }
+                self.replica.hold(index, holding);
                 let now = tokio::time::Instant::now();
                 if not_before[index] > now {
                     continue;
@@ -257,10 +254,12 @@ impl Sender {
                 match self.snapshot(&set, &epoch, withheld).await {
                     Ok(seq) if withheld => {
                         tracing::info!("Edge replication: set {} sent empty, as it is held back", set.name);
+                        self.replica.sent_whole(index, true);
                         self.replica.snapshot_done(index, &epoch, seq, resyncs);
                     }
                     Ok(seq) => {
                         tracing::info!("Edge replication: set {} sent whole ({seq} batches)", set.name);
+                        self.replica.sent_whole(index, false);
                         self.replica.snapshot_done(index, &epoch, seq, resyncs);
                     }
                     Err(err) => {

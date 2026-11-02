@@ -83,8 +83,10 @@ function domain() {
   return property('sip_domain') || property('sip_public_address') || 'moqui'
 }
 
+/** The live SIP nodes; the edge node's link-kept row only while phones go through it (edge_sip_enabled, E10 phones). */
 function liveSipNodes() {
-  return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS)
+  const edgeOn = edgeSipEnabled()
+  return rows(SIP_NODE).filter((n) => ms(n.heartbeatDate) >= nowMs() - NODE_STALE_MS && (edgeOn || n.edgeLinked !== 'Y'))
 }
 
 /** Cascading media nodes (W7, Calls.js cascadeOn): a phone may ring on another node than the call's. */
@@ -320,6 +322,8 @@ function checkDigest(p) {
 
 /** A binding the engine added, refreshed or removed; one of an older revision or of a removed device is not kept. */
 function storeRegistration(p) {
+  // phones off (E10 phones): the edge node keeps no new binding here; a removal is still taken
+  if (isEdgeCaller() && !edgeSipEnabled() && p.change !== 'removed') return refuse('notAllowed', 'Phones do not go through the edge node')
   if (!edgeNodeAllowed(p.instanceId)) return refuse('notAllowed', 'The edge node keeps the bindings of its own SIP node only')
   const row = one(REGISTRATION, { sipRegistrationId: p.sipRegistrationId })
   if (row && isEdgeCaller() && row.instanceId !== p.instanceId) return refuse('notAllowed', 'Not a binding of the edge node')
@@ -431,6 +435,7 @@ function ringDevices(p) {
  * place#PhoneCall's checks: the user's outbound permission and caller ID, the fraud limits, and the emergency path first.
  */
 function receiveDeviceCall(p) {
+  if (isEdgeCaller() && !edgeSipEnabled()) return refuse('notAllowed', 'Phones do not go through the edge node')
   if (!registrarOn()) return refuse('notAllowed', 'The registrar is off')
   const device = p.sipDeviceId ? one(DEVICE, { sipDeviceId: p.sipDeviceId }) : null
   if (!device || device.statusId !== 'SdsActive') return refuse('notAllowed', 'This phone was removed')

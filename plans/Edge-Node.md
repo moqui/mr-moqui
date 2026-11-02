@@ -1551,7 +1551,11 @@ Its actions are pause, resync and unpair.
   (UDP/TCP and TLS), its realm (`sip_domain`) and registrar switch, as its Hello's fields 11 to 14 (the engine's
   `SipAdvert`); the trunks its engine has loaded, each with its state (`SipTrunk`: `loaded` until it answers, then
   `registered`, `ok`, `failed` with why, or `unregistered`; the engine keeps them per factory as it loads and as each
-  answers, `moqui_core::edge::media::set_sip_trunks`, `note_sip_trunk`); the asking node's numbers with a fallback in
+  answers, `moqui_core::edge::media::set_sip_trunks`, `note_sip_trunk`; a reload, which any batch of `voiceTrunks`
+  makes, keeps the state of a trunk it had, so a failing trunk stays failed; review fix: moqui-sip's register and ping
+  loops that `set_trunks` replaced tell nothing more, and a trunk kept with the same registration is not unregistered
+  by its old loop, so a working trunk does not show `unregistered` and its binding at the provider stays); the asking
+  node's numbers with a fallback in
   its copy of `voiceFallbacks`; and `other_nodes` when another local node is active, since the engine reads the copies
   of the only active node and so loads none then (decision 1). Hello's areas name `sip` while the engine runs, as the
   Hello is made (`accept.rs`), as calls do. `setup::NOT_AVAILABLE` is empty. `ConfigureRequest` field 8 is not used:
@@ -1561,12 +1565,17 @@ Its actions are pause, resync and unpair.
   - the link's replication sender holds back `voiceTrunks` and `voiceFallbacks` (`sip::withheld`): their full send has
     no records (only its end, which removes the edge node's copy) and their changes are dropped, so the edge node's
     engine loads again with no trunks (its trunks stop registering and their calls are not taken) and answers no
-    number from a fallback; the sender sends both sets whole again when the setting changes (read each pass, at most
-    2 s), so a hand edit of `.env` also takes;
+    number from a fallback; the sender compares, each pass (at most 2 s), whether the set is held back with whether
+    its last full send was empty (kept with the set's state, `Replica::hold`, `sent_whole`), and sends it whole again
+    when they differ, so no change of the setting leaves the trunks' credentials (`authJson`) on the edge node. The
+    setting is the process property: Apply sets it at once; a hand edit of `runtime/.env` takes at the next start, as
+    `.env` is read at start;
   - the edge node's link-kept `SipNode` row stays (removing it would end its calls), but `Voice.js` `voiceNodes`
     leaves it out, so no new call goes to its engine; `SipDevices.js` `edgeSipNode` is none, so phones made here get
     this node's realm and registrar switch, and `check#SipDeviceDigest` from `_edge_` matches nothing, so its
-    registrar signs no phone in;
+    registrar signs no phone in; `SipDevices.js` `liveSipNodes` leaves the row out too, so no phone rings through a
+    binding the edge node holds, and `receive#DeviceCall` and `store#SipRegistration` (but a removal) from `_edge_` are
+    refused; Apply turning phones off removes the edge node's `SipRegistration` rows;
   - the link's minute's `refresh#PhoneFallbacks` (and its greetings for the edge node) does not run.
   Off at the edge node itself (no SIP engine) is its `.env`; the local setting needs no change there.
 - **Discover** offers phones when the edge node's SIP engine runs, on by default unless `edge_sip_enabled` is off,
@@ -1591,8 +1600,8 @@ Its actions are pause, resync and unpair.
   (`edge_dns.rs` `sip_rows`, sharing `srv_row` with XMPP's). A realm that is no DNS name (an address, or `moqui`) has a
   row saying so instead. The `_sips._tcp` row per mail domain is gone.
 - **Test** (`sipOn`; not checked while `edge_sip_enabled` is off): `sipNode`, the row live with the Hello's
-  addresses; `sipTrunks`, every enabled trunk of this node in the offer's loaded trunks and none failed (not checked
-  with no trunk); `sipFallbacks`, the edge node's copy holds as many fallbacks as this node has, with nothing of the
+  addresses; `sipTrunks`, every enabled trunk of this node in the offer's loaded trunks, each `registered` or `ok`
+  (`loaded`, not answering yet, is not passed; not checked with no trunk); `sipFallbacks`, the edge node's copy holds as many fallbacks as this node has, with nothing of the
   set waiting or due (`fallback_check`). No SIP OPTIONS ping: the edge node's engine answers OPTIONS from its trunks
   only, and a stranger's not at all.
 - **Status** shows phones: the trunks and phones through the edge node at its SIP addresses, its registrar, and from
@@ -1603,17 +1612,20 @@ Its actions are pause, resync and unpair.
   `other_nodes` while the other node is active, and the SIP SRV records against fixed ones; the phones walk: with the
   other node revoked, a trunk and two numbers (one with a fallback) set up on the local node replicate and the edge
   node's engine loads the trunk; Discover shows it with its numbers, the fallback summary and the notes; phones alone
-  chosen; Apply (the setting, every line passing); Test's three checks passing; `get#VoiceCapabilities` active;
+  chosen; Apply (the setting, every line passing); Test's three checks passing (the trunk a fake one on loopback that
+  answers the engine's OPTIONS pings); `get#VoiceCapabilities` active;
   Status; phones off (both copies emptied, the engine without the trunk, the row kept, Test not checking, no voice
   node so capabilities inactive with `noSipServer`, Status saying so) and on again (the trunk loaded again). Unit:
-  `edge/sip_tests.rs` (the setting and the sets it holds back, the row check, the trunk and fallback checks, a link
-  with no SIP engine), `edge_link/tests.rs` (the offer's conversion), `edge_dns_tests.rs` (the SIP SRV rows, a realm
+  `edge/sip_tests.rs` (the setting and the sets it holds back, the row check, the trunk and fallback checks, a trunk's
+  state kept across a reload, a link with no SIP engine), `edge/replica_tests.rs` (a set held back or let go sent
+  whole once), `edge_link/tests.rs` (the offer's conversion), `edge_dns_tests.rs` (the SIP SRV rows, a realm
   that is no DNS name), `setup_tests.rs` (no area not available). `EdgeScreens.spec.js`: Discover takes phones alone,
   and not unoffered.
 - **Not done.** A real trunk and real phones through a deployed edge node, with real SRV records, are to be checked by
-  hand. `check#SipDeviceDigest` refusing the edge node's answers while phones are off is not covered by a test (the
-  spec engine cannot set a process property). The trunk states in the offer are the user agent's: a trunk that does
-  not register stays `loaded` until its first OPTIONS ping is answered (or failed three times).
+  hand. The `_edge_` refusals of `SipDevices.js` while phones are off (`check#SipDeviceDigest`, `receive#DeviceCall`,
+  `store#SipRegistration`) are not covered by a test (the spec engine cannot set a process property). The trunk
+  states in the offer are the user agent's: a trunk that does not register stays `loaded` until its first OPTIONS
+  ping is answered (or failed three times).
 
 ### 5.8 Security
 

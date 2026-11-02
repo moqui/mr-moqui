@@ -584,7 +584,8 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   node's SIP engine, the local trunks and their numbers that go through it, its registrar and how many numbers have a
   fallback. Apply writes `edge_sip_enabled` in the local node's `runtime/.env` (on unless `false`; unpairing removes
   it). Off, the local node sends `voiceTrunks` and `voiceFallbacks` empty, so the edge node's engine registers no trunk
-  and answers no number from a fallback; the edge node's `SipNode` row stays but takes no new call, and its registrar
+  and answers no number from a fallback; the edge node's `SipNode` row stays but takes no new call, no phone rings
+  through a binding there (Apply removes them), and its registrar
   signs no phone in. Test checks the row, that the edge node's engine loaded every enabled trunk (its offer lists them
   with their state) and that its copy holds every fallback. The DNS step checks the SRV records of the edge node's
   `sip_domain` (`_sips._tcp` for its TLS port, `_sip._udp` and `_sip._tcp` for the other) against its names and

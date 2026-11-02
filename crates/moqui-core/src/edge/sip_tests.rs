@@ -116,12 +116,32 @@ fn the_trunk_check_wants_every_enabled_trunk_loaded_and_none_failed() {
     offer.trunks[1].state = "loaded".to_string();
     let (ok, text) = trunk_check(&local, &offer);
     assert!(
-        ok == Some(true) && text.contains("T1 name (registered), T2 name (loaded)"),
+        ok == Some(false) && text.contains("not answering yet: T2 name (loaded)"),
+        "loaded is not confirmed: {text}"
+    );
+    offer.trunks[1].state = "ok".to_string();
+    let (ok, text) = trunk_check(&local, &offer);
+    assert!(
+        ok == Some(true) && text.contains("T1 name (registered), T2 name (ok)"),
         "{text}"
     );
     offer.other_nodes = true;
     let (ok, text) = trunk_check(&local, &offer);
     assert!(ok == Some(false) && text.contains("Other local nodes"), "{text}");
+}
+
+#[test]
+fn a_reload_keeps_the_state_of_a_trunk_it_had_and_a_new_one_is_loaded() {
+    let before = vec![trunk("T1", "failed", "403 Forbidden"), trunk("T3", "ok", "")];
+    let merged =
+        crate::edge::media::merge_sip_trunks(&before, vec![trunk("T1", "loaded", ""), trunk("T2", "loaded", "")]);
+    assert_eq!(
+        merged[0].state, "failed",
+        "a failing trunk loaded again still fails: {merged:?}"
+    );
+    assert_eq!(merged[0].error, "403 Forbidden");
+    assert_eq!(merged[1].state, "loaded", "a new trunk");
+    assert_eq!(merged.len(), 2, "a trunk taken out is gone");
 }
 
 #[test]
