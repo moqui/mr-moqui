@@ -84,6 +84,7 @@ fn config(allowed: &str) -> SmtpConfig {
         tls_key_file: String::new(),
         chunking: true,
         dsn: false,
+        internet: None,
     }
 }
 
@@ -727,4 +728,187 @@ fn allow_list_entries_and_paths_parse() {
     assert_eq!(parse_path("a@x.org"), None);
     assert_eq!(parse_path("<a@x.org>junk"), None);
     assert_eq!(strip_keyword("from: <a@x.org>", "FROM:"), Some("<a@x.org>"));
+}
+
+/// A fake Rspamd: `/checkv2` answers "add header" for a message whose text has `Buy now`, "reject" for `Wire money`,
+/// "no action" for the rest.
+async fn fake_rspamd() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                let mut length = 0_usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    if let Some((name, value)) = line.trim_end().split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                let mut body = vec![0_u8; length];
+                tokio::io::AsyncReadExt::read_exact(&mut reader, &mut body)
+                    .await
+                    .unwrap();
+                let text = String::from_utf8_lossy(&body);
+                let action = if text.contains("Buy now") {
+                    "add header"
+                } else if text.contains("Wire money") {
+                    "reject"
+                } else {
+                    "no action"
+                };
+                let json = format!(r#"{{"action":"{action}","score":7.5,"required_score":6.0}}"#);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+                    json.len()
+                );
+                let _ = reader.get_mut().write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    format!("http://{address}")
+}
+
+/// Internet mode (E5b): any address, its own Authentication-Results (a forged one with its authserv-id dropped), the
+/// spam fields its own (Rspamd's verdict), a DMARC reject refused with 550, and the per-address connection limit.
+#[tokio::test]
+async fn internet_mode_checks_the_mail_and_limits_each_address() {
+    let records = moqui_mail::dns::Records::offline();
+    records.fix_txt("example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    records.fix_txt("gw.example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    records.fix_txt("reject.test", "v=spf1 -all").unwrap();
+    records.fix_txt("_dmarc.reject.test", "v=DMARC1; p=reject").unwrap();
+    let mut config = config("10.9.9.9");
+    config.allowed = Vec::new();
+    config.max_message = 100_000;
+    config.authserv_id = "mx.test".to_string();
+    config.spam_headers = vec!["X-Spam-Flag".to_string(), "X-Spam-Status".to_string()];
+    config.internet = Some(Internet {
+        max_per_ip: 1,
+        per_minute: 30,
+        rspamd_url: fake_rspamd().await,
+        spam_fields: config.spam_headers.clone(),
+        records: Some(Arc::new(records)),
+    });
+    let (address, fake, _stop) = start(config).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    // a second connection from the same address while this one is open: over max-connections-per-ip
+    let mut second = Client::connect(address).await;
+    assert_eq!(
+        second.reply().await,
+        "421 4.7.0 Too many connections from your address, try again later"
+    );
+    assert!(client.command("EHLO gw.example.org").await.starts_with("250-mx.test"));
+    let send = |from: &'static str, body: &'static str| (from, body);
+    for (from, body) in [send("ann@example.org", "Hello"), send("ann@example.org", "Buy now")] {
+        assert_eq!(client.command(&format!("MAIL FROM:<{from}>")).await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client
+            .send(&format!(
+                "Authentication-Results: MX.test; dkim=pass\r\nAuthentication-Results: other.example; spf=pass\r\n\
+                 X-Spam-Flag: NO\r\nFrom: {from}\r\nSubject: Hi\r\n\r\n{body}\r\n.\r\n"
+            ))
+            .await;
+        assert!(client.reply().await.starts_with("250 2.0.0 Ok"), "{body}");
+    }
+    {
+        let delivered = fake.delivered.lock().unwrap();
+        let first = String::from_utf8_lossy(&delivered[0].raw).to_string();
+        assert!(first.starts_with("Authentication-Results: mx.test;"), "{first}");
+        assert!(first.contains("spf=pass") && first.contains("dmarc=none"), "{first}");
+        assert!(
+            first.contains("\r\nX-Spam-Flag: NO\r\nX-Spam-Status: No, score=7.5 required=6\r\n"),
+            "{first}"
+        );
+        assert!(
+            !first.contains("MX.test; dkim=pass"),
+            "the forged result is dropped: {first}"
+        );
+        assert!(
+            first.contains("Authentication-Results: other.example; spf=pass"),
+            "{first}"
+        );
+        assert_eq!(first.matches("X-Spam-Flag").count(), 1, "{first}");
+        let second = String::from_utf8_lossy(&delivered[1].raw).to_string();
+        assert!(
+            second.contains("\r\nX-Spam-Flag: YES\r\nX-Spam-Status: Yes, score=7.5 required=6\r\n"),
+            "{second}"
+        );
+    }
+    // Rspamd's reject, and a DMARC reject policy that fails: 550 after the data, nothing delivered
+    for (from, body, reply) in [
+        ("ann@example.org", "Wire money", "550 5.7.1 Rejected as spam"),
+        (
+            "x@reject.test",
+            "Hello",
+            "550 5.7.1 Rejected by the DMARC policy of reject.test",
+        ),
+    ] {
+        assert_eq!(client.command(&format!("MAIL FROM:<{from}>")).await, "250 2.1.0 Ok");
+        assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+        assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+        client
+            .send(&format!("From: {from}\r\nSubject: Hi\r\n\r\n{body}\r\n.\r\n"))
+            .await;
+        assert_eq!(client.reply().await, reply);
+    }
+    assert_eq!(fake.delivered.lock().unwrap().len(), 2);
+    assert_eq!(client.command("QUIT").await, "221 2.0.0 Bye");
+}
+
+/// Internet mode with Rspamd not reached: the mail is taken (fail open, logged), as not spam.
+#[tokio::test]
+async fn internet_mode_takes_the_mail_when_rspamd_is_not_reached() {
+    let records = moqui_mail::dns::Records::offline();
+    records.fix_txt("example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut config = config("10.9.9.9");
+    config.allowed = Vec::new();
+    config.authserv_id = "mx.test".to_string();
+    config.internet = Some(Internet {
+        max_per_ip: 5,
+        per_minute: 30,
+        rspamd_url: format!("http://{closed}"),
+        spam_fields: vec!["X-Spam-Flag".to_string()],
+        records: Some(Arc::new(records)),
+    });
+    let (address, fake, _stop) = start(config).await;
+    let mut client = Client::connect(address).await;
+    assert_eq!(client.reply().await, "220 mx.test ESMTP mr-moqui");
+    assert!(client.command("EHLO gw.example.org").await.starts_with("250-mx.test"));
+    assert_eq!(client.command("MAIL FROM:<ann@example.org>").await, "250 2.1.0 Ok");
+    assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
+    assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
+    client
+        .send("From: ann@example.org\r\nSubject: Hi\r\n\r\nHello\r\n.\r\n")
+        .await;
+    assert!(client.reply().await.starts_with("250 2.0.0 Ok"));
+    let delivered = String::from_utf8_lossy(&fake.delivered.lock().unwrap()[0].raw).to_string();
+    assert!(delivered.contains("\r\nX-Spam-Flag: NO\r\n"), "{delivered}");
+}
+
+#[test]
+fn ipv6_addresses_are_limited_by_their_64() {
+    let a: IpAddr = "2001:db8:1:2::5".parse().unwrap();
+    let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+    let c: IpAddr = "2001:db8:1:3::5".parse().unwrap();
+    assert_eq!(limit_key(a), limit_key(b));
+    assert_ne!(limit_key(a), limit_key(c));
+    let v4: IpAddr = "192.0.2.7".parse().unwrap();
+    assert_eq!(limit_key(v4), v4);
+    assert_eq!(limit_key("::ffff:192.0.2.7".parse().unwrap()), v4);
 }

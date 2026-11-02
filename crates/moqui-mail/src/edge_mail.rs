@@ -28,6 +28,8 @@
 //!   cannot be reached, answers 4xx or drops the connection answers `retryLater`: the item waits, not counted, to the
 //!   end of the retention period. An answer, accepted or refused with 5xx, goes back as kind `mailStatus` for the
 //!   `mailOut` item, queued in a transaction of its own right after the relay, so a later failure never relays twice.
+//!   With the MTA in moqui (E5b, `edge_mail_mta` `moqui`, the default) the message is DKIM-signed and recorded for MX
+//!   delivery in the item's transaction instead ([`super::mx`]), which sends the `mailStatus` answers.
 //! - **Bounces after the relay**: a delivery status notification (RFC 3464) to the VERP address comes back to the edge
 //!   node's listener, which takes it only for a `mailOut` item it received from a paired node, reads it
 //!   ([`parse_dsn`]) and queues a `mailStatus` for that item ([`dsn_status_item`]) instead of mail.
@@ -251,7 +253,30 @@ pub fn inbound_item(
     recipients: &[super::delivery::RecipientDsn],
     conversation: &str,
 ) -> NewItem {
+    inbound_item_trusting(
+        raw,
+        envelope,
+        recipients,
+        conversation,
+        &super::delivery::Options::default(),
+    )
+}
+
+/// [`inbound_item`] with what the edge node's listener trusts (`trusted`): its authserv-id and spam verdict fields, which
+/// the local node then trusts for this message, so the edge node's own `Authentication-Results` (the MTA in moqui) is
+/// kept whatever the local node's `smtp_authserv_id` is.
+#[cfg(feature = "imap")]
+#[must_use]
+pub fn inbound_item_trusting(
+    raw: Vec<u8>,
+    envelope: &super::delivery::Envelope,
+    recipients: &[super::delivery::RecipientDsn],
+    conversation: &str,
+    trusted: &super::delivery::Options,
+) -> NewItem {
     let payload = serde_json::json!({
+        "authservId": trusted.authserv_id,
+        "spamHeaders": trusted.spam_headers,
         "mailFrom": envelope.mail_from,
         "helo": envelope.helo,
         "clientIp": envelope.client_ip,
@@ -329,7 +354,20 @@ pub(super) fn deliver_edge_mail(
         dsn_ret: json_text(&payload, "dsnRet"),
         dsn_envid: json_text(&payload, "dsnEnvid"),
     };
-    let (options, delimiters) = listener_options(&factory);
+    let (mut options, delimiters) = listener_options(&factory);
+    // what the edge node's listener trusted, it wrote itself or checked: its authserv-id and spam fields
+    let edge_authserv = json_text(&payload, "authservId");
+    if !edge_authserv.trim().is_empty() {
+        options.authserv_id = edge_authserv;
+    }
+    for name in payload["spamHeaders"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        if let Some(name) = name
+            .as_str()
+            .filter(|name| !options.spam_headers.iter().any(|seen| seen.eq_ignore_ascii_case(name)))
+        {
+            options.spam_headers.push(name.to_string());
+        }
+    }
     // the delivery reads and writes the accounts as the listener does, with authorization off: _EDGE_ was authorized
     // for this service, and the addresses are resolved here
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
@@ -570,6 +608,8 @@ pub(super) fn deliver_edge_outbound_mail(
         })
         .unwrap_or_default();
     let from = json_text(&payload, "from");
+    #[cfg(feature = "imap")]
+    let original_from = from.clone();
     let domain = bounce_domain();
     // the null reverse path (a notice) stays null; any other gets the VERP sender, so a bounce names this item
     let sender = if from.trim().is_empty() || domain.is_empty() {
@@ -577,6 +617,24 @@ pub(super) fn deliver_edge_outbound_mail(
     } else {
         format!("{BOUNCE_PREFIX}{item}@{domain}")
     };
+    #[cfg(feature = "imap")]
+    if super::mx::mta() == super::mx::Mta::Moqui {
+        // the MTA in moqui (E5b): signed here, recorded per recipient domain in this item's transaction, delivered to
+        // the MX by the delivery thread; the answers come back as mailStatus from there
+        let hosted = super::auth::hosted_domains(facade, true)?;
+        let signed = super::auth::sign_for(raw, |domain| hosted.contains(domain));
+        // the local node's own accounts are queued back to it, not sent round through this node's port 25
+        let (local, external) = split_local(facade, &factory, &node, &to)?;
+        if !local.is_empty() {
+            queue_back(&factory, facade, &node, &item, &original_from, &local, &signed)?;
+        }
+        let rows = super::mx::record(facade, &node, &item, &sender, &external, &local, &signed)?;
+        tracing::info!(
+            "Edge outbound mail item {item}: {} queued back to the local node, {rows} domain(s) to deliver to by MX",
+            local.len()
+        );
+        return Ok(BTreeMap::new());
+    }
     let (status, reply) = match relay(&sender, &to, &raw) {
         Relayed::Accepted(reply) => ("accepted", reply),
         Relayed::Refused(reply) => ("bounced", reply),
@@ -603,6 +661,75 @@ pub(super) fn deliver_edge_outbound_mail(
         tracing::error!("Edge outbound mail item {item} was relayed ({status}), but its answer was not queued: {err}");
     }
     Ok(BTreeMap::new())
+}
+
+/// The recipients of `to` that are local node `node`'s own accounts (its replicated `mailRecipients`), and the rest.
+#[cfg(feature = "imap")]
+fn split_local(
+    facade: &EntityFacade,
+    factory: &ExecutionContextFactory,
+    node: &str,
+    to: &[String],
+) -> Result<(Vec<String>, Vec<String>), LibError> {
+    let values = moqui_core::edge::replica::list_values(facade, Some(node), RECIPIENT_SET, None, 1_000_000)?;
+    let maps = super::delivery::recipient_maps(&values);
+    let (_, delimiters) = super::delivery::listener_options(factory);
+    let (mut local, mut external) = (Vec::new(), Vec::new());
+    for address in to {
+        let ours = maps
+            .iter()
+            .any(|(of, map)| of == node && map.find(address, &delimiters).is_some());
+        if ours {
+            local.push(address.clone());
+        } else {
+            external.push(address.clone());
+        }
+    }
+    Ok((local, external))
+}
+
+/// Queue `signed` back to local node `node` as mail for its own accounts `local` (internal mail through the edge node),
+/// with the `Authentication-Results` of this node's own key on it, in the item's transaction.
+#[cfg(feature = "imap")]
+fn queue_back(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    node: &str,
+    item: &str,
+    from: &str,
+    local: &[String],
+    signed: &[u8],
+) -> Result<(), LibError> {
+    use super::delivery::{Envelope, Options, RecipientDsn};
+    let hostname = super::mx::hostname();
+    let mut raw = Vec::with_capacity(signed.len() + 512);
+    if let Some(field) = super::auth::verify_internal(signed, &hostname) {
+        raw.extend_from_slice(field.as_bytes());
+    }
+    raw.extend_from_slice(signed);
+    let envelope = Envelope {
+        mail_from: from.to_string(),
+        helo: hostname.clone(),
+        client_ip: "127.0.0.1".to_string(),
+        protocol: "ESMTP".to_string(),
+        session_id: item.to_string(),
+        hostname: hostname.clone(),
+        ..Envelope::default()
+    };
+    let recipients: Vec<RecipientDsn> = local
+        .iter()
+        .map(|address| RecipientDsn {
+            address: address.clone(),
+            ..RecipientDsn::default()
+        })
+        .collect();
+    let trusted = Options {
+        spam_headers: Vec::new(),
+        authserv_id: hostname,
+    };
+    let back = inbound_item_trusting(raw, &envelope, &recipients, &format!("mail:{item}"), &trusted);
+    queue::enqueue(factory, facade, Some(node), &back)?;
+    Ok(())
 }
 
 /// The local node's `mailOut` item `item`: the message it carried, `(emailMessageId, messageId)`.
@@ -667,10 +794,43 @@ fn back_to_outbox(
     Ok(())
 }
 
+/// Some recipients of message `email_message_id` did not get it and others did: it stays Sent (a resend would reach
+/// those that got it again), with `sendError` naming the refused, only while it is still as the send left it.
+fn note_refused(
+    facade: &EntityFacade,
+    email_message_id: &str,
+    message_id: &str,
+    refused: &str,
+) -> Result<(), LibError> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(message) = find_one(facade, MESSAGE, "emailMessageId", email_message_id)? else {
+        return Ok(());
+    };
+    if field_text(&message, "statusId") != "ES_SENT" || field_text(&message, "messageId") != message_id {
+        tracing::warn!("Email message {email_message_id} ({message_id}) was not delivered to all; it is not as sent now: {refused}");
+        return Ok(());
+    }
+    let mut row = facade.make_value(MESSAGE)?;
+    row.set("emailMessageId", Value::string(email_message_id));
+    row.set(
+        "sendError",
+        Value::string(
+            format!("Not delivered to: {refused}")
+                .chars()
+                .take(4000)
+                .collect::<String>(),
+        ),
+    );
+    row.update(facade)?;
+    tracing::warn!("Email message {email_message_id} ({message_id}) was sent, but not delivered to: {refused}");
+    Ok(())
+}
+
 /// `note#EdgeMailStatus`, on the local node: the edge node's answer for one of this node's `mailOut` items, found by
 /// its id in this node's own outbox (what the edge node names is never trusted for the message). A refusal (bounced,
-/// from the relay or a later notification) puts the message back ([`back_to_outbox`]); accepted and delayed are
-/// logged.
+/// from the relay or a later notification, or no recipient reached) puts the message back ([`back_to_outbox`]); a
+/// partial delivery (some recipients refused, others reached) leaves it Sent with the refused named in its send error;
+/// accepted and delayed are logged.
 pub(super) fn note_edge_mail_status(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -690,6 +850,10 @@ pub(super) fn note_edge_mail_status(
         );
         return Ok(BTreeMap::new());
     };
+    if status == "partial" && !email_message_id.is_empty() {
+        note_refused(facade, &email_message_id, &message_id, &reply)?;
+        return Ok(BTreeMap::new());
+    }
     if status != "bounced" || email_message_id.is_empty() {
         tracing::info!(
             "Email message {email_message_id} ({message_id}), item {item}: the edge node says {status}: {reply}"

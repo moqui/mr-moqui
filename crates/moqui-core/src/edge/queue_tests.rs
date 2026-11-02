@@ -182,6 +182,39 @@ fn an_attempt_with_no_answer_or_a_receiver_that_cannot_take_it_is_not_counted() 
 }
 
 #[test]
+fn unavailable_answers_in_a_row_wait_longer_each_time_and_are_not_counted() {
+    let (ctx, facade) = open();
+    let node = local_node_id(ctx.factory());
+    enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();
+    let settings = settings();
+    let mut at = now_millis();
+    let unavailable = Outcome::Answered(Applied::Unavailable("the relay is away".to_string()));
+    for waits in 1..=4_u32 {
+        let head = due_heads(&facade, &node, TO_EDGE, at).unwrap().due.remove(0);
+        assert_eq!((head.attempts, head.waits), (0, waits - 1));
+        assert!(claim(&facade, &head, "test", at).unwrap().is_some());
+        assert_eq!(
+            finish(&facade, &settings, &head, &unavailable, at).unwrap(),
+            Step::Retry
+        );
+        // 100 ms, 200, 400, 800: doubled each time, as counted refusals are
+        let wait = duration_millis(settings.retry_after(waits));
+        assert_eq!(wait, 100 * (1 << (waits - 1)));
+        let heads = due_heads(&facade, &node, TO_EDGE, at).unwrap();
+        assert_eq!(heads.next_due, Some(at + wait), "wait {waits}");
+        at += wait;
+    }
+    // any other answer ends the run: the next unavailable one waits the first wait again
+    let head = due_heads(&facade, &node, TO_EDGE, at).unwrap().due.remove(0);
+    assert!(claim(&facade, &head, "test", at).unwrap().is_some());
+    let lost = Outcome::Lost("the link dropped".to_string());
+    assert_eq!(finish(&facade, &settings, &head, &lost, at).unwrap(), Step::Retry);
+    at += 100;
+    let head = due_heads(&facade, &node, TO_EDGE, at).unwrap().due.remove(0);
+    assert_eq!(head.waits, 0);
+}
+
+#[test]
 fn the_stats_count_by_kind_and_the_clean_pass_keeps_what_failed_for_the_retention_period() {
     let (ctx, facade) = open();
     enqueue(ctx.factory(), &facade, None, &item("a", "1")).unwrap();

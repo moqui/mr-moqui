@@ -129,6 +129,35 @@
     <default-property name="smtp_authserv_id" value=""/>
     <default-property name="smtp_tls_cert_file" value=""/>
     <default-property name="smtp_tls_key_file" value=""/>
+    <!--
+        Mail authentication and the MTA in moqui (plans/Edge-Node.md §5.4, E5b). smtp_internet: true takes mail from the
+        internet (smtp-server internet; port 25 on an edge node): any address, STARTTLS, per-address limits, SPF, DKIM,
+        DMARC and ARC checked with an Authentication-Results of its own (DMARC is RFC 9989's: t=y lowers the policy, and
+        there is no pct). mail_arc_trusted_sealers: the domains whose passing ARC seal overrides a DMARC reject or
+        quarantine (forwarders and lists this node trusts); empty for no ARC exception. mail_rspamd_url: Rspamd's HTTP
+        API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached fails open
+        (logged, not spam); checks that do not finish in 45 seconds answer 451. mail_dkim_key: the node's DKIM private
+        key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it; an edge node
+        signs what it delivers with it, and a send by SMTP is signed only when it is set or goes to this node's own
+        listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
+        org.moqui.impl.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
+        for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
+        MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
+        time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
+        mail_mx_override (testing and staging only): domain=host:port pairs, * for any, in place of the MX.
+        mail_dns_offline (testing only): true makes no DNS query.
+    -->
+    <default-property name="smtp_internet" value=""/>
+    <default-property name="mail_rspamd_url" value=""/>
+    <default-property name="mail_dkim_key" value="" is-secret="true"/>
+    <default-property name="mail_dkim_selector" value="moqui"/>
+    <default-property name="mail_dkim_domains" value=""/>
+    <default-property name="edge_mail_mta" value=""/>
+    <default-property name="mail_arc_trusted_sealers" value=""/>
+    <default-property name="mail_delivery_retry_seconds" value="300"/>
+    <default-property name="mail_delivery_days" value="5"/>
+    <default-property name="mail_mx_override" value=""/>
+    <default-property name="mail_dns_offline" value=""/>
 
     <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
         user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
@@ -1113,7 +1142,8 @@
         Mail (E5a, plans/Edge-Node.md §5.4): an edge node's listener queues what it takes as mail for the local node,
         answering RCPT TO from the replicated mailRecipients; a local node's EmailServer with smtpHost edge: queues its
         sends as mailOut, and the edge node answers each with a mailStatus (from its relay, or a later bounce to its
-        VERP address); a mailOut that fails for good puts its message back in the Outbox. -->
+        VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the
+        edge node answers from its MX delivery: bounced for the recipients refused, accepted once all are delivered. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5">
         <queue-kind name="mail" service="org.moqui.impl.EmailServices.deliver#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.impl.EmailServices.deliver#EdgeOutboundMail"

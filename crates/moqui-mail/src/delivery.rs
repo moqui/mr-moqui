@@ -225,6 +225,70 @@ impl RecipientMap {
     }
 }
 
+/// The server entity, whose `storeHost` makes an account one the sync feeds.
+const EDGE_SERVER: &str = "moqui.basic.email.EmailServer";
+
+fn replica_field(fields: &serde_json::Value, name: &str) -> String {
+    match &fields[name] {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// The recipients of each local node from an edge node's copies of its `mailRecipients` (plans/Edge-Node.md §5.4):
+/// the edge node's listener answers `RCPT TO` from them, and its MTA queues mail to them back to the local node.
+#[must_use]
+pub fn recipient_maps(values: &[moqui_core::edge::replica::ReplicaValue]) -> Vec<(String, RecipientMap)> {
+    // each account with its server's id, until the servers are all read
+    let mut accounts: std::collections::BTreeMap<&str, Vec<(RecipientAccount, String)>> =
+        std::collections::BTreeMap::new();
+    let mut identities: std::collections::BTreeMap<&str, Vec<RecipientIdentity>> = std::collections::BTreeMap::new();
+    let mut stores: HashSet<(&str, String)> = HashSet::new();
+    for value in values {
+        let node = value.paired_node_id.as_str();
+        match value.entity_name.as_str() {
+            ACCOUNT => accounts.entry(node).or_default().push((
+                RecipientAccount {
+                    email_account_id: replica_field(&value.pk, "emailAccountId"),
+                    email_address: replica_field(&value.fields, "emailAddress"),
+                    account_kind_enum_id: replica_field(&value.fields, "accountKindEnumId"),
+                    status_id: replica_field(&value.fields, "statusId"),
+                    has_store_server: false,
+                },
+                replica_field(&value.fields, "emailServerId"),
+            )),
+            IDENTITY => identities.entry(node).or_default().push(RecipientIdentity {
+                email_identity_id: replica_field(&value.pk, "emailIdentityId"),
+                email_address: replica_field(&value.fields, "emailAddress"),
+                email_account_id: replica_field(&value.fields, "emailAccountId"),
+            }),
+            EDGE_SERVER if !replica_field(&value.fields, "storeHost").trim().is_empty() => {
+                stores.insert((node, replica_field(&value.pk, "emailServerId")));
+            }
+            _ => {}
+        }
+    }
+    let mut names: Vec<&str> = accounts.keys().chain(identities.keys()).copied().collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut nodes = Vec::with_capacity(names.len());
+    for node in names {
+        let node_accounts: Vec<RecipientAccount> = accounts
+            .remove(node)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(mut account, server)| {
+                account.has_store_server = !server.is_empty() && stores.contains(&(node, server));
+                account
+            })
+            .collect();
+        let node_identities = identities.remove(node).unwrap_or_default();
+        nodes.push((node.to_string(), RecipientMap::new(&node_accounts, &node_identities)));
+    }
+    nodes
+}
+
 /// Sequenced ids in the order they were made: shorter first, then by text.
 fn made_order(left: &str, right: &str) -> std::cmp::Ordering {
     left.len().cmp(&right.len()).then_with(|| left.cmp(right))
@@ -460,6 +524,23 @@ pub fn deliver(
             results.push(value);
         }
         kept.push(field);
+    }
+    // internal mail (plans/Edge-Node.md §5.4): a signature of this node's own key verified against that key, with no
+    // DNS query, unless a trusted field reports DKIM already
+    let internal = if results.iter().any(|value| value.to_ascii_lowercase().contains("dkim=")) {
+        None
+    } else {
+        let authserv = if envelope.hostname.trim().is_empty() {
+            "localhost"
+        } else {
+            envelope.hostname.trim()
+        };
+        super::auth::verify_internal(raw, authserv)
+    };
+    if let Some(field) = &internal {
+        kept.insert(0, field.as_bytes());
+        let (_, value) = field_name_value(field.as_bytes());
+        results.push(value);
     }
     let authentication = verdict(&results);
     let mut report = Report {
@@ -727,7 +808,7 @@ fn step(account_id: &str, name: &str, run: impl FnOnce()) {
 }
 
 /// The header block (each field with its line end) and the rest (from the empty line on).
-fn split_head(raw: &[u8]) -> (&[u8], &[u8]) {
+pub(crate) fn split_head(raw: &[u8]) -> (&[u8], &[u8]) {
     let mut start = 0;
     while start < raw.len() {
         let end = raw[start..]
@@ -744,7 +825,7 @@ fn split_head(raw: &[u8]) -> (&[u8], &[u8]) {
 }
 
 /// The fields of a header block, each with its folded lines and line ends.
-fn header_fields(head: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn header_fields(head: &[u8]) -> Vec<&[u8]> {
     let mut fields: Vec<&[u8]> = Vec::new();
     let mut field_start: Option<usize> = None;
     let mut start = 0;
@@ -772,7 +853,7 @@ fn header_fields(head: &[u8]) -> Vec<&[u8]> {
 }
 
 /// A field's name and its unfolded value.
-fn field_name_value(field: &[u8]) -> (String, String) {
+pub(crate) fn field_name_value(field: &[u8]) -> (String, String) {
     let text = String::from_utf8_lossy(field);
     let Some((name, value)) = text.split_once(':') else {
         return (String::new(), String::new());

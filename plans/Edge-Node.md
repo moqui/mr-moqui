@@ -1,16 +1,17 @@
 # Edge Node
 
-Status 2026-11-01: E0–E4 and E5a built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct;
+Status 2026-11-01: E0–E4, E5a and E5b built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC direct;
 the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches its
 authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
-access. Mail crosses the link with Postfix and Rspamd beside the edge node (E5a); its manual check at a large
-provider is pending. Every question in [§8](#8-decisions) is
+access. Mail crosses the link, with the MTA in moqui on the edge node by default (E5b) or Postfix and Rspamd beside it
+(E5a); the manual check at a large provider is pending. Every question in [§8](#8-decisions) is
 decided. E0 done: the entity access audit is [§4a](#4a-entity-access-audit), and the build cost is in §5.6. What E1
 built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As built"),
 [§5.6](#56-moquiedgeconfxml-and-packaging) and [§5.7](#57-attaching-a-local-node-system-app); what E2 built is in
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
 built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
-[§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2.
+[§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, and E5b's in §5.4 ("As built
+(E5b)").
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -623,6 +624,77 @@ release.
 - **Manual, not automated.** Outbound mail DKIM-signed and passing DMARC at a large provider, with real DNS and
   Postfix with Rspamd: to be checked once on a deployed edge node, as E4's two-runtime check was.
 
+**As built (E5b).**
+- **Auth** (`moqui-mail/src/auth.rs`, on `mail-auth` with hickory's resolver in `dns.rs`). SPF (HELO and MAIL FROM),
+  DKIM (the first ten signatures of a message), DMARC and ARC verified into an `Authentication-Results` under the
+  node's authserv-id, within 45 seconds (else a temporary error); DKIM signing (RSA-SHA256, relaxed; From, Subject, To
+  and Date oversigned). DMARC is RFC 9989's: `t=y` lowers the policy and there is no `pct`; a passing ARC chain last
+  sealed by one of `mail_arc_trusted_sealers` overrides reject and quarantine, and with none named there is no ARC
+  exception. The resolver runs on a Tokio runtime of `moqui-mail`'s own (four workers) and keeps answers to their TTL;
+  a task that panics is "not checked", not a crash. `dns.rs` also answers TXT, MX and A/AAAA for E10; an address lookup
+  that failed with no address back is an error, never "no address". DNS records can be fixed in its cache (tests, and
+  the node's own key), and `mail_dns_offline` (testing only) makes no query.
+- **The DKIM key** is configuration: `mail_dkim_key` (base64 PKCS#8 or PEM), made RSA-2048 into `runtime/.env` the
+  first time a server needs it (not at every start, so tests and nodes without mail make none), `mail_dkim_selector`
+  (`moqui`), `mail_dkim_domains` (else the hosted and shared accounts' domains; on an edge node from the replicated
+  accounts). `EmailServices.get#DkimRecord` returns the TXT value (`v=DKIM1; k=rsa; p=...`) for E10.
+- **In.** `<smtp-server internet="true">` or `smtp_internet` (on in MoquiEdgeConf.xml): no allowed-addresses needed,
+  STARTTLS on by default, per-address limits (`max-connections-per-ip` 5, `connections-per-minute` 30; on the address a
+  PROXY header names when that is on; IPv6 by its /64). After the data and before the answer: the checks, with its own
+  `Authentication-Results` (authserv-id `smtp_authserv_id`, else `smtp_hostname`) on top and any that claim that id
+  removed; Rspamd's verdict over its HTTP API (`mail_rspamd_url`, `/checkv2`) written as the listener's spam fields
+  (`spam-headers`, default `X-Spam-Flag` and `X-Spam-Status`), any that came removed; reject is 550, soft reject and
+  greylist 451. Fail open: Rspamd not reached is logged and the mail taken; checks that time out answer 451. A DMARC
+  failure under `p=reject` is refused with 550, under `p=quarantine` marked spam (Junk). Then the edge
+  `QueueBackend`, or local delivery on a normal node. The queued item carries the edge node's authserv-id and spam
+  fields, which the local node trusts for it.
+- **Out** (`moqui-mail/src/mx.rs`), with `edge_mail_mta=moqui` (set in MoquiEdgeConf.xml; empty or `postfix` keeps
+  E5a's relay, so an upgraded E5a edge node is not switched). `deliver#EdgeOutboundMail` signs the message, queues it
+  back as `mail` for the recipients that are the local node's own replicated accounts (internal mail does not go round
+  through port 25), and records one `moqui.edge.EdgeMailDelivery` per other recipient domain, with the message kept
+  once under `dbresource://moqui/edge/mail/`, in the receipt's transaction: the `mailOut` item is delivered once these
+  commit. A thread of its own starts each row due on a thread of its own, at most eight at once, never two rows of one
+  message together, without waiting for them; a try ends within 10 minutes (a minute per command), inside the row's
+  15-minute lease, so a tarpit domain holds only its own thread. MX by preference (the domain's address with none, a
+  null MX refused), each address in turn; STARTTLS when offered, any certificate; MTA-STS fetched over HTTPS (64 KiB at
+  most) and kept to its `max_age`, and with `mode: enforce` only the policy's hosts with a valid certificate; MAIL
+  FROM the VERP sender, RCPT per recipient. 2xx is sent, 5xx refused, 4xx or not reached waits: 5 minutes
+  (`mail_delivery_retry_seconds`) doubling to 4 hours, until `mail_delivery_days` (5), when the rest are refused with
+  the last reply. Rows of a local node no longer paired fail, logged. `mail_mx_override` (testing and staging only)
+  maps domains to `host:port`.
+- **Reports, no DSN.** A try's answers are committed on its row first; its report (`mailStatus` for the `mailOut`
+  item) is queued after, in a transaction of its own, and one that fails is queued at the next round
+  (`reportPending`), never by delivering again. While other rows of the message wait, refused recipients go back as
+  "partial". The last report: "accepted" when every recipient got it; "partial" when some did and some were refused,
+  which leaves the message Sent with the refused named in its `sendError` (a resend from the Outbox would reach the
+  others twice); "bounced" when none did, which puts it back in the Outbox (E5a's path). So no RFC 3464 DSN is
+  generated: the local node's status is the report, for a refusal and a give-up alike. A remote MX's later DSN to the
+  VERP address still comes back as in E5a.
+- **Internal mail.** There is no separate hosted-to-hosted path on a local node: a hosted account's send goes out
+  through its `EmailServer` and comes back through the listener. A send by SMTP (`implementation.rs`) is DKIM-signed
+  with the node's key when its From domain is a hosted one (kept a minute) and either `mail_dkim_key` is set or the
+  server is this node's own listener, so a node sending through another provider sends no signature of an unpublished
+  key, and a send never makes a key. `delivery::deliver` verifies a signature under the node's selector against the
+  node's own key, with no DNS query, and adds an `Authentication-Results` when it passes and no trusted field reports
+  DKIM already; another node's key under the same selector adds nothing. Through an edge node, the edge node signs and
+  queues it back with its own `Authentication-Results`.
+- **Queue.** An `Unavailable` answer (a handler's `retryLater`) now waits twice as long each time in a row, to the
+  10-minute cap, still uncounted (`EdgeQueueItem.waitCount`, back to 0 on any other answer). An attempt in flight holds
+  the attempt count up by one under its lease (the claim's fencing), given back when the answer is not counted; a
+  count is read between attempts.
+- **Test.** `tests/it/edge_mail.rs` `the_moqui_mta_takes_port_25_and_delivers_to_the_mx`: no Postfix; port 25 in
+  internet mode with fixed DNS records, a forged result dropped, a DMARC reject refused, the rest stored once; out to a
+  fake MX through `mail_mx_override`, DKIM-signed and verified against `get#DkimRecord`, a 4xx tried again, a 5xx back
+  in the Outbox, a partial delivery left Sent with the refused named, internal mail queued back with `dkim=pass`.
+  `tests/it/smtp.rs`: a hosted account's send to the node's own listener carries `dkim=pass` from the node's key, made
+  into `runtime/.env`. Unit tests: `auth_tests.rs` (sign and verify, DMARC policies, another node's key, oversigning),
+  `mx_tests.rs` (MTA-STS and enforce, a null MX, failed address lookups, retries, a session, a report that cannot be
+  queued, partial and bounced reports), `smtp_tests.rs` (internet mode with a fake Rspamd and with Rspamd not
+  reached, IPv6 limits by /64), `queue_tests.rs` (the uncounted backoff).
+- **Acceptance.** E5a's cases pass with no Postfix, and internal mail carries verified DKIM and an
+  `Authentication-Results`: met in the tests above. Not automated: delivery to and DMARC pass at a large provider,
+  with real DNS, MTA-STS and reverse DNS, to be checked once on a deployed edge node.
+
 **Chat bridges and SMS.**
 - The provider's webhook URL is the edge node's, `/channels/{chatBridgeId}/webhook`.
   - The edge node checks the signature with the replicated bridge secret, drops a repeated provider transaction id,
@@ -993,7 +1065,7 @@ Its actions are pause, resync and unpair.
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |
 | **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
-| **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client | |
+| **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
 
 E1 to E3 are the base, and the rest build on them. After E3 the order can follow need. E4 and E5a are the likely
 first two.

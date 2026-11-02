@@ -1578,6 +1578,13 @@ fn boot_server_factory(
     // the mail client's IMAP IDLE workers, started on the scheduler's tick (email-client idle-enabled)
     #[cfg(feature = "imap")]
     moqui_mail::start_idle(&factory);
+    // the node's DKIM key is made into runtime/.env when first needed; on an edge node with the MTA in moqui, its MX
+    // delivery (plans/Edge-Node.md §5.4, E5b)
+    #[cfg(feature = "imap")]
+    {
+        moqui_mail::auth::enable_key_generation(factory.runtime_dir().join(".env"));
+        moqui_mail::mx::start(&factory);
+    }
     // the agent run engine: the lease keeper and the recovery sweep, after the cluster so leases name its instance
     #[cfg(feature = "llm")]
     moqui_llm::start(&factory);

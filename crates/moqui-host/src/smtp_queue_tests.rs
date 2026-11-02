@@ -19,6 +19,10 @@
 use super::*;
 use serde_json::json;
 
+const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
+const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
+const SERVER: &str = "moqui.basic.email.EmailServer";
+
 fn copy(node: &str, entity: &str, pk: serde_json::Value, fields: serde_json::Value) -> replica::ReplicaValue {
     replica::ReplicaValue {
         paired_node_id: node.to_string(),

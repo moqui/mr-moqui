@@ -24,7 +24,8 @@
 //! waits for its retry and holds the items after it, until it is delivered or fails for good (after
 //! `queue-max-attempts` refusals, or past the retention period or the size cap); then the next one goes. Not counted as
 //! a refusal: an attempt with no answer (the link dropped), and a receiver that is paused, busy or stopping (tried again
-//! after `queue-retry-seconds`) or has no handler or grant for the kind (a version skew: tried again every
+//! after `queue-retry-seconds`; an unavailable answer, such as a handler's `retryLater`, waits twice as long each time in
+//! a row, to the 10-minute cap) or has no handler or grant for the kind (a version skew: tried again every
 //! 10 minutes). Modeled on `ChatBridgeDelivery` (`crate::service::chat_bridge`): the claim is a conditional update of
 //! the attempt count and the lease.
 //!
@@ -109,6 +110,8 @@ pub struct QueueItem {
     pub content_location: String,
     /// The attempts made before this one.
     pub attempts: u32,
+    /// The uncounted "unavailable" answers in a row before this attempt: each doubles the wait, as counted refusals do.
+    pub waits: u32,
 }
 
 /// The receiver's answer to a delivery.
@@ -384,12 +387,13 @@ pub fn paused(facade: &EntityFacade) -> bool {
 }
 
 /// The fields of a head, without its payload.
-const HEAD_FIELDS: [&str; 8] = [
+const HEAD_FIELDS: [&str; 9] = [
     "queueItemId",
     "kind",
     "conversationKey",
     "idempotencyKey",
     "attemptCount",
+    "waitCount",
     "nextAttemptDate",
     "leaseExpiresDate",
     "sequenceNum",
@@ -404,6 +408,7 @@ fn queue_item(row: &EntityValue) -> QueueItem {
         payload: String::new(),
         content_location: String::new(),
         attempts: u32::try_from(number(row, "attemptCount")).unwrap_or(0),
+        waits: u32::try_from(number(row, "waitCount")).unwrap_or(0),
     }
 }
 
@@ -812,14 +817,24 @@ pub fn finish(
         Outcome::Answered(Applied::Paused) => {
             uncounted("the receiver's delivery is paused".to_string(), settings.retry_first)
         }
-        Outcome::Answered(Applied::Unavailable(error)) | Outcome::Lost(error) => {
-            uncounted(error.clone(), settings.retry_first)
+        // a receiver that cannot take it now (a handler's retryLater: a relay or a database away) is asked again after
+        // a wait that doubles with each such answer in a row, up to the cap, still not counted
+        Outcome::Answered(Applied::Unavailable(error)) => {
+            let waits = item.waits.saturating_add(1);
+            let (step, mut fields) = uncounted(error.clone(), settings.retry_after(waits));
+            fields.push(("waitCount", Value::I64(i64::from(waits))));
+            (step, fields)
         }
+        Outcome::Lost(error) => uncounted(error.clone(), settings.retry_first),
     };
     let mut fields: Vec<(String, Value)> = fields
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
         .collect();
+    if !matches!(outcome, Outcome::Answered(Applied::Unavailable(_))) {
+        // any other answer ends a run of unavailable ones
+        fields.push(("waitCount".to_string(), Value::I64(0)));
+    }
     fields.push(("leaseOwner".to_string(), Value::Null));
     fields.push(("leaseExpiresDate".to_string(), Value::Null));
     transaction(facade, TransactionAttribute::ForceNew, || {

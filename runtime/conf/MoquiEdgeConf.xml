@@ -4,8 +4,8 @@
     nodes pair with it (System › Edge Clients) and dial its HTTPS listener (by ALPN). It gives them web access: the host
     names added there, passthrough or terminate, and an SSH tunnel port (edge_ssh_tunnel_port); delegated calls, the
     queue and replication (the edge element below); mr-pass's authority, the local node over the link
-    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); and mail, with
-    Postfix and Rspamd beside it (the smtp-server below; docs/Run-Deploy.md, Edge node mail). A client-ip-header here
+    (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); and mail, with the
+    MTA in moqui on port 25 (the smtp-server below; docs/Run-Deploy.md, Edge node mail). A client-ip-header here
     needs trusted-proxies, or it is ignored.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
@@ -21,18 +21,26 @@
     <!-- mr-pass calls its local node as the PASS authority over gRPC down the link (plans/Edge-Node.md §5.5) -->
     <default-property name="pass_backend_url" value="edge:"/>
 
-    <!-- Mail (plans/Edge-Node.md §5.4, E5a): Postfix on this host takes port 25 (SPF, DKIM, DMARC and Rspamd's verdict)
-        and hands each message for the local node's domains to the LMTP listener below, on smtp_listen_port (set it in
-        .env, as 10024; the listener is off while it is empty). The listener answers RCPT TO from the local node's
-        replicated accounts, so an unknown address is refused while the local node is away too, and queues each message
-        for the local node. Mail the local node sends through an EmailServer with smtpHost edge: is relayed to Postfix
-        on edge_mail_relay_port, which signs it with DKIM (Rspamd) and delivers it, from bounce+(item)@ the domain
-        edge_mail_bounce_domain names (set it in .env, and route that domain to the LMTP listener too), so a later
-        bounce comes back to the message. -->
-    <default-property name="smtp_allowed_addresses" value="127.0.0.1,::1"/>
+    <!-- Mail (plans/Edge-Node.md §5.4): the MTA in moqui (E5b), the default. The SMTP listener takes port 25 from the
+        internet itself (internet mode; smtp_listen_port 25 and smtp_listen_host 0.0.0.0, or :: for IPv6 too, in .env):
+        STARTTLS with the web certificate, per-address limits, SPF, DKIM, DMARC and ARC checked with its own
+        Authentication-Results (authserv-id smtp_hostname), Rspamd's verdict when mail_rspamd_url is set, a DMARC reject
+        policy refused. It answers RCPT TO from the local node's replicated accounts, so an unknown address is refused
+        while the local node is away too, and queues each message for the local node. Mail the local node sends through
+        an EmailServer with smtpHost edge: is DKIM-signed here (mail_dkim_key, made into .env on first use; publish
+        get#DkimRecord's TXT record) and delivered to each domain's MX, with STARTTLS and MTA-STS, retried for
+        mail_delivery_days, from bounce+(item)@ the domain edge_mail_bounce_domain names (set it in .env, with its MX here),
+        so a later bounce comes back to the message. DNS to publish: docs/Run-Deploy.md, Edge node mail.
+        Postfix and Rspamd beside it instead (E5a), as an edge node set up before E5b runs: in .env
+        edge_mail_mta=postfix, smtp_internet=false, smtp_listen_port=10024 and smtp_allowed_addresses=127.0.0.1,::1 (out
+        of internet mode the listener does not start without allowed addresses), and in the runtime's conf
+        <smtp-server protocol="lmtp"/>. Postfix takes port 25 and hands mail to the listener by LMTP, and mail out is
+        relayed to Postfix on edge_mail_relay_port. -->
+    <default-property name="edge_mail_mta" value="moqui"/>
+    <default-property name="smtp_internet" value="true"/>
     <default-property name="edge_mail_relay_host" value="127.0.0.1"/>
     <default-property name="edge_mail_relay_port" value="10025"/>
-    <smtp-server protocol="lmtp"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
 
     <!-- Not built yet; each is turned on by the phase that uses it:
         E6, chat bridges and SMS:    <default-property name="channels_webhooks_enabled" value="true"/>

@@ -99,6 +99,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="payloadSize" type="number-integer"/>
         <field name="statusEnumId" type="id" not-null="true"/>
         <field name="attemptCount" type="number-integer"/>
+        <!-- uncounted "unavailable" answers in a row (a handler's retryLater); each doubles the wait to the cap -->
+        <field name="waitCount" type="number-integer"/>
         <field name="nextAttemptDate" type="date-time"/>
         <field name="lastAttemptDate" type="date-time"/>
         <field name="leaseOwner" type="text-medium"/>
@@ -171,6 +173,51 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="idempotencyKey" type="text-medium"/>
         <field name="appliedDate" type="date-time"/>
         <index name="EDGE_RECEIPT_APPLIED"><index-field name="appliedDate"/></index>
+    </entity>
+
+    <entity entity-name="EdgeMailDelivery" package="moqui.edge" use="transactional" cache="never">
+        <description>On an edge node with the MTA in moqui (edge_mail_mta=moqui, plans/Edge-Node.md §5.4 E5b), the
+            delivery of one message a local node sent (its mailOut queueItemId) to the recipients of one domain, by that
+            domain's MX; the domain "(local node)" is the recipients queued back to the local node itself. Written in
+            the transaction that applies the mailOut item, so the item is delivered once these rows are there.
+            recipientsJson is the addresses still to deliver; mailFrom the envelope sender (the VERP address when
+            edge_mail_bounce_domain is set); contentLocation the signed message, shared by the rows of one message and
+            removed with its last report. statusEnumId: EmdPending (nextAttemptDate is the next try), EmdSent, EmdBounced
+            (bouncedCount refused for good, or not delivered within mail_delivery_days). sentCount and refusedText (each
+            refused address with the answer) are what the report says; reportPending is Y while the report (the
+            mailStatus back) is not queued yet, which each round tries again without delivering again. lastReplyText is
+            the last answer of the MX, or why it was not reached.</description>
+        <field name="mailDeliveryId" type="id" is-pk="true"/>
+        <field name="pairedNodeId" type="id" not-null="true"/>
+        <field name="queueItemId" type="id" not-null="true"/>
+        <field name="domain" type="text-medium" not-null="true"/>
+        <field name="recipientsJson" type="text-very-long"/>
+        <field name="mailFrom" type="text-medium"/>
+        <field name="contentLocation" type="text-medium"/>
+        <field name="statusEnumId" type="id" not-null="true"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="bouncedCount" type="number-integer"/>
+        <field name="sentCount" type="number-integer"/>
+        <field name="refusedText" type="text-very-long"/>
+        <field name="reportPending" type="text-indicator"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="lastReplyText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <relationship type="one" title="EdgeMailDeliveryStatus" related="moqui.basic.Enumeration" short-alias="status">
+            <key-map field-name="statusEnumId"/></relationship>
+        <index name="EDGE_MAIL_DUE"><index-field name="statusEnumId"/><index-field name="nextAttemptDate"/></index>
+        <index name="EDGE_MAIL_ITEM"><index-field name="pairedNodeId"/><index-field name="queueItemId"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Edge Mail Delivery Status" enumTypeId="EdgeMailDeliveryStatus"/>
+            <moqui.basic.Enumeration description="Pending" enumId="EmdPending"
+                    enumCode="pending" enumTypeId="EdgeMailDeliveryStatus" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Sent" enumId="EmdSent"
+                    enumCode="sent" enumTypeId="EdgeMailDeliveryStatus" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Bounced" enumId="EmdBounced"
+                    enumCode="bounced" enumTypeId="EdgeMailDeliveryStatus" sequenceNum="3"/>
+        </seed-data>
     </entity>
 
     <entity entity-name="EdgeReplicaValue" package="moqui.edge" use="transactional" cache="never">

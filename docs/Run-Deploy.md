@@ -214,6 +214,7 @@ with `--no-data` leaves it out, so it is the place for per-host settings that sh
 When a secret property still ends in `CHANGEME` at startup, a value is generated and written to `runtime/.env`. This
 covers `entity_ds_crypt_pass`, `session_cookie_key`, `ssh_host_key`, `git_lfs_token_key`, `cluster_tls_cert`,
 `cluster_tls_key` and `edge_link_key`. A new file gets mode 0600, and a `.env` that cannot be written fails the start.
+`mail_dkim_key` (empty by default) is made there too, the first time a server needs it.
 
 The properties most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
@@ -271,8 +272,14 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
-| `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
-| `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of relayed mail, `bounce+<item>@` it, whose bounces the LMTP listener takes back to the message; empty sends from the message's own sender |
+| `edge_mail_mta` | `moqui` in MoquiEdgeConf.xml, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
+| `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node with `edge_mail_mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
+| `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
+| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in MoquiEdgeConf.xml), with Rspamd's HTTP API for its spam verdict when the URL is set ([Edge node](#edge-node), Mail) |
+| `mail_dkim_key`, `mail_dkim_selector`, `mail_dkim_domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
+| `mail_arc_trusted_sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
+| `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
+| `mail_mx_override`, `mail_dns_offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
 | `moqui_log_level`, `moqui_log_dir` | `info`, `runtime://log` | The console level, and the directory of `moqui.log` and `moqui-error.log` |
 | `search_backend` | `postgres` | `postgres` or `opensearch` ([search](#search)) |
 | `example_disabled` | `false` | `true` leaves out the example component and its gallery on a dev instance |
@@ -635,8 +642,8 @@ the Dev AIDE loads there.
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
 open ([plan](../plans/Edge-Node.md)). For now this is the link, web access and the ways work crosses it: pairing, the
 link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication,
-mr-pass's calls to the local node as its PASS authority, and mail with Postfix and Rspamd beside the edge node. No chat
-or calls use them yet.
+mr-pass's calls to the local node as its PASS authority, and mail, with the MTA in moqui on port 25 (or Postfix and
+Rspamd beside the edge node). No chat or calls use them yet.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -697,21 +704,51 @@ or calls use them yet.
   set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
   `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
   edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
-- **Mail** ([plan](../plans/Edge-Node.md) §5.4). Postfix and Rspamd run on the edge node's host and do the internet side
-  ([Mail-Inbound](interfaces/Mail-Inbound.md) has the gateway's rules). Point the domains' MX at the edge node; SPF,
-  DKIM and DMARC records name it.
-  - **In.** Postfix hands mail for the local node's domains to the edge node's LMTP listener (MoquiEdgeConf.xml has
-    `protocol="lmtp"`; set `smtp_listen_port` in `.env`, for example 10024). The listener answers `RCPT TO` from the
-    local node's accounts, replicated to the edge node (`mailRecipients`), so an unknown address is refused while the
-    local node is away too, and queues each message for the local node, which delivers it as its own listener would.
-    Set `smtp_authserv_id` on the local node to Rspamd's authserv-id, so only its `Authentication-Results` are kept.
+- **Mail** ([plan](../plans/Edge-Node.md) §5.4). The MTA in moqui is the default (`edge_mail_mta=moqui` in
+  MoquiEdgeConf.xml; an empty `edge_mail_mta` keeps E5a's relay to Postfix, so an older edge node is not switched by
+  an upgrade): the edge node takes port 25 itself and delivers to each domain's MX. Postfix and Rspamd beside it are
+  the alternative, below.
+  - **In.** The SMTP listener runs in internet mode (`smtp_internet=true`): set `smtp_listen_port=25`,
+    `smtp_listen_host=0.0.0.0` (or `::`) and `smtp_hostname` (the MX name, also the authserv-id of its
+    `Authentication-Results`) in `.env`. It offers STARTTLS with the web certificate, limits each address
+    (`max-connections-per-ip`, `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any
+    `Authentication-Results` claiming its name, refuses a DMARC failure whose policy is reject (550) and files a
+    quarantine one in Junk. With `mail_rspamd_url` (Rspamd's HTTP API, `http://127.0.0.1:11333`) Rspamd's verdict
+    sets `X-Spam-Flag` and `X-Spam-Status` (any that came are removed); without it there is no spam check. Both fail
+    open: Rspamd not reached, or a check that fails, is logged and the mail taken (as not spam); checks that do not
+    finish in 45 seconds answer 451. DMARC is RFC 9989's (`t=y` lowers the policy; there is no `pct`), and a passing
+    ARC chain sealed by one of `mail_arc_trusted_sealers` (a forwarder or list you trust) overrides a reject or
+    quarantine; with none named there is no ARC exception. `RCPT TO`
+    is answered from the local node's accounts, replicated to the edge node (`mailRecipients`), so an unknown address
+    is refused while the local node is away too, and each message is queued for the local node, which delivers it as
+    its own listener would, trusting the edge node's `Authentication-Results`.
   - **Out.** On the local node, give `SYSTEM` and the accounts an `EmailServer` with `smtpHost` `edge:`. A send is
-    queued for the edge node, which relays it to Postfix on `edge_mail_relay_port` (10025), and Postfix signs it with
-    DKIM through Rspamd and delivers it. While Postfix is not reached the message waits in the queue. Set
-    `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the edge node) and the edge node sends each
-    message from `bounce+<item>@` that domain, so a remote server's later bounce names the message. A refusal, at the
-    relay or by a later bounce, puts a mail client's message back in its Outbox with the reply as its send error, as
-    does a message the local node could not hand to the edge node within the queue's retention period.
+    queued for the edge node, which DKIM-signs it (`mail_dkim_key`, generated into `.env` the first time; selector
+    `mail_dkim_selector`, default `moqui`; for `mail_dkim_domains`, else the hosted accounts' domains) and delivers it
+    to each recipient domain's MX: STARTTLS when offered, MTA-STS honored (with `mode: enforce`, only the policy's MX
+    hosts, with a valid certificate), a 4xx tried again from 5 minutes (`mail_delivery_retry_seconds`) doubling to 4
+    hours, for `mail_delivery_days` (5). Set `edge_mail_bounce_domain` (as `bounces.example.com`, with its MX at the
+    edge node) and each message goes from `bounce+<item>@` that domain, so a remote server's later bounce names the
+    message. A message no recipient got (refused at the MX, by a later bounce, or after `mail_delivery_days`) goes back
+    to a mail client's Outbox with the replies as its send error, as does one the local node could not hand to the edge
+    node within the queue's retention period; one some recipients got stays Sent, with the refused named in its send
+    error. Mail to the local node's own accounts is queued back to it by the edge node, signed and with an
+    `Authentication-Results`, not sent round through port 25.
+  - **DNS to publish.** For each mail domain: MX at the edge node's name; SPF (`v=spf1 a:edge.example.com -all`, or
+    its addresses); the DKIM key at `moqui._domainkey.<domain>` (the TXT value is
+    `org.moqui.impl.EmailServices.get#DkimRecord`'s `record`, run on the edge node; it is longer than 255 characters,
+    so enter it as several quoted strings of at most 255 each, which DNS joins); DMARC at `_dmarc.<domain>`
+    (`v=DMARC1; p=quarantine; rua=mailto:...` to start); the bounce domain's MX at the edge node too. Reverse DNS: the
+    edge node's address must resolve to its `smtp_hostname`, and that name back to the address (set it at the cloud
+    provider). MTA-STS for the domains themselves (`_mta-sts` and `https://mta-sts.<domain>/.well-known/mta-sts.txt`)
+    is optional. DANE is not checked yet.
+  - **Postfix and Rspamd beside it** (E5a) do the internet side instead ([Mail-Inbound](interfaces/Mail-Inbound.md)
+    has the gateway's rules). In `.env`: `edge_mail_mta=postfix`, `smtp_internet=false`, `smtp_listen_port=10024` and
+    `smtp_allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on the `smtp-server` in the runtime's conf. Postfix
+    hands mail for the local node's domains to that LMTP listener; set `smtp_authserv_id` on the local node to
+    Rspamd's authserv-id, so only its `Authentication-Results` are kept. Mail out is relayed to Postfix on
+    `edge_mail_relay_port` (10025), and Postfix signs it with DKIM through Rspamd and delivers it; while Postfix is not
+    reached the message waits in the queue.
 
   ```
   # /etc/postfix/main.cf (the listener answers RCPT TO itself, so no reject_unverified_recipient)

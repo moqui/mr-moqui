@@ -76,6 +76,8 @@ pub(crate) fn from_proto(item: proto::QueueItem) -> QueueItem {
         payload: item.payload,
         content_location: item.content_location,
         attempts: item.attempts,
+        // the sender's own count of uncounted waits; the receiver does not use it
+        waits: 0,
     }
 }
 

@@ -1415,11 +1415,43 @@ fn captured(letter: &Letter) -> bool {
     false
 }
 
+/// Send `letter` by SMTP through `server`, DKIM-signed with the node's key when its From domain is a hosted account's
+/// (or one of `mail_dkim_domains`: `auth.rs`), so mail between the hosted accounts carries the same signature as mail
+/// out (plans/Edge-Node.md §5.4, "the same standards inside"). Only when the key is configured (so its record can be
+/// published), or when the server is this node's own SMTP listener, where the node verifies its own key: a node that
+/// sends through another provider's server sends no signature of a key nobody published.
 fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> Result<(), Error> {
     let message = build_lettre(letter)?;
+    #[cfg(feature = "imap")]
+    if super::auth::key_configured() || own_listener(server) {
+        let formatted = message.formatted();
+        let signed = super::auth::sign_for(formatted.clone(), |domain| {
+            super::auth::is_hosted_domain(facade, domain)
+        });
+        if signed.len() != formatted.len() {
+            return smtp_send_retry(facade, server, None, |transport| {
+                lettre::Transport::send_raw(transport, message.envelope(), &signed).map(|_| ())
+            });
+        }
+    }
     smtp_send_retry(facade, server, None, |transport| {
         lettre::Transport::send(transport, &message).map(|_| ())
     })
+}
+
+/// Whether `server` is this node's own SMTP listener: a loopback host at a port the listener is bound to
+/// ([`super::auth::note_own_listener`]).
+#[cfg(feature = "imap")]
+fn own_listener(server: &EntityValue) -> bool {
+    let host = field_text(server, "smtpHost");
+    let host = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    let loopback = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    let port: Option<u16> = field_text(server, "smtpPort").trim().parse().ok();
+    loopback && port.is_some_and(super::auth::is_own_listener)
 }
 
 /// Authentication refusal happens before SMTP accepts the message, so only that failure is safe to retry.

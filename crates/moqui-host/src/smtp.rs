@@ -39,6 +39,15 @@
 //! On an edge node (`node_role=edge`) the listener takes mail for its local node's accounts and queues it for the
 //! local node instead of storing it ([`queue`], plans/Edge-Node.md §5.4).
 //!
+//! Internet mode (`internet`, `smtp_internet`; the MTA in moqui on port 25, plans/Edge-Node.md §5.4 E5b) takes mail from
+//! any address, with STARTTLS on by default and per-address limits (`max-connections-per-ip`,
+//! `connections-per-minute`, 421 past them). After the data and before the answer it checks SPF, DKIM, DMARC and ARC
+//! (`moqui_mail::auth`) and asks Rspamd (`rspamd-url`, `mail_rspamd_url`) for its verdict: its own
+//! `Authentication-Results` and spam fields go on top, any that came claiming its authserv-id, and any spam fields,
+//! are removed; a DMARC failure under a reject policy and Rspamd's reject are 550, quarantine and Rspamd's "add
+//! header" are spam (Junk). Rspamd not reached fails open (logged, the mail taken as not spam); checks that do not
+//! finish in 45 seconds answer 451.
+//!
 //! `RCPT TO` is answered from the accounts ([`moqui_mail::delivery::find_recipient`]): an address of a
 //! hosted or shared account is accepted, any other refused with 550 there, so nothing is accepted that would bounce
 //! later. After `DATA` the message is stored once per account ([`moqui_mail::delivery::deliver`]); a store
@@ -168,6 +177,35 @@ pub struct SmtpConfig {
     pub chunking: bool,
     /// DSN (RFC 3461).
     pub dsn: bool,
+    /// Mail from the internet (`internet`, `smtp_internet`): the MTA in moqui's port 25. None behind a gateway.
+    pub internet: Option<Internet>,
+}
+
+/// The internet mode's settings (plans/Edge-Node.md §5.4, E5b).
+#[derive(Clone)]
+pub struct Internet {
+    /// The most connections at once from one address.
+    pub max_per_ip: usize,
+    /// The most new connections a minute from one address.
+    pub per_minute: usize,
+    /// Rspamd's HTTP API, empty for no spam check.
+    pub rspamd_url: String,
+    /// The spam verdict fields this listener writes (its `spam-headers`, else `X-Spam-Flag` and `X-Spam-Status`); any
+    /// that came with the message are removed.
+    pub spam_fields: Vec<String>,
+    /// Fixed DNS records instead of the resolver's (a test's).
+    pub records: Option<Arc<moqui_mail::dns::Records>>,
+}
+
+impl std::fmt::Debug for Internet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Internet")
+            .field("max_per_ip", &self.max_per_ip)
+            .field("per_minute", &self.per_minute)
+            .field("rspamd_url", &self.rspamd_url)
+            .field("spam_fields", &self.spam_fields)
+            .finish_non_exhaustive()
+    }
 }
 
 fn property(name: &str) -> String {
@@ -216,7 +254,15 @@ impl SmtpConfig {
             .map(AllowedNet::parse)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|text| Error::new(format!("smtp_allowed_addresses: {text}")))?;
-        if allowed.is_empty() {
+        let internet = match setting("internet").trim().to_ascii_lowercase().as_str() {
+            "true" | "y" | "yes" | "1" => true,
+            "false" | "n" | "no" | "0" => false,
+            _ => matches!(
+                property("smtp_internet").to_ascii_lowercase().as_str(),
+                "true" | "y" | "yes" | "1"
+            ),
+        };
+        if allowed.is_empty() && !internet {
             return Err(Error::new(
                 "smtp_allowed_addresses is empty: name the edge gateway's addresses (127.0.0.1 for a gateway on this host)",
             ));
@@ -237,7 +283,7 @@ impl SmtpConfig {
             "lmtp" => true,
             other => return Err(Error::new(format!("smtp-server protocol {other} is not smtp or lmtp"))),
         };
-        let starttls = flag("starttls", false);
+        let starttls = flag("starttls", internet);
         let require_tls = flag("require-tls", false);
         if require_tls && !starttls {
             return Err(Error::new(
@@ -252,6 +298,24 @@ impl SmtpConfig {
                 .map(str::to_string)
                 .collect()
         };
+        let mut spam_headers = list("spam-headers");
+        let mut authserv_id = setting_or_property("authserv-id", "smtp_authserv_id");
+        let internet = internet.then(|| {
+            // the verdict fields are this listener's own: it writes them, and reads them as the gateway's were read
+            if spam_headers.is_empty() {
+                spam_headers = vec!["X-Spam-Flag".to_string(), "X-Spam-Status".to_string()];
+            }
+            if authserv_id.is_empty() {
+                authserv_id.clone_from(&hostname);
+            }
+            Internet {
+                max_per_ip: count("max-connections-per-ip", 5),
+                per_minute: count("connections-per-minute", 30),
+                rspamd_url: setting_or_property("rspamd-url", "mail_rspamd_url"),
+                spam_fields: spam_headers.clone(),
+                records: None,
+            }
+        });
         Ok(Some(Self {
             host,
             port,
@@ -264,8 +328,8 @@ impl SmtpConfig {
             session_timeout: Duration::from_secs(number("session-timeout", 1800)),
             proxy_protocol: flag("proxy-protocol", false),
             plus_separator: inbound::plus_separator(&setting("plus-separator")),
-            spam_headers: list("spam-headers"),
-            authserv_id: setting_or_property("authserv-id", "smtp_authserv_id"),
+            spam_headers,
+            authserv_id,
             lmtp,
             starttls,
             require_tls,
@@ -273,11 +337,14 @@ impl SmtpConfig {
             tls_key_file: setting_or_property("tls-key-file", "smtp_tls_key_file"),
             chunking: flag("chunking", true),
             dsn: flag("dsn", false),
+            internet,
         }))
     }
 
+    /// Whether a connection from `address` is taken: one in `allowed-addresses`, or in internet mode with none named,
+    /// any.
     fn allows(&self, address: IpAddr) -> bool {
-        self.allowed.iter().any(|net| net.contains(address))
+        (self.internet.is_some() && self.allowed.is_empty()) || self.allowed.iter().any(|net| net.contains(address))
     }
 }
 
@@ -343,18 +410,26 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     let (shutdown, watch) = tokio::sync::watch::channel(false);
     tracing::info!(
         "{} listener on {address} for {}, from {}{}{}",
-        if config.lmtp { "LMTP" } else { "SMTP" },
+        match (config.lmtp, config.internet.is_some()) {
+            (true, _) => "LMTP",
+            (false, true) => "SMTP (internet)",
+            (false, false) => "SMTP",
+        },
         if edge_mode {
             "the local node's hosted and shared accounts, queued for it"
         } else {
             "hosted and shared accounts"
         },
-        config
-            .allowed
-            .iter()
-            .map(|net| format!("{}/{}", net.network, net.prefix))
-            .collect::<Vec<_>>()
-            .join(", "),
+        if config.allowed.is_empty() {
+            "any address".to_string()
+        } else {
+            config
+                .allowed
+                .iter()
+                .map(|net| format!("{}/{}", net.network, net.prefix))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
         if config.proxy_protocol { " through PROXY" } else { "" },
         match (config.starttls, config.require_tls) {
             (true, true) => ", STARTTLS required",
@@ -363,7 +438,14 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         }
     );
     if edge_mode {
-        let backend = queue::QueueBackend::new(Arc::downgrade(factory), config.plus_separator.clone());
+        let backend = queue::QueueBackend::new(
+            Arc::downgrade(factory),
+            config.plus_separator.clone(),
+            Options {
+                spam_headers: config.spam_headers.clone(),
+                authserv_id: config.authserv_id.clone(),
+            },
+        );
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     } else {
         let backend = FactoryBackend {
@@ -377,6 +459,8 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     }
     *moqui_lib::sync::lock(&factory.extension(|_| SmtpAddress::default()).0) = Some(address);
+    // a send to it is mail to this node itself, which the node DKIM-signs and verifies (moqui-mail auth.rs)
+    moqui_mail::auth::note_own_listener(address.port());
     Ok(Some(SmtpServer { address, shutdown }))
 }
 
@@ -514,6 +598,78 @@ struct Shared<B> {
     backend: B,
     active: AtomicUsize,
     sessions: AtomicU64,
+    /// In internet mode, each address's connections open now and its recent connection times.
+    per_ip: std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+}
+
+/// One address's connections, for the internet mode's limits.
+#[derive(Default)]
+struct PerIp {
+    open: usize,
+    recent: std::collections::VecDeque<Instant>,
+}
+
+/// A connection counted against its address's limit, given back on drop.
+struct IpSlot<'a> {
+    per_ip: &'a std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+    ip: IpAddr,
+}
+
+impl Drop for IpSlot<'_> {
+    fn drop(&mut self) {
+        let mut map = moqui_lib::sync::lock(self.per_ip);
+        if let Some(entry) = map.get_mut(&self.ip) {
+            entry.open = entry.open.saturating_sub(1);
+            if entry.open == 0 && entry.recent.is_empty() {
+                map.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// The key an address is limited by: an IPv4 address itself, an IPv6 address by its /64 (one site's or host's
+/// prefix, which hands its hosts any address in it).
+fn limit_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(v6) & !((1_u128 << 64) - 1))),
+        v4 => v4,
+    }
+}
+
+/// Count a connection from `ip` against the internet mode's limits: none when it is over one of them (why).
+fn take_ip_slot<'a>(
+    per_ip: &'a std::sync::Mutex<std::collections::HashMap<IpAddr, PerIp>>,
+    internet: &Internet,
+    ip: IpAddr,
+) -> Result<IpSlot<'a>, String> {
+    let ip = limit_key(ip);
+    let mut map = moqui_lib::sync::lock(per_ip);
+    let now = Instant::now();
+    // forget the addresses with nothing open and nothing in the last minute, so the map stays small
+    if map.len() > 10_000 {
+        map.retain(|_, entry| {
+            entry
+                .recent
+                .retain(|at| now.duration_since(*at) < Duration::from_secs(60));
+            entry.open > 0 || !entry.recent.is_empty()
+        });
+    }
+    let entry = map.entry(ip).or_default();
+    entry
+        .recent
+        .retain(|at| now.duration_since(*at) < Duration::from_secs(60));
+    if entry.open >= internet.max_per_ip {
+        return Err(format!("{} connections open (max-connections-per-ip)", entry.open));
+    }
+    if entry.recent.len() >= internet.per_minute {
+        return Err(format!(
+            "{} connections in the last minute (connections-per-minute)",
+            entry.recent.len()
+        ));
+    }
+    entry.open += 1;
+    entry.recent.push_back(now);
+    Ok(IpSlot { per_ip, ip })
 }
 
 /// A place among `smtp-server` `max-connections`, given back on drop.
@@ -539,6 +695,7 @@ pub(crate) async fn serve<B: Backend>(
         backend,
         active: AtomicUsize::new(0),
         sessions: AtomicU64::new(0),
+        per_ip: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
     loop {
         tokio::select! {
@@ -607,6 +764,24 @@ async fn connection<B: Backend>(
         return;
     }
     let _slot = Slot(&shared.active);
+    // behind PROXY the limits count the client the header names, once it is read (Session::session)
+    let _ip_slot = match config.internet.as_ref().filter(|_| !config.proxy_protocol) {
+        Some(internet) => match take_ip_slot(&shared.per_ip, internet, peer_ip) {
+            Ok(slot) => Some(slot),
+            Err(why) => {
+                tracing::warn!("SMTP connection {id} from {peer_ip} refused: {why}");
+                let _ = reply_now(
+                    &mut stream,
+                    config.command_timeout,
+                    "421 4.7.0 Too many connections from your address, try again later",
+                )
+                .await;
+                let _ = stream.shutdown().await;
+                return;
+            }
+        },
+        None => None,
+    };
     let started = Instant::now();
     let mut session = Session {
         shared,
@@ -623,6 +798,7 @@ async fn connection<B: Backend>(
         messages: 0,
         accepted: 0,
         refused: 0,
+        ip_slot: None,
     };
     let end = session.run().await;
     let _ = session.stream.get_mut().shutdown().await;
@@ -735,6 +911,8 @@ struct Session<'a, B> {
     messages: usize,
     accepted: usize,
     refused: usize,
+    /// In internet mode behind PROXY, the place of the client the header named among its address's connections.
+    ip_slot: Option<IpSlot<'a>>,
 }
 
 impl<B: Backend> Session<'_, B> {
@@ -836,6 +1014,17 @@ impl<B: Backend> Session<'_, B> {
                     return Err(End::Proxy(format!("{source} is not in smtp_allowed_addresses")));
                 }
                 self.client_ip = source;
+            }
+            if let Some(internet) = self.config().internet.as_ref() {
+                match take_ip_slot(&self.shared.per_ip, internet, self.client_ip) {
+                    Ok(slot) => self.ip_slot = Some(slot),
+                    Err(why) => {
+                        let _ = self
+                            .reply("421 4.7.0 Too many connections from your address, try again later")
+                            .await;
+                        return Err(End::Proxy(format!("{} refused: {why}", self.client_ip)));
+                    }
+                }
             }
         }
         let lmtp = self.config().lmtp;
@@ -1268,6 +1457,13 @@ impl<B: Backend> Session<'_, B> {
                 }
             }
         }
+        let raw = match self.config().internet.clone() {
+            Some(internet) => match self.check(&internet, &transaction, raw).await {
+                Ok(raw) => raw,
+                Err(reply) => return self.reply_all(&transaction, &reply).await,
+            },
+            None => raw,
+        };
         let protocol = received_protocol(self.config().lmtp, self.esmtp, transaction.utf8, self.tls);
         let message = Message {
             raw,
@@ -1368,6 +1564,97 @@ impl<B: Backend> Session<'_, B> {
         }
     }
 
+    /// The internet mode's checks after the data, before the answer: SPF, DKIM, DMARC and ARC, and the Rspamd verdict.
+    /// The message with this listener's `Authentication-Results` and spam verdict fields on top (any that came claiming
+    /// its authserv-id, and any spam verdict fields, removed), or the reply refusing it: 550 for a DMARC failure under a
+    /// reject policy or Rspamd's reject, 451 for Rspamd's soft reject or greylist. Quarantine and Rspamd's "add header"
+    /// mark it as spam, so it goes to Junk.
+    async fn check(&mut self, internet: &Internet, transaction: &Transaction, raw: Vec<u8>) -> Result<Vec<u8>, String> {
+        let config = self.config();
+        let session = moqui_mail::auth::Session {
+            client_ip: Some(self.client_ip),
+            helo: self.helo.clone().unwrap_or_default(),
+            mail_from: transaction.mail_from.clone(),
+            hostname: config.hostname.clone(),
+        };
+        let verdict = moqui_mail::auth::verify(
+            raw.clone(),
+            session.clone(),
+            config.authserv_id.clone(),
+            internet.records.clone(),
+        )
+        .await;
+        tracing::info!(
+            "SMTP session {} from {} <{}>: {}",
+            self.id,
+            self.client_ip,
+            clip(&transaction.mail_from),
+            verdict.summary
+        );
+        if verdict.temp_error {
+            // the checks did not finish: the sender tries again rather than the message going in unjudged
+            return Err("451 4.7.0 Temporary authentication failure, try again later".to_string());
+        }
+        if verdict.dmarc == moqui_mail::auth::DmarcAction::Reject {
+            return Err(format!(
+                "550 5.7.1 Rejected by the DMARC policy of {}",
+                clip(&verdict.domain)
+            ));
+        }
+        let mut spam = verdict.dmarc == moqui_mail::auth::DmarcAction::Quarantine;
+        let mut status = if spam {
+            format!("Yes, DMARC quarantine of {}", clip(&verdict.domain))
+        } else {
+            "No".to_string()
+        };
+        if !internet.rspamd_url.is_empty() {
+            let recipients: Vec<String> = transaction.recipients.iter().map(|rcpt| rcpt.address.clone()).collect();
+            match rspamd(&internet.rspamd_url, &raw, &session, &self.id, &recipients).await {
+                Ok(answer) => {
+                    tracing::info!(
+                        "SMTP session {}: Rspamd {} (score {} of {})",
+                        self.id,
+                        answer.action,
+                        answer.score,
+                        answer.required
+                    );
+                    match answer.action.as_str() {
+                        "reject" => return Err("550 5.7.1 Rejected as spam".to_string()),
+                        "soft reject" | "greylist" => return Err("451 4.7.1 Try again later".to_string()),
+                        "add header" | "rewrite subject" => spam = true,
+                        _ => {}
+                    }
+                    if !status.starts_with("Yes") {
+                        status = format!(
+                            "{}, score={} required={}",
+                            if spam { "Yes" } else { "No" },
+                            answer.score,
+                            answer.required
+                        );
+                    }
+                }
+                Err(err) => tracing::warn!("SMTP session {}: no Rspamd verdict, taken as not spam: {err}", self.id),
+            }
+        }
+        let mut fields = vec![verdict.field];
+        for name in &internet.spam_fields {
+            let value = if name.to_ascii_lowercase().ends_with("status") {
+                status.clone()
+            } else if spam {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            };
+            fields.push(format!("{name}: {value}\r\n"));
+        }
+        Ok(moqui_mail::auth::rewrite_head(
+            &raw,
+            &config.authserv_id,
+            &internet.spam_fields,
+            &fields,
+        ))
+    }
+
     /// The message up to `CRLF.CRLF`, dot-unstuffed; none when it is larger than the limit (read to its end anyway).
     /// Only a `.` line after a CRLF ends it, so a bare LF cannot end the data early.
     async fn read_data(&mut self) -> Result<Option<Vec<u8>>, End> {
@@ -1397,6 +1684,53 @@ impl<B: Backend> Session<'_, B> {
         }
         Ok((!too_big).then_some(out))
     }
+}
+
+/// Rspamd's answer (its `/checkv2` HTTP API).
+struct Rspamd {
+    action: String,
+    score: f64,
+    required: f64,
+}
+
+/// Ask Rspamd at `url` about `raw` from `session` (its address, EHLO name, sender and this node's name), to
+/// `recipients`, within 20 seconds; `queue_id` names it in Rspamd's log.
+async fn rspamd(
+    url: &str,
+    raw: &[u8],
+    session: &moqui_mail::auth::Session,
+    queue_id: &str,
+    recipients: &[String],
+) -> Result<Rspamd, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| err.to_string())?;
+    let ip = session.client_ip.map(|ip| ip.to_string()).unwrap_or_default();
+    let mut request = client
+        .post(format!("{}/checkv2", url.trim_end_matches('/')))
+        .header("IP", ip)
+        .header("Helo", session.helo.as_str())
+        .header("From", session.mail_from.as_str())
+        .header("Queue-Id", queue_id)
+        .header("Hostname", session.hostname.as_str());
+    for recipient in recipients {
+        request = request.header("Rcpt", recipient.as_str());
+    }
+    let response = request
+        .body(raw.to_vec())
+        .send()
+        .await
+        .map_err(|err| format!("{url}: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!("{url}: {}", response.status()));
+    }
+    let body: serde_json::Value = response.json().await.map_err(|err| format!("{url}: {err}"))?;
+    Ok(Rspamd {
+        action: body["action"].as_str().unwrap_or("no action").to_ascii_lowercase(),
+        score: body["score"].as_f64().unwrap_or(0.0),
+        required: body["required_score"].as_f64().unwrap_or(0.0),
+    })
 }
 
 /// The Received field's `with` (RFC 3848, RFC 6531): SMTP after HELO, ESMTP after EHLO, LMTP; UTF8SMTP and UTF8LMTP

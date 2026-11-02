@@ -18,7 +18,9 @@
 //! (IMAP IDLE workers), [`store`] (a received message as a row), [`discover`] (autodiscover), [`import`] (.eml and
 //! .mbox), [`export`] (a stored message as .eml), [`oauth`] (sign-in with Google or Microsoft, the token store and
 //! XOAUTH2) and [`delivery`] (mail the host's SMTP listener received for hosted and shared accounts), all of them
-//! `imap`; [`edge_mail`] carries mail through an edge node, in and out. The functions below are the registry entries.
+//! `imap`; [`edge_mail`] carries mail through an edge node, in and out, and with `imap` [`auth`] (SPF, DKIM, DMARC, ARC
+//! and DKIM signing), [`dns`] (its resolver) and [`mx`] (the edge node's MX delivery) are the MTA in moqui. The
+//! functions below are the registry entries.
 //!
 //! Core reaches this crate only through the [`moqui_core::extension`] entry below, and moqui-host links it under its
 //! `smtp` feature. In a build without the crate, or without `imap`, its services still load, and a call reports that
@@ -35,9 +37,13 @@ use moqui_core::extension::RustServiceFn;
 use moqui_core::rust_service;
 
 #[cfg(feature = "imap")]
+pub mod auth;
+#[cfg(feature = "imap")]
 pub mod delivery;
 #[cfg(feature = "imap")]
 mod discover;
+#[cfg(feature = "imap")]
+pub mod dns;
 pub mod edge_mail;
 #[cfg(feature = "imap")]
 mod export;
@@ -48,6 +54,8 @@ mod implementation;
 mod import;
 #[cfg(feature = "imap")]
 mod inbound;
+#[cfg(feature = "imap")]
+pub mod mx;
 #[cfg(feature = "imap")]
 mod oauth;
 #[cfg(feature = "imap")]
@@ -107,6 +115,7 @@ fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), Strin
     #[cfg(feature = "imap")]
     {
         rust_service!(map, deliver_edge_mail)?;
+        rust_service!(map, get_dkim_record)?;
         rust_service!(map, poll_server)?;
         rust_service!(map, sync_account)?;
         rust_service!(map, sync_due_accounts)?;
@@ -160,6 +169,8 @@ mail_service!(note_edge_mail_status, edge_mail::note_edge_mail_status);
 mail_service!(fail_edge_outbound_mail, edge_mail::fail_edge_outbound_mail);
 #[cfg(feature = "imap")]
 mail_service!(deliver_edge_mail, edge_mail::deliver_edge_mail);
+#[cfg(feature = "imap")]
+mail_service!(get_dkim_record, auth::get_dkim_record);
 #[cfg(feature = "imap")]
 mail_service!(poll_server, inbound::poll_server);
 #[cfg(feature = "imap")]

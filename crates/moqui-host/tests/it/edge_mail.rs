@@ -135,8 +135,9 @@ fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
     }
 }
 
-/// Postfix's relay port: takes each message (kept with its `MAIL FROM` line first), refusing with 550 any recipient
-/// whose address starts with `bounce`.
+/// Postfix's relay port, or (E5b) a recipient domain's MX: takes each message (kept with its `MAIL FROM` line first),
+/// refusing with 550 any recipient whose address starts with `bounce`, and with 451 the first time one whose address
+/// starts with `later`.
 struct Relay {
     address: SocketAddr,
     taken: Arc<Mutex<Vec<String>>>,
@@ -147,16 +148,18 @@ fn relay() -> Relay {
     let address = listener.local_addr().unwrap();
     let taken = Arc::new(Mutex::new(Vec::new()));
     let keep = Arc::clone(&taken);
+    let later = Arc::new(std::sync::atomic::AtomicBool::new(false));
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let keep = Arc::clone(&keep);
-            std::thread::spawn(move || relay_session(stream, &keep));
+            let later = Arc::clone(&later);
+            std::thread::spawn(move || relay_session(stream, &keep, &later));
         }
     });
     Relay { address, taken }
 }
 
-fn relay_session(stream: TcpStream, taken: &Mutex<Vec<String>>) {
+fn relay_session(stream: TcpStream, taken: &Mutex<Vec<String>>, later: &std::sync::atomic::AtomicBool) {
     let mut writer = stream.try_clone().unwrap();
     let mut reader = BufReader::new(stream);
     let mut say = |line: &str| writer.write_all(format!("{line}\r\n").as_bytes());
@@ -179,6 +182,8 @@ fn relay_session(stream: TcpStream, taken: &Mutex<Vec<String>>) {
             "250 2.1.0 Ok".to_string()
         } else if upper.starts_with("RCPT TO:<BOUNCE") {
             "550 5.1.1 <bounce@example.net>: Recipient address rejected: User unknown".to_string()
+        } else if upper.starts_with("RCPT TO:<LATER") && !later.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            "451 4.2.0 <later@example.net>: Mailbox busy, try again later".to_string()
         } else if upper.starts_with("RCPT TO") {
             accepted += 1;
             "250 2.1.5 Ok".to_string()
@@ -280,6 +285,41 @@ fn lmtp(address: SocketAddr, recipients: &[&str], message: &str) -> (Vec<String>
     (rcpt, after)
 }
 
+/// A sender on the internet, to the edge node's port 25 (the MTA in moqui): EHLO `helo`, one message from `from` to
+/// `recipients`; each RCPT's reply, and the reply after the data (empty when no recipient was taken).
+fn smtp(address: SocketAddr, helo: &str, from: &str, recipients: &[&str], message: &str) -> (Vec<String>, String) {
+    let stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let mut client = Lmtp {
+        reader: BufReader::new(stream.try_clone().unwrap()),
+        writer: stream,
+    };
+    assert!(client.reply().starts_with("220 "));
+    assert!(client.command(&format!("EHLO {helo}")).starts_with("250"));
+    assert_eq!(client.command(&format!("MAIL FROM:<{from}>")), "250 2.1.0 Ok");
+    let rcpt: Vec<String> = recipients
+        .iter()
+        .map(|address| client.command(&format!("RCPT TO:<{address}>")))
+        .collect();
+    if !rcpt.iter().any(|line| line.starts_with("250")) {
+        client.command("QUIT");
+        return (rcpt, String::new());
+    }
+    assert!(client.command("DATA").starts_with("354"));
+    let mut stuffed = String::new();
+    for line in message.split_inclusive("\r\n") {
+        if line.starts_with('.') {
+            stuffed.push('.');
+        }
+        stuffed.push_str(line);
+    }
+    stuffed.push_str(".\r\n");
+    client.writer.write_all(stuffed.as_bytes()).unwrap();
+    let after = client.reply();
+    client.command("QUIT");
+    (rcpt, after)
+}
+
 /// Whether the edge node has the local node's down connection.
 fn down(edge: &Gate) -> bool {
     let out = call(edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]);
@@ -349,6 +389,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
             // not reached at first: a port nothing listens on
             ("edge_mail_relay_port", &closed_port),
             ("edge_mail_bounce_domain", "bounce.test"),
+            ("edge_mail_mta", "postfix"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -538,14 +579,24 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
             .get("lastErrorText")
             .is_some_and(|error| error.contains("the relay 127.0.0.1"))
     });
-    std::thread::sleep(Duration::from_millis(500));
-    let waiting = out_item("EDGE_OUT_1");
-    assert_eq!(waiting.get("statusEnumId").map(String::as_str), Some("EqsPending"));
-    assert_eq!(
-        waiting.get("attemptCount").map(String::as_str),
-        Some("0"),
-        "not counted"
-    );
+    // not counted: an attempt in flight holds the count up by one under its lease (the claim's fencing, given back
+    // when the answer is unavailable), so the count is read between attempts, with no lease
+    let started = Instant::now();
+    let mut between = 0;
+    while started.elapsed() < Duration::from_millis(500) {
+        let waiting = out_item("EDGE_OUT_1");
+        assert_eq!(waiting.get("statusEnumId").map(String::as_str), Some("EqsPending"));
+        if waiting.get("leaseOwner").is_none_or(String::is_empty) {
+            between += 1;
+            assert_eq!(
+                waiting.get("attemptCount").map(String::as_str),
+                Some("0"),
+                "not counted"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(between > 0, "read between attempts");
     assert!(rows(&edge, "moqui.edge.EdgeQueueItem", &[("kind", "mailStatus")]).is_empty());
     // the relay back: it takes it, from the VERP sender of the item
     moqui_lib::env::set_property("edge_mail_relay_port", relay_port.clone());
@@ -599,5 +650,268 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
                 .get("sendError")
                 .is_some_and(|error| error.contains("ok@example.net; 5.1.1"))
     });
+    dialer.stop();
+}
+
+/// The MTA in moqui (E5b): the edge node takes port 25 itself, in internet mode, with no Postfix.
+const EDGE_MTA_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
+    <email-client idle-enabled="false"/>
+    <smtp-server internet="true" starttls="false"/>"#;
+
+/// E5a's cases with the MTA in moqui, no Postfix: mail from the internet to port 25 checked (SPF, DKIM, DMARC) with the
+/// edge node's own Authentication-Results, a forged one dropped, a DMARC reject policy refused with 550, and the rest
+/// queued for the local node; mail out DKIM-signed and delivered to the recipient domain's MX (a fake one through
+/// `mail_mx_override`), a 4xx tried again, a 5xx back in the Outbox. DNS is offline: the records are fixed.
+#[test]
+fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let (root, cert, key) = certs();
+    let mx = relay();
+    let local =
+        crate::common::start_with_conf_files("edge-mta-local", None, LOCAL_CONF, &[("mail_dns_offline", "true")], &[]);
+    let sales = to_plain_string(
+        &call(
+            &local,
+            "org.moqui.impl.EmailClientServices.create#EmailAccount",
+            &[
+                ("accountKindEnumId", Value::string("EakHosted")),
+                ("emailAddress", Value::string("sales@example.com")),
+            ],
+        )["emailAccountId"],
+    );
+    let edge_port = crate::common::free_port();
+    let edge_port_text = edge_port.to_string();
+    let mx_override = format!("example.net=127.0.0.1:{}", mx.address.port());
+    let edge = crate::common::start_second_with(
+        "edge-mta-edge",
+        EDGE_MTA_CONF,
+        &[
+            ("node_role", "edge"),
+            ("webapp_https_listen_port", &edge_port_text),
+            ("smtp_listen_port", "0"),
+            ("smtp_hostname", "edge.example.com"),
+            ("edge_mail_mta", "moqui"),
+            ("edge_mail_bounce_domain", "bounce.test"),
+            ("mail_mx_override", &mx_override),
+            ("mail_delivery_retry_seconds", "0.2"),
+            ("mail_dns_offline", "true"),
+        ],
+        &[("cert/default.crt", &cert), ("cert/default.key", &key)],
+    );
+    let port_25 = edge.server.smtp_address().expect("the edge node's SMTP listener");
+    // the senders' records: example.org sends from this host, reject.test from nowhere and asks for rejection
+    let records = moqui_mail::dns::records();
+    records.fix_txt("example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    records.fix_txt("mx.example.org", "v=spf1 ip4:127.0.0.1 -all").unwrap();
+    records.fix_txt("reject.test", "v=spf1 -all").unwrap();
+    records.fix_txt("_dmarc.reject.test", "v=DMARC1; p=reject").unwrap();
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let url = format!("https://localhost:{edge_port}");
+    let code = to_plain_string(&call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[])["code"]);
+    let mut pairing = PairConfig::new(&url, &code, NODE);
+    pairing.trust_root = Some(root);
+    pairing.connect_timeout = Duration::from_secs(5);
+    let paired = rt.block_on(pair(&pairing)).unwrap();
+    let mut config = LocalConfig::new(&url, &paired.key, &paired.pin, NODE);
+    config.backoff = Backoff {
+        first: Duration::from_millis(100),
+        max: Duration::from_millis(500),
+    };
+    config.connect_timeout = Duration::from_secs(3);
+    config.web = local_web(local.server.factory());
+    let (_shutdown, shutdown) = watch::channel(false);
+    let dialer = Dialer::start(config, rt.handle(), shutdown, None).unwrap();
+    wait_until(Duration::from_secs(10), "the link up", || {
+        dialer.status().state == LinkState::Linked
+    });
+    wait_until(Duration::from_secs(10), "the accounts replicated", || {
+        let facade = facade(&edge);
+        moqui_core::edge::replica::cursors(&facade, Some(NODE))
+            .unwrap()
+            .iter()
+            .any(|cursor| cursor.set_name == "mailRecipients" && cursor.snapshot_date.is_some())
+    });
+
+    // in, from the internet: checked, the forged result dropped, stored once in the account
+    let forged = format!(
+        "Authentication-Results: edge.example.com; dkim=pass header.d=example.org\r\n{}",
+        message("<in@example.org>", "From the internet")
+    );
+    let (rcpt, after) = smtp(
+        port_25,
+        "mx.example.org",
+        "dan@example.org",
+        &["sales@example.com", "nobody@example.com"],
+        &forged,
+    );
+    assert_eq!(rcpt[0], "250 2.1.5 Ok");
+    assert!(rcpt[1].starts_with("550 5.1.1 <nobody@example.com>"), "{rcpt:?}");
+    assert!(after.starts_with("250 2.0.0"), "{after}");
+    wait_until(Duration::from_secs(10), "the mail in the account", || {
+        stored(&local, &sales, "<in@example.org>") == 1
+    });
+    let headers = rows(&local, MESSAGE, &[("messageId", "<in@example.org>")])[0]
+        .get("headersString")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        headers.contains("Authentication-Results: edge.example.com;"),
+        "{headers}"
+    );
+    assert!(headers.contains("spf=pass"), "{headers}");
+    assert!(headers.contains("dmarc=none"), "{headers}");
+    assert!(!headers.contains("dkim=pass"), "the forged result is gone: {headers}");
+    // a DMARC reject policy that fails: refused after the data, nothing queued
+    let (rcpt, after) = smtp(
+        port_25,
+        "mx.example.org",
+        "x@reject.test",
+        &["sales@example.com"],
+        &message("<dmarc@reject.test>", "Spoofed").replace("dan@example.org", "x@reject.test"),
+    );
+    assert_eq!(rcpt, ["250 2.1.5 Ok"]);
+    assert!(
+        after.starts_with("550 5.7.1 Rejected by the DMARC policy of reject.test"),
+        "{after}"
+    );
+
+    // out: signed here and delivered to the MX; a 4xx tried again, a 5xx back in the Outbox
+    call(
+        &local,
+        "create#moqui.basic.email.EmailServer",
+        &[
+            ("emailServerId", Value::string("EDGE_OUT")),
+            ("smtpHost", Value::string("edge:")),
+        ],
+    );
+    let outbound = |id: &str, to: &str| {
+        call(
+            &local,
+            &format!("create#{MESSAGE}"),
+            &[
+                ("emailMessageId", Value::string(id)),
+                ("statusId", Value::string("ES_READY")),
+                ("emailAccountId", Value::string(&sales)),
+                ("emailServerId", Value::string("EDGE_OUT")),
+                ("fromAddress", Value::string("sales@example.com")),
+                ("toAddresses", Value::string(to)),
+                ("subject", Value::string("Out through the MTA in moqui")),
+                ("bodyText", Value::string("Hello from the local node")),
+            ],
+        );
+        let sent = call(
+            &local,
+            "org.moqui.impl.EmailServices.send#EmailMessage",
+            &[("emailMessageId", Value::string(id))],
+        );
+        assert_eq!(sent.get("sendError"), None, "{sent:?}");
+    };
+    outbound("MTA_OUT_1", "ok@example.net, later@example.net");
+    wait_until(
+        Duration::from_secs(10),
+        "both recipients delivered, one after a 4xx",
+        || mx.taken.lock().unwrap().len() == 2,
+    );
+    let taken = mx.taken.lock().unwrap().clone();
+    let item = rows(&edge, "moqui.edge.EdgeMailDelivery", &[("domain", "example.net")])[0]["queueItemId"].clone();
+    assert!(
+        taken[0].starts_with(&format!("MAIL FROM:<bounce+{item}@bounce.test>")),
+        "{}",
+        taken[0].lines().next().unwrap_or_default()
+    );
+    // what the MX got is signed for example.com with the edge node's key, and verifies against its published record
+    let signed = taken[0]
+        .split_once("\r\n")
+        .map(|(_, message)| message)
+        .unwrap_or_default()
+        .to_string();
+    assert!(signed.starts_with("DKIM-Signature: v=1; a=rsa-sha256;"), "{signed}");
+    let record = to_plain_string(&call(&edge, "org.moqui.impl.EmailServices.get#DkimRecord", &[])["record"]);
+    assert!(record.starts_with("v=DKIM1; k=rsa; p="), "{record}");
+    let fixed = moqui_mail::dns::Records::offline();
+    fixed.fix_txt("moqui._domainkey.example.com", &record).unwrap();
+    let verdict = moqui_mail::dns::run(moqui_mail::auth::verify(
+        signed.into_bytes(),
+        moqui_mail::auth::Session {
+            client_ip: Some("192.0.2.25".parse().unwrap()),
+            helo: "edge.example.com".to_string(),
+            mail_from: format!("bounce+{item}@bounce.test"),
+            hostname: "mx.example.net".to_string(),
+        },
+        "mx.example.net".to_string(),
+        Some(Arc::new(fixed)),
+    ))
+    .unwrap();
+    assert!(verdict.summary.contains("dkim=pass"), "{verdict:?}");
+    wait_until(Duration::from_secs(10), "the delivery done", || {
+        rows(&edge, "moqui.edge.EdgeMailDelivery", &[("queueItemId", &item)])[0]
+            .get("statusEnumId")
+            .map(String::as_str)
+            == Some("EmdSent")
+    });
+    let row = &rows(&edge, "moqui.edge.EdgeMailDelivery", &[("queueItemId", &item)])[0];
+    assert_eq!(row.get("attemptCount").map(String::as_str), Some("2"), "{row:?}");
+
+    outbound("MTA_OUT_2", "bounce@example.net");
+    wait_until(Duration::from_secs(10), "the bounce in the Outbox", || {
+        let row = &rows(&local, MESSAGE, &[("emailMessageId", "MTA_OUT_2")])[0];
+        row.get("statusId").map(String::as_str) == Some("ES_READY")
+            && row
+                .get("sendError")
+                .is_some_and(|error| error.starts_with("Bounced: bounce@example.net: ") && error.contains("550"))
+    });
+    let first = &rows(&local, MESSAGE, &[("emailMessageId", "MTA_OUT_1")])[0];
+    assert_eq!(first.get("statusId").map(String::as_str), Some("ES_SENT"));
+    assert_eq!(mx.taken.lock().unwrap().len(), 2, "the bounce took no data");
+
+    // some delivered and some refused: it stays Sent, with the refused named, so a resend reaches nobody twice
+    outbound("MTA_OUT_3", "ok3@example.net, bounce@example.net");
+    wait_until(Duration::from_secs(10), "the partial delivery noted", || {
+        let row = &rows(&local, MESSAGE, &[("emailMessageId", "MTA_OUT_3")])[0];
+        row.get("statusId").map(String::as_str) == Some("ES_SENT")
+            && row
+                .get("sendError")
+                .is_some_and(|error| error.starts_with("Not delivered to: bounce@example.net: "))
+    });
+    assert_eq!(mx.taken.lock().unwrap().len(), 3);
+
+    // internal mail through the edge node: queued back to the local node, not round through port 25, signed and
+    // verified with the edge node's key
+    outbound("MTA_OUT_4", "sales@example.com");
+    let message_id = rows(&local, MESSAGE, &[("emailMessageId", "MTA_OUT_4")])[0]["messageId"].clone();
+    wait_until(Duration::from_secs(10), "the internal message in the account", || {
+        rows(
+            &local,
+            MESSAGE,
+            &[("emailAccountId", &sales), ("messageId", &message_id)],
+        )
+        .iter()
+        .any(|row| row.get("statusId").map(String::as_str) == Some("ES_RECEIVED"))
+    });
+    let headers = rows(
+        &local,
+        MESSAGE,
+        &[("emailAccountId", &sales), ("messageId", &message_id)],
+    )
+    .into_iter()
+    .find(|row| row.get("statusId").map(String::as_str) == Some("ES_RECEIVED"))
+    .and_then(|row| row.get("headersString").cloned())
+    .unwrap_or_default();
+    assert!(
+        headers.contains("Authentication-Results: edge.example.com;"),
+        "{headers}"
+    );
+    assert!(
+        headers.contains("dkim=pass header.d=example.com header.s=moqui"),
+        "{headers}"
+    );
+    assert_eq!(mx.taken.lock().unwrap().len(), 3, "nothing to the MX");
     dialer.stop();
 }

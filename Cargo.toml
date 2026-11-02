@@ -175,8 +175,16 @@ lettre = { version = "0.11", default-features = false, features = [
 # lexical-core 0.7 (RUSTSEC-2024-0377); 3.0 uses nom 7.
 imap = { version = "=3.0.0-alpha.15", default-features = false }
 # Inbound MIME for poll#EmailServer: nested multiparts, RFC 2047 words, charsets, folded headers. Defaults are
-# empty; the single-byte charsets are built in, and `full_encoding` (encoding_rs for multi-byte CJK) stays off.
+# empty; the single-byte charsets are built in. `full_encoding` (encoding_rs for multi-byte CJK) is on through mail-auth
+# below.
 mail-parser = { version = "1", default-features = false }
+# Mail authentication (moqui-mail `auth`, plans/Edge-Node.md §5.4 E5b): SPF, DKIM, DMARC and ARC verified, DKIM signed,
+# MTA-STS records. aws-lc-rs is its crypto (it pins aws-lc-sys 0.46 beside the 0.47 aws-lc-rs links, so AWS-LC is built
+# twice; rust-crypto would add a second rsa instead) and hickory its DNS. It turns on mail-parser's full_encoding.
+mail-auth = { version = "0.15", default-features = false, features = ["aws-lc-rs", "arc"] }
+# The DNS resolver mail-auth queries through, configured here (moqui-mail `dns`: MX, TXT, A and AAAA, for the MTA and
+# E10's DNS checks). Its defaults are system-config and the Tokio runtime.
+hickory-resolver = "0.26"
 # Direct so IMAP and POP3 can build a ClientConfig on aws-lc. ring stays off.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
 webpki-roots = "1"

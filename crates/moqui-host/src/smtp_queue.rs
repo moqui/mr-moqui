@@ -33,14 +33,11 @@ use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_core::edge::{queue, replica};
 use moqui_core::entity::EntityFacade;
 use moqui_lib::sync::lock;
-use moqui_mail::delivery::{RecipientAccount, RecipientDsn, RecipientIdentity, RecipientMap};
+use moqui_mail::delivery::{Options, RecipientDsn, RecipientMap};
 use moqui_mail::edge_mail::{self, RECIPIENT_SET};
 
 use super::{AccountResult, Backend, DataAnswer, Message, RcptAnswer};
 
-const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
-const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
-const SERVER: &str = "moqui.basic.email.EmailServer";
 /// The most copies the recipients are built from; a set larger than this is a deployment this design does not serve.
 const MAX_COPIES: usize = 1_000_000;
 
@@ -70,62 +67,9 @@ enum Lookup {
     Unknown,
 }
 
-fn field(fields: &serde_json::Value, name: &str) -> String {
-    match &fields[name] {
-        serde_json::Value::String(text) => text.clone(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
-
-/// The recipients of each local node from the copies of its `mailRecipients`.
+/// The recipients of each local node from the copies of its `mailRecipients` (`moqui_mail::delivery`).
 fn build(values: &[replica::ReplicaValue]) -> Vec<(String, RecipientMap)> {
-    // each account with its server's id, until the servers are all read
-    let mut accounts: BTreeMap<&str, Vec<(RecipientAccount, String)>> = BTreeMap::new();
-    let mut identities: BTreeMap<&str, Vec<RecipientIdentity>> = BTreeMap::new();
-    let mut stores: HashSet<(&str, String)> = HashSet::new();
-    for value in values {
-        let node = value.paired_node_id.as_str();
-        match value.entity_name.as_str() {
-            ACCOUNT => accounts.entry(node).or_default().push((
-                RecipientAccount {
-                    email_account_id: field(&value.pk, "emailAccountId"),
-                    email_address: field(&value.fields, "emailAddress"),
-                    account_kind_enum_id: field(&value.fields, "accountKindEnumId"),
-                    status_id: field(&value.fields, "statusId"),
-                    has_store_server: false,
-                },
-                field(&value.fields, "emailServerId"),
-            )),
-            IDENTITY => identities.entry(node).or_default().push(RecipientIdentity {
-                email_identity_id: field(&value.pk, "emailIdentityId"),
-                email_address: field(&value.fields, "emailAddress"),
-                email_account_id: field(&value.fields, "emailAccountId"),
-            }),
-            SERVER if !field(&value.fields, "storeHost").trim().is_empty() => {
-                stores.insert((node, field(&value.pk, "emailServerId")));
-            }
-            _ => {}
-        }
-    }
-    let mut names: Vec<&str> = accounts.keys().chain(identities.keys()).copied().collect();
-    names.sort_unstable();
-    names.dedup();
-    let mut nodes = Vec::with_capacity(names.len());
-    for node in names {
-        let node_accounts: Vec<RecipientAccount> = accounts
-            .remove(node)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(mut account, server)| {
-                account.has_store_server = !server.is_empty() && stores.contains(&(node, server));
-                account
-            })
-            .collect();
-        let node_identities = identities.remove(node).unwrap_or_default();
-        nodes.push((node.to_string(), RecipientMap::new(&node_accounts, &node_identities)));
-    }
-    nodes
+    moqui_mail::delivery::recipient_maps(values)
 }
 
 /// The local nodes paired with this edge node and not revoked.
@@ -227,14 +171,17 @@ pub(crate) struct QueueBackend {
     factory: Weak<ExecutionContextFactory>,
     delimiters: String,
     copies: Arc<Mutex<Copies>>,
+    /// What this listener trusts (its authserv-id, its spam fields), which the local node trusts for its mail.
+    trusted: Options,
 }
 
 impl QueueBackend {
-    pub(crate) fn new(factory: Weak<ExecutionContextFactory>, delimiters: String) -> Self {
+    pub(crate) fn new(factory: Weak<ExecutionContextFactory>, delimiters: String, trusted: Options) -> Self {
         Self {
             factory,
             delimiters,
             copies: Arc::new(Mutex::new(Copies::default())),
+            trusted,
         }
     }
 }
@@ -282,6 +229,7 @@ impl Backend for QueueBackend {
     async fn deliver(&self, message: Message) -> DataAnswer {
         let copies = Arc::clone(&self.copies);
         let delimiters = self.delimiters.clone();
+        let trusted = self.trusted.clone();
         let queued = crate::worker::on_pool_without_authz(&self.factory, move |factory| {
             let facade = entity(factory)?;
             let mut accounts: Vec<(String, AccountResult)> = Vec::new();
@@ -344,7 +292,13 @@ impl Backend for QueueBackend {
                 ids.sort_unstable();
                 // ordered per recipient mailbox: a message to several goes under the first
                 let conversation = format!("mail:{}", ids.first().map_or("", String::as_str));
-                let item = edge_mail::inbound_item(message.raw.clone(), &message.envelope, &recipients, &conversation);
+                let item = edge_mail::inbound_item_trusting(
+                    message.raw.clone(),
+                    &message.envelope,
+                    &recipients,
+                    &conversation,
+                    &trusted,
+                );
                 match queue::enqueue(factory, &facade, Some(&node), &item) {
                     Ok(queued) => {
                         summary.push(format!(

@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
          poll#EmailServer is moqui_mail::poll_server.
          test#EmailServer is moqui_mail::test_server.
          deliver#EdgeMail, deliver#EdgeOutboundMail, note#EdgeMailStatus and fail#EdgeOutboundMail are
-         moqui_mail::edge_mail. -->
+         moqui_mail::edge_mail. get#DkimRecord is moqui_mail::auth. -->
     <service verb="send" noun="Email" type="rust" location="moqui_mail::send_template" allow-remote="false">
         <implements service="org.moqui.EmailServices.send#EmailTemplate"/>
         <in-parameters>
@@ -112,11 +112,14 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="deliver" noun="EdgeOutboundMail" type="rust" location="moqui_mail::deliver_edge_outbound_mail"
             allow-remote="false">
         <description>On an edge node, the queue kind mailOut: a message its local node sent through an EmailServer with
-            smtpHost edge:, relayed to the MTA beside the edge node (edge_mail_relay_host, edge_mail_relay_port) from
-            the VERP sender bounce+(item id)@(edge_mail_bounce_domain) when that is set, and its answer (accepted, or
-            bounced for a 5xx or an address it could never take, with the reply) queued back as mailStatus in a
-            transaction of its own; an item whose answer is queued is not relayed again. A relay that cannot be
-            reached, answers 4xx or drops the connection answers retryLater. Refused on a local node.</description>
+            smtpHost edge:, sent from the VERP sender bounce+(item id)@(edge_mail_bounce_domain) when that is set. With
+            edge_mail_mta moqui (the default) it is DKIM-signed and recorded as one moqui.edge.EdgeMailDelivery per
+            recipient domain in this item's transaction, which the MX delivery thread delivers (moqui_mail::mx); the
+            answers come back as mailStatus from there. With edge_mail_mta postfix it is relayed to the MTA beside the
+            edge node (edge_mail_relay_host, edge_mail_relay_port), and its answer (accepted, or bounced for a 5xx or an
+            address it could never take, with the reply) queued back as mailStatus in a transaction of its own; an item
+            whose answer is queued is not relayed again. A relay that cannot be reached, answers 4xx or drops the
+            connection answers retryLater. Refused on a local node.</description>
         <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
     </service>
     <service verb="note" noun="EdgeMailStatus" type="rust" location="moqui_mail::note_edge_mail_status"
@@ -141,6 +144,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="payload" allow-html="any"/>
             <parameter name="error" allow-html="any"/>
         </in-parameters>
+    </service>
+
+    <service verb="get" noun="DkimRecord" type="rust" location="moqui_mail::get_dkim_record" allow-remote="false">
+        <description>The DNS TXT record of this node's DKIM key (mail_dkim_key, generated into runtime/.env the first
+            time it is needed), to publish at (selector)._domainkey.(domain): v=DKIM1; k=rsa; p=(public key). The
+            domains are mail_dkim_domains, else the domains of the hosted and shared accounts.</description>
+        <out-parameters>
+            <parameter name="selector"/>
+            <parameter name="record"/>
+            <parameter name="domainList" type="List"/>
+        </out-parameters>
     </service>
 
     <service verb="poll" noun="EmailServer" type="rust" location="moqui_mail::poll_server"

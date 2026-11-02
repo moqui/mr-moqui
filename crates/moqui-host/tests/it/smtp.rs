@@ -19,7 +19,8 @@
 //! a DbResource, the account rule and the email ECAs run once on each copy (a failing ECA logged, the other running);
 //! the gateway's spam verdict files in Junk; a message over `smtp-server` `max-message-size` is refused with 552; a store that
 //! fails answers 451 and the gateway's retry does not double the account that took it. In LMTP mode (with DSN) each
-//! recipient gets its own reply: a store that fails for one account is 451 for its recipient only.
+//! recipient gets its own reply: a store that fails for one account is 451 for its recipient only. Internal mail, a
+//! hosted account's send to another through the listener, is DKIM-signed and verified with an Authentication-Results.
 
 #![cfg(all(
     unix,
@@ -406,6 +407,49 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     assert!(rows("moqui.basic.email.EmailMessage", &[("emailAccountId", &broken)]).is_empty());
     assert_eq!(gateway.command("QUIT"), "221 2.0.0 Bye");
     assert_eq!(gateway.reply(), "");
+
+    // internal mail (plans/Edge-Node.md §5.4, E5b): a hosted account's send is DKIM-signed with the node's key (made
+    // into runtime/.env now), and delivered here it is verified against that key, with an Authentication-Results
+    sync(
+        "create#moqui.basic.email.EmailServer",
+        &[
+            ("emailServerId", text("GATE_LOOP")),
+            ("smtpHost", text("127.0.0.1")),
+            ("smtpPort", text(&address.port().to_string())),
+        ],
+    );
+    sync(
+        "create#moqui.basic.email.EmailMessage",
+        &[
+            ("emailMessageId", text("GATE_INTERNAL")),
+            ("statusId", text("ES_READY")),
+            ("emailServerId", text("GATE_LOOP")),
+            ("fromAddress", text("sales@example.com")),
+            ("toAddresses", text("help@example.com")),
+            ("subject", text("Internal")),
+            ("bodyText", text("Between hosted accounts")),
+        ],
+    );
+    let sent = sync(
+        "org.moqui.impl.EmailServices.send#EmailMessage",
+        &[("emailMessageId", text("GATE_INTERNAL"))],
+    );
+    let message_id = out(&sent, "messageId");
+    assert!(!message_id.is_empty(), "{sent:?}");
+    let internal = rows(
+        "moqui.basic.email.EmailMessage",
+        &[("emailAccountId", &support), ("messageId", &message_id)],
+    );
+    assert_eq!(internal.len(), 1, "stored once in the shared account");
+    let headers = field(&internal[0], "headersString");
+    assert!(headers.contains("DKIM-Signature: v=1; a=rsa-sha256;"), "{headers}");
+    assert!(headers.contains("Authentication-Results: mx.gate.test;"), "{headers}");
+    assert!(
+        headers.contains("dkim=pass header.d=example.com header.s=moqui"),
+        "{headers}"
+    );
+    let env = std::fs::read_to_string(factory.runtime_dir().join(".env")).unwrap_or_default();
+    assert!(env.contains("mail_dkim_key="), "the key made into runtime/.env");
 }
 
 #[test]
