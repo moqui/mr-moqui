@@ -10,8 +10,9 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
-  [conditions](#conditions), [helpers](#helpers), [mail](#mail), [notifications](#notifications), [agent
-  evaluation](#agent-evaluation), [porting a Spock spec](#porting-a-spock-spec), [pitfalls](#pitfalls)
+  [conditions](#conditions), [helpers](#helpers), [mail](#mail), [HTTP fixtures](#http-fixtures),
+  [notifications](#notifications), [agent evaluation](#agent-evaluation), [porting a Spock spec](#porting-a-spock-spec),
+  [pitfalls](#pitfalls)
 
 ## Build
 
@@ -508,6 +509,36 @@ capture.last().toList            // ["customer@example.com"]
 | `isEnabled()` | Whether a send now is captured |
 
 The capture is a tool of the framework (`moqui_core::service::mail_capture`, in `MoquiDefaultConf.xml`).
+
+### HTTP fixtures
+
+A spec exercises a provider adapter (a payment, shipping or EDI gateway) through its production code with no network:
+while the HTTP fixtures are enabled, every outbound HTTP request of the run's server (`ec.service.rest()` `call()` and
+`send()`, `remote-rest` services, `http` locations) is answered by the first fixture it matches, in the order added, and
+recorded. A request that matches none fails as a transport error naming it, so nothing goes out. The adapter keeps its
+endpoint from its gateway configuration (a sandbox URL), and the fixture matches that URL; the adapter has no test branch.
+
+```js
+const http = ec.factory.getTool("HttpFixtures")
+spec({ setupSpec() { http.enable() }, cleanupSpec() { http.reset() } })
+// in a feature: an answer once, then a lost answer (the request went out, its answer did not come back)
+http.add({ method: "POST", url: "https://apitest.example.com/v1/charges", status: 200, contentType: "application/json",
+    body: JSON.stringify({ id: "ch_1" }), times: 1 })
+http.add({ url: "https://apitest.example.com/v1/*", error: "operation timed out" })
+// ... call the Mantle service that calls the adapter, then
+http.requests()[0].headers["Idempotency-Key"]
+```
+
+| Method | |
+|---|---|
+| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
+| `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
+| `enable()`, `disable()`, `isEnabled()` | Answer and record, or send as usual; off by default. `enable()` is refused outside a `moqui test` run |
+| `clear()`, `reset()` | Forget the fixtures and requests; `reset()` also disables. Reset when the spec ends, as the switch outlives the spec |
+
+The fixtures are a tool of the framework (`moqui_core::service::http_fixtures`, in `MoquiDefaultConf.xml`), on the
+transport under `moqui_core::outbound`. They are process-wide, so while they are on a request sent with no execution
+context (a worker thread's) is answered or refused too, and only the `moqui test` runner allows enabling them.
 
 ### Notifications
 

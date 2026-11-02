@@ -249,6 +249,10 @@ fn send_inner(request: Request) -> Result<Response, Error> {
             redacted(&request.url)
         )));
     }
+    // a spec's HTTP fixtures answer before any transport (service::http_fixtures)
+    if let Some(answer) = crate::service::http_fixtures::intercept(&request) {
+        return answer;
+    }
     if let Some(sender) = SENDER.get() {
         return sender.send(request);
     }
@@ -395,6 +399,23 @@ fn open_inner(request: OpenRequest) -> Result<OpenResponse, Error> {
             redacted(&request.url)
         )));
     }
+    // a spec's HTTP fixtures answer before any transport (service::http_fixtures)
+    if crate::service::http_fixtures::intercept_enabled() {
+        let whole = Request {
+            method: request.method,
+            url: request.url.clone(),
+            headers: request.headers.clone(),
+            body: request
+                .body
+                .as_ref()
+                .map(|body| String::from_utf8_lossy(body).into_owned()),
+            timeout: request.timeout,
+            deny_internal: false,
+        };
+        if let Some(answer) = crate::service::http_fixtures::intercept(&whole) {
+            return answer.map(whole_response);
+        }
+    }
     if let Some(sender) = SENDER.get() {
         let response = sender.send(Request {
             method: request.method,
@@ -404,19 +425,24 @@ fn open_inner(request: OpenRequest) -> Result<OpenResponse, Error> {
             timeout: request.timeout,
             deny_internal: false,
         })?;
-        let bytes = if response.bytes.is_empty() {
-            response.body.into_bytes()
-        } else {
-            response.bytes
-        };
-        return Ok(OpenResponse {
-            status: response.status,
-            headers: response.headers,
-            length: Some(bytes.len() as u64),
-            reader: Box::new(std::io::Cursor::new(bytes)),
-        });
+        return Ok(whole_response(response));
     }
     open_default(request)
+}
+
+/// A whole response, from an installed sender or a fixture, as an [`open`] response read from memory.
+fn whole_response(response: Response) -> OpenResponse {
+    let bytes = if response.bytes.is_empty() {
+        response.body.into_bytes()
+    } else {
+        response.bytes
+    };
+    OpenResponse {
+        status: response.status,
+        headers: response.headers,
+        length: Some(bytes.len() as u64),
+        reader: Box::new(std::io::Cursor::new(bytes)),
+    }
 }
 
 #[cfg(feature = "http")]

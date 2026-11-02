@@ -312,6 +312,7 @@ impl NativeRegistry {
         // MoquiDefaultConf.xml selects
         // and the mail and notification captures for specs (MailCapture, NotificationCapture)
         crate::service::mail_capture::register(&mut registry)?;
+        crate::service::http_fixtures::register(&mut registry)?;
         crate::notify::capture::register(&mut registry)?;
         for extension in crate::extension::linked() {
             (extension.register_native)(&mut registry)?;

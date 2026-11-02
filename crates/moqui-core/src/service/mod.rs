@@ -41,6 +41,7 @@ mod fence_tests;
 pub mod git_eca;
 #[cfg(feature = "image")]
 mod images;
+pub mod http_fixtures;
 pub mod info;
 #[cfg(test)]
 mod inline_tests;

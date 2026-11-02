@@ -232,6 +232,54 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- =========== Receive Services =========== -->
 
+    <service verb="store" noun="ReceivedSystemMessage" allow-remote="false">
+        <description>MR Moqui only. For a provider's receive service (SystemMessageType.receiveServiceName, called by
+            receive#IncomingSystemMessage after the endpoint authenticated the remote): keep a received message once per
+            remote, type and provider event id. The remote is locked, so concurrent deliveries of one event serialize; an
+            event already kept is a duplicate (duplicateOfId): nothing is created and systemMessageIdList is empty, so
+            nothing is consumed again while the endpoint still answers success. Otherwise creates the SystemMessage,
+            Received, with messageId the event id. The provider's receive service parses the event id from the
+            authenticated body; the remote comes from the endpoint, never from the payload.</description>
+        <in-parameters>
+            <parameter name="systemMessageTypeId" required="true"/>
+            <parameter name="systemMessageRemoteId" required="true"/>
+            <parameter name="messageId" required="true"><description>The provider's event id (a webhook's notification or
+                event id)</description></parameter>
+            <parameter name="messageText" required="true"/>
+            <parameter name="remoteMessageId"/>
+            <parameter name="messageDate" type="Timestamp"/>
+            <parameter name="docType"/>
+            <parameter name="docSubType"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="systemMessageIdList" type="List"/>
+            <parameter name="systemMessageId"/>
+            <parameter name="duplicateOfId"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.service.message.SystemMessageRemote" value-field="remote" for-update="true"/>
+            <if condition="remote == null">
+                <return error="true" message="Remote system ${systemMessageRemoteId} not valid"/></if>
+            <entity-find entity-name="moqui.service.message.SystemMessage" list="existingList" limit="1">
+                <econdition field-name="systemMessageRemoteId"/>
+                <econdition field-name="systemMessageTypeId"/>
+                <econdition field-name="messageId"/>
+                <econdition field-name="isOutgoing" value="N"/>
+                <select-field field-name="systemMessageId"/>
+            </entity-find>
+            <if condition="existingList.length">
+                <set field="duplicateOfId" from="existingList[0].systemMessageId"/>
+                <set field="systemMessageIdList" from="[]"/>
+                <return/>
+            </if>
+            <service-call name="create#moqui.service.message.SystemMessage" out-map="created"
+                    in-map="{systemMessageTypeId, systemMessageRemoteId, messageId, messageText, remoteMessageId, messageDate,
+                        docType, docSubType, statusId:'SmsgReceived', isOutgoing:'N', initDate:ec.user.nowTimestamp}"/>
+            <set field="systemMessageId" from="created.systemMessageId"/>
+            <set field="systemMessageIdList" from="[systemMessageId]"/>
+        </actions>
+    </service>
+
     <service verb="receive" noun="IncomingSystemMessage" allow-remote="true">
         <description>Call to receive a message (often through a remote interface). If there is a
             SystemMessageType.receiveServiceName calls that service to save the message, otherwise creates a
