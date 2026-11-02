@@ -104,8 +104,10 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.message.hasError()) {
                 // the names an XMPP SRV record may point at: the edge node's own
                 const urlHost = String(offered.edgeUrl || '').replace(/^[a-z]+:\/\//i, '').split(/[/:?#]/)[0].toLowerCase()
+                // an SRV target is a host name, never an address
                 const xmppHosts = Array.from(new Set(Array.from(offer.publicNames || []).concat([urlHost, offer.mail?.mxHost || ''])
-                    .map((name) => String(name).trim().toLowerCase()).filter((name) => name)))
+                    .map((name) => String(name).trim().replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase())
+                    .filter((name) => name && !name.includes(':') && !/^[0-9.]+$/.test(name))))
                 const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeDns').parameters({
                     domains: choices.mailOn ? choices.mailDomains || [] : [], hostNames,
                     mxHost: offer.mail?.mxHost || '', edgeAddresses: offer.addresses || [],

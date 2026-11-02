@@ -98,6 +98,9 @@ pub struct XmppOffer {
     pub tls_port: u16,
     /// `edge_xmpp_node` names another local node, so the tunnels do not come here.
     pub other_node: bool,
+    /// `edge_xmpp_node` is empty and this node is not the only one linked, so the tunnels go to no node until it
+    /// names one.
+    pub needs_node: bool,
 }
 
 /// What an edge node offers a local node.

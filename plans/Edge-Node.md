@@ -1214,8 +1214,7 @@ Its actions are pause, resync and unpair.
   area off leaves what an earlier Apply set; there is no undo. The mail-out test is a queue round trip, not a message
   sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone, calls and
   monitoring are not in the form (E7, E8 and §5.9 are not built). XMPP's domain is not chosen in the form but is the
-  node's `xmpp_domain`, and Apply writes nothing local for it; its probe takes any certificate (the TLS is the local
-  node's own) and goes to the host of `edge_node_url`, not to the SRV target.
+  node's `xmpp_domain`, and Apply writes nothing local for it; its probe goes to the host of `edge_node_url`, not to the SRV target.
 - **Tests.** `tests/it/edge_setup.rs` (about 4 s): the offer read, Configure applied (a name another node holds
   refused, the edge node's own names and their subdomains, an IP address, `localhost` and a one-label name refused, a
   stale name removed, input refused whole), Apply's local writes into the test runtime's own `.env` (the
@@ -1241,10 +1240,12 @@ Its actions are pause, resync and unpair.
 - **Discover** offers XMPP when the edge node has a tunnel port and this node an `xmpp_domain` (on by default then),
   showing the domain and ports. Uploads (`https://<domain>`) and `/xmpp-websocket` ride on web access, so the domain
   must be an `EdgeHost`: Next adds it to the passthrough names when it is in neither list (terminate is taken too: its
-  WebSocket signs in without `-PLUS`). `apply#EdgeSetup` (`xmppOn`) does the same, and with web access off needs the
-  name there already; with no `xmpp_domain` or no tunnel port it changes nothing. It writes nothing local; its lines
-  say when this node's `xmpp_port` or `xmpp_tls_port` (which Chat apps shows) differ from the edge node's ports, when
-  the edge node did not take the name, and when the tunnels go to another node.
+  WebSocket signs in without `-PLUS`); with web access off it asks the offer and refuses unless the edge node has
+  the name. `apply#EdgeSetup` (`xmppOn`) adds it the same way; with web access off and the name not there it gives a
+  failed line and applies the rest; with no `xmpp_domain` or no tunnel port it changes nothing. It writes nothing
+  local; its lines say when this node's `xmpp_port` or `xmpp_tls_port` (which Chat apps shows) differ from the edge
+  node's ports, when the edge node did not take the name, and when the tunnels go to another node or to none
+  (`needs_node`, field 5: `edge_xmpp_node` empty and the node not the only one linked, the tunnel ports' own rule).
 - **DNS.** `edge_dns` checks `_xmpp-client._tcp` and `_xmpps-client._tcp` of the XMPP domain (not of each mail
   domain), each port that is on: every record must name one of the edge node's names (its public names, the host of
   `edge_node_url`, its MX host) and the tunnel port. `Lookup::srv` is hickory's SRV lookup (`dns::srv`), with fixed
@@ -1252,15 +1253,17 @@ Its actions are pause, resync and unpair.
   `_sips._tcp` stays listed for later (E8).
 - **Test.** `test#EdgeSetup` (`xmppOn`) calls `EdgeLink::xmpp_probe` for each port that is on (host
   `edge_link/probe.rs`): this node's server must take tunneled connections of the kind (`xmpp::running`), then a
-  client stream to the edge node's port (direct TLS with ALPN `xmpp-client`, or in the clear before STARTTLS) must
-  come back with features from the domain, STARTTLS offered on the STARTTLS port; nothing more is sent, so no
-  sign-in is counted. A port that is off is not checked. A third line checks the domain is one of the node's host
-  names there.
+  client connection to the edge node's port (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its
+  features from the domain with STARTTLS, then STARTTLS) must complete a TLS handshake pinned to this node's own
+  certificate for the domain (`tls::leaf_for`, the whole certificate): only this node has its key, so that is the
+  proof the connection came back here. Nothing more is sent, so no sign-in is counted. A port that is off is not
+  checked. A third line checks the domain is one of the node's host names there. The checks run on a thread of
+  their own beside the round trips' 10 s wait.
 - **Status** shows XMPP: the domain through the ports, while the link is up and the name is there.
 - **Tests.** `edge_setup.rs`: the offer's ports and `xmpp` in Hello, Configure keeping the domain and refusing a bad
   one, the SRV records against fixed ones, and the wizard's XMPP walk (Discover adding the domain, Apply, the edge
-  node's row and `setupJson`, Test's probes failing on a node with no XMPP server and the name found, Status, and
-  Apply refused with no `xmpp_domain`). `edge_xmpp.rs`: the probe through both tunnel ports reaches the local node's
+  node's row and `setupJson`, Test's probes failing on a node with no XMPP server and the name found, Status, Apply
+  with web access off and the name kept giving no failed line, and Apply refused with no `xmpp_domain`). `edge_xmpp.rs`: the probe through both tunnel ports reaches the local node's
   server, and fails with the link down. Unit: `setup_tests.rs` (the domain's checks), `edge_dns_tests.rs` (the SRV
   rows, a fixed SRV record). `EdgeScreens.spec.js`: Discover adds the domain, or refuses with no `xmpp_domain`.
 

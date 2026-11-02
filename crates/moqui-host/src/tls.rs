@@ -555,6 +555,17 @@ fn has_any_pair(dir: &Path) -> bool {
     pair_names(dir).iter().any(|name| find_files(dir, name).is_some())
 }
 
+/// The leaf certificate a handshake asking `dir`'s certificates for `name` is served, as the edge link's XMPP probe
+/// pins it (`edge_link::probe`); none when no pair there answers for the name.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn leaf_for(dir: &Path, name: &str) -> Option<CertificateDer<'static>> {
+    CertStore::new(dir.to_path_buf())
+        .lookup(Some(name))?
+        .cert
+        .first()
+        .cloned()
+}
+
 /// A self-signed `localhost` certificate plus `default` copies, when the directory has no pair at all.
 pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
     if has_any_pair(dir) {

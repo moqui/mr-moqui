@@ -353,6 +353,10 @@ pub struct XmppOffer {
     /// edge_xmpp_node names another local node, so the tunnels do not come to the asking node.
     #[prost(bool, tag = "4")]
     pub other_node: bool,
+    /// edge_xmpp_node is empty and the asking node is not the only one linked, so the tunnels go to no node until
+    /// edge_xmpp_node names one.
+    #[prost(bool, tag = "5")]
+    pub needs_node: bool,
 }
 /// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover). Each area is a message of its own; calls
 /// and SIP get theirs the same way when they are built.

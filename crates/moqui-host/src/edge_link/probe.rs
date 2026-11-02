@@ -13,22 +13,24 @@
  */
 
 //! The wizard's XMPP check on a local node (plans/Edge-Node.md §5.7, the Test step, E10): this node's XMPP server
-//! takes tunneled connections of the kind (§5.4, E9), and a client stream opened to the edge node's tunnel port, on
-//! the host of `edge_node_url`, comes back to it through the link. The stream is opened as a client would (direct TLS
-//! with ALPN `xmpp-client`, or in the clear before STARTTLS) and read up to its features; nothing more is sent, so no
-//! credential crosses and no sign-in is counted. The TLS is this node's own, so any certificate is taken: the
-//! stream's `from` naming this node's domain is what says it came back here.
+//! takes tunneled connections of the kind (§5.4, E9), and a client connection to the edge node's tunnel port, on the
+//! host of `edge_node_url`, comes back to it through the link. The connection is opened as a client's would be
+//! (direct TLS with ALPN `xmpp-client`, or the stream in the clear, its features, then STARTTLS), and its TLS must
+//! present this node's own certificate for the domain (pinned to the whole certificate, from `runtime/cert`): only
+//! this node's server has its key, so a handshake that completes is the proof it came back here. Nothing more is
+//! sent, so no credential crosses and no sign-in is counted.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 
-/// How long the probe may take: connecting, the TLS and the stream's features.
+/// How long the probe may take: connecting, the stream's features and the TLS.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-/// The most of the stream read while looking for its features.
+/// The most of the stream read while looking for what it waits for.
 const MAX_READ: usize = 16 * 1024;
 
 /// The kind's name in a message.
@@ -40,12 +42,13 @@ fn kind(direct: bool) -> &'static str {
     }
 }
 
-/// Check that a client stream to the edge node's tunnel `port` (direct TLS when `direct`) reaches this node's XMPP
-/// server: what it reached, or why not.
+/// Check that a client connection to the edge node's tunnel `port` (direct TLS when `direct`) reaches this node's
+/// XMPP server: what it reached, or why not.
 ///
 /// # Errors
 ///
-/// Returns why: this node runs no XMPP server for the kind, no edge node address, or the stream did not come back.
+/// Returns why: this node runs no XMPP server for the kind or has no certificate for the domain, no edge node
+/// address, or the connection did not come back here.
 pub async fn xmpp_probe(
     factory: Arc<ExecutionContextFactory>,
     edge_url: String,
@@ -54,6 +57,7 @@ pub async fn xmpp_probe(
 ) -> Result<String, String> {
     let domain = moqui_lib::env::get_prop_or_env("xmpp_domain")
         .trim()
+        .trim_end_matches('.')
         .to_ascii_lowercase();
     if domain.is_empty() {
         return Err("This node runs no XMPP server: set xmpp_domain".to_string());
@@ -64,6 +68,9 @@ pub async fn xmpp_probe(
             kind(direct)
         ));
     }
+    let Some(leaf) = crate::tls::leaf_for(&factory.runtime_dir().join("cert"), &domain) else {
+        return Err(format!("This node has no certificate for {domain} in runtime/cert"));
+    };
     drop(factory);
     if port == 0 {
         return Err(format!("The edge node's {} tunnel port is off", kind(direct)));
@@ -72,52 +79,69 @@ pub async fn xmpp_probe(
         return Err("The edge node's address is not known".to_string());
     };
     let host = host.trim_start_matches('[').trim_end_matches(']').to_string();
-    match tokio::time::timeout(PROBE_TIMEOUT, open(&host, port, &domain, direct)).await {
+    let pin: [u8; 32] = Sha256::digest(leaf.as_ref()).into();
+    match tokio::time::timeout(PROBE_TIMEOUT, open(&host, port, &domain, direct, pin)).await {
         Ok(Ok(())) => Ok(format!(
-            "A client stream to {host}:{port} ({}) reached this node's XMPP server for {domain}",
+            "A client connection to {host}:{port} ({}) reached this node's XMPP server for {domain}",
             kind(direct)
         )),
         Ok(Err(why)) => Err(format!("{host}:{port} ({}): {why}", kind(direct))),
         Err(_) => Err(format!(
-            "{host}:{port} ({}): no stream features in {} seconds",
+            "{host}:{port} ({}): no answer in {} seconds",
             kind(direct),
             PROBE_TIMEOUT.as_secs()
         )),
     }
 }
 
-async fn open(host: &str, port: u16, domain: &str, direct: bool) -> Result<(), String> {
-    let tcp = TcpStream::connect((host, port))
+async fn open(host: &str, port: u16, domain: &str, direct: bool, pin: [u8; 32]) -> Result<(), String> {
+    let mut tcp = TcpStream::connect((host, port))
         .await
         .map_err(|err| format!("not reached: {err}"))?;
     let _ = tcp.set_nodelay(true);
     if !direct {
-        return features(tcp, domain, true).await;
+        // the stream in the clear: its features from the domain, with STARTTLS, then the go-ahead
+        open_stream(&mut tcp, domain).await?;
+        let features = read_until(&mut tcp, &["</stream:features>", "</features>"]).await?;
+        if !features.contains(&format!("from='{domain}'")) && !features.contains(&format!("from=\"{domain}\"")) {
+            return Err(format!("an XMPP server answered, but not for {domain}"));
+        }
+        if !features.contains("urn:ietf:params:xml:ns:xmpp-tls") {
+            return Err("the XMPP server offered no STARTTLS".to_string());
+        }
+        tcp.write_all(b"<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")
+            .await
+            .map_err(|err| format!("STARTTLS was not sent: {err}"))?;
+        let answer = read_until(&mut tcp, &["<proceed", "<failure"]).await?;
+        if !answer.contains("<proceed") {
+            return Err("the XMPP server refused STARTTLS".to_string());
+        }
     }
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let verifier = crate::tls_pin::PinVerifier::new(crate::tls_pin::Pin::Deferred, false, &provider);
+    let verifier = crate::tls_pin::PinVerifier::new(crate::tls_pin::Pin::Certificate(pin), false, &provider);
     let mut config = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_safe_default_protocol_versions()
         .map_err(|err| format!("no TLS: {err}"))?
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
-    config.alpn_protocols = vec![b"xmpp-client".to_vec()];
+    if direct {
+        config.alpn_protocols = vec![b"xmpp-client".to_vec()];
+    }
     let name = rustls::pki_types::ServerName::try_from(domain.to_string())
         .map_err(|err| format!("{domain} is not a TLS name: {err}"))?;
-    let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+    let mut tls = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(name, tcp)
         .await
-        .map_err(|err| format!("the TLS did not complete, so the tunnel did not reach an XMPP server: {err}"))?;
-    features(tls, domain, false).await
+        .map_err(|err| {
+            format!("the TLS was not this node's own for {domain}, so the tunnel did not come back here: {err}")
+        })?;
+    let _ = tls.shutdown().await;
+    Ok(())
 }
 
-/// Open the stream to `domain` and read up to its features: they must come from `domain`, and offer STARTTLS when
-/// `starttls`.
-async fn features<S>(mut stream: S, domain: &str, starttls: bool) -> Result<(), String>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+/// Send the stream header to `domain`.
+async fn open_stream<S: AsyncWrite + Unpin>(stream: &mut S, domain: &str) -> Result<(), String> {
     let header = format!(
         "<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' \
          to='{domain}' version='1.0'>"
@@ -125,7 +149,12 @@ where
     stream
         .write_all(header.as_bytes())
         .await
-        .map_err(|err| format!("the stream was not sent: {err}"))?;
+        .map_err(|err| format!("the stream was not sent: {err}"))
+}
+
+/// Read the stream until one of `ends` is in it: what was read; a stream error, the end of the stream or too much
+/// is why not.
+async fn read_until<S: AsyncRead + Unpin>(stream: &mut S, ends: &[&str]) -> Result<String, String> {
     let mut seen: Vec<u8> = Vec::new();
     let mut buf = [0_u8; 4096];
     loop {
@@ -138,28 +167,17 @@ where
         }
         seen.extend_from_slice(&buf[..read]);
         let text = String::from_utf8_lossy(&seen);
-        if text.contains("<stream:error") {
-            let error = text.split_once("<stream:error").map_or("", |(_, error)| error);
+        if let Some((_, error)) = text.split_once("<stream:error") {
             return Err(format!(
                 "a stream error: <stream:error{}",
                 error.chars().take(200).collect::<String>()
             ));
         }
-        // the features always have children before sign-in: STARTTLS, or the mechanisms
-        if text.contains("</stream:features>") || text.contains("</features>") {
-            let from_ok = text.contains(&format!("from='{domain}'")) || text.contains(&format!("from=\"{domain}\""));
-            if !from_ok {
-                return Err(format!("an XMPP server answered, but not for {domain}"));
-            }
-            if starttls && !text.contains("urn:ietf:params:xml:ns:xmpp-tls") {
-                return Err("the XMPP server offered no STARTTLS".to_string());
-            }
-            let _ = stream.write_all(b"</stream:stream>").await;
-            let _ = stream.shutdown().await;
-            return Ok(());
+        if ends.iter().any(|end| text.contains(end)) {
+            return Ok(text.into_owned());
         }
         if seen.len() > MAX_READ {
-            return Err("no stream features in the first 16 KB".to_string());
+            return Err("not answered in the first 16 KB".to_string());
         }
     }
 }

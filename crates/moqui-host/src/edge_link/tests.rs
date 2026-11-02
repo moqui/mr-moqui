@@ -146,3 +146,26 @@ fn debug_output_redacts_keys_and_codes() {
     let shown = format!("{pairing:?}");
     assert!(!shown.contains("SECRET-CODE"), "{shown}");
 }
+
+#[test]
+fn xmpp_tunnels_go_to_the_named_node_or_else_the_only_one_linked() {
+    let mut config = super::EdgeConfig::from_properties("edge-offer-test");
+    config.xmpp_tunnel_node = String::new();
+    let linked = |names: &[&str]| names.iter().map(|name| (*name).to_string()).collect::<Vec<_>>();
+    assert_eq!(super::offer::xmpp_node(&config, "a", &linked(&["a"])), (false, false));
+    assert_eq!(
+        super::offer::xmpp_node(&config, "a", &linked(&["a", "b"])),
+        (false, true),
+        "several linked and none named: the tunnels are refused"
+    );
+    assert_eq!(super::offer::xmpp_node(&config, "a", &linked(&["b"])), (false, true));
+    config.xmpp_tunnel_node = "b".to_string();
+    assert_eq!(
+        super::offer::xmpp_node(&config, "a", &linked(&["a", "b"])),
+        (true, false)
+    );
+    assert_eq!(
+        super::offer::xmpp_node(&config, "b", &linked(&["a", "b"])),
+        (false, false)
+    );
+}

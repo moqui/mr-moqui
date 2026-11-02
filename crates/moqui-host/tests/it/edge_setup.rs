@@ -502,6 +502,44 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     }
     assert_eq!(tests["xmppWeb"]["ok"], "true", "{tests:?}");
     show("EdgeNode/Status", &["chat.example.com through ports"]);
+    // web access off: the edge node has the name (a trailing dot is the same domain), so Discover and Apply take it
+    moqui_lib::env::set_property("xmpp_domain", "Chat.example.com.".to_string());
+    assert_eq!(
+        post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]),
+        ""
+    );
+    let xmpp_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
+        list(out.get("lineList"))
+            .into_iter()
+            .filter(|line| line["area"] == "xmpp")
+            .collect()
+    };
+    let applied = xmpp_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("xmppOn", Value::Bool(true))],
+    ));
+    assert!(
+        !applied.is_empty() && applied.iter().all(|line| line["ok"] == "true"),
+        "{applied:?}"
+    );
+    // and a domain the edge node does not have: Discover refuses, Apply applies the rest with a failed line
+    moqui_lib::env::set_property("xmpp_domain", "talk.example.com".to_string());
+    let refused = post("EdgeNode/Pair/Discover/chooseSetup", &[("xmppOn", Value::string("Y"))]);
+    assert!(refused.contains("turn web access on"), "{refused}");
+    let applied = call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("xmppOn", Value::Bool(true))],
+    );
+    assert_eq!(applied["configured"], Value::Bool(true), "the rest is applied");
+    let lines = xmpp_lines(applied);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["ok"] == "false" && line["text"].contains("turn web access on")),
+        "{lines:?}"
+    );
     // with no xmpp_domain, nothing is changed
     moqui_lib::env::clear_property("xmpp_domain");
     let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
@@ -646,7 +684,8 @@ fn a_local_node_is_attached_from_the_wizard() {
         offer.xmpp.available
             && offer.xmpp.port == xmpp_port
             && offer.xmpp.tls_port == xmpp_tls_port
-            && !offer.xmpp.other_node,
+            && !offer.xmpp.other_node
+            && !offer.xmpp.needs_node,
         "the tunnel ports: {:?}",
         offer.xmpp
     );

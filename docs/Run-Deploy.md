@@ -682,10 +682,10 @@ their PASS authority, and XMPP clients through its tunnel ports. Calls and phone
       `xmpp_tls_port`, which Chat apps shows, differ from the edge node's ports.
    5. **Test.** The link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
       and the accounts' servers are on `edge:`, and the edge node can send: its DKIM key, or its Postfix relay
-      answering), the webhooks, PASS, and XMPP (a client stream through each tunnel port reaches this node's XMPP
-      server, and the domain is one of its host names there), each a pass, fail or not-checked line, with round trips
-      on the queue and no outside mail or provider. It runs once per visit; Test again runs it again. Continue anyway goes on with a
-      failure; Finish shows the status.
+      answering), the webhooks, PASS, and XMPP (a client connection through each tunnel port reaches this node's XMPP
+      server, its TLS this node's own certificate, and the domain is one of its host names there), each a pass, fail
+      or not-checked line, with round trips on the queue and no outside mail or provider. It runs once per visit;
+      Test again runs it again. Continue anyway goes on with a failure; Finish shows the status.
 3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
 
 The status screen shows what is set up (host names, mail, chat, PASS, XMPP), with Set up again, which opens the wizard at

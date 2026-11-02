@@ -108,7 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
         if (paired) {
             let hostsText = L('Not known while the link is down')
             let xmppText = hostsText
-            const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().toLowerCase()
+            const xmppDomain = String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase()
             if (state === 'linked') {
                 ec.message.pushErrors()
                 try {
@@ -120,8 +120,10 @@ along with this software (see the LICENSE.md file). If not, see
                         const xmpp = offer.xmpp || {}
                         const ports = [xmpp.port, xmpp.tlsPort].filter((port) => port).join(', ')
                         // through the edge node: its tunnel ports come here, and the domain is a host name of this node there
-                        const hosted = !!xmppDomain && Array.from(offer.nodeHosts || []).some((host) => host.hostName === xmppDomain)
-                        xmppText = !xmppDomain ? L('No XMPP server on this node') : xmpp.available && !xmpp.otherNode && hosted
+                        const hosted = !!xmppDomain && Array.from(offer.nodeHosts || [])
+                            .some((host) => String(host.hostName || '').replace(/\.$/, '').toLowerCase() === xmppDomain)
+                        xmppText = !xmppDomain ? L('No XMPP server on this node') : xmpp.needsNode ? L('Refused: set edge_xmpp_node on the edge node')
+                            : xmpp.available && !xmpp.otherNode && hosted
                             ? ec.resource.expand('${domain} through ports ${ports}', '', {domain: xmppDomain, ports})
                             : L('Not through the edge node')
                     }

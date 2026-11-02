@@ -121,6 +121,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             port: config.xmpp_tunnel.map_or(0, |address| u32::from(address.port())),
             tls_port: config.xmpp_tls_tunnel.map_or(0, |address| u32::from(address.port())),
             other_node: false,
+            needs_node: false,
         }),
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
@@ -156,12 +157,29 @@ fn host_setting(host: &EdgeHostInfo) -> HostSetting {
     }
 }
 
-/// What this edge node offers local node `node` now, with its host names here.
-pub(crate) fn offer(factory: &ExecutionContextFactory, config: &EdgeConfig, node: &str) -> Result<Offer, Error> {
+/// Where the XMPP tunnels go for local node `node`, by the tunnel ports' own rule (`tunnel::tunnel_node`): to the node
+/// `edge_xmpp_node` names, else to the only node linked. Answers (other node, needs a node): `edge_xmpp_node` names
+/// another node; or it is empty and `linked` is not exactly `node`, so the tunnels go nowhere until it names one.
+pub(crate) fn xmpp_node(config: &EdgeConfig, node: &str, linked: &[String]) -> (bool, bool) {
+    let named = config.xmpp_tunnel_node.as_str();
+    if named.is_empty() {
+        (false, !matches!(linked, [only] if only == node))
+    } else {
+        (named != node, false)
+    }
+}
+
+/// What this edge node offers local node `node` now, with its host names here; `linked` is the nodes linked now.
+pub(crate) fn offer(
+    factory: &ExecutionContextFactory,
+    config: &EdgeConfig,
+    node: &str,
+    linked: &[String],
+) -> Result<Offer, Error> {
     let mut offer = base_offer(factory, config);
     offer.node_hosts = hosts::list(factory, Some(node))?.iter().map(host_setting).collect();
     if let Some(xmpp) = offer.xmpp.as_mut() {
-        xmpp.other_node = !config.xmpp_tunnel_node.is_empty() && config.xmpp_tunnel_node != node;
+        (xmpp.other_node, xmpp.needs_node) = xmpp_node(config, node, linked);
     }
     Ok(offer)
 }
@@ -212,6 +230,7 @@ pub(crate) fn configure(
     config: &EdgeConfig,
     node: &str,
     request: ConfigureRequest,
+    linked: &[String],
 ) -> Result<ConfigureReply, Error> {
     let checked = setup::check_setup(&setup_of(request))?;
     let mut results = Vec::new();
@@ -288,13 +307,20 @@ pub(crate) fn configure(
         "passSites": checked.pass_sites,
         "xmppDomain": checked.xmpp_domain,
     });
-    if !checked.xmpp_domain.is_empty() && !config.xmpp_tunnel_node.is_empty() && config.xmpp_tunnel_node != node {
-        tracing::warn!(
+    match xmpp_node(config, node, linked) {
+        _ if checked.xmpp_domain.is_empty() => {}
+        (true, _) => tracing::warn!(
             "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node names {}, so its clients are not \
              tunneled there",
             checked.xmpp_domain,
             config.xmpp_tunnel_node
-        );
+        ),
+        (_, true) => tracing::warn!(
+            "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node is empty and it is not the only node \
+             linked, so XMPP clients are refused: set edge_xmpp_node",
+            checked.xmpp_domain
+        ),
+        _ => {}
     }
     store::save_setup(factory, node, &kept_setup.to_string())?;
     tracing::info!(
@@ -314,7 +340,7 @@ pub(crate) fn configure(
         }
     );
     Ok(ConfigureReply {
-        offer: Some(offer(factory, config, node)?),
+        offer: Some(offer(factory, config, node, linked)?),
         hosts: results,
     })
 }
@@ -395,6 +421,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
             port: port(xmpp.port),
             tls_port: port(xmpp.tls_port),
             other_node: xmpp.other_node,
+            needs_node: xmpp.needs_node,
         },
         not_available: offer.not_available,
         addresses: offer.addresses,
