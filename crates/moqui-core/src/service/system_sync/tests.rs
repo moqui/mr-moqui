@@ -40,6 +40,10 @@ const FIXTURE: &str = r#"<services>
                     in-map="{testId:systemMessageId, testMedium:systemMessage.get('messageText')}"/>
         </actions>
     </service>
+    <service verb="receive" noun="SmsgTestFail">
+        <implements service="org.moqui.impl.SystemMessageServices.receive#SystemMessage"/>
+        <actions><return error="true" message="Test receive failed"/></actions>
+    </service>
     <service verb="send" noun="SmsgTestFail">
         <implements service="org.moqui.impl.SystemMessageServices.send#SystemMessage"/>
         <actions><return error="true" message="Test send of ${systemMessageId} failed"/></actions>
@@ -494,8 +498,7 @@ fn an_hmac_sha512_receive_checks_the_hex_signature_in_either_case_with_or_withou
         request.set_header("X-ANET-Signature", signature.to_string());
         request.body = sent.as_bytes().to_vec();
         let _web = crate::web::install(BTreeMap::new());
-        super::message::receive_rest_message(&request, &["SmsgTestIn512".to_string(), "SmsgAnet".to_string()])
-            .unwrap();
+        super::message::receive_rest_message(&request, &["SmsgTestIn512".to_string(), "SmsgAnet".to_string()]).unwrap();
         crate::web::output_status()
     };
     // Authorize.Net sends `sha512=` and upper-case hex
@@ -507,8 +510,148 @@ fn an_hmac_sha512_receive_checks_the_hex_signature_in_either_case_with_or_withou
     let other_key = super::message::hmac_sha512_hex("other", body);
     assert_eq!(receive(&format!("sha512={other_key}"), body), 403);
     assert_eq!(receive("sha512=", body), 403);
-    assert_eq!(receive(&super::message::hmac_base64_for_test("s3cret", body), body), 403);
-    assert!(!super::message::sha512_hex_matches_for_test(&signed[..64], "s3cret", body));
+    assert_eq!(
+        receive(&super::message::hmac_base64_for_test("s3cret", body), body),
+        403
+    );
+    assert!(!super::message::sha512_hex_matches_for_test(
+        &signed[..64],
+        "s3cret",
+        body
+    ));
+}
+
+#[test]
+fn a_url_token_receive_needs_the_one_query_token_equal_to_the_shared_secret() {
+    let setup = setup("url-token");
+    let _entered = setup.context.enter();
+    install(&setup);
+    let facade = &setup.facade;
+    {
+        let _authz = setup.context.disable_authz();
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageType",
+            &[("systemMessageTypeId", "SmsgTestInToken")],
+        );
+        for (remote, name, secret) in [
+            ("SmsgToken", "", "t0ken-s3cret"),
+            ("SmsgTokenNamed", "key", "t0ken-s3cret"),
+            ("SmsgTokenEmpty", "", ""),
+        ] {
+            seed(
+                facade,
+                "moqui.service.message.SystemMessageRemote",
+                &[
+                    ("systemMessageRemoteId", remote),
+                    ("messageAuthEnumId", "SmatUrlToken"),
+                    ("authHeaderName", name),
+                    ("sharedSecret", secret),
+                ],
+            );
+        }
+    }
+    let body = r#"{"event":"track_updated","test":true,"data":{}}"#;
+    let receive = |remote: &str, query: &[(&str, &str)]| {
+        let mut request = crate::web::WebRequest::new("POST", format!("/rest/sm/SmsgTestInToken/{remote}"));
+        request.query = query
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+            .collect();
+        request.body = body.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &["SmsgTestInToken".to_string(), remote.to_string()]).unwrap();
+        crate::web::output_status()
+    };
+    // `token` by default, or the parameter authHeaderName names
+    assert_eq!(
+        receive("SmsgToken", &[("token", "t0ken-s3cret")]),
+        200,
+        "{}",
+        errors(&setup.context)
+    );
+    assert_eq!(
+        receive("SmsgTokenNamed", &[("key", "t0ken-s3cret")]),
+        200,
+        "{}",
+        errors(&setup.context)
+    );
+    // missing, wrong, empty, another parameter's and a repeated token are refused before anything is kept
+    assert_eq!(receive("SmsgToken", &[]), 403);
+    assert_eq!(receive("SmsgToken", &[("token", "t0ken-s3creT")]), 403);
+    assert_eq!(receive("SmsgToken", &[("token", "")]), 403);
+    assert_eq!(receive("SmsgTokenNamed", &[("token", "t0ken-s3cret")]), 403);
+    assert_eq!(
+        receive("SmsgToken", &[("token", "t0ken-s3cret"), ("token", "other")]),
+        403
+    );
+    // a remote with no secret is not usable: an empty token would match it
+    assert_eq!(receive("SmsgTokenEmpty", &[("token", "")]), 403);
+}
+
+#[test]
+fn a_timestamp_hmac_message_not_kept_gives_its_replay_key_back_so_the_retry_is_taken() {
+    let setup = setup("hmac-ts-retry");
+    let _entered = setup.context.enter();
+    install(&setup);
+    // the replay cache MoquiDefaultConf.xml declares, which a test context has not
+    setup
+        .context
+        .factory()
+        .cache()
+        .get_or_create("moqui.security.hmac.replay")
+        .unwrap();
+    let facade = &setup.facade;
+    {
+        let _authz = setup.context.disable_authz();
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageType",
+            &[
+                ("systemMessageTypeId", "SmsgTestInTs"),
+                ("receiveServiceName", "receive#SmsgTestFail"),
+            ],
+        );
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", "SmsgShippo"),
+                ("messageAuthEnumId", "SmatHmacSha256Timestamp"),
+                ("authHeaderName", "Shippo-Auth-Signature"),
+                ("sharedSecret", "s3cret"),
+            ],
+        );
+    }
+    let body = r#"{"event":"transaction_updated","test":true,"data":{"object_id":"tx_1"}}"#;
+    let header = super::message::timestamp_header("s3cret", body, crate::service::util::now_millis() / 1000);
+    let receive = || {
+        let mut request = crate::web::WebRequest::new("POST", "/rest/sm/SmsgTestInTs/SmsgShippo".to_string());
+        request.set_header("Shippo-Auth-Signature", header.clone());
+        request.body = body.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &["SmsgTestInTs".to_string(), "SmsgShippo".to_string()])
+            .unwrap();
+        setup.context.message().clear_errors();
+        crate::web::output_status()
+    };
+    // the receive service fails: not kept, so the same signed delivery is taken when it is sent again
+    assert_eq!(receive(), 500);
+    {
+        let _authz = setup.context.disable_authz();
+        crate::service::call::sync_with(
+            "update#moqui.service.message.SystemMessageType",
+            &params(&[("systemMessageTypeId", "SmsgTestInTs"), ("receiveServiceName", "")]),
+            &crate::service::call::CallOptions {
+                disable_authz: true,
+                ..crate::service::call::CallOptions::default()
+            },
+        )
+        .unwrap();
+    }
+    assert_eq!(receive(), 200, "{}", errors(&setup.context));
+    // kept once: the same signature again is a replay
+    assert_eq!(receive(), 403);
 }
 
 #[test]

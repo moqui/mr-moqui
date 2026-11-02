@@ -14,7 +14,8 @@
 
 //! `send#SystemMessageRest`, from its Groovy script, and the `/rest/sm` receive, from `WebFacadeImpl.handleSystemMessage`.
 //! The HMAC values are `WebUtilities.hmacSha256Base64`, `hmacSha256Hex`, and `hmacSha256TimestampHeader`; MR Moqui adds
-//! `SmatHmacSha512` (hex HMAC-SHA512 of the body, as Authorize.Net's `X-ANET-Signature: sha512=<HEX>`).
+//! `SmatHmacSha512` (hex HMAC-SHA512 of the body, as Authorize.Net's `X-ANET-Signature: sha512=<HEX>`) and
+//! `SmatUrlToken` (a secret query parameter of the webhook URL, as Shippo's self-generated `?token=`).
 
 use std::collections::BTreeMap;
 
@@ -182,7 +183,8 @@ pub(super) fn send_rest(
 /// The `sm` transition of `rest.xml`: `/rest/sm/{systemMessageTypeId}/{systemMessageRemoteId}/{remoteMessageId}` with
 /// the message as the request body. The remote's `messageAuthEnumId` picks the check: a logged-in user authorized for
 /// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, SmatHmacSha512, or
-/// SmatHmacSha256Timestamp with a five minute window and a replay cache), or nothing (SmatNone). The reply is
+/// SmatHmacSha256Timestamp with a five minute window and a replay cache), a secret URL query parameter
+/// (SmatUrlToken), or nothing (SmatNone). The reply is
 /// `{systemMessageIdList: [...]}`.
 pub(crate) fn receive_rest_message(request: &WebRequest, extra: &[String]) -> Result<bool, Error> {
     let [type_id, remote_id, more @ ..] = extra else {
@@ -234,6 +236,9 @@ fn receive_checked(
     };
 
     let auth = field(&remote, "messageAuthEnumId");
+    // The replay key a timestamped HMAC spent, given back when the message is not kept, so the provider's retry of a
+    // delivery that failed here (a 500) is not refused as a replay.
+    let mut spent_key: Option<String> = None;
     match auth.as_str() {
         "" | "SmatLogin" => {
             // The user is logged in by this point, by the request's credentials, or not at all.
@@ -347,6 +352,28 @@ fn receive_checked(
                 web::send_json_error(403, "HMAC replay rejected");
                 return Ok(());
             }
+            spent_key = Some(replay_key);
+            crate::user::login_anonymous()?;
+        }
+        // A secret token the provider sends back as a query parameter of the webhook URL it was given (Shippo's
+        // self-generated `?token=`), compared in constant time with the remote's sharedSecret; authHeaderName names the
+        // parameter (`token` when empty). No signature over the body and no replay window: the receive service keeps
+        // each provider event once.
+        "SmatUrlToken" => {
+            let secret = field(&remote, "sharedSecret");
+            if secret.is_empty() {
+                tracing::error!("System message receive URL token for remote {remote_id} needs a sharedSecret");
+                web::send_json_error(403, &format!("Remote system {remote_id} auth configuration not valid"));
+                return Ok(());
+            }
+            let name = Some(field(&remote, "authHeaderName"))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "token".to_string());
+            if !url_token_matches(&request.query, &name, &secret) {
+                tracing::warn!("System message receive URL token did not match for remote {remote_id}");
+                web::send_json_error(403, &format!("URL token verify failed for remote system {remote_id}"));
+                return Ok(());
+            }
             crate::user::login_anonymous()?;
         }
         // An explicit unauthenticated remote, with the same anonymous login as the HMAC paths.
@@ -373,6 +400,11 @@ fn receive_checked(
         ..CallOptions::default()
     };
     let result = sync_with(RECEIVE, &parameters, &options);
+    if has_error() || result.is_err() {
+        if let Some(key) = &spent_key {
+            give_back(key);
+        }
+    }
     if has_error() {
         let errors = ExecutionContext::with_current(|ctx| ctx.message().errors().join("\n")).unwrap_or_default();
         web::send_json_error(500, &errors);
@@ -477,6 +509,19 @@ fn timestamp_parts(header: &str) -> (Option<String>, Option<String>) {
     (timestamp, signature)
 }
 
+/// Whether the query has exactly one parameter `name`, equal to `secret` (`SmatUrlToken`); a repeated parameter is
+/// refused, so a second value cannot be slipped in beside the right one.
+fn url_token_matches(query: &[(String, String)], name: &str, secret: &str) -> bool {
+    let mut values = query
+        .iter()
+        .filter(|(key, _)| key == name)
+        .map(|(_, value)| value.as_str());
+    match (values.next(), values.next()) {
+        (Some(given), None) => !given.is_empty() && same_text(given, secret),
+        _ => false,
+    }
+}
+
 /// Compare without stopping at the first difference, so the time does not show how much of a signature matched.
 fn same_text(left: &str, right: &str) -> bool {
     left.len() == right.len()
@@ -505,6 +550,21 @@ fn first_use(key: &str) -> Result<bool, Error> {
     }
     // One atomic check and store: two requests with the same signature cannot both see it unused.
     Ok(cache.put_if_absent(key.to_string(), Value::Bool(true))?)
+}
+
+/// Forget a replay key whose message was not kept; a failure to forget is logged, and the retry is then refused as a
+/// replay until the key expires.
+fn give_back(key: &str) {
+    let cache = ExecutionContext::with_current(|ctx| ctx.factory().cache().get(REPLAY_CACHE));
+    match cache {
+        Some(Ok(Some(cache))) => {
+            if let Err(err) = cache.remove(&key.to_string()) {
+                tracing::error!("Could not give back the HMAC replay key of a message not kept: {err}");
+            }
+        }
+        Some(Err(err)) => tracing::error!("Could not give back the HMAC replay key of a message not kept: {err}"),
+        _ => {}
+    }
 }
 
 #[cfg(test)]

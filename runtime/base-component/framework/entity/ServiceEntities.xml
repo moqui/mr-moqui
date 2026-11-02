@@ -396,6 +396,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="SmatHmacSha256" description="HMAC SHA-256" enumTypeId="SystemMessageAuthType"/>
             <moqui.basic.Enumeration enumId="SmatHmacSha256Timestamp" description="HMAC SHA-256 with Timestamp" enumTypeId="SystemMessageAuthType"/>
             <moqui.basic.Enumeration enumId="SmatHmacSha512" description="HMAC SHA-512, hex" enumTypeId="SystemMessageAuthType"/>
+            <moqui.basic.Enumeration enumId="SmatUrlToken" description="Secret URL token (query parameter)" enumTypeId="SystemMessageAuthType"/>
         </seed-data>
     </entity>
     <entity entity-name="SystemMessageEnumMap" package="moqui.service.message" use="configuration">
