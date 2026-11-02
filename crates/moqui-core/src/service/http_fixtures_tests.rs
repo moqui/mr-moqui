@@ -119,3 +119,44 @@ fn only_a_test_run_enables_them_and_bad_fixtures_are_refused() {
     ];
     assert!(fixture_of(&Value::Map(bad_status.into_iter().collect())).is_err());
 }
+
+#[test]
+fn a_closed_test_run_refuses_all_but_loopback_and_opened_prefixes() {
+    for url in [
+        "http://localhost:8080/rest/x",
+        "http://app.localhost/",
+        "http://127.0.0.1:1/",
+        "http://127.8.9.10/",
+        "http://[::1]:9000/a",
+        "https://user:pw@localhost/b",
+    ] {
+        assert!(is_loopback(url), "{url}");
+        assert!(refusal_of(url, true, false).is_none(), "{url}");
+    }
+    for url in [
+        "https://api.sandbox.paytrace.com/v3/token",
+        "https://localhost.example.com/",
+        "http://10.0.0.1/",
+        "http://[::2]/",
+        "not a url",
+    ] {
+        assert!(!is_loopback(url), "{url}");
+    }
+    let refused = refusal_of("https://api.sandbox.paytrace.com/v3/token?client_secret=x", true, false).unwrap();
+    assert!(refused.message().contains("https://api.sandbox.paytrace.com/v3/token"), "{refused}");
+    assert!(!refused.message().contains("client_secret"), "{refused}");
+    // opened by a spec, or not a closed run (fixtures on, or not a test run)
+    assert!(refusal_of("https://api.example.com/x", true, true).is_none());
+    assert!(refusal_of("https://api.example.com/x", false, false).is_none());
+
+    let fixtures = HttpFixtures::default();
+    fixtures.allow_network(vec!["https://api.example.com/".to_string(), String::new()]);
+    assert!(fixtures.network_open("https://api.example.com/v1/x"));
+    assert!(!fixtures.network_open("https://api.example.org/"));
+    // reset: no fixtures and nothing opened, so a test run is closed again
+    fixtures.reset();
+    assert!(!fixtures.network_open("https://api.example.com/v1/x"));
+    assert!(!fixtures.is_enabled());
+    // outside a test run (no allow() in this binary) nothing is refused
+    assert!(network_refusal("https://api.example.com/x").is_none());
+}

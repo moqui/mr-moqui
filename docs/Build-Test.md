@@ -533,12 +533,18 @@ http.requests()[0].headers["Idempotency-Key"]
 |---|---|
 | `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
 | `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
-| `enable()`, `disable()`, `isEnabled()` | Answer and record, or send as usual; off by default. `enable()` is refused outside a `moqui test` run |
-| `clear()`, `reset()` | Forget the fixtures and requests; `reset()` also disables. Reset when the spec ends, as the switch outlives the spec |
+| `enable()`, `disable()`, `isEnabled()` | Answer and record; off by default. `enable()` is refused outside a `moqui test` run |
+| `allowNetwork(urlPrefixes)` | Let requests to these URL prefixes go to the network while the fixtures are off (see below); an empty list closes it again |
+| `clear()`, `reset()` | Forget the fixtures and requests; `reset()` also disables and forgets `allowNetwork`. Reset when the spec ends, as the switch outlives the spec |
 
 The fixtures are a tool of the framework (`moqui_core::service::http_fixtures`, in `MoquiDefaultConf.xml`), on the
 transport under `moqui_core::outbound`. They are process-wide, so while they are on a request sent with no execution
 context (a worker thread's) is answered or refused too, and only the `moqui test` runner allows enabling them.
+
+A `moqui test` run is closed to the network while the fixtures are off too: a request to anything but a loopback address
+(localhost, `*.localhost`, 127.0.0.0/8, ::1) fails as a transport error naming its redacted URL, with a warning in the
+log. A spec's gateway records outlive it, and a later spec's job over them (a details poll) would otherwise send their
+spec credentials to a provider's sandbox. A spec that needs a real host opens it with `allowNetwork`, and resets after.
 
 ### Notifications
 

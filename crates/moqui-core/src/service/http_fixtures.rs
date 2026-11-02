@@ -23,7 +23,13 @@
 //! `enable()` is refused. The recorded headers have their credentials redacted (Authorization, Proxy-Authorization,
 //! Cookie, and any `*Api-Key`).
 //!
-//! The tool: `isEnabled()`, `enable()`, `disable()`, `reset()` (off, no fixtures, no requests), `add({method, url,
+//! A test run is closed to the network also while the fixtures are off ([`network_refusal`]): a request to anything but
+//! a loopback address (localhost, 127.0.0.0/8, ::1, `*.localhost`) fails as a transport error naming its redacted URL,
+//! unless a spec opened its URL prefix with `allowNetwork([...])`. So a spec's leftover gateway, or a later spec's job
+//! over its records, cannot reach a provider's sandbox with spec credentials.
+//!
+//! The tool: `isEnabled()`, `enable()`, `disable()`, `reset()` (off, no fixtures, no requests, no network opened: still
+//! closed), `allowNetwork(urlPrefixes)` (a list; empty closes again), `add({method, url,
 //! bodyContains, status, body, headers, contentType, error, times})` (`url` exact, or a prefix when it ends with `*`;
 //! `times` 0 or absent is any number), `clear()` (the fixtures and requests), `requests()` (oldest first, each
 //! `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1), `count()` and
@@ -121,6 +127,8 @@ pub struct HttpFixtures {
     enabled: AtomicBool,
     fixtures: Mutex<Vec<Fixture>>,
     requests: Mutex<Vec<Recorded>>,
+    /// URL prefixes a spec opened to the network while the fixtures are off, in a test run.
+    network: Mutex<Vec<String>>,
 }
 
 impl HttpFixtures {
@@ -150,6 +158,23 @@ impl HttpFixtures {
 
     pub fn requests(&self) -> Vec<Recorded> {
         lock(&self.requests).clone()
+    }
+
+    /// Open these URL prefixes to the network in a test run, replacing the ones opened before; empty closes it again.
+    pub fn allow_network(&self, prefixes: Vec<String>) {
+        *lock(&self.network) = prefixes.into_iter().filter(|prefix| !prefix.is_empty()).collect();
+    }
+
+    /// Whether a spec opened `url` to the network.
+    fn network_open(&self, url: &str) -> bool {
+        lock(&self.network).iter().any(|prefix| url.starts_with(prefix.as_str()))
+    }
+
+    /// Off, with no fixtures, requests or opened prefixes: in a test run the network stays closed.
+    pub fn reset(&self) {
+        self.enabled.store(false, Ordering::SeqCst);
+        self.clear();
+        lock(&self.network).clear();
     }
 
     /// The answer to `request`: the first fixture it matches, or an error naming it.
@@ -224,6 +249,50 @@ fn credential_header(name: &str) -> bool {
 /// Whether the fixtures are on.
 pub fn intercept_enabled() -> bool {
     FIXTURES.is_enabled()
+}
+
+/// Whether `url`'s host is a loopback address: localhost or a `.localhost` name, 127.0.0.0/8, or ::1.
+pub fn is_loopback(url: &str) -> bool {
+    let Some((_, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(address) => address.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+/// The refusal of `url` in a closed test run: `closed` is a test run with the fixtures off, `open` whether a spec opened
+/// it. A loopback address is never refused (a spec's own servers and the test server).
+pub fn refusal_of(url: &str, closed: bool, open: bool) -> Option<TransportError> {
+    if !closed || open || is_loopback(url) {
+        return None;
+    }
+    let shown = crate::outbound::redacted(url);
+    tracing::warn!("Refused outbound HTTP to {shown}: a moqui test run sends nothing to the network while no HTTP fixtures are on");
+    Some(TransportError::new(format!(
+        "outbound HTTP to {shown} refused: a moqui test run sends nothing to the network (HttpFixtures, docs/Build-Test.md)"
+    )))
+}
+
+/// The transport's check before it sends anything: in a `moqui test` run ([`allowed`]) with the fixtures off, a request
+/// to a non-loopback address a spec did not open fails. `None` sends (or lets the fixtures answer).
+pub fn network_refusal(url: &str) -> Option<TransportError> {
+    if !allowed() {
+        return None;
+    }
+    refusal_of(url, !FIXTURES.is_enabled(), FIXTURES.network_open(url))
 }
 
 /// The fixtures' answer, when they are on: `None` sends as usual.
@@ -333,6 +402,7 @@ impl ToolFactory for HttpFixturesToolFactory {
     fn type_declaration(&self) -> Option<&'static str> {
         Some(
             "{ isEnabled(): boolean; enable(): void; disable(): void; reset(): void; \
+             allowNetwork(urlPrefixes: string[]): void; \
              add(fixture: { method?: string; url: string; bodyContains?: string; status?: number; body?: string; \
              headers?: Record<string, string>; contentType?: string; error?: string; times?: number }): void; \
              clear(): void; requests(): { method: string; url: string; headers: Record<string, string>; \
@@ -351,6 +421,7 @@ impl Tool for HttpFixturesTool {
             "enable",
             "disable",
             "reset",
+            "allowNetwork",
             "add",
             "clear",
             "requests",
@@ -372,8 +443,16 @@ impl Tool for HttpFixturesTool {
                 Ok(Value::Null)
             }
             "reset" => {
-                fixtures.set_enabled(false)?;
-                fixtures.clear();
+                fixtures.reset();
+                Ok(Value::Null)
+            }
+            "allowNetwork" => {
+                let prefixes = match args.first() {
+                    Some(Value::List(items)) => items.iter().map(to_plain_string).collect(),
+                    None | Some(Value::Null) => Vec::new(),
+                    Some(other) => vec![to_plain_string(other)],
+                };
+                fixtures.allow_network(prefixes);
                 Ok(Value::Null)
             }
             "add" => {

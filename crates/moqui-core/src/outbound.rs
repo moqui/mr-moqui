@@ -253,6 +253,10 @@ fn send_inner(request: Request) -> Result<Response, Error> {
     if let Some(answer) = crate::service::http_fixtures::intercept(&request) {
         return answer;
     }
+    // a test run with the fixtures off sends nothing to the network
+    if let Some(refused) = crate::service::http_fixtures::network_refusal(&request.url) {
+        return Err(refused);
+    }
     if let Some(sender) = SENDER.get() {
         return sender.send(request);
     }
@@ -415,6 +419,10 @@ fn open_inner(request: OpenRequest) -> Result<OpenResponse, Error> {
         if let Some(answer) = crate::service::http_fixtures::intercept(&whole) {
             return answer.map(whole_response);
         }
+    }
+    // a test run with the fixtures off sends nothing to the network
+    if let Some(refused) = crate::service::http_fixtures::network_refusal(&request.url) {
+        return Err(refused);
     }
     if let Some(sender) = SENDER.get() {
         let response = sender.send(Request {
