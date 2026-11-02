@@ -237,8 +237,33 @@ pub(crate) fn list_clients(factory: &ExecutionContextFactory) -> Result<Vec<Edge
                 remote_address: text(row.get("lastAddress")),
                 binary_version: text(row.get("binaryVersion")),
                 link_version: text(row.get("linkVersion")).parse().unwrap_or(0),
+                setup_json: text(row.get("setupJson")),
+                setup_date: row.get("setupDate").and_then(moqui_core::user::value_millis),
             })
             .collect())
+    })
+}
+
+/// Keep what a node's Configure set besides its host names (a JSON object, checked by the caller).
+pub(crate) fn save_setup(factory: &ExecutionContextFactory, node: &str, setup_json: &str) -> Result<(), Error> {
+    let facade = facade(factory)?;
+    committed(&facade, CLIENT, || {
+        let active = facade
+            .find(CLIENT)?
+            .eq("pairedNodeId", Value::string(node))
+            .one()?
+            .is_some_and(|row| text(row.get("statusId")) == ACTIVE);
+        if !active {
+            return Err(Error::new(format!(
+                "local node {node} is not paired with this edge node, or was revoked"
+            )));
+        }
+        let mut client = facade.make_value(CLIENT)?;
+        client.set("pairedNodeId", Value::string(node));
+        client.set("setupJson", Value::string(setup_json));
+        client.set("setupDate", moqui_core::user::now_value());
+        client.update(&facade)?;
+        Ok(())
     })
 }
 

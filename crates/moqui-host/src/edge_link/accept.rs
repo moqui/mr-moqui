@@ -47,9 +47,9 @@ use super::hosts::{self, Hosts, Route};
 use super::pair::Identity;
 use super::proto::link_server::{Link, LinkServer};
 use super::proto::{
-    ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply, HelloRequest, LocalHelloRequest,
-    PairReply, PairRequest, PingReply, PingRequest, ProbeReply, ProbeRequest, PutContentReply, ReplicateReply,
-    ReplicateRequest, UnpairReply, UnpairRequest,
+    ConfigureReply, ConfigureRequest, ContentChunk, DelegateRequest, DeliverReply, DeliverRequest, Hello, HelloReply,
+    HelloRequest, LocalHelloRequest, Offer, OfferRequest, PairReply, PairRequest, PingReply, PingRequest, ProbeReply,
+    ProbeRequest, PutContentReply, ReplicateReply, ReplicateRequest, UnpairReply, UnpairRequest,
 };
 use super::store::{self, Paired};
 use super::{
@@ -1251,6 +1251,49 @@ impl Link for LinkService {
         Ok(Response::new(ReplicateReply {
             resync: answer == moqui_core::edge::replica::BatchAnswer::Resync,
         }))
+    }
+
+    async fn get_offer(&self, _request: Request<OfferRequest>) -> Result<Response<Offer>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        let server = Arc::clone(&self.server);
+        let key = node.to_string();
+        let offer = self
+            .server
+            .on_pool(move |factory| super::offer::offer(factory, &server.config, &key))
+            .await
+            .map_err(|err| {
+                tracing::error!("Edge link of {node}: the offer was not made: {err}");
+                Status::internal("the edge node could not make its offer")
+            })?;
+        Ok(Response::new(offer))
+    }
+
+    async fn configure(&self, request: Request<ConfigureRequest>) -> Result<Response<ConfigureReply>, Status> {
+        let (node, _) = self.up()?;
+        if !self.helloed.load(Ordering::Acquire) {
+            return Err(Status::failed_precondition("Hello first"));
+        }
+        let request = request.into_inner();
+        // refused whole before any change when it is not input (moqui_core::edge::setup::check_setup)
+        super::offer::request_check(&request).map_err(|err| Status::invalid_argument(err.message().to_string()))?;
+        let server = Arc::clone(&self.server);
+        let key = node.to_string();
+        let reply = self
+            .server
+            .on_pool(move |factory| {
+                let reply = super::offer::configure(factory, &server.config, &key, request)?;
+                server.hosts.load(factory)?;
+                Ok(reply)
+            })
+            .await
+            .map_err(|err| {
+                tracing::error!("Edge link of {node}: its setup was not applied: {err}");
+                Status::internal("the edge node could not apply the setup; its log has why")
+            })?;
+        Ok(Response::new(reply))
     }
 
     async fn unpair(&self, _request: Request<UnpairRequest>) -> Result<Response<UnpairReply>, Status> {

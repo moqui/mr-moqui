@@ -50,6 +50,9 @@ along with this software (see the LICENSE.md file). If not, see
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.ChatBridgeServices.store#EdgeMedia"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <!-- attaching a local node (E10): the Test step's round trips, on both ends -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EdgeServices.receive#EdgeEcho"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="EDGE_DELEGATE" userGroupId="EDGE_DELEGATE" artifactGroupId="EDGE_DELEGATE"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

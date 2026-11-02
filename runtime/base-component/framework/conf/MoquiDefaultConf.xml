@@ -1161,6 +1161,9 @@
         <replicate set="chatBridges">
             <entity name="moqui.chat.ChatBridge" fields="typeEnumId,adapterName,statusId,webhookPublicKey,webhookToleranceSeconds"/>
         </replicate>
+        <!-- attaching a local node (E10): the round trips of the Edge Node wizard's Test step, which the edge node
+            answers back on the queue -->
+        <queue-kind name="edgeEcho" service="org.moqui.impl.EdgeServices.receive#EdgeEcho"/>
     </edge>
 
     <!-- Log files: dir (moqui_log_dir). A file rolls over to moqui.yyyy-MM-dd.N.log (UTC) at max-size-mb or when the day

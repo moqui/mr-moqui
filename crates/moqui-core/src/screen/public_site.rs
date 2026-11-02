@@ -52,6 +52,26 @@ fn normalize_host(host: &str) -> String {
     host.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// The hosts of the conf's `public-site` routes (mr-pass's sites), normalized: on an edge node, names no local node's
+/// setup may claim (plans/Edge-Node.md §5.7).
+pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
+    let Ok(conf) = MNode::parse_shared("moqui-conf", factory.conf_text()) else {
+        return Vec::new();
+    };
+    let Some(list) = conf.first_named("webapp-list") else {
+        return Vec::new();
+    };
+    let mut hosts = Vec::new();
+    for webapp in list.named_iter("webapp") {
+        for route in webapp.named_iter("public-site") {
+            if let Some(host) = route.attribute("host") {
+                hosts.push(normalize_host(&host));
+            }
+        }
+    }
+    hosts
+}
+
 pub(super) fn resolve(
     factory: &ExecutionContextFactory,
     request: &WebRequest,

@@ -129,6 +129,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="linked" type="Boolean"/><parameter name="down" type="Boolean"/>
                 <parameter name="generation" type="Long"/><parameter name="lastConnectDate" type="Timestamp"/>
                 <parameter name="remoteAddress"/><parameter name="binaryVersion"/><parameter name="linkVersion" type="Long"/>
+                <parameter name="setup" type="Map"><description>What the node's last Configure set besides its host
+                    names: mailDomains, chatBridgeIds and passSites; empty before one.</description></parameter>
+                <parameter name="setupDate" type="Timestamp"/>
             </parameter></parameter>
         </out-parameters>
     </service>
@@ -270,6 +273,117 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="pk" type="Map"/><parameter name="fields" type="Map"/>
             </parameter></parameter>
         </out-parameters>
+    </service>
+
+    <!-- ========== Attaching a local node (plans/Edge-Node.md §5.7, E10): the wizard's Discover, Apply and Test steps
+        after pairing. The edge node's offer and Configure cross the link (Link.GetOffer, Link.Configure); the rest is
+        crates/moqui-core/src/edge/setup.rs, and the DNS check moqui-mail's resolver. ========== -->
+    <service verb="get" noun="EdgeOffer" type="rust" location="moqui_core::service::edge::get_edge_offer"
+            allow-remote="false" transaction="ignore">
+        <description>On a paired local node: what its edge node offers it now, asked on the link. offer has publicNames
+            and hostModes (web access), mail (available, mta moqui or postfix, listener, mxHost, bounceDomain,
+            dkimSelector, dkimRecord), chat (webhooks, publicUrl), pass (available, clientId), notAvailable (areas not
+            built yet: calls, sip, xmpp), addresses (the edge node's public addresses, when it names them) and nodeHosts
+            (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
+        <out-parameters>
+            <parameter name="offer" type="Map"/>
+            <parameter name="edgeUrl"/>
+        </out-parameters>
+    </service>
+
+    <service verb="apply" noun="EdgeSetup" type="rust" location="moqui_core::service::edge::apply_edge_setup"
+            allow-remote="false" transaction="ignore">
+        <description>On a paired local node, the wizard's Apply. The whole setup is checked first (the host names, mail
+            domains, ids and the PASS callback); when any is not input nothing changes. Then the edge node's part goes
+            (Link.Configure); when it is not taken nothing changes on this node either. Then the local rows and settings
+            of each area turned on are written, and every replicated set is sent whole again. Mail: an
+            EmailServer EDGE with smtpHost edge:, SYSTEM's smtpHost edge: when systemMail, and each of emailAccountIds
+            (hosted or shared, with no incoming server of another provider) sending through the edge node; the host or
+            server each replaced is kept (edgePriorSmtpHost, edgePriorServerId) and put back when the node unpairs. Chat:
+            channels_public_url in runtime/.env, the edge node's address. PASS: pass_edge_client and
+            pass_client_(id)_sites and _callback in runtime/.env. Web: hostList (hostName, modeEnumId) is this node's
+            whole list of names on the edge node; a name another node holds is refused there. An area turned off is
+            left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
+            Refused on an edge node; fails before any change when the edge node's offer cannot be read.</description>
+        <in-parameters>
+            <parameter name="webOn" type="Boolean" default="false"/>
+            <parameter name="hostList" type="List"/>
+            <parameter name="mailOn" type="Boolean" default="false"/>
+            <parameter name="mailDomains" type="List"/>
+            <parameter name="systemMail" type="Boolean" default="false"/>
+            <parameter name="emailAccountIds" type="List"/>
+            <parameter name="chatOn" type="Boolean" default="false"/>
+            <parameter name="chatBridgeIds" type="List"/>
+            <parameter name="passOn" type="Boolean" default="false"/>
+            <parameter name="passSites" type="List"/>
+            <parameter name="passCallback"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="lineList" type="List"/>
+            <parameter name="hostList" type="List"/>
+            <parameter name="configured" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="check" noun="EdgeDns" type="rust" location="moqui_mail::check_edge_dns"
+            allow-remote="false" transaction="ignore">
+        <description>The DNS records a local node behind an edge node needs, each looked up now: for each of domains, MX
+            naming mxHost, SPF that lets the edge node send (mx once the MX names it, a:mxHost, include:mxHost, which
+            needs mxHost's own SPF record, or a network with one of its addresses), the
+            DKIM key at (dkimSelector)._domainkey.(domain) matching dkimRecord, and DMARC; for each of hostNames, A and
+            AAAA naming the edge node's addresses (edgeAddresses, else those of mxHost; a family the edge node lists no
+            address of is not checked). recordList has kind, name,
+            expected, found, ok and a note; _sips._tcp and the XMPP SRV records are listed as later. In a build without
+            the mail client's resolver (the imap feature) it fails, saying so.</description>
+        <in-parameters>
+            <parameter name="domains" type="List"/>
+            <parameter name="hostNames" type="List"/>
+            <parameter name="mxHost"/>
+            <parameter name="edgeAddresses" type="List"/>
+            <parameter name="dkimSelector"/>
+            <parameter name="dkimRecord"/>
+            <parameter name="mailMta"><description>The edge node's MTA, moqui or postfix: with postfix Rspamd's key
+                signs, which the edge node does not know, so only that a DKIM record is there is checked</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recordList" type="List"/>
+            <parameter name="passed" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="test" noun="EdgeSetup" type="rust" location="moqui_core::service::edge::test_edge_setup"
+            allow-remote="false" transaction="ignore">
+        <description>On a paired local node, the wizard's Test: the link is up; with mailOn, a round trip on the queue in
+            which the edge node checks that it takes mail for mailAddress (else a hosted or shared account's; not
+            checked when there is none; the answer comes back as inbound mail does), and one in which it takes this
+            node's mail and can send it (its DKIM key with the MTA in moqui, its Postfix relay answering), with the EDGE
+            server, SYSTEM's (with systemMail) and the servers of emailAccountIds on edge:; with chatOn, one in which it
+            checks that it takes the webhooks of chatBridgeIds (not checked with none); with passOn, the PASS client
+            settings name passSites and the edge node has mr-pass. No outside mail or provider is needed; the answers
+            are waited for up to 10 seconds. testList has check, label, ok, checked and message; passed is true when
+            none failed.</description>
+        <in-parameters>
+            <parameter name="mailOn" type="Boolean" default="false"/>
+            <parameter name="mailAddress"/>
+            <parameter name="systemMail" type="Boolean" default="false"/>
+            <parameter name="emailAccountIds" type="List"/>
+            <parameter name="chatOn" type="Boolean" default="false"/>
+            <parameter name="chatBridgeIds" type="List"/>
+            <parameter name="passOn" type="Boolean" default="false"/>
+            <parameter name="passSites" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="testList" type="List"/>
+            <parameter name="passed" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <service verb="receive" noun="EdgeEcho" type="rust" location="moqui_core::service::edge::receive_edge_echo"
+            allow-remote="false">
+        <description>The queue kind edgeEcho, a round trip of the wizard's Test step (test#EdgeSetup): on an edge node
+            the check the payload asks of the local node's copies and its own settings, answered back on the queue; on a
+            local node the answer, kept for the test that waits for it. Granted to _EDGE_.</description>
+        <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
     </service>
 
     <!-- A diagnostic for an operator after pairing: list echo#Delegate in edge delegate on both nodes and call it on

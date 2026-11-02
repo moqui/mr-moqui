@@ -22,7 +22,8 @@ along with this software (see the LICENSE.md file). If not, see
     every node. Host names (§5.3, get#EdgeHosts, add#EdgeHost, remove#EdgeHost) are the public names this edge node
     answers for a paired node, each passthrough or terminate. Each node's queue (§5.2, get#QueueStatus) shows the items
     waiting for it and the failed ones, with the oldest waiting; Replicated sets shows each node's sets as this edge
-    node has applied them. -->
+    node has applied them. Set up is what the node's last Configure, from its Edge Node wizard (§5.7, E10), set besides
+    its host names: its mail domains, chat bridges and PASS sites. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
 
@@ -127,6 +128,16 @@ along with this software (see the LICENSE.md file). If not, see
                 versionText: (client.binaryVersion || '') + (client.linkVersion ? ' · ' + L('link') + ' ' + client.linkVersion : ''),
                 keyFingerprint: client.keyFingerprint || '',
                 keyShort: client.keyFingerprint ? String(client.keyFingerprint).slice(0, 16) + '…' : '',
+                setupText: (() => {
+                    const setup = client.setup
+                    if (!setup) return L('Not yet')
+                    const parts = []
+                    if ((setup.mailDomains || []).length) parts.push(L('mail') + ' ' + Array.from(setup.mailDomains).join(', '))
+                    if ((setup.chatBridgeIds || []).length) parts.push(ec.resource.expand('${n} chat bridges', '', {n: setup.chatBridgeIds.length}))
+                    if ((setup.passSites || []).length) parts.push(L('PASS') + ' ' + Array.from(setup.passSites).join(', '))
+                    const when = client.setupDate ? ' (' + ec.l10n.format(client.setupDate, '') + ')' : ''
+                    return (parts.length ? parts.join('; ') : L('Host names only')) + when
+                })(),
                 queueText: (() => {
                     const queue = queues[client.pairedNodeId]
                     if (!queue) return L('Empty')
@@ -209,6 +220,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="remoteAddress"><default-field title="Address"><display/></default-field></field>
                     <field name="versionText"><default-field title="Version"><display/></default-field></field>
                     <field name="keyShort"><default-field title="Key" tooltip="The start of the SHA-256 of the node's key, pinned at pairing"><display/></default-field></field>
+                    <field name="setupText"><default-field title="Set up"
+                            tooltip="What the node's own setup, from its Edge Node wizard, set besides its host names">
+                        <display/></default-field></field>
                     <field name="queueText"><default-field title="Queue"
                             tooltip="Items waiting for the node, sent in order when its link is up; failed ones are kept">
                         <display/></default-field></field>

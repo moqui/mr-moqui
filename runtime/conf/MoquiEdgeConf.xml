@@ -7,6 +7,10 @@
     (pass_backend_url below; set pass_backend_web_url in .env to the local node's web address for SSO); mail, with the
     MTA in moqui on port 25 (the smtp-server below; docs/Run-Deploy.md, Edge node mail); and chat bridges' webhooks
     and MMS files (channels below). A client-ip-header here needs trusted-proxies, or it is ignored.
+    A local node sets itself up with its System › Edge Node wizard: it reads what this node offers (its names, mail,
+    webhooks, mr-pass) and sends its host names and the rest (Edge Clients shows them). Set edge_public_addresses in
+    .env (this node's public IPv4 and IPv6 addresses), which the wizard checks the local node's A and AAAA records
+    against.
     Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link and embedded
     Postgres. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings (names,
     addresses, ports) go in .env.

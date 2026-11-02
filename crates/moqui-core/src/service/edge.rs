@@ -17,7 +17,9 @@
 //! fails with [`crate::edge::NOT_BUILT`], except `get#LinkStatus`, which answers `state` notBuilt (or notStarted in a
 //! build with the link that no HTTP listener started) so a screen can say so. The queue's and replication's services
 //! (`enqueue#Item`, `get#QueueStatus`, `pause#QueueDelivery`, `resync#Replication`, `get#ReplicaValues`) work on the
-//! rows and state in [`crate::edge`] and need no link.
+//! rows and state in [`crate::edge`] and need no link. The wizard's steps after pairing (§5.7, E10): `get#EdgeOffer`,
+//! `apply#EdgeSetup` and `test#EdgeSetup` on a local node, and `receive#EdgeEcho`, the handler of the Test step's
+//! round trips on both ends ([`crate::edge::setup`]).
 
 use std::collections::BTreeMap;
 
@@ -47,6 +49,10 @@ pub(in crate::service) fn register(
     rust_service!(map, pause_queue_delivery)?;
     rust_service!(map, resync_replication)?;
     rust_service!(map, get_replica_values)?;
+    rust_service!(map, get_edge_offer)?;
+    rust_service!(map, apply_edge_setup)?;
+    rust_service!(map, test_edge_setup)?;
+    rust_service!(map, receive_edge_echo)?;
     Ok(())
 }
 
@@ -181,6 +187,15 @@ fn client_value(client: &EdgeClientInfo) -> Value {
     row.insert("remoteAddress".to_string(), Value::string(&client.remote_address));
     row.insert("binaryVersion".to_string(), Value::string(&client.binary_version));
     row.insert("linkVersion".to_string(), Value::I64(i64::from(client.link_version)));
+    row.insert(
+        "setup".to_string(),
+        if client.setup_json.is_empty() {
+            Value::Null
+        } else {
+            moqui_lib::json::from_json(&serde_json::from_str(&client.setup_json).unwrap_or_default())
+        },
+    );
+    row.insert("setupDate".to_string(), millis(client.setup_date));
     Value::Map(row)
 }
 
@@ -424,6 +439,538 @@ fn get_replica_values(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         })
         .collect();
     Ok(BTreeMap::from([("valueList".to_string(), Value::List(value_list))]))
+}
+
+/// A Boolean parameter: true, or the text true, Y or yes.
+fn flag(parameters: &BTreeMap<String, Value>, name: &str) -> bool {
+    match parameters.get(name) {
+        Some(Value::Bool(on)) => *on,
+        Some(value) => matches!(
+            to_plain_string(value).trim().to_ascii_lowercase().as_str(),
+            "true" | "y" | "yes"
+        ),
+        None => false,
+    }
+}
+
+/// A list parameter as texts: a list, or a comma-separated text; blanks left out.
+fn list(parameters: &BTreeMap<String, Value>, name: &str) -> Vec<String> {
+    let items: Vec<String> = match parameters.get(name) {
+        Some(Value::List(items)) => items.iter().map(to_plain_string).collect(),
+        Some(value) if !is_empty(value) => to_plain_string(value).split(',').map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
+    items
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn map(pairs: Vec<(&str, Value)>) -> Value {
+    Value::Map(
+        pairs
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect(),
+    )
+}
+
+fn offer_value(offer: &crate::edge::EdgeOffer) -> Value {
+    let mail = &offer.mail;
+    map(vec![
+        ("publicNames", strings(&offer.public_names)),
+        ("hostModes", strings(&offer.host_modes)),
+        (
+            "mail",
+            map(vec![
+                ("available", Value::Bool(mail.available)),
+                ("mta", Value::string(&mail.mta)),
+                ("listener", Value::Bool(mail.listener)),
+                ("mxHost", Value::string(&mail.mx_host)),
+                ("bounceDomain", Value::string(&mail.bounce_domain)),
+                ("dkimSelector", Value::string(&mail.dkim_selector)),
+                ("dkimRecord", Value::string(&mail.dkim_record)),
+            ]),
+        ),
+        (
+            "chat",
+            map(vec![
+                ("webhooks", Value::Bool(offer.chat.webhooks)),
+                ("publicUrl", Value::string(&offer.chat.public_url)),
+            ]),
+        ),
+        (
+            "pass",
+            map(vec![
+                ("available", Value::Bool(offer.pass.available)),
+                ("clientId", Value::string(&offer.pass.client_id)),
+            ]),
+        ),
+        ("notAvailable", strings(&offer.not_available)),
+        ("addresses", strings(&offer.addresses)),
+        (
+            "nodeHosts",
+            Value::List(offer.node_hosts.iter().map(host_value).collect()),
+        ),
+    ])
+}
+
+/// `get#EdgeOffer`: on a local node, what its edge node offers it now, asked on the link.
+fn get_edge_offer(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let link = crate::edge::link()?;
+    let offer = link.offer()?;
+    Ok(BTreeMap::from([
+        ("offer".to_string(), offer_value(&offer)),
+        ("edgeUrl".to_string(), Value::string(&link.status().url)),
+    ]))
+}
+
+fn line_value(line: &crate::edge::setup::SetupLine) -> Value {
+    map(vec![
+        ("area", Value::string(&line.area)),
+        ("ok", Value::Bool(line.ok)),
+        ("text", Value::string(&line.text)),
+    ])
+}
+
+/// The host names of `apply#EdgeSetup`'s `hostList`: maps of hostName and modeEnumId (passthrough by default).
+fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
+    let Some(Value::List(items)) = parameters.get("hostList") else {
+        return list(parameters, "hostList")
+            .into_iter()
+            .map(|name| EdgeHostInfo {
+                host_name: name,
+                paired_node_id: String::new(),
+                mode_enum_id: HOST_PASSTHROUGH.to_string(),
+            })
+            .collect();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let (name, mode) = match item {
+                Value::Map(row) => (
+                    row.get("hostName").map(to_plain_string).unwrap_or_default(),
+                    row.get("modeEnumId").map(to_plain_string).unwrap_or_default(),
+                ),
+                other => (to_plain_string(other), String::new()),
+            };
+            let name = name.trim().to_string();
+            (!name.is_empty()).then(|| EdgeHostInfo {
+                host_name: name,
+                paired_node_id: String::new(),
+                mode_enum_id: if mode.trim().is_empty() {
+                    HOST_PASSTHROUGH.to_string()
+                } else {
+                    mode.trim().to_string()
+                },
+            })
+        })
+        .collect()
+}
+
+/// `apply#EdgeSetup`: on a paired local node, check the whole setup first (nothing changes when any of it is not
+/// input), send the edge node its part (Configure; when it is not taken nothing changes here either), then write the
+/// chosen areas' local rows and settings, and send every replicated set whole again. Each step is a line; once the
+/// edge node has its part, a local step that fails does not stop the others.
+fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
+    let factory = current_factory()?;
+    if crate::edge::settings(&factory).edge_node {
+        return Err(LibError::new(
+            "an edge node is set up in its own .env and conf, not by apply#EdgeSetup",
+        ));
+    }
+    let link = crate::edge::link()?;
+    let status = link.status();
+    let offer = link.offer().map_err(|err| {
+        LibError::new(format!(
+            "the edge node's offer was not read, so nothing was changed: {err}"
+        ))
+    })?;
+    let (web, mail, chat, pass) = (
+        flag(parameters, "webOn"),
+        flag(parameters, "mailOn"),
+        flag(parameters, "chatOn"),
+        flag(parameters, "passOn"),
+    );
+    let bridges = list(parameters, "chatBridgeIds");
+    let sites = list(parameters, "passSites");
+    let choices = LocalChoices {
+        edge_url: status.url.clone(),
+        mail: mail.then(|| MailChoice {
+            system: flag(parameters, "systemMail"),
+            account_ids: list(parameters, "emailAccountIds"),
+        }),
+        chat: chat.then(|| bridges.clone()),
+        pass: pass.then(|| PassChoice {
+            sites: sites.clone(),
+            callback: text(parameters, "passCallback").unwrap_or_default(),
+        }),
+    };
+    let request = crate::edge::EdgeSetup {
+        hosts: if web { host_list(parameters) } else { Vec::new() },
+        set_hosts: web,
+        mail_domains: if mail {
+            list(parameters, "mailDomains")
+        } else {
+            Vec::new()
+        },
+        chat_bridge_ids: if chat { bridges } else { Vec::new() },
+        pass_sites: if pass { sites } else { Vec::new() },
+    };
+    // the whole setup is checked before anything changes, here or on the edge node
+    let checked = setup::check_setup(&request).map_err(|err| LibError::new(format!("nothing was changed: {err}")))?;
+    for host in &checked.hosts {
+        setup::check_host_name(&host.host_name)
+            .map_err(|why| LibError::new(format!("nothing was changed: {}: {why}", host.host_name)))?;
+    }
+    if let Some(pass) = &choices.pass {
+        setup::check_pass(pass, &offer).map_err(|why| LibError::new(format!("nothing was changed: {why}")))?;
+    }
+    let mut lines = Vec::new();
+    let mut host_rows = Vec::new();
+    // the edge node's part first: when it is not taken, this node is left as it was
+    let answer = match link.configure(&request) {
+        Ok(answer) => answer,
+        Err(err) => {
+            tracing::error!("Edge setup: the edge node was not configured: {err}");
+            lines.push(SetupLine::new(
+                "link",
+                false,
+                format!("The edge node did not take the setup, so nothing was changed on this node: {err}"),
+            ));
+            return Ok(BTreeMap::from([
+                (
+                    "lineList".to_string(),
+                    Value::List(lines.iter().map(line_value).collect()),
+                ),
+                ("hostList".to_string(), Value::List(host_rows)),
+                ("configured".to_string(), Value::Bool(false)),
+            ]));
+        }
+    };
+    for host in &answer.hosts {
+        let ok = host.error.is_empty();
+        let mode = if host.mode_enum_id == HOST_TERMINATE {
+            "terminate"
+        } else {
+            "passthrough"
+        };
+        lines.push(SetupLine::new(
+            "web",
+            ok,
+            if ok {
+                format!("{} goes to this node ({mode})", host.host_name)
+            } else {
+                format!("{}: {}", host.host_name, host.error)
+            },
+        ));
+        host_rows.push(map(vec![
+            ("hostName", Value::string(&host.host_name)),
+            ("modeEnumId", Value::string(&host.mode_enum_id)),
+            ("error", Value::string(&host.error)),
+        ]));
+    }
+    lines.push(SetupLine::new("link", true, "The edge node has this node's setup"));
+    let env_file = factory.runtime_dir().join(".env");
+    lines.extend(setup::apply_local(facade, &env_file, &choices, &answer.offer));
+    let sets = match crate::edge::replica::replica(facade) {
+        Some(replica) => {
+            replica.resync_all();
+            replica.sets().len()
+        }
+        None => 0,
+    };
+    if sets > 0 {
+        lines.push(SetupLine::new(
+            "link",
+            true,
+            format!("{sets} replicated sets go to the edge node whole again"),
+        ));
+    }
+    Ok(BTreeMap::from([
+        (
+            "lineList".to_string(),
+            Value::List(lines.iter().map(line_value).collect()),
+        ),
+        ("hostList".to_string(), Value::List(host_rows)),
+        ("configured".to_string(), Value::Bool(true)),
+    ]))
+}
+
+/// How long the Test step waits for the edge node's answers, all together.
+const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A line of the Test step: passed, failed, or not checked (nothing chosen to check it with).
+struct TestLine {
+    check: &'static str,
+    label: &'static str,
+    /// `None`: not checked.
+    ok: Option<bool>,
+    message: String,
+}
+
+/// `test#EdgeSetup`: on a paired local node, check the chosen areas end to end: the link is up; for mail, the edge
+/// node takes mail for an address (its answer comes back on the queue, as inbound mail does), the system's and the
+/// chosen accounts' mail goes through the edge mail server, and the edge node can send it (its DKIM key, or its
+/// Postfix relay); for chat, it takes the bridges' webhooks; for PASS, the client settings are there and the edge
+/// node has mr-pass. No outside mail or provider is needed. A check with nothing to check is "not checked".
+fn test_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    use crate::edge::setup::{start_echo, wait_echo, EchoCheck};
+    let factory = current_factory()?;
+    let mut tests: Vec<TestLine> = Vec::new();
+    let link = crate::edge::link();
+    let status = link.as_ref().map(|link| link.status()).ok();
+    let (ok, message) = match &status {
+        Some(status) if status.state == crate::edge::LinkState::Linked => (
+            true,
+            match status.rtt_ms {
+                Some(rtt) => format!("Linked, round trip {rtt:.1} ms"),
+                None => "Linked".to_string(),
+            },
+        ),
+        Some(status) => (
+            false,
+            format!("The link is {}: {}", status.state.as_str(), status.last_error),
+        ),
+        None => (false, crate::edge::NOT_BUILT.to_string()),
+    };
+    tests.push(TestLine {
+        check: "link",
+        label: "The link",
+        ok: Some(ok),
+        message,
+    });
+    // the round trips go out together, then each answer is waited for until one deadline
+    let mut pending: Vec<(&'static str, &'static str, Result<String, LibError>)> = Vec::new();
+    let mut echo = |check: &'static str, label: &'static str, echo: EchoCheck| {
+        pending.push((check, label, start_echo(&factory, facade, &echo)));
+    };
+    let mail_on = flag(parameters, "mailOn");
+    let accounts = list(parameters, "emailAccountIds");
+    let mut not_checked: Vec<TestLine> = Vec::new();
+    if mail_on {
+        let address = text(parameters, "mailAddress").or_else(|| hosted_address(facade));
+        match address {
+            Some(address) => echo(
+                "mailIn",
+                "Mail in",
+                EchoCheck {
+                    check: "mailIn".to_string(),
+                    address,
+                    bridge_ids: Vec::new(),
+                },
+            ),
+            None => not_checked.push(TestLine {
+                check: "mailIn",
+                label: "Mail in",
+                ok: None,
+                message: "Not checked: this node has no hosted or shared account".to_string(),
+            }),
+        }
+        echo(
+            "mailOut",
+            "Mail out",
+            EchoCheck {
+                check: "mailOut".to_string(),
+                ..EchoCheck::default()
+            },
+        );
+    }
+    let bridges = list(parameters, "chatBridgeIds");
+    if flag(parameters, "chatOn") {
+        if bridges.is_empty() {
+            not_checked.push(TestLine {
+                check: "webhook",
+                label: "Webhooks",
+                ok: None,
+                message: "Not checked: no chat bridge was chosen".to_string(),
+            });
+        } else {
+            echo(
+                "webhook",
+                "Webhooks",
+                EchoCheck {
+                    check: "webhook".to_string(),
+                    address: String::new(),
+                    bridge_ids: bridges,
+                },
+            );
+        }
+    }
+    let deadline = std::time::Instant::now() + TEST_WAIT;
+    for (check, label, started) in pending {
+        let (mut ok, mut message) = match started {
+            Err(err) => (false, format!("Not queued: {err}")),
+            Ok(token) => match wait_echo(&token, deadline) {
+                Some(answer) => (answer.ok, answer.message),
+                None => (
+                    false,
+                    "No answer from the edge node in 10 seconds: its link, or its queue, is not working".to_string(),
+                ),
+            },
+        };
+        if ok && check == "mailOut" {
+            if let Some(problem) = mail_out_problem(facade, flag(parameters, "systemMail"), &accounts) {
+                (ok, message) = (false, problem);
+            }
+        }
+        tests.push(TestLine {
+            check,
+            label,
+            ok: Some(ok),
+            message,
+        });
+    }
+    tests.extend(not_checked);
+    if flag(parameters, "passOn") {
+        let (ok, message) = pass_ready(link.ok().as_deref(), &list(parameters, "passSites"));
+        tests.push(TestLine {
+            check: "pass",
+            label: "PASS",
+            ok: Some(ok),
+            message,
+        });
+    }
+    let passed = tests.iter().all(|test| test.ok != Some(false));
+    let test_list = tests
+        .into_iter()
+        .map(|test| {
+            map(vec![
+                ("check", Value::string(test.check)),
+                ("label", Value::string(test.label)),
+                ("ok", Value::Bool(test.ok == Some(true))),
+                ("checked", Value::Bool(test.ok.is_some())),
+                ("message", Value::string(test.message)),
+            ])
+        })
+        .collect();
+    Ok(BTreeMap::from([
+        ("testList".to_string(), Value::List(test_list)),
+        ("passed".to_string(), Value::Bool(passed)),
+    ]))
+}
+
+/// The address of a hosted or shared account here, for the mail-in check when none was chosen.
+fn hosted_address(facade: &EntityFacade) -> Option<String> {
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    let rows = facade
+        .find("moqui.basic.email.EmailAccount")
+        .ok()?
+        .condition(crate::entity::Condition::is_in(
+            "accountKindEnumId",
+            vec![Value::string("EakHosted"), Value::string("EakShared")],
+        ))
+        .order_by("emailAddress", false)
+        .limit(1)
+        .disable_authz()
+        .list()
+        .ok()?;
+    rows.values()
+        .first()
+        .and_then(|row| row.get("emailAddress").map(to_plain_string))
+        .filter(|address| !address.is_empty())
+}
+
+/// Why this node's mail does not go to the edge node, when it does not: the edge mail server, `SYSTEM` (when chosen)
+/// or a chosen account is not on `edge:`.
+fn mail_out_problem(facade: &EntityFacade, system: bool, accounts: &[String]) -> Option<String> {
+    use crate::edge::setup::{EDGE_SERVER_ID, EDGE_SMTP_HOST, SYSTEM_SERVER_ID};
+    let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
+    let one = |entity: &str, field: &str, id: &str| -> Result<Option<crate::entity::EntityValue>, LibError> {
+        facade
+            .find(entity)?
+            .eq(field, Value::string(id))
+            .disable_authz()
+            .use_cache(false)
+            .one()
+    };
+    let smtp_host = |server: &str| -> Result<String, LibError> {
+        Ok(one("moqui.basic.email.EmailServer", "emailServerId", server)?
+            .and_then(|row| row.get("smtpHost").map(to_plain_string))
+            .unwrap_or_default())
+    };
+    let check = || -> Result<Option<String>, LibError> {
+        let mut servers = vec![EDGE_SERVER_ID.to_string()];
+        if system {
+            servers.push(SYSTEM_SERVER_ID.to_string());
+        }
+        for account in accounts {
+            let server = one("moqui.basic.email.EmailAccount", "emailAccountId", account)?
+                .and_then(|row| row.get("emailServerId").map(to_plain_string))
+                .unwrap_or_default();
+            if server.is_empty() {
+                return Ok(Some(format!("Account {account} has no mail server: apply again")));
+            }
+            servers.push(server);
+        }
+        for server in servers {
+            if smtp_host(&server)? != EDGE_SMTP_HOST {
+                return Ok(Some(format!(
+                    "Mail server {server} does not send through the edge node: apply again"
+                )));
+            }
+        }
+        Ok(None)
+    };
+    match check() {
+        Ok(problem) => problem,
+        Err(err) => Some(format!("The mail servers were not read: {err}")),
+    }
+}
+
+/// PASS readiness on the local node: the edge node's client has the sites and a callback, and the edge node has
+/// mr-pass.
+fn pass_ready(link: Option<&dyn crate::edge::EdgeLink>, sites: &[String]) -> (bool, String) {
+    let client = crate::pass_authority::Client::edge_client_id();
+    let registered = moqui_lib::env::get_prop_or_env(&format!("pass_client_{client}_sites"));
+    let registered: Vec<&str> = registered
+        .split(',')
+        .map(str::trim)
+        .filter(|site| !site.is_empty())
+        .collect();
+    let missing: Vec<&str> = sites
+        .iter()
+        .map(String::as_str)
+        .filter(|site| !registered.contains(site))
+        .collect();
+    if registered.is_empty() || !missing.is_empty() {
+        let names = if missing.is_empty() {
+            "the sites".to_string()
+        } else {
+            missing.join(", ")
+        };
+        return (
+            false,
+            format!("pass_client_{client}_sites does not name {names}: apply again"),
+        );
+    }
+    if moqui_lib::env::get_prop_or_env(&format!("pass_client_{client}_callback"))
+        .trim()
+        .is_empty()
+    {
+        return (false, format!("pass_client_{client}_callback is not set: apply again"));
+    }
+    match link.map(|link| link.offer()) {
+        Some(Ok(offer)) if offer.pass.available => (
+            true,
+            format!("The edge node serves {} as PASS client {client}", registered.join(", ")),
+        ),
+        Some(Ok(_)) => (false, "The edge node has no mr-pass".to_string()),
+        Some(Err(err)) => (false, format!("The edge node's offer was not read: {err}")),
+        None => (false, crate::edge::NOT_BUILT.to_string()),
+    }
+}
+
+/// `receive#EdgeEcho`: the handler of the `edgeEcho` queue kind, a Test step round trip.
+fn receive_edge_echo(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    let factory = current_factory()?;
+    let node = required(parameters, "pairedNodeId")?;
+    let payload = text(parameters, "payload").unwrap_or_default();
+    crate::edge::setup::receive_echo(&factory, facade, &node, &payload)?;
+    Ok(BTreeMap::new())
 }
 
 #[cfg(test)]

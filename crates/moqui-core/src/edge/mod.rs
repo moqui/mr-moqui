@@ -20,7 +20,9 @@
 //!
 //! How work crosses the link (§5.2) is here too, as far as it needs no network: the `<edge>` conf ([`conf`]), the
 //! service facade's hand-off of delegated calls ([`delegate`]), the queue's rows, receipts and handlers ([`queue`]),
-//! and replication's change notes, batches and copies ([`replica`]). The host's link moves them.
+//! and replication's change notes, batches and copies ([`replica`]). The host's link moves them. Attaching a local node
+//! (§5.7, E10) is [`setup`]: the edge node's offer, the local node's Configure, the local rows Apply writes and the
+//! Test step's round trips.
 
 use std::sync::Arc;
 
@@ -31,8 +33,10 @@ pub mod conf;
 pub mod delegate;
 pub mod queue;
 pub mod replica;
+pub mod setup;
 
 pub use conf::{settings, EdgeSettings, ReplicaEntity, ReplicaSet};
+pub use setup::{Configured, EdgeOffer, EdgeSetup};
 
 /// The message when no edge link is installed.
 pub const NOT_BUILT: &str = "edge link not built into this host";
@@ -157,6 +161,11 @@ pub struct EdgeClientInfo {
     pub remote_address: String,
     pub binary_version: String,
     pub link_version: u32,
+    /// What the node's last Configure set besides its host names (a JSON object: mailDomains, chatBridgeIds,
+    /// passSites), empty before one.
+    pub setup_json: String,
+    /// When its last Configure came.
+    pub setup_date: Option<i64>,
 }
 
 /// A public host name an edge node answers for a paired local node (`moqui.edge.EdgeHost`, §5.3).
@@ -223,6 +232,16 @@ pub trait EdgeLink: Send + Sync {
     fn delegate(&self, call: &DelegateCall) -> Result<DelegateAnswer, Error> {
         let _ = call;
         Err(Error::new(OFFLINE))
+    }
+    /// On a local node: what its edge node offers it now, asked on the up connection (§5.7, Discover).
+    fn offer(&self) -> Result<EdgeOffer, Error> {
+        Err(Error::new(NOT_BUILT))
+    }
+    /// On a local node: send the edge node its part of the setup (the link's Configure, §5.7 Apply); the answer has
+    /// the offer after it and each host name's result.
+    fn configure(&self, setup: &EdgeSetup) -> Result<Configured, Error> {
+        let _ = setup;
+        Err(Error::new(NOT_BUILT))
     }
 }
 

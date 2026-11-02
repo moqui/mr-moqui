@@ -158,9 +158,29 @@ Each session is logged when it ends (the client and its EHLO name, the messages,
 ended), and each message with its sender, recipients, size, the accounts and message ids it was stored as, the spam
 verdict and the authentication results in short (`spf=pass dkim=pass dmarc=pass`). Message bodies are never logged.
 
+## The edge node as the gateway
+
+A local server behind a firewall gets its mail through its edge node ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node),
+[plan](../../plans/Edge-Node.md) §5.4). The local node then runs no listener of its own for the internet: the edge node
+takes the mail and queues each message for it over the link, and the local node delivers it as this listener would.
+`RCPT TO` is answered on the edge node from the local node's accounts, replicated to it, so an unknown address is refused
+while the local node is away too.
+
+- **Postfix and Rspamd beside the edge node** (E5a). The gateway above runs on the edge node's host and hands mail to
+  the edge node's listener by LMTP on loopback (`edge_mail_mta=postfix`, `protocol="lmtp"`). Postfix signs the local
+  node's mail out with DKIM through Rspamd and delivers it.
+- **The MTA in moqui** (E5b, the default on an edge node). The edge node takes port 25 itself, in internet mode
+  (`smtp_internet=true`): STARTTLS, limits per address, and SPF, DKIM, DMARC and ARC checked with its own
+  `Authentication-Results`. Rspamd's HTTP API, when `mail_rspamd_url` is set, gives the spam verdict. The local node's
+  mail out goes to the edge node (an `EmailServer` with `smtpHost` `edge:`), which signs it and delivers it to each
+  domain's MX.
+
+The local node's System › Edge Node wizard sets the mail side up: the `edge:` server for `SYSTEM` and the chosen
+accounts, and the DNS records (MX, SPF, the DKIM key and DMARC), each checked live.
+
 ## What it does not do
 
 No `AUTH` (the allow-list is the gateway's identity), no client certificates, no relaying: it takes mail only for its own
-accounts and only from the gateway. No `ETRN`, no `BINARYMIME`, and no failure or delay DSNs of its own. No SPF, DKIM or
-DMARC checks, no spam filter of its own, no queue: those are the gateway's. A `postmaster` mailbox is an account like any
+accounts and only from the gateway. No `ETRN`, no `BINARYMIME`, and no failure or delay DSNs of its own. Out of internet mode no SPF,
+DKIM or DMARC checks, no spam filter of its own, no queue: those are the gateway's. A `postmaster` mailbox is an account like any
 other (the gateway answers for its own). `VRFY` answers `252`.

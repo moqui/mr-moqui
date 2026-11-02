@@ -11,7 +11,7 @@ pub struct Hello {
     /// The features compiled in that the other end may use: rtc, sip, xmpp, inbound-smtp, channels.
     #[prost(string, repeated, tag = "3")]
     pub features: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// The edge node's: what it offers (later phases fill this in).
+    /// The edge node's: the areas it offers, by name (web, mail, chat, pass); GetOffer has the details.
     #[prost(string, repeated, tag = "4")]
     pub capabilities: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// The edge node's: the public host names it answers for.
@@ -274,6 +274,124 @@ pub struct ReplicateReply {
     #[prost(bool, tag = "1")]
     pub resync: bool,
 }
+/// A public host name of a local node, with how the edge node handles it (plans/Edge-Node.md §5.3).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HostSetting {
+    /// Lower case, with no port or trailing dot.
+    #[prost(string, tag = "1")]
+    pub host_name: ::prost::alloc::string::String,
+    /// EdgeHostPassthrough or EdgeHostTerminate.
+    #[prost(string, tag = "2")]
+    pub mode: ::prost::alloc::string::String,
+    /// In a ConfigureReply, why the edge node did not take the name; empty when it did.
+    #[prost(string, tag = "3")]
+    pub error: ::prost::alloc::string::String,
+}
+/// Web access: the names the edge node answers for itself, and the modes a local node's names may have.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WebOffer {
+    #[prost(string, repeated, tag = "1")]
+    pub public_names: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "2")]
+    pub modes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Mail: the MTA on the edge node (E5a, E5b).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MailOffer {
+    /// The edge node takes mail for its local nodes (its SMTP listener is set up).
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// moqui (the MTA in moqui) or postfix (Postfix and Rspamd beside it).
+    #[prost(string, tag = "2")]
+    pub mta: ::prost::alloc::string::String,
+    /// The SMTP listener is on: smtp_listen_port is set.
+    #[prost(bool, tag = "3")]
+    pub listener: bool,
+    /// The host name a local node's MX records name: smtp_hostname, else the edge node's web host name.
+    #[prost(string, tag = "4")]
+    pub mx_host: ::prost::alloc::string::String,
+    /// The domain of the VERP bounce addresses (edge_mail_bounce_domain); empty when not set.
+    #[prost(string, tag = "5")]
+    pub bounce_domain: ::prost::alloc::string::String,
+    /// The DKIM selector and TXT record of the edge node's key, which signs the local node's mail (moqui MTA only).
+    #[prost(string, tag = "6")]
+    pub dkim_selector: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub dkim_record: ::prost::alloc::string::String,
+}
+/// Chat bridges and SMS (E6).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ChatOffer {
+    /// channels_webhooks_enabled is on: the edge node takes the bridges' webhooks.
+    #[prost(bool, tag = "1")]
+    pub webhooks: bool,
+    /// The address the providers call (/channels/{chatBridgeId}/webhook under it) and the files of MMS come from.
+    #[prost(string, tag = "2")]
+    pub public_url: ::prost::alloc::string::String,
+}
+/// mr-pass on the edge node (E4).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PassOffer {
+    /// mr-pass is loaded on the edge node.
+    #[prost(bool, tag = "1")]
+    pub available: bool,
+    /// The PASS client id the local node registers the edge node as (pass_edge_client there).
+    #[prost(string, tag = "2")]
+    pub client_id: ::prost::alloc::string::String,
+}
+/// What an edge node offers a local node (plans/Edge-Node.md §5.7, Discover).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Offer {
+    #[prost(message, optional, tag = "1")]
+    pub web: ::core::option::Option<WebOffer>,
+    #[prost(message, optional, tag = "2")]
+    pub mail: ::core::option::Option<MailOffer>,
+    #[prost(message, optional, tag = "3")]
+    pub chat: ::core::option::Option<ChatOffer>,
+    #[prost(message, optional, tag = "4")]
+    pub pass: ::core::option::Option<PassOffer>,
+    /// Areas not built on this edge node yet: calls, sip, xmpp.
+    #[prost(string, repeated, tag = "5")]
+    pub not_available: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The edge node's public addresses (edge_public_addresses), which the local node's A and AAAA records name; empty
+    /// when not set, and then the addresses of its web host name are expected.
+    #[prost(string, repeated, tag = "6")]
+    pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The asking local node's host names on this edge node now.
+    #[prost(message, repeated, tag = "7")]
+    pub node_hosts: ::prost::alloc::vec::Vec<HostSetting>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct OfferRequest {}
+/// The local node's part of its setup (plans/Edge-Node.md §5.7, Apply). The edge node checks it as input from any
+/// client: only the asking node's names are changed, and a name another node holds is refused.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConfigureRequest {
+    /// The local node's host names: with set_hosts, the whole list, so a name of this node not in it is removed.
+    #[prost(message, repeated, tag = "1")]
+    pub hosts: ::prost::alloc::vec::Vec<HostSetting>,
+    /// The mail domains whose MX names the edge node.
+    #[prost(string, repeated, tag = "2")]
+    pub mail_domains: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The chat bridges whose webhooks go to the edge node.
+    #[prost(string, repeated, tag = "3")]
+    pub chat_bridge_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The PASS sites the edge node serves.
+    #[prost(string, repeated, tag = "4")]
+    pub pass_sites: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// hosts is the node's whole list; when false the node's names are left as they are.
+    #[prost(bool, tag = "5")]
+    pub set_hosts: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConfigureReply {
+    /// The offer after the change, with the node's host names.
+    #[prost(message, optional, tag = "1")]
+    pub offer: ::core::option::Option<Offer>,
+    /// Each name of the request, with its error when it was not taken.
+    #[prost(message, repeated, tag = "2")]
+    pub hosts: ::prost::alloc::vec::Vec<HostSetting>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LocalHelloRequest {
     #[prost(message, optional, tag = "1")]
@@ -535,6 +653,50 @@ pub mod link_client {
                 .insert(GrpcMethod::new("moqui.edge.v1.Link", "Replicate"));
             self.inner.unary(req, path, codec).await
         }
+        /// What the edge node offers this local node now.
+        pub async fn get_offer(
+            &mut self,
+            request: impl tonic::IntoRequest<super::OfferRequest>,
+        ) -> std::result::Result<tonic::Response<super::Offer>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/GetOffer",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.Link", "GetOffer"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// The local node's part of its setup: its host names, mail domains, chat bridges and PASS sites.
+        pub async fn configure(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ConfigureRequest>,
+        ) -> std::result::Result<tonic::Response<super::ConfigureReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.edge.v1.Link/Configure",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.edge.v1.Link", "Configure"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -589,6 +751,16 @@ pub mod link_server {
             &self,
             request: tonic::Request<super::ReplicateRequest>,
         ) -> std::result::Result<tonic::Response<super::ReplicateReply>, tonic::Status>;
+        /// What the edge node offers this local node now.
+        async fn get_offer(
+            &self,
+            request: tonic::Request<super::OfferRequest>,
+        ) -> std::result::Result<tonic::Response<super::Offer>, tonic::Status>;
+        /// The local node's part of its setup: its host names, mail domains, chat bridges and PASS sites.
+        async fn configure(
+            &self,
+            request: tonic::Request<super::ConfigureRequest>,
+        ) -> std::result::Result<tonic::Response<super::ConfigureReply>, tonic::Status>;
     }
     /// Served by the edge node; the local node calls it on its up connection. Probe is on a check or pairing connection and
     /// Pair on a pairing connection (ALPN moqui-edge-pair/1, the web certificate); the others on an up connection (ALPN
@@ -1002,6 +1174,92 @@ pub mod link_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ReplicateSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.Link/GetOffer" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetOfferSvc<T: Link>(pub Arc<T>);
+                    impl<T: Link> tonic::server::UnaryService<super::OfferRequest>
+                    for GetOfferSvc<T> {
+                        type Response = super::Offer;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::OfferRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::get_offer(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetOfferSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.edge.v1.Link/Configure" => {
+                    #[allow(non_camel_case_types)]
+                    struct ConfigureSvc<T: Link>(pub Arc<T>);
+                    impl<T: Link> tonic::server::UnaryService<super::ConfigureRequest>
+                    for ConfigureSvc<T> {
+                        type Response = super::ConfigureReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ConfigureRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Link>::configure(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ConfigureSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

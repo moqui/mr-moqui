@@ -51,6 +51,17 @@ with a messaging bridge and no trunk texts.
    at (an MMS that goes out is refused, `mediaUnreachable`, without it); System, Voice, Fraud: the SMS limits (people's
    texts a day each and in all; the system's own texts a day) and the system's number (sign-in codes).
 
+**Behind an edge node** ([Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node), [plan](../../plans/Edge-Node.md)
+§5.4). A local server that providers cannot reach takes its texts through its edge node:
+- The webhook URL in the portal is the edge node's: `https://<edge node>/channels/<chatBridgeId>/webhook`. The edge node
+  checks the signature with the bridge's public key (replicated to it; the API key stays on the local node), answers 200
+  once the text is queued, and the local node takes it when its link is up, once, without checking it again.
+- `channels_webhooks_enabled=true` is on the edge node (MoquiEdgeConf.xml). On the local node `channels_public_url` is
+  the edge node's address; the Edge Node wizard sets it.
+- MMS. Each file of a text that goes out is put on the edge node before the send, and the provider fetches it from
+  there (`/channels/<chatBridgeId>/media/<token>`, for `channels_media_minutes`). While the link is down the text waits.
+  Files of texts that come in are fetched by the local node from the provider, as without an edge node.
+
 ## The number pair's room
 
 One room for each pair (our number, their number): `ChatRoom` type `CrtExternal`, named their number, visible to its

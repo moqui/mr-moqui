@@ -58,6 +58,7 @@ pub mod dial;
 pub(crate) mod down;
 pub(crate) mod hook;
 pub(crate) mod hosts;
+mod offer;
 pub mod pair;
 pub(crate) mod proto;
 mod queue;

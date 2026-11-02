@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::edge::{
-    DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, LinkStatus, PairResult,
-    PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
+    Configured, DelegateAnswer, DelegateCall, EdgeClientInfo, EdgeHostInfo, EdgeInfo, EdgeLink, EdgeOffer, EdgeSetup,
+    LinkStatus, PairResult, PairingCode, NODE_KEY, NODE_PIN, NODE_URL,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
@@ -38,6 +38,10 @@ use super::{EdgeConfig, LocalConfig};
 
 /// How long pairing and checking wait for the edge node.
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a page waits for the edge node's offer before it says the edge node is not answering.
+const OFFER_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long pairing waits for the new link to come up before it answers.
+const LINK_WAIT: Duration = Duration::from_secs(5);
 
 /// What [`start`] gives the listeners on an edge node: the HTTPS listener's hand-off and the web front of the paired
 /// nodes' hosts.
@@ -75,6 +79,7 @@ pub(crate) fn start(
                 Ok(identity) => {
                     let mut config = EdgeConfig::from_properties(&instance_id(factory));
                     config.offline_page = offline_page(factory);
+                    config.capabilities = super::offer::areas(factory, &config);
                     let server = EdgeServer::new(factory, config, &identity.fingerprint, shutdown.clone());
                     super::accept::acceptor(&server, resolver, &identity).map(|acceptor| (server, acceptor))
                 }
@@ -231,6 +236,17 @@ impl Hook {
         Ok(())
     }
 
+    /// The up connection's client of this local node's link; an error on an edge node or a node not paired.
+    fn up_client(&self) -> Result<Option<super::LinkClient>, Error> {
+        if moqui_core::edge::is_edge_node() {
+            return Err(Error::new("this is an edge node: it offers, and local nodes ask"));
+        }
+        match lock(&self.dialer).as_ref() {
+            Some(dialer) => Ok(dialer.up_client()),
+            None => Err(Error::new("this node is not paired with an edge node")),
+        }
+    }
+
     fn env_path(&self) -> Result<std::path::PathBuf, Error> {
         Ok(self.factory()?.runtime_dir().join(".env"))
     }
@@ -289,6 +305,11 @@ impl EdgeLink for Hook {
             local.node_name = host.trim().to_string();
         }
         self.start_dialer(local).map_err(Error::new)?;
+        // the wizard's next step asks the edge node's offer on the link: give it a few seconds to come up
+        let waiting = std::time::Instant::now();
+        while waiting.elapsed() < LINK_WAIT && !lock(&self.dialer).as_ref().is_some_and(is_linked) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
         Ok(PairResult {
             edge: paired.edge,
             key_fingerprint: paired.key_fingerprint,
@@ -309,6 +330,12 @@ impl EdgeLink for Hook {
         // inspection, rather than going to whichever edge node this node pairs with next (plans/Edge-Node.md §5.2)
         if let Some(facade) = self.factory()?.entity() {
             moqui_core::edge::replica::disable(&facade);
+            // the mail servers the wizard's Apply set to edge: send as they did before it (plans/Edge-Node.md §5.7)
+            for line in moqui_core::edge::setup::restore_local(&facade) {
+                if line.ok {
+                    tracing::info!("Unpaired: {}", line.text);
+                }
+            }
             let queue = moqui_core::edge::queue::TO_EDGE;
             let settings = moqui_core::edge::settings(&*self.factory()?);
             let now = moqui_core::user::now_millis();
@@ -380,6 +407,18 @@ impl EdgeLink for Hook {
             .ok_or_else(|| Error::new(format!("{}: this node takes no links", moqui_core::edge::OFFLINE)))?;
         let call = call.clone();
         crate::edge::block_on(async move { server.delegate(call).await })?
+    }
+
+    fn offer(&self) -> Result<EdgeOffer, Error> {
+        let client = self.up_client()?;
+        crate::edge::block_on(async move { super::dial::offer_on(client, OFFER_TIMEOUT).await })?.map_err(Error::new)
+    }
+
+    fn configure(&self, setup: &EdgeSetup) -> Result<Configured, Error> {
+        let client = self.up_client()?;
+        let setup = setup.clone();
+        crate::edge::block_on(async move { super::dial::configure_on(client, &setup, CALL_TIMEOUT).await })?
+            .map_err(Error::new)
     }
 
     fn ping_client(&self, paired_node_id: &str) -> Result<f64, Error> {

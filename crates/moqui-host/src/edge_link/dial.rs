@@ -20,14 +20,16 @@
 //!
 //! While the link is up the local node also serves the edge node's delegated calls and queued items (§5.2, as the user
 //! `_EDGE_`, through `moqui_core::edge`), and sends its own outbox and replicated sets up ([`super::queue`],
-//! [`super::replicate`]). These need the server's factory, which comes with [`LocalConfig::web`].
+//! [`super::replicate`]). These need the server's factory, which comes with [`LocalConfig::web`]. The Edge Node
+//! wizard asks the edge node's offer and sends its Configure on the up connection ([`Dialer::offer`],
+//! [`Dialer::configure`], plans/Edge-Node.md §5.7).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::edge::{DelegateCall, EdgeInfo, LinkState, LinkStatus};
+use moqui_core::edge::{Configured, DelegateCall, EdgeInfo, EdgeOffer, EdgeSetup, LinkState, LinkStatus};
 use moqui_core::telemetry::Telemetry;
 use moqui_lib::sync::lock;
 use tokio::io::AsyncWriteExt as _;
@@ -38,7 +40,7 @@ use super::pair::{client_config, dial_tls, parse_url, Identity, ServerTrust};
 use super::proto::local_link_server::{LocalLink, LocalLinkServer};
 use super::proto::{
     ContentChunk, DelegateReply, DelegateRequest, DeliverReply, DeliverRequest, HelloRequest, LocalHelloReply,
-    LocalHelloRequest, PingReply, PingRequest, PutContentReply, UnpairRequest,
+    LocalHelloRequest, OfferRequest, PingReply, PingRequest, PutContentReply, UnpairRequest,
 };
 use super::{
     check_versions, edge_info, hello, jitter, read_answer, Answer, LinkClient, LinkError, LocalConfig, LINK_VERSION,
@@ -429,6 +431,24 @@ impl Dialer {
         lock(&self.shared.status).clone()
     }
 
+    /// The up connection's client while the link is up, for a call of the wizard's (hook.rs).
+    pub(crate) fn up_client(&self) -> Option<LinkClient> {
+        if lock(&self.shared.status).state != LinkState::Linked {
+            return None;
+        }
+        lock(&self.shared.up).clone()
+    }
+
+    /// What the edge node offers this node now (the link's GetOffer).
+    pub async fn offer(&self) -> Result<EdgeOffer, String> {
+        offer_on(self.up_client(), self.timeout).await
+    }
+
+    /// Send the edge node this node's part of the setup (the link's Configure).
+    pub async fn configure(&self, setup: &EdgeSetup) -> Result<Configured, String> {
+        configure_on(self.up_client(), setup, self.timeout).await
+    }
+
     /// Stop dialing and close the link.
     pub fn stop(&self) {
         let _ = self.stop.send(true);
@@ -448,6 +468,39 @@ impl Dialer {
         };
         self.stop();
         outcome
+    }
+}
+
+const NOT_UP: &str = "the link to the edge node is not up";
+
+/// The edge node's offer, asked on `client`'s up connection.
+pub(crate) async fn offer_on(client: Option<LinkClient>, timeout: Duration) -> Result<EdgeOffer, String> {
+    let mut client = client.ok_or_else(|| NOT_UP.to_string())?;
+    match tokio::time::timeout(timeout, client.get_offer(OfferRequest {})).await {
+        Ok(Ok(reply)) => Ok(super::offer::offer_of(reply.into_inner())),
+        Ok(Err(status)) => Err(format!(
+            "the edge node did not answer with its offer: {}",
+            status.message()
+        )),
+        Err(_) => Err(format!(
+            "the edge node is not answering: no offer in {} s",
+            timeout.as_secs()
+        )),
+    }
+}
+
+/// Send `setup` on `client`'s up connection.
+pub(crate) async fn configure_on(
+    client: Option<LinkClient>,
+    setup: &EdgeSetup,
+    timeout: Duration,
+) -> Result<Configured, String> {
+    let mut client = client.ok_or_else(|| NOT_UP.to_string())?;
+    let request = super::offer::request_of(setup);
+    match tokio::time::timeout(timeout, client.configure(request)).await {
+        Ok(Ok(reply)) => Ok(super::offer::configured_of(reply.into_inner())),
+        Ok(Err(status)) => Err(format!("the edge node refused the setup: {}", status.message())),
+        Err(_) => Err("the edge node did not answer the setup in time".to_string()),
     }
 }
 

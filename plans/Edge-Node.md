@@ -1,6 +1,6 @@
 # Edge Node
 
-Status 2026-11-01: E0–E4, E5a, E5b and E6 built. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
+Status 2026-11-02: E0–E4, E5a, E5b, E6 and E10 built; E7–E9 (calls, SIP, XMPP) and E11 not yet. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
 its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
 access. Mail crosses the link, with the MTA in moqui on the edge node by default (E5b) or Postfix and Rspamd beside it
@@ -12,7 +12,9 @@ built, where it differs from the design, is in [§5.1](#51-the-edge-link) ("As b
 [§5.3](#53-web-access) ("As built"); what E3 built is in [§5.2](#52-how-work-crosses-the-link) ("As built"); what E4
 built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); what E5a built is in
 [§5.4](#54-comms-on-the-edge-node) ("As built (E5a)"), with the queue's content in §5.2, E5b's in §5.4 ("As built
-(E5b)"), and E6's in §5.4 ("As built (E6)").
+(E5b)"), E6's in §5.4 ("As built (E6)"), and E10's, the wizard's Discover, Apply and Test, in
+[§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)"). A real local node attached through the wizard on a
+served Maximal build, with real DNS, is pending.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -1074,6 +1076,82 @@ Its actions are pause, resync and unpair.
   `moqui test` starts no listener, and `--serve` starts it only after the specs, so a run is always the no-link case.
   The local and edge cases were checked over HTTP on a served Maximal build.
 
+**As built (E10).**
+- **Offer.** The edge node's Hello now names its areas in `capabilities` (`web`, and `mail`, `chat`, `pass` when set
+  up), and a new RPC `Link.GetOffer` (additive) answers a structured `Offer`: web access (its public names and the
+  modes), mail (moqui or postfix, the listener on, the MX host `smtp_hostname`, the bounce domain, and with the MTA in
+  moqui its DKIM selector and record), chat (webhooks on, the public URL), PASS (mr-pass loaded, the client id `edge`),
+  calls, SIP and XMPP as not available, its public addresses (a new property, `edge_public_addresses`) and the asking
+  node's host names. The offer is asked on the link, never on the pairing connection, so it is always fresh: the wizard
+  and Status read it with `get#EdgeOffer`. Code: `edge_link/offer.rs`; `moqui_core::edge::setup` holds the types.
+- **Configure.** A new RPC `Link.Configure` (additive): the local node's host names with their modes (`set_hosts`: the
+  node's whole list; a name of the node not listed is removed), its mail domains, chat bridges and PASS sites. The edge
+  node checks it as input from any client first (`setup::check_setup`: at most 64 of each, domains and ids by their
+  syntax, the modes; a bad one refuses the whole request, before any change). Host names go through E2's
+  `hosts::add`, for the node the link's key names, never one in the request; a name another node holds is answered
+  "another local node has this name", without naming it. A local node cannot claim the edge node's own names, which
+  the host table would route before the edge node's own handling: its public names and `webapp_http_host`,
+  `smtp_hostname`, `edge_mail_bounce_domain`, the host of `channels_public_url`, its `public-site` hosts, and their
+  subdomains, and IP addresses, `localhost` and one-label names (`setup::check_host_name`, `is_reserved`); a name the
+  operator adds on Edge Clients is not checked. Other errors go back as one generic message, the detail logged. The
+  rest is kept as `EdgeClient.setupJson` (new fields `setupJson`, `setupDate`; refused for a node not active), which
+  Edge Clients shows as "Set up". The offer's area names in Hello are read at start (restart the edge node after
+  changing its areas); GetOffer is computed fresh, and a page waits for it at most 3 s. The edge node needs no mail domains to work (its MX
+  and DKIM signing read the replicated accounts), so they are kept for the operator to see.
+- **Wizard.** `Pair.xml` has five steps now; Connect's Next pairs (pairing now waits up to 5 s for the link) and goes
+  on, and Finish is the last step's.
+  - **Discover** (`Pair/Discover.xml`): the offer as a form, each area on or off: passthrough and terminate host names
+    (this node's `webapp_http_host` and its names there now), mail (the hosted and shared accounts' domains, the
+    system's mail, the accounts), chat (the bridges), PASS (the sites, from `mantle.public.PublicSite` when Mantle is
+    there, else typed, and the SSO callback). Calls, phones and XMPP are listed as not available yet. The choices go in
+    the session (`edgeSetup`), never a URL.
+  - **Apply** (`Pair/Apply.xml`, `apply#EdgeSetup`): Apply (a button on the step; the wizard's Next then needs it done,
+    and a new choice in Discover clears it, so a changed setup is applied again before Test) checks the whole setup
+    first (`check_setup`, the host names, the PASS choice; Discover checks them too) and changes nothing when any is
+    not right; then sends Configure, and changes nothing locally when the edge node does not take it; then writes the
+    local rows and settings (`setup::apply_local`, each area apart, a line each): an `EmailServer` `EDGE`
+    with `smtpHost` `edge:`; `SYSTEM`'s `smtpHost` set to `edge:` (the email templates name `SYSTEM`); each chosen
+    hosted or shared account's own server, when it owns one with no incoming store, set to `edge:`, else the account
+    pointed at `EDGE`; an account that syncs from another provider is left. The host or server each replaced is kept
+    (new fields `EmailServer.edgePriorSmtpHost`, `EmailAccount.edgePriorServerId`) and put back at unpairing
+    (`setup::restore_local`, from `unpair#EdgeNode`); while the node is not paired (no `edge_node_url` and no running
+    link), a send through `edge:` is not queued but fails retryable and stays in the Outbox. Discover leaves the
+    system's mail off by default when `SYSTEM` has a server of its own. `channels_public_url`, and
+    `pass_edge_client` with `pass_client_edge_sites` and `_callback`, go into `runtime/.env`
+    (`update_dotenv_file`; a process property that overrides one is named). Then Configure, and every replicated set
+    whole again. The DNS records are checked live on each render (`check#EdgeDns`, in moqui-mail on E5b's resolver,
+    whose `txt` now answers fixed records too): MX, SPF (`mx` only once the MX is the edge node, `a:` the MX host, a
+    network with one of its addresses, or `include:` it, noted as needing its own SPF record), the DKIM key (the `p=`
+    compared; under Postfix only that a record is there), DMARC, and A and AAAA against `edge_public_addresses`, else
+    the MX host's addresses, a family the edge node lists none of not checked; each expected and found, with Check
+    again. `_sips._tcp` and the XMPP SRV records are listed for later.
+  - **Test** (`Pair/Test.xml`, `test#EdgeSetup`, modeled on MailAccounts' Test with Continue anyway): the link (state
+    and round trip), and round trips on the queue (a new kind, `edgeEcho`, `receive#EdgeEcho`, granted to `_EDGE_`;
+    at most 20 a minute per node on the edge node): mail in (the edge node finds the first chosen account's address,
+    else a hosted one's, in its copy of the recipients, and its answer comes back on the queue as inbound mail does;
+    not checked with no account), mail out (the edge node can send: its DKIM key, or its Postfix relay answering; and
+    `EDGE`, `SYSTEM` when chosen and the chosen accounts' servers are on `edge:`), webhooks (on, and the chosen bridges
+    in its copy; not checked with none), PASS (the client properties name the sites, and the edge node has mr-pass).
+    No outside mail or provider; the answers are waited for up to 10 s. The result is kept for the visit; Test again
+    runs it again. Finish goes to Status and forgets the choices.
+  - **Status** has a Setup box: the host names (from the offer while linked), mail out (the system and the accounts
+    through `EDGE`), the chat address and the PASS sites, with Set up again, which opens the wizard at Discover.
+- **Deviations.** Each area's host names are two lists (passthrough, terminate), not one row per name. Turning an
+  area off leaves what an earlier Apply set; there is no undo. The mail-out test is a queue round trip, not a message
+  sent to an outside address, and mail in checks the recipient copy rather than taking a message. Phone, calls, XMPP
+  and monitoring are not in the form (E7–E9 and §5.9 are not built).
+- **Tests.** `tests/it/edge_setup.rs` (about 4 s): the offer read, Configure applied (a name another node holds
+  refused, the edge node's own names and their subdomains, an IP address, `localhost` and a one-label name refused, a
+  stale name removed, input refused whole), Apply's local writes into the test runtime's own `.env` (the
+  repository's is checked untouched), unpairing's restore of `SYSTEM` and the account, `check#EdgeDns` against fixed
+  records, `test#EdgeSetup`'s round trips, and the wizard's steps after Connect walked as screens: Discover's default
+  form (no `localhost`, the system's own server noted), a bad name refused, Apply, a choice made again needing Apply
+  again, Test and Status, with the dialer behind the local node's services. Pairing itself (EdgeUrl, Connect) is not
+  driven through the screens: the hook pairs only with a WebPKI certificate, which a test authority is not;
+  `edge_link.rs` covers pairing. Unit tests: `edge/setup_tests.rs` (input checks, the mail rows, PASS refusals, the echo) and
+  `moqui-mail` `edge_dns_tests.rs`. `EdgeScreens.spec.js` renders the new steps in its three cases and checks that
+  Discover keeps its choices in the session.
+
 ### 5.8 Security
 
 - **What an edge node sees:**
@@ -1130,7 +1208,7 @@ Its actions are pause, resync and unpair.
 | **E7** | Calls with the edge node as media node; TURN; recordings queued | A call between an outside browser and an office browser. Its recording reaches the local node |
 | **E8** | SIP on the edge node; the voicemail fallback | A trunk call is routed by the local node. With the local node away, a voicemail is recorded and delivered later |
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node |
-| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard |
+| **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built. Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
 
@@ -1139,16 +1217,18 @@ first two.
 
 ## 7. Documents to change
 
-When it is built:
+When it is built (done in E10 unless marked):
 - **Run-Deploy:** a topology row and a section, "A local server with an edge node"; the new properties; the PASS
-  section's transport.
-- **Guides:** Attack-Surface; Mail-Inbound (the edge node as the gateway, then the MTA in moqui); SMS, SIP, WebRTC and
-  TURN (the edge node as edge and media node).
-- **mr-pass:** `docs/Deployment.md`.
+  section's transport. Done.
+- **Guides:** Attack-Surface (done); Mail-Inbound, the edge node as the gateway, then the MTA in moqui (done); SMS and
+  Chat-Bridges, the webhook URL on the edge node and MMS (done); SIP, WebRTC and TURN, the edge node as edge and media
+  node (not yet: with E7 and E8).
+- **mr-pass:** `docs/Deployment.md`, the edge node as PASS server. Done.
 - **Plans:**
   - Comms-Framework: C3b's and C6's split between edge node and local node. Its line "this plan adds no new mail
-    features" should point here for the MTA and filtering work.
-  - The two mr-pass plan sentences in §5.5.
+    features" should point here for the MTA and filtering work. Done.
+  - The two mr-pass plan sentences in §5.5. Done in E4 (`design-shop.md` §13.1 and `implementation-forum.md`'s
+    "Local and remote" row now name gRPC, direct or on an edge node's link).
 
 ## 8. Decisions
 

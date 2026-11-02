@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair step 4, apply (plans/Edge-Node.md §5.7): the choices Discover kept in the session, and Apply
+    (org.moqui.impl.EdgeServices.apply#EdgeSetup): it writes this node's rows and settings (the EDGE mail server with
+    smtpHost edge:, the system's and the chosen accounts' mail through it; channels_public_url; the PASS client
+    properties), sends the edge node its part (the link's Configure: the host names, refused for a name another node
+    holds) and sends every replicated set whole again. Each step is a line, kept in the session for this step. The DNS
+    records to set are checked live on each render (check#EdgeDns, with the edge node's MX host, addresses and DKIM key
+    from its offer): MX, SPF, DKIM and DMARC for each mail domain, A and AAAA for each host name, expected and found;
+    Check again looks them up again. Next goes on to Test once Apply ran. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Apply" default-menu-index="4" menu-image="sym_o_published_with_changes" menu-image-type="icon">
+
+    <transition name="applySetup">
+        <actions><script><![CDATA[
+            let choices = null
+            try { choices = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { choices = null }
+            if (!choices) { ec.message.addError(ec.l10n.localize('Choose what to set up first, in Discover')); return }
+            const hostList = (choices.passthroughNames || []).map((hostName) => ({hostName, modeEnumId: 'EdgeHostPassthrough'}))
+                .concat((choices.terminateNames || []).map((hostName) => ({hostName, modeEnumId: 'EdgeHostTerminate'})))
+            const out = ec.service.sync().name('org.moqui.impl.EdgeServices.apply#EdgeSetup').parameters({
+                webOn: !!choices.webOn, hostList, mailOn: !!choices.mailOn, mailDomains: choices.mailDomains || [],
+                systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
+                chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
+                passOn: !!choices.passOn, passSites: choices.passSites || [], passCallback: choices.passCallback || ''}).call()
+            if (ec.message.hasError()) return
+            const lines = Array.from(out?.lineList || []).map((line) => ({area: line.area, ok: line.ok === true, text: line.text}))
+            const configured = out?.configured === true
+            ec.web.sessionAttributes.edgeApplied = JSON.stringify({lines, configured})
+            ec.web.sessionAttributes.remove('edgeTested')
+            const failed = lines.filter((line) => !line.ok).length
+            if (!configured) ec.message.addMessage(ec.l10n.localize('Not applied: the edge node did not take the setup, and nothing was changed here'), 'danger')
+            else if (failed) ec.message.addMessage(ec.resource.expand('Applied, with ${n} steps that did not go through', '', {n: failed}), 'warning')
+            else ec.message.addMessage(ec.l10n.localize('Applied: this node is set up with the edge node'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="confirmApply">
+        <actions><script><![CDATA[
+            let kept = null
+            try { kept = JSON.parse(ec.web.sessionAttributes.edgeApplied || 'null') } catch (e) { kept = null }
+            if (!kept?.configured) ec.message.addError(ec.l10n.localize('Apply the setup first'))
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        notBuilt = link.state === 'notBuilt'
+        notStarted = link.state === 'notStarted'
+        const running = !notBuilt && !notStarted
+        isEdge = running && link.nodeRole === 'edge'
+        notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
+        let choices = null
+        try { choices = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { choices = null }
+        noChoices = running && !isEdge && !notPaired && !choices
+        ready = running && !isEdge && !notPaired && !!choices
+        lineList = []
+        recordList = []
+        dnsError = ''
+        applied = false
+        if (!ready) return
+        const list = (items) => Array.from(items || []).join(', ')
+        const hostNames = choices.webOn ? (choices.passthroughNames || []).concat(choices.terminateNames || []) : []
+        const accountText = choices.mailOn ? ec.resource.expand('${n} accounts', '', {n: (choices.emailAccountIds || []).length}) : ''
+        summary = {
+            webText: choices.webOn ? [list(choices.passthroughNames) && list(choices.passthroughNames) + ' (' + L('passthrough') + ')',
+                list(choices.terminateNames) && list(choices.terminateNames) + ' (' + L('terminate') + ')'].filter((text) => text).join('; ') : L('Off'),
+            mailText: choices.mailOn ? list(choices.mailDomains) + (choices.systemMail ? '; ' + L('the system') + ', ' : '; ') + accountText : L('Off'),
+            chatText: choices.chatOn ? ec.resource.expand('${n} bridges', '', {n: (choices.chatBridgeIds || []).length}) : L('Off'),
+            passText: choices.passOn ? list(choices.passSites) + ' · ' + (choices.passCallback || '') : L('Off')}
+        let kept = null
+        try { kept = JSON.parse(ec.web.sessionAttributes.edgeApplied || 'null') } catch (e) { kept = null }
+        applied = !!kept?.configured
+        const areaNames = {web: L('Web access'), mail: L('Mail'), chat: L('Chat'), pass: L('PASS'), link: L('Link')}
+        lineList = Array.from(kept?.lines || []).map((line) => ({areaText: areaNames[line.area] || line.area, text: line.text,
+            stateLabel: line.ok ? L('Done') : L('Not done'), stateColor: line.ok ? 'positive' : 'negative'}))
+        confirm = {applied: applied ? 'Y' : ''}
+        // the DNS records, checked live: the edge node's MX host, addresses and key come from its offer; each a probe
+        if (!hostNames.length && !choices.mailOn) return
+        ec.message.pushErrors()
+        try {
+            const offer = (ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}).offer || {}
+            if (!ec.message.hasError()) {
+                const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeDns').parameters({
+                    domains: choices.mailOn ? choices.mailDomains || [] : [], hostNames,
+                    mxHost: offer.mail?.mxHost || '', edgeAddresses: offer.addresses || [],
+                    dkimSelector: offer.mail?.dkimSelector || '', dkimRecord: offer.mail?.dkimRecord || '',
+                    mailMta: offer.mail?.mta || ''}).call() || {}
+                recordList = Array.from(out.recordList || []).map((record) => ({kind: record.kind, name: record.name,
+                    expected: record.later ? '' : record.expected || '', found: record.found || (record.later ? '' : L('None')),
+                    note: record.note || '',
+                    stateLabel: record.later ? L('Not needed yet') : record.ok ? L('Set') : L('Not yet'),
+                    stateColor: record.later ? 'grey' : record.ok ? 'positive' : 'warning'}))
+            }
+            if (ec.message.hasError()) dnsError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+    ]]></script></actions>
+    <widgets>
+        <section name="NotBuilt" condition="notBuilt"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotStarted" condition="notStarted"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="IsEdge" condition="isEdge"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotPaired" condition="notPaired"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Pair with an edge node first." style="q-mb-sm"/>
+                <link url="../EdgeUrl" text="Edge node" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NoChoices" condition="noChoices"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Choose what to set up first." style="q-mb-sm"/>
+                <link url="../Discover" text="Discover" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="Ready" condition="ready"><widgets>
+            <!-- the step form, first: the wizard's Next submits the first form of the step -->
+            <form-single name="ConfirmApply" transition="confirmApply" map="confirm">
+                <field name="applied"><default-field><hidden/></default-field></field>
+            </form-single>
+            <container-box><box-header title="What Apply sets up"/><box-toolbar>
+                <link url="applySetup" link-type="hidden-form" text="Apply" icon="sym_o_published_with_changes" btn-type="primary"
+                        condition="!applied"
+                        confirmation="Apply the setup? It changes this node's mail servers and settings, and its host names on the edge node."/>
+                <link url="applySetup" link-type="hidden-form" text="Apply again" icon="sym_o_published_with_changes"
+                        condition="applied"
+                        confirmation="Apply the setup again? It changes this node's mail servers and settings, and its host names on the edge node."/>
+                <link url="../Discover" text="Change" icon="sym_o_edit"/>
+            </box-toolbar><box-body>
+                <form-single name="SetupSummary" map="summary">
+                    <field name="webText"><default-field title="Web access"><display/></default-field></field>
+                    <field name="mailText"><default-field title="Mail"><display/></default-field></field>
+                    <field name="chatText"><default-field title="Chat"><display/></default-field></field>
+                    <field name="passText"><default-field title="PASS"><display/></default-field></field>
+                    <field-layout>
+                        <field-row><field-ref name="webText"/><field-ref name="mailText"/></field-row>
+                        <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
+                    </field-layout>
+                </form-single>
+                <section name="NotApplied" condition="!applied"><widgets>
+                    <label type="p" text="Nothing is changed until you apply. An area turned off is left as it is." style="m-muted q-mb-none"/>
+                </widgets></section>
+            </box-body></container-box>
+            <section name="Applied" condition="lineList.length"><widgets>
+                <container-box><box-header title="Applied"/><box-body-nopad>
+                    <form-list name="AppliedLines" list="lineList" skip-form="true" paginate="false">
+                        <field name="areaText"><default-field title="Area"><display style="text-weight-medium"/></default-field></field>
+                        <field name="state"><default-field title="State"><render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text>
+                        </render-mode></default-field></field>
+                        <field name="text"><default-field title="What"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="areaText"/><field-ref name="text"/></column>
+                            <column><field-ref name="state"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+            </widgets></section>
+            <container-box><box-header title="DNS records to set"/><box-toolbar>
+                <link url="." text="Check again" icon="sym_o_refresh"/>
+            </box-toolbar><box-body-nopad>
+                <label type="p" style="m-muted q-pa-sm q-mb-none"
+                        text="Set these at your DNS provider. Each is looked up now; a change can take a while to show."/>
+                <section name="DnsError" condition="dnsError"><widgets>
+                    <label type="p" text="${dnsError}" style="text-negative q-pa-sm q-mb-none"/>
+                </widgets></section>
+                <form-list name="DnsRecords" list="recordList" skip-form="true" paginate="false">
+                    <field name="kind"><default-field title="Record"><display style="text-weight-medium"/></default-field></field>
+                    <field name="name"><default-field title="Name"><display/></default-field></field>
+                    <field name="expected"><default-field title="Set it to"><display/></default-field></field>
+                    <field name="found"><default-field title="Found"><display/></default-field></field>
+                    <field name="state"><default-field title="State"><render-mode>
+                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text>
+                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text>
+                    </render-mode></default-field></field>
+                    <field name="note"><default-field title="Note"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="kind"/><field-ref name="name"/></column>
+                        <column><field-ref name="state"/><field-ref name="note"/></column>
+                    </columns>
+                </form-list>
+                <section name="NoRecords" condition="!recordList.length &amp;&amp; !dnsError"><widgets>
+                    <label type="p" text="No host names or mail domains, so no records to set." style="m-muted q-pa-sm q-mb-none"/>
+                </widgets></section>
+            </box-body-nopad></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

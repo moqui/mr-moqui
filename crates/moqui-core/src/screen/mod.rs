@@ -32,6 +32,7 @@ pub(crate) mod menu;
 pub mod overlay;
 mod pdf;
 mod public_site;
+pub use public_site::hosts as public_site_hosts;
 mod render;
 pub(crate) mod saved_finds;
 pub(crate) mod scan;

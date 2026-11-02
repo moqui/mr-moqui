@@ -15,7 +15,8 @@ and the build packages are in [Build-Test](Build-Test.md).
     [HTTPS, ports and proxies](#https-ports-and-proxies);
   - deployments: [One production server](#one-production-server), [Cluster](#cluster),
     [PASS servers with a BOSS server or cluster](#pass-servers-with-a-boss-server-or-cluster),
-    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server), [Edge node](#edge-node) (the link and web access);
+    [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server),
+    [A local server with an edge node](#a-local-server-with-an-edge-node);
   - reference: [Components](#components), [Moving from Moqui Java](#moving-from-moqui-java),
     [Directory layout](#directory-layout).
 
@@ -140,6 +141,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
 | Dev instances with a dev group server | A team: shared repositories, tasks and models | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
 | Public demo server | The apps for anyone to try with the `john.doe` login | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
+| A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
 
 ## Production checklist
 
@@ -267,15 +269,16 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#edge-node)) |
+| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#a-local-server-with-an-edge-node)) |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_ssh_tunnel_port`, `edge_ssh_tunnel_host`, `edge_ssh_tunnel_node` | empty | On an edge node, a port whose connections go to a local node's SSH server, the address it listens on (empty for every one) and the node (empty for the only one linked) |
 | `edge_offline_page` | empty | On an edge node, the location of the page a terminate host shows while its node's link is down; empty for the built-in one |
+| `edge_public_addresses` | empty | On an edge node, its public IPv4 and IPv6 addresses, comma-separated, which it offers its local nodes for their A and AAAA records; empty, and the wizard expects the addresses of its MX host name |
 | `edge_mail_mta` | `moqui` in MoquiEdgeConf.xml, else empty | On an edge node, what delivers the local node's mail out: `moqui` (to each domain's MX), or empty or `postfix` (relayed to the MTA beside it, E5a) |
 | `edge_mail_relay_host`, `edge_mail_relay_port` | `127.0.0.1`, `10025` | On an edge node with `edge_mail_mta=postfix`, the MTA beside it that mail the local node sends is relayed to (Postfix's relay port) |
 | `edge_mail_bounce_domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
-| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in MoquiEdgeConf.xml), with Rspamd's HTTP API for its spam verdict when the URL is set ([Edge node](#edge-node), Mail) |
+| `smtp_internet`, `mail_rspamd_url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in MoquiEdgeConf.xml), with Rspamd's HTTP API for its spam verdict when the URL is set ([Edge node](#a-local-server-with-an-edge-node), Mail) |
 | `mail_dkim_key`, `mail_dkim_selector`, `mail_dkim_domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
 | `mail_arc_trusted_sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
 | `mail_delivery_retry_seconds`, `mail_delivery_days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
@@ -637,13 +640,53 @@ visitors out of the shared login ([its README](../runtime/dev-component/demo/REA
 a schedule with `./moq reload-save --release demo`, with the server stopped. Do not run a demo as `instance_purpose=dev`:
 the Dev AIDE loads there.
 
-## Edge node
+## A local server with an edge node
 
 An edge node is a small server in the cloud in front of a local server, which dials out to it and keeps one link
-open ([plan](../plans/Edge-Node.md)). For now this is the link, web access and the ways work crosses it: pairing, the
-link's state and revoking, the local node's apps and its SSH server, delegated calls, the queue and replication,
-mr-pass's calls to the local node as its PASS authority, and mail, with the MTA in moqui on port 25 (or Postfix and
-Rspamd beside the edge node). No chat or calls use them yet.
+open ([plan](../plans/Edge-Node.md)). The local server needs no open port, port forward or fixed address. Through the
+edge node go: the local node's apps and its SSH server, mail (with the MTA in moqui on port 25, or Postfix and Rspamd
+beside the edge node), chat providers' webhooks and MMS files, and mr-pass's public sites, which call the local node as
+their PASS authority. Calls, phones (SIP) and XMPP do not go through it yet.
+
+**Attach a local node in one sitting.**
+1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI
+   certificate, and a start with `conf/MoquiEdgeConf.xml`. In its System › Edge Clients, make a pairing code.
+2. On the local node, in System › Edge Node, choose **Pair with an edge node**. The wizard's steps:
+   1. **Edge node.** Its address and the pairing code.
+   2. **Connect.** Check its name and link key fingerprint against Edge Clients. Next pairs and waits for the link.
+   3. **Discover.** What the edge node offers, as a form with each area on or off and this node's choices filled in:
+      the host names, passthrough or terminate (this node's `webapp_http_host` by default, unless it is `localhost` or
+      has one label, and the names the edge node has for this node now); the mail domains (from the hosted and shared
+      accounts), and whether the system's mail (off by default when `SYSTEM` has a server of its own) and the chosen
+      accounts' mail goes out through the edge node; the chat bridges whose webhooks go to it; the PASS sites it
+      serves, with their SSO callback. Calls, phones and XMPP are listed as not available yet. A host name must be a
+      public DNS name: not an IP address, `localhost` or a name with one label.
+   4. **Apply.** The whole setup is checked first, and nothing changes when any of it is not right. The edge node's
+      part goes first (host names, mail domains, bridges, sites): it takes only this node's names, and refuses a name
+      another node holds and its own names (its public names, its SMTP host, its bounce domain, its sites' hosts, and
+      their subdomains); a name of this node not listed is removed. When the edge node does not take the setup,
+      nothing changes on this node. Then it writes this node's part: an `EmailServer` `EDGE` with `smtpHost` `edge:`,
+      `SYSTEM`'s `smtpHost` set to `edge:` when chosen, and the chosen accounts sending through it;
+      `channels_public_url` (the edge node's address); `pass_edge_client`, `pass_client_edge_sites` and
+      `pass_client_edge_callback`. The host or server each mail row had is kept (`edgePriorSmtpHost`,
+      `edgePriorServerId`), and **unpairing puts it back**; mail for an `edge:` server while this node is not paired is
+      not queued, but fails as retryable and stays in the Outbox. Every replicated set is sent whole again. An area
+      turned off is left as it is. Then it lists the DNS records to set, each looked up live: MX, SPF, the DKIM key and DMARC for
+      each mail domain, and A and AAAA for each host name. Check again looks them up again. `_sips._tcp` and the XMPP
+      SRV records are listed for later.
+   5. **Test.** The link, mail in (the edge node takes mail for a hosted account's address), mail out (the system's
+      and the accounts' servers are on `edge:`, and the edge node can send: its DKIM key, or its Postfix relay
+      answering), the webhooks and PASS, each a pass, fail or not-checked line, with round trips on the queue and no
+      outside mail or provider. It runs once per visit; Test again runs it again. Continue anyway goes on with a
+      failure; Finish shows the status.
+3. Set each chat provider's webhook URL to `<the edge node's address>/channels/<chatBridgeId>/webhook`.
+
+The status screen shows what is set up (host names, mail, chat, PASS), with Set up again, which opens the wizard at
+Discover. Edge Clients shows what each node's setup sent. A page waits at most 3 s for the edge node's offer, and
+says when it is not answering. The offer is read fresh each time; the area names in the edge node's Hello are read at
+its start, so restart it after changing its mail, chat or PASS settings. The sections below are what the wizard sets,
+for an operator who sets a part by hand; a name the operator adds on Edge Clients is not checked against the edge
+node's own names.
 
 - **The edge node** runs `conf/MoquiEdgeConf.xml` (`node_role=edge`, web protection on) with the base components and
   mr-pass (`./moq component-get edge`). It needs the Maximal package, or Enterprise with an external database; both
@@ -669,8 +712,8 @@ Rspamd beside the edge node). No chat or calls use them yet.
 - **The local node** needs no role and no open port. In System › Edge Node, enter the edge node's address and the code,
   check its name and link key fingerprint, and pair. Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to
   `runtime/.env` and brings the link up; unpairing removes them.
-- **Web access.** In System › Edge Clients, add each public host name of a local node, such as `erp.example.com`,
-  and point its DNS at the edge node. In the office's DNS the same name can point at the local node. A name has a
+- **Web access.** The wizard sets the local node's host names, or add each in System › Edge Clients, such as
+  `erp.example.com`, and point its DNS at the edge node. In the office's DNS the same name can point at the local node. A name has a
   mode:
   - **Passthrough**, the default. The edge node reads the name the browser asks for, before any TLS, and sends the
     connection down the link with a PROXY header that names the client. The local node ends the TLS with its own
@@ -704,6 +747,10 @@ Rspamd beside the edge node). No chat or calls use them yet.
   set `pass_client_edge_sites` (the sites the edge node serves) and `pass_client_edge_callback` (its SSO callback). Set
   `pass_backend_web_url` on the edge node to the local node's web address (a host name with web access through the
   edge node) for the SSO front channel. While the link is down every PASS page fails as unavailable.
+- **Chat and SMS** ([plan](../plans/Edge-Node.md) §5.4, [SMS](interfaces/SMS.md)). MoquiEdgeConf.xml sets
+  `channels_webhooks_enabled=true`: the edge node checks each webhook's signature with the local node's replicated
+  bridge and queues it for the local node. On the local node, `channels_public_url` is the edge node's address, so the
+  files of an MMS are served by the edge node.
 - **Mail** ([plan](../plans/Edge-Node.md) §5.4). The MTA in moqui is the default (`edge_mail_mta=moqui` in
   MoquiEdgeConf.xml; an empty `edge_mail_mta` keeps E5a's relay to Postfix, so an older edge node is not switched by
   an upgrade): the edge node takes port 25 itself and delivers to each domain's MX. Postfix and Rspamd beside it are
@@ -858,9 +905,10 @@ In local mode, mr-pass runs in the same runtime as Mantle and makes in-process c
 [docs/Deployment.md](../runtime/component/mr-pass/docs/Deployment.md). This section covers the remote layout.
 
 The remote calls go over REST, which every package has and which is Lite's default, or over gRPC where the package has
-it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an [edge node](#edge-node)
-to its local node over the edge link (`pass_backend_url=edge:`). `pass_backend_transport` chooses (`rest`, `grpc`, or
-empty for automatic); the settings are in Deployment.md.
+it (Maximal, Enterprise): direct to the authority's gRPC listener, or from an
+[edge node](#a-local-server-with-an-edge-node) to its local node over the edge link (`pass_backend_url=edge:`).
+`pass_backend_transport` chooses (`rest`, `grpc`, or empty for automatic); the settings are in Deployment.md. With an
+edge node as the PASS server, the local node's Edge Node wizard writes the client properties for it.
 
 ### The authority
 

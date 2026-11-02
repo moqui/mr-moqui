@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair step 3, discover (plans/Edge-Node.md §5.7): what the paired edge node offers now
+    (org.moqui.impl.EdgeServices.get#EdgeOffer, asked on the link), as a filled-out form with each area on or off and
+    this node's choices filled in: web access (its host names, passthrough or terminate; by default this node's
+    webapp_http_host and the names it has there now), mail (the domains of the hosted and shared accounts, and whether
+    the system's and the chosen accounts' outgoing mail goes through the edge node), chat (the bridges whose webhooks
+    go to it) and PASS (the sites it serves, and their SSO callback). Calls, phones and XMPP are listed as not
+    available yet. Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
+    hold no secret, and nothing goes in a URL. Status links here to set a paired node up again. Not paired, an edge
+    node, a build without the link, and a link that is down see why instead. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Discover" default-menu-index="3" menu-image="sym_o_travel_explore" menu-image-type="icon">
+
+    <transition name="chooseSetup">
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            // a check list posts one value, several, or none
+            const toList = (value) => value == null || value === '' ? [] : typeof value === 'string'
+                ? value.split(',') : Array.from(value)
+            const names = (value) => Array.from(new Set(toList(value).flatMap((text) => String(text).split(/[,\s]+/))
+                .map((text) => text.trim().toLowerCase()).filter((text) => text)))
+            const on = (value) => toList(value).some((text) => String(text) === 'Y' || String(text) === 'true')
+            // a DNS name with a domain: not an IP address, one label, or localhost (moqui_core::edge::setup::check_host_name)
+            const publicName = (name) => name.length <= 253 && /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name)
+                && /[a-z]/.test(name.split('.').pop()) && name !== 'localhost' && !name.endsWith('.localhost')
+            const choices = {
+                webOn: on(webOn), passthroughNames: names(passthroughNames), terminateNames: names(terminateNames),
+                mailOn: on(mailOn), mailDomains: names(mailDomains), systemMail: on(systemMail),
+                emailAccountIds: toList(emailAccountIds).map(String),
+                chatOn: on(chatOn), chatBridgeIds: toList(chatBridgeIds).map(String),
+                passOn: on(passOn), passSites: toList(passSites).flatMap((text) => String(text).split(','))
+                    .map((text) => text.trim()).filter((text) => text),
+                passCallback: String(passCallback || '').trim()}
+            if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn) {
+                ec.message.addError(L('Turn on at least one area')); return }
+            if (choices.webOn && !choices.passthroughNames.length && !choices.terminateNames.length) {
+                ec.message.addValidationError(null, 'passthroughNames', null, L('Enter a host name, or turn web access off'), null); return }
+            if (choices.mailOn && !choices.mailDomains.length) {
+                ec.message.addValidationError(null, 'mailDomains', null, L('Enter a mail domain, or turn mail off'), null); return }
+            if (choices.passOn && (!choices.passSites.length || !/^https?:\/\/[^/\s]+\/\S*$/.test(choices.passCallback))) {
+                ec.message.addValidationError(null, 'passCallback', null, L('Choose the sites and enter the SSO callback address, with its path'), null); return }
+            // the whole setup is checked here too, so Apply never stops half way on a bad name (apply#EdgeSetup checks again)
+            const badName = choices.passthroughNames.concat(choices.terminateNames).find((name) => !publicName(name))
+            if (choices.webOn && badName) {
+                ec.message.addValidationError(null, 'passthroughNames', null, ec.resource.expand('${name} is not a public host name', '', {name: badName}), null); return }
+            const badDomain = choices.mailDomains.find((domain) => !publicName(domain))
+            if (choices.mailOn && badDomain) {
+                ec.message.addValidationError(null, 'mailDomains', null, ec.resource.expand('${name} is not a mail domain', '', {name: badDomain}), null); return }
+            const badId = choices.chatBridgeIds.concat(choices.passSites).find((id) => !/^[A-Za-z0-9_.-]{1,63}$/.test(id))
+            if (badId) { ec.message.addError(ec.resource.expand('${id} is not an id', '', {id: badId})); return }
+            ec.web.sessionAttributes.edgeSetup = JSON.stringify(choices)
+            // a changed choice is applied again before it is tested
+            ec.web.sessionAttributes.remove('edgeApplied')
+            ec.web.sessionAttributes.remove('edgeTested')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        notBuilt = link.state === 'notBuilt'
+        notStarted = link.state === 'notStarted'
+        const running = !notBuilt && !notStarted
+        isEdge = running && link.nodeRole === 'edge'
+        notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
+        offerError = ''
+        hasOffer = false
+        notAvailableText = ''
+        if (!running || isEdge || notPaired) return
+        // the offer, asked on the link: a probe (Practices-App-Dev §4), so a link that is down is shown, not raised
+        let out = {}
+        ec.message.pushErrors()
+        try {
+            out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
+            if (ec.message.hasError()) offerError = ec.message.getErrorsString()
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (offerError) return
+        hasOffer = true
+        const offer = out.offer || {}
+        const mail = offer.mail || {}
+        const chat = offer.chat || {}
+        const pass = offer.pass || {}
+        mailAvailable = !!mail.available
+        chatAvailable = !!chat.webhooks
+        passAvailable = !!pass.available
+        const areaNames = {calls: L('calls'), sip: L('phones'), xmpp: L('XMPP chat clients')}
+        notAvailableText = Array.from(offer.notAvailable || []).map((area) => areaNames[area] || area).join(', ')
+        offerText = {
+            publicNamesText: Array.from(offer.publicNames || []).join(', '),
+            mailText: mailAvailable ? ec.resource.expand('MX ${mx}, the ${mta}', '', {mx: mail.mxHost || '',
+                mta: mail.mta === 'moqui' ? L('MTA in moqui') : L('Postfix beside it')}) : L('No mail'),
+            chatText: chatAvailable ? (chat.publicUrl || out.edgeUrl || '') : L('No webhooks'),
+            passText: passAvailable ? L('mr-pass') : L('No mr-pass')}
+        // this node's choices: kept from an earlier visit, else filled in from the offer and this node's records
+        let kept = null
+        try { kept = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { kept = null }
+        const nodeHosts = Array.from(offer.nodeHosts || [])
+        // this node's own name, unless it is no public one (localhost, the default, or a name with one label)
+        let ownHost = String(System.getProperty('webapp_http_host') || '').trim().toLowerCase().split(':')[0]
+        if (!ownHost.includes('.') || ownHost === 'localhost' || ownHost.endsWith('.localhost') || /^[0-9.]+$/.test(ownHost)) ownHost = ''
+        const passthrough = nodeHosts.filter((host) => host.modeEnumId !== 'EdgeHostTerminate').map((host) => host.hostName)
+        if (ownHost && !nodeHosts.some((host) => host.hostName === ownHost)) passthrough.unshift(ownHost)
+        const terminate = nodeHosts.filter((host) => host.modeEnumId === 'EdgeHostTerminate').map((host) => host.hostName)
+        const accounts = ec.entity.find('moqui.basic.email.EmailAccount')
+            .condition('accountKindEnumId', 'in', ['EakHosted', 'EakShared']).orderBy('emailAddress').limit(200).disableAuthz().list()
+        accountOptions = Array.from(accounts).filter((account) => account.statusId !== 'EasRemoved')
+            .map((account) => ({emailAccountId: account.emailAccountId, emailAddress: account.emailAddress}))
+        const domains = Array.from(new Set(accountOptions.map((account) => String(account.emailAddress || '').split('@')[1] || '')
+            .map((domain) => domain.trim().toLowerCase()).filter((domain) => domain)))
+        bridgeOptions = Array.from(ec.entity.find('moqui.chat.ChatBridge').orderBy('name').limit(200).disableAuthz().list())
+            .map((bridge) => ({chatBridgeId: bridge.chatBridgeId, name: bridge.name || bridge.chatBridgeId}))
+        siteOptions = ec.entity.isEntityDefined('mantle.public.PublicSite')
+            ? Array.from(ec.entity.find('mantle.public.PublicSite').orderBy('name').limit(200).disableAuthz().list())
+                .map((site) => ({siteId: site.siteId, name: site.name || site.siteId})) : []
+        const client = String(pass.clientId || 'edge')
+        const registeredSites = String(System.getProperty('pass_client_' + client + '_sites') || '').split(',').map((site) => site.trim()).filter((site) => site)
+        const firstHost = passthrough[0] || terminate[0] || ''
+        // the system's mail goes through the edge node by default only when it has no server of its own yet
+        const systemServer = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', 'SYSTEM').disableAuthz().one()
+        const systemHost = String(systemServer?.smtpHost || '')
+        systemHasHost = !!systemHost && systemHost !== 'edge:'
+        // choices kept from an earlier visit: a name the edge node has for this node now is kept, never dropped
+        mergedNames = []
+        if (kept) {
+            const listed = new Set((kept.passthroughNames || []).concat(kept.terminateNames || []))
+            for (const host of nodeHosts) {
+                if (listed.has(host.hostName)) continue
+                mergedNames.push(host.hostName)
+                if (host.modeEnumId === 'EdgeHostTerminate') kept.terminateNames = (kept.terminateNames || []).concat([host.hostName])
+                else kept.passthroughNames = (kept.passthroughNames || []).concat([host.hostName])
+            }
+        }
+        mergedText = mergedNames.join(', ')
+        choices = kept || {
+            webOn: true, passthroughNames: passthrough, terminateNames: terminate,
+            mailOn: mailAvailable && accountOptions.length > 0, mailDomains: domains, systemMail: !systemHasHost,
+            emailAccountIds: accountOptions.map((account) => account.emailAccountId),
+            chatOn: chatAvailable && bridgeOptions.length > 0, chatBridgeIds: bridgeOptions.map((bridge) => bridge.chatBridgeId),
+            passOn: false, passSites: registeredSites,
+            passCallback: String(System.getProperty('pass_client_' + client + '_callback') || '') ||
+                (firstHost ? 'https://' + firstHost + '/account/Sso' : '')}
+        form = {webOn: choices.webOn ? 'Y' : '', passthroughNames: (choices.passthroughNames || []).join(', '),
+            terminateNames: (choices.terminateNames || []).join(', '),
+            mailOn: choices.mailOn ? 'Y' : '', mailDomains: (choices.mailDomains || []).join(', '),
+            systemMail: choices.systemMail ? 'Y' : '', emailAccountIds: choices.emailAccountIds || [],
+            chatOn: choices.chatOn ? 'Y' : '', chatBridgeIds: choices.chatBridgeIds || [],
+            passOn: choices.passOn ? 'Y' : '', passSites: siteOptions.length ? (choices.passSites || []) : (choices.passSites || []).join(', '),
+            passCallback: choices.passCallback || ''}
+        hasSites = siteOptions.length > 0
+    ]]></script></actions>
+    <widgets>
+        <section name="NotBuilt" condition="notBuilt"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotStarted" condition="notStarted"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="IsEdge" condition="isEdge"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotPaired" condition="notPaired"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Pair with an edge node first." style="q-mb-sm"/>
+                <link url="../EdgeUrl" text="Edge node" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="OfferError" condition="offerError"><widgets>
+            <container-box type="warning"><box-header title="The edge node did not answer"/><box-body>
+                <label type="p" text="${offerError}"/>
+                <label type="p" text="The link comes up a few seconds after pairing. Try again then, or see the link's state." style="m-muted"/>
+                <container style="row q-gutter-sm">
+                    <link url="." text="Try again" icon="sym_o_refresh"/>
+                    <link url="../../Status" text="Edge node" icon="sym_o_cloud_sync"/>
+                </container>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="Offer" condition="hasOffer"><widgets>
+            <container-box><box-header title="What this node uses the edge node for"/><box-body>
+                <!-- the step form, first: the wizard's Next submits the first form of the step -->
+                <form-single name="EdgeSetupChoices" transition="chooseSetup" map="form">
+                    <field name="webOn"><default-field title="Web access"><check><option key="Y" text="This node's apps answer on the edge node's address"/></check></default-field></field>
+                    <field name="passthroughNames"><default-field title="Passthrough host names" tooltip="The edge node passes the TLS through unopened, and this node ends it with its own certificate. Separate names with commas"><text-line size="60"/></default-field></field>
+                    <field name="terminateNames"><default-field title="Terminate host names" tooltip="The edge node ends the TLS with its own certificate and forwards each request, and shows an offline page while this node is away"><text-line size="60"/></default-field></field>
+                    <field name="mailOn"><conditional-field condition="mailAvailable" title="Mail"><check><option key="Y" text="The edge node takes this node's mail, and sends it"/></check></conditional-field>
+                        <default-field title="Mail"><display text="The edge node takes no mail: its SMTP listener is off"/></default-field></field>
+                    <field name="mailDomains"><conditional-field condition="mailAvailable" title="Mail domains" tooltip="The domains whose MX records name the edge node; Apply lists the DNS records to set"><text-line size="60"/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="systemMail"><conditional-field condition="mailAvailable" title=" "><check><option key="Y" text="The system's own mail goes through the edge node"/></check></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="emailAccountIds"><conditional-field condition="mailAvailable &amp;&amp; accountOptions.length" title="Accounts that send through it">
+                        <check><list-options list="accountOptions" key="${emailAccountId}" text="${emailAddress}"/></check></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="chatOn"><conditional-field condition="chatAvailable &amp;&amp; bridgeOptions.length" title="Chat"><check><option key="Y" text="Chat providers call the edge node's webhooks"/></check></conditional-field>
+                        <conditional-field condition="chatAvailable" title="Chat"><display text="No chat bridges yet"/></conditional-field>
+                        <default-field title="Chat"><display text="The edge node takes no webhooks"/></default-field></field>
+                    <field name="chatBridgeIds"><conditional-field condition="chatAvailable &amp;&amp; bridgeOptions.length" title="Bridges">
+                        <check><list-options list="bridgeOptions" key="${chatBridgeId}" text="${name}"/></check></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="passOn"><conditional-field condition="passAvailable" title="PASS"><check><option key="Y" text="The edge node serves the public sites"/></check></conditional-field>
+                        <default-field title="PASS"><display text="The edge node has no mr-pass"/></default-field></field>
+                    <field name="passSites"><conditional-field condition="passAvailable &amp;&amp; hasSites" title="Sites">
+                        <check><list-options list="siteOptions" key="${siteId}" text="${name}"/></check></conditional-field>
+                        <conditional-field condition="passAvailable" title="Site ids" tooltip="The PASS sites the edge node serves, separated by commas"><text-line size="40"/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field name="passCallback"><conditional-field condition="passAvailable" title="SSO callback" tooltip="The frontend's sign-in callback, such as https://forum.example.com/account/Sso"><text-line size="60"/></conditional-field>
+                        <default-field><ignored/></default-field></field>
+                    <field-layout>
+                        <field-group title="Web access"><field-ref name="webOn"/><field-ref name="passthroughNames"/><field-ref name="terminateNames"/></field-group>
+                        <field-group title="Mail"><field-ref name="mailOn"/><field-ref name="mailDomains"/><field-ref name="systemMail"/><field-ref name="emailAccountIds"/></field-group>
+                        <field-group title="Chat"><field-ref name="chatOn"/><field-ref name="chatBridgeIds"/></field-group>
+                        <field-group title="PASS"><field-ref name="passOn"/><field-ref name="passSites"/><field-ref name="passCallback"/></field-group>
+                    </field-layout>
+                </form-single>
+                <section name="Merged" condition="mergedText"><widgets>
+                    <label type="p" text="Added the names the edge node has for this node now: ${mergedText}. A name taken out of the lists is removed from the edge node when you apply." style="text-warning q-mt-md q-mb-none"/>
+                </widgets></section>
+                <section name="SystemHost" condition="systemHasHost"><widgets>
+                    <label type="p" text="The system's mail has a server of its own now. Choose it to go through the edge node instead; unpairing puts the server back." style="m-muted q-mt-md q-mb-none"/>
+                </widgets></section>
+                <section name="NotAvailable" condition="notAvailableText"><widgets>
+                    <label type="p" text="Not available on edge nodes yet: ${notAvailableText}." style="m-muted q-mt-md q-mb-none"/>
+                </widgets></section>
+            </box-body></container-box>
+            <container-box><box-header title="The edge node offers"/><box-body>
+                <form-single name="EdgeOfferView" map="offerText">
+                    <field name="publicNamesText"><default-field title="Its names"><display/></default-field></field>
+                    <field name="mailText"><default-field title="Mail"><display/></default-field></field>
+                    <field name="chatText"><default-field title="Webhooks"><display/></default-field></field>
+                    <field name="passText"><default-field title="PASS"><display/></default-field></field>
+                    <field-layout>
+                        <field-row><field-ref name="publicNamesText"/><field-ref name="mailText"/></field-row>
+                        <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
+                    </field-layout>
+                </form-single>
+                <label type="p" text="Next keeps these choices for Apply. Nothing is changed yet." style="text-caption m-muted q-mb-none q-mt-sm"/>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

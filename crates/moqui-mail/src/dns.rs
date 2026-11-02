@@ -13,8 +13,8 @@
  */
 
 //! The DNS of mail (plans/Edge-Node.md §5.4, E5b): the resolver that SPF, DKIM, DMARC and ARC verification query
-//! ([`super::auth`]), and the MX, A and AAAA lookups of the edge node's MX delivery ([`super::mx`]). E10's DNS checks use
-//! [`txt`], [`mx`] and [`ips`] too.
+//! ([`super::auth`]), and the MX, A and AAAA lookups of the edge node's MX delivery ([`super::mx`]). E10's DNS checks
+//! ([`super::edge_dns`]) use [`txt`], [`mx`] and [`ips`] too.
 //!
 //! The resolver is hickory's, built from the system's resolver configuration (Cloudflare when there is none), with its
 //! answers kept in a [`Records`] cache until their TTL. It runs on a small Tokio runtime of this crate's own, so the
@@ -114,6 +114,8 @@ pub struct Records {
     ipv4: Answers<Box<str>, Answer<Ipv4Addr>>,
     ipv6: Answers<Box<str>, Answer<Ipv6Addr>>,
     ptr: Answers<IpAddr, Answer<Box<str>>>,
+    /// The fixed TXT records' text, by name, which [`txt`] answers with.
+    raw_txt: Mutex<HashMap<Box<str>, Vec<String>>>,
 }
 
 impl DnsCache for Records {
@@ -166,6 +168,7 @@ impl Records {
             ipv4: Answers::offline(Err(negative)),
             ipv6: Answers::offline(Err(negative)),
             ptr: Answers::offline(Err(negative)),
+            raw_txt: Mutex::new(HashMap::new()),
         }
     }
 
@@ -187,6 +190,11 @@ impl Records {
         }
         .map_err(|err| format!("the TXT record of {name} does not parse: {err}"))?;
         self.txt.insert(fqdn(name), record, Instant::now() + FIXED);
+        let mut raw = lock(&self.raw_txt);
+        let texts = raw.entry(fqdn(name)).or_default();
+        if !texts.iter().any(|kept| kept == text) {
+            texts.push(text.to_string());
+        }
         Ok(())
     }
 
@@ -330,12 +338,15 @@ pub fn records() -> &'static Records {
     })
 }
 
-/// The TXT records of `name`, each with its strings joined.
+/// The TXT records of `name`, each with its strings joined: the fixed ones when `name` has any.
 ///
 /// # Errors
 ///
 /// Returns why when the lookup failed; a name with no TXT records is an empty list.
 pub fn txt(name: &str) -> Result<Vec<String>, String> {
+    if let Some(fixed) = lock(&records().raw_txt).get(&fqdn(name)) {
+        return Ok(fixed.clone());
+    }
     if offline() {
         return Ok(Vec::new());
     }

@@ -16,9 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     (org.moqui.impl.EdgeServices.check#EdgeNode, as step 1 kept it in the session; asked again for an address step 1 did
     not check): its name, the fingerprint of its link key (told over the
     WebPKI-checked web certificate), its versions, public names and
-    features, and whether its link protocol fits this node's. Pair (pair#EdgeNode) pairs with the code from step 1, kept
+    features, and whether its link protocol fits this node's. Next (pair#EdgeNode) pairs with the code from step 1, kept
     in the session, refusing an edge node whose fingerprint is not the one shown here; it writes the link's settings to
-    runtime/.env, brings the link up and shows the status. When the session lost the code, it is asked for here. -->
+    runtime/.env, brings the link up, and goes on to Discover. When the session lost the code, it is asked for here. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Connect" default-menu-index="2" menu-image="sym_o_link" menu-image-type="icon">
 
@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script>
             <if condition="!ec.message.hasError()"><message type="success">Paired with the edge node</message></if>
         </actions>
-        <default-response url="../../Status"/>
+        <default-response url="."/>
         <error-response url="."/>
     </transition>
 
@@ -105,7 +105,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
                 <section name="Compatible" condition="compatible"><widgets>
-                    <label type="p" text="The edge node's web certificate checked out, and it told this link key fingerprint over it. Pair pins it: this node then links only to that key, and the edge node only to this node's own new key. A renewed web certificate does not change it." style="m-muted q-mt-md q-mb-none"/>
+                    <label type="p" text="The edge node's web certificate checked out, and it told this link key fingerprint over it. Next pairs and pins it: this node then links only to that key, and the edge node only to this node's own new key. A renewed web certificate does not change it." style="m-muted q-mt-md q-mb-none"/>
                 </widgets></section>
                 <section name="Incompatible" condition="!compatible"><widgets>
                     <label type="p" text="${compatibleMessage || 'The versions are too far apart to link. Upgrade the older of the two.'}" style="text-warning q-mt-md q-mb-none"/>

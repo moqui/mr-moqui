@@ -51,6 +51,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="linkVersion" type="number-integer"/>
         <field name="features" type="text-medium"/>
         <field name="nodeName" type="text-medium"/>
+        <field name="setupJson" type="text-long"><description>What the node's last Configure (the Edge Node wizard's
+            Apply, plans/Edge-Node.md §5.7) set besides its host names: a JSON object of mailDomains, chatBridgeIds and
+            passSites, checked as input from any client.</description></field>
+        <field name="setupDate" type="date-time"/>
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
         <index name="EDGE_CLIENT_KEY"><index-field name="keyFingerprint"/></index>
     </entity>

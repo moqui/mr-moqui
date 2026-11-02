@@ -44,6 +44,8 @@ pub mod delivery;
 mod discover;
 #[cfg(feature = "imap")]
 pub mod dns;
+#[cfg(feature = "imap")]
+pub mod edge_dns;
 pub mod edge_mail;
 #[cfg(feature = "imap")]
 mod export;
@@ -112,6 +114,7 @@ fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), Strin
     rust_service!(map, deliver_edge_outbound_mail)?;
     rust_service!(map, note_edge_mail_status)?;
     rust_service!(map, fail_edge_outbound_mail)?;
+    rust_service!(map, check_edge_dns)?;
     #[cfg(feature = "imap")]
     {
         rust_service!(map, deliver_edge_mail)?;
@@ -172,6 +175,19 @@ mail_service!(deliver_edge_mail, edge_mail::deliver_edge_mail);
 #[cfg(feature = "imap")]
 mail_service!(get_dkim_record, auth::get_dkim_record);
 #[cfg(feature = "imap")]
+mail_service!(check_edge_dns, edge_dns::check_edge_dns);
+
+/// `check#EdgeDns` without `imap`: this build has no resolver for it.
+#[cfg(not(feature = "imap"))]
+fn check_edge_dns(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    Err(LibError::new(
+        "DNS checks need the mail client's resolver, which this build does not have (the imap feature)",
+    ))
+}
+#[cfg(feature = "imap")]
 mail_service!(poll_server, inbound::poll_server);
 #[cfg(feature = "imap")]
 mail_service!(sync_account, sync::sync_account_service);
@@ -221,7 +237,7 @@ mod tests {
         let registered: Vec<&str> = map.keys().copied().collect();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
         let mut named = Vec::new();
-        for file in ["EmailServices.xml", "EmailClientServices.xml"] {
+        for file in ["EmailServices.xml", "EmailClientServices.xml", "EdgeServices.xml"] {
             let text = std::fs::read_to_string(dir.join(file)).unwrap();
             named.extend(
                 text.split("location=\"")

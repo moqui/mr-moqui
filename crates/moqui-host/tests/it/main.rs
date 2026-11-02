@@ -49,6 +49,7 @@ mod edge_chat;
 mod edge_link;
 mod edge_mail;
 mod edge_pass;
+mod edge_setup;
 mod edge_web;
 mod edge_work;
 mod elfinder;

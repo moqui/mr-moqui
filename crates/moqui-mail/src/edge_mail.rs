@@ -464,6 +464,13 @@ pub(super) fn enqueue_outbound(
         return Err(Error::new("a message for the edge node needs a recipient"));
     }
     let factory = current_factory().map_err(Error::from)?;
+    // after unpairing nothing queues for whichever edge node comes next: the send fails, retryable, and the message
+    // stays in the Outbox (plans/Edge-Node.md §5.7)
+    if !moqui_core::edge::settings(&factory).edge_node && !moqui_core::edge::setup::is_paired(facade) {
+        return Err(Error::new(
+            "this node is not paired with an edge node, so mail for its edge: server is not queued",
+        ));
+    }
     let payload = serde_json::json!({
         "emailMessageId": email_message_id,
         "messageId": message_id,

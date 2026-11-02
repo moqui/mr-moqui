@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Pair step 5, test (plans/Edge-Node.md §5.7; modeled on MailAccounts Add/Test.xml): the areas chosen in Discover,
+    end to end, each with a pass or fail line (org.moqui.impl.EdgeServices.test#EdgeSetup): the link is up; mail in
+    (the edge node takes mail for the first chosen account's address, and its answer comes back on the queue as
+    inbound mail does) and mail out (it takes this node's mail, through the EDGE mail server); chat (it takes the
+    chosen bridges' webhooks); PASS (the client settings are there and the edge node has mr-pass). No outside mail or
+    provider is needed. A check with nothing to check (no account, no bridge) says it was not checked. The test runs
+    once when the step first shows after Apply, and its result is kept in the session, so a failed Finish shows the
+    same result without asking the edge node again; Test again runs it again. Finish goes to the status when the test
+    passed, or with "Continue anyway", and forgets the wizard's choices. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Test" default-menu-index="5" menu-image="sym_o_network_check" menu-image-type="icon">
+
+    <transition name="confirmTest">
+        <actions><script><![CDATA[
+            if (testPassed !== 'Y' && continueAnyway !== 'Y') ec.message.addValidationError(null, 'continueAnyway', null,
+                ec.l10n.localize('The test did not pass: go back to fix the setup, or choose Continue anyway'), null)
+            if (!ec.message.hasError()) {
+                ec.web.sessionAttributes.remove('edgeSetup')
+                ec.web.sessionAttributes.remove('edgeApplied')
+                ec.web.sessionAttributes.remove('edgeTested')
+            }
+        ]]></script></actions>
+        <default-response url="../../Status"/>
+        <error-response url="."/>
+    </transition>
+    <transition name="testAgain">
+        <actions><script>ec.web.sessionAttributes.remove('edgeTested')</script></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        notBuilt = link.state === 'notBuilt'
+        notStarted = link.state === 'notStarted'
+        const running = !notBuilt && !notStarted
+        isEdge = running && link.nodeRole === 'edge'
+        notPaired = running && !isEdge && (!link.state || link.state === 'unpaired')
+        let choices = null
+        try { choices = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { choices = null }
+        noChoices = running && !isEdge && !notPaired && !choices
+        ready = running && !isEdge && !notPaired && !!choices
+        testRows = []
+        testError = ''
+        passed = false
+        if (!ready) return
+        // the address mail in is checked for: the first chosen account's
+        const firstAccount = (choices.emailAccountIds || [])[0]
+        const account = firstAccount ? ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', firstAccount)
+            .disableAuthz().one() : null
+        // the result of this visit's test, else a new one; a probe (Practices-App-Dev §4): a failure is shown, not raised
+        let out = null
+        try { out = JSON.parse(ec.web.sessionAttributes.edgeTested || 'null') } catch (e) { out = null }
+        if (!out) {
+            ec.message.pushErrors()
+            try {
+                const tested = ec.service.sync().name('org.moqui.impl.EdgeServices.test#EdgeSetup').parameters({
+                    mailOn: !!choices.mailOn, mailAddress: account?.emailAddress || '',
+                    systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
+                    chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
+                    passOn: !!choices.passOn, passSites: choices.passSites || []}).call() || {}
+                if (ec.message.hasError()) testError = ec.message.getErrorsString()
+                out = {passed: tested.passed === true, testList: Array.from(tested.testList || []).map((test) =>
+                    ({label: test.label, message: test.message, ok: test.ok === true, checked: test.checked !== false}))}
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+            if (!testError) ec.web.sessionAttributes.edgeTested = JSON.stringify(out)
+        }
+        passed = !testError && out.passed === true
+        testRows = Array.from(out.testList || []).map((test) => ({label: test.label, message: test.message,
+            stateLabel: !test.checked ? L('Not checked') : test.ok ? L('Passed') : L('Failed'),
+            stateColor: !test.checked ? 'grey' : test.ok ? 'positive' : 'negative'}))
+        confirm = {testPassed: passed ? 'Y' : 'N', continueAnyway: ''}
+    ]]></script></actions>
+    <widgets>
+        <section name="NotBuilt" condition="notBuilt"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This build has no edge link. The Maximal and Enterprise packages have it." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotStarted" condition="notStarted"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="The edge link starts with the HTTPS listener, and it is not running in this process." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="IsEdge" condition="isEdge"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="This node is an edge node. Local nodes pair with it in Edge Clients." style="q-mb-none"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NotPaired" condition="notPaired"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Pair with an edge node first." style="q-mb-sm"/>
+                <link url="../EdgeUrl" text="Edge node" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="NoChoices" condition="noChoices"><widgets>
+            <container-box type="warning"><box-body>
+                <label type="p" text="Choose what to set up first." style="q-mb-sm"/>
+                <link url="../Discover" text="Discover" icon="sym_o_arrow_back"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="Result" condition="ready"><widgets>
+            <container-box type="${passed ? 'success' : 'danger'}"><box-header title="${passed ? 'It works' : 'It did not work yet'}"/>
+                <box-toolbar>
+                    <link url="testAgain" link-type="hidden-form" text="Test again" icon="sym_o_refresh"/>
+                </box-toolbar>
+                <box-body>
+                    <section name="TestError" condition="testError"><widgets>
+                        <label type="p" text="${testError}" style="text-negative"/>
+                    </widgets></section>
+                    <form-list name="TestLines" list="testRows" skip-form="true" paginate="false">
+                        <field name="label"><default-field title="Check"><display style="text-weight-medium"/></default-field></field>
+                        <field name="state"><default-field title="Result"><render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateLabel}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateLabel})}]]></text>
+                        </render-mode></default-field></field>
+                        <field name="message"><default-field title="What it found"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="label"/><field-ref name="message"/></column>
+                            <column><field-ref name="state"/></column>
+                        </columns>
+                    </form-list>
+                    <section name="FixLink" condition="!passed"><widgets>
+                        <link url="../Apply" text="Back to Apply" icon="sym_o_arrow_back"/>
+                    </widgets></section>
+                    <form-single name="SetupTestConfirm" transition="confirmTest" map="confirm">
+                        <field name="testPassed"><default-field><hidden/></default-field></field>
+                        <field name="continueAnyway"><conditional-field condition="!passed" title="">
+                            <check><option key="Y" text="Continue anyway: the status shows the link, and each area says what is wrong until it is fixed"/></check></conditional-field>
+                            <default-field><hidden/></default-field></field>
+                    </form-single>
+                </box-body>
+            </container-box>
+        </widgets></section>
+    </widgets>
+</screen>

@@ -21,8 +21,9 @@ Each runs in the moqui binary; external servers are options, not requirements (�
 The framework app is BasicComms. IronStone Comms in mr-boss stays the full app. It mounts the BasicComms screens and
 adds BOSS's parts by screen-extend and providers (§3.4).
 
-Email moves with the rest; this plan adds no new mail features. Its known limitations, and the outstanding live sync
-and OAuth checks, remain in [Remaining-Work, Mail](Remaining-Work.md#mail).
+Email moves with the rest; this plan adds no new mail features. The new mail work, the MTA in moqui on an edge node and
+filtering in moqui, is in [Edge-Node](Edge-Node.md) §5.4 (E5a, E5b, E11). Its known limitations, and the outstanding
+live sync and OAuth checks, remain in [Remaining-Work, Mail](Remaining-Work.md#mail).
 
 Sections: [1 starting point](#1-starting-point) · [2 scope](#2-scope) · [3 the framework Comms app](#3-the-framework-comms-app) ·
 [4 chat protocols](#4-chat-protocols) · [5 voice](#5-voice) · [6 web conferencing](#6-web-conferencing) ·
@@ -457,6 +458,11 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     `/xmpp-websocket` (RFC 7395).
   - **C3b, federation:** server to server on 5269 with TLS and SASL EXTERNAL, with dialback (XEP-0220) as the fallback.
     Remote users reach only rooms with federation on (§4.4).
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.4, E9). A local server behind an edge node takes s2s
+      on the edge node: the edge node holds the 5269 listener, its TLS and dialback, and checks the remote server;
+      stanzas for local users are queued to the local node over the link, so they wait while it is away, and the local
+      node's stanzas go out through the edge node. Client connections (5222, 5223, `/xmpp-websocket`) are tunneled to
+      the local node until then, and fail while it is away. Room and user state stay on the local node.
   - **Sign-in:** an app password (`UserAppPassword`, as DAV and git use).
     - Today's app-password hash is unsalted SHA-256, which cannot answer SCRAM. An app password made for XMPP also
       stores salted SCRAM-SHA-256 verifiers.
@@ -498,6 +504,12 @@ The appservice (C2) and Slack, Teams and Discord (C5) come when a deployment nee
     - C7's key endpoints (§4.5).
   - **C6b, federation:** signing keys, event signing, the room DAG, state resolution v2, backfill and media, on 8448 or
     443 with `.well-known` delegation (§6.5).
+    - **Split with an edge node** ([Edge-Node](Edge-Node.md) §5.2, §5.4). The federation endpoint is public, so on a
+      local server behind an edge node it is reached through the edge node: incoming transactions are checked there
+      (signatures, the origin server's keys, replicated from the local node's view of the room) and queued for the local
+      node, which keeps the room DAG, state resolution and the signing key. The edge node answers key queries from its
+      copy while the local node is away; backfill and state queries need the local node and fail while it is away.
+      The client-server API (C6a) goes to the local node through web access. Design this split with C6b.
   - **C6c, appservices:** so mautrix bridges (WhatsApp, Signal, Telegram, Meta, Google Messages and others) attach to
     Moqui as to any homeserver.
     - Each is a separate AGPL process with its own Postgres (D-C4).

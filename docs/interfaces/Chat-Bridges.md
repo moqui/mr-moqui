@@ -151,6 +151,14 @@ configuration is encrypted and never returned; the inbound token is kept only as
 mapping of an external room per bridge; no direct conversation) and `end#RoomBridge`. System, Chat Bridges lists the
 bridges and the failed deliveries with Send again, and disables or enables a bridge.
 
+**Behind an edge node** ([plan](../../plans/Edge-Node.md) §5.4). A network's webhook URL is the edge node's,
+`/channels/{chatBridgeId}/webhook`; the edge node checks the request with the bridge's replicated copy (its type,
+adapter, status and webhook key, never `configJson`) and queues it, and the local node applies it through the adapter's
+`apply_webhook` with the same input checks and dedupe. Files a message sends by address (MMS) are put on the edge node
+and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels_public_url` names the edge
+node; the Edge Node wizard sets it and lists each bridge's webhook URL ([SMS](SMS.md) has the steps). Networks that
+only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node.
+
 While the copies the chat actors migration kept are there (`CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1`,
 `CHAT_POLL_VOTE_PRE_C1`), System, Chat Bridges lists them with their rows and the table's (`get#PreC1Backups`) and has
 Drop the old copies (`drop#PreC1Backups`, both `ChatBridgeAdmin`, in `chat_migrate.rs`). Each table is checked again

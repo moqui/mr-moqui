@@ -1,4 +1,4 @@
-// The edge link's System screens (plans/Edge-Node.md §5.2, §5.3, §5.7): Edge Node (its status, and the Pair wizard's two steps)
+// The edge link's System screens (plans/Edge-Node.md §5.2, §5.3, §5.7): Edge Node (its status, and the Pair wizard's five steps)
 // and Edge Clients (with its host names, queues and replicated sets) render in qvt and tui with no error, each with the text of
 // this node's case: no link in this process (a build without it, or one where no HTTP listener started it), a local node not
 // paired yet, or an edge node (node_role=edge). The queue's services, which need no link, are checked in every case.
@@ -125,6 +125,53 @@ feature("Connect shows the answer step 1 kept in the session, and asks the edge 
     }
 })
 
+// Discover's choices go in the session, never a URL (plans/Edge-Node.md §5.7); its transition needs no link.
+feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, and asks Apply again", {
+    when() {
+        const test = ec.screen.makeTest().rootScreen(systemRoot).renderMode("qvt").withStaticData()
+        const post = (parameters) => {
+            ec.web.sessionAttributes.remove("edgeSetup")
+            const out = test.render("EdgeNode/Pair/Discover/chooseSetup", parameters, "post")
+            const errors = out.errorMessages.join(" | ")
+            ec.message.clearErrors()
+            return {errors, kept: JSON.parse(ec.web.sessionAttributes.edgeSetup || "null")}
+        }
+        const none = post({})
+        const noName = post({webOn: "Y", passthroughNames: ""})
+        const local = post({webOn: "Y", passthroughNames: "localhost"})
+        ec.web.sessionAttributes.edgeApplied = JSON.stringify({lines: [], configured: true})
+        const chosen = post({
+            webOn: "Y",
+            passthroughNames: "ERP.example.com, app.example.com",
+            mailOn: "Y",
+            mailDomains: "Example.com",
+            systemMail: "Y",
+            emailAccountIds: ["A1", "A2"],
+            chatOn: "",
+            passOn: "Y",
+            passSites: "SITE1",
+            passCallback: "https://forum.example.com/account/Sso"
+        })
+        const appliedAfter = ec.web.sessionAttributes.edgeApplied || null
+        ec.web.sessionAttributes.remove("edgeSetup")
+        return {none, noName, local, chosen, appliedAfter}
+    },
+    then({none, noName, local, chosen, appliedAfter}) {
+        none.errors.includes("at least one area")
+        none.kept == null
+        noName.kept == null
+        local.errors.includes("not a public host name")
+        local.kept == null
+        chosen.errors == ""
+        appliedAfter == null
+        chosen.kept.passthroughNames.join(",") == "erp.example.com,app.example.com"
+        chosen.kept.mailDomains.join(",") == "example.com"
+        chosen.kept.emailAccountIds.join(",") == "A1,A2"
+        chosen.kept.chatOn == false
+        chosen.kept.passSites.join(",") == "SITE1"
+    }
+})
+
 // The queue's services need no link (plans/Edge-Node.md §5.2). A kind this node's edge conf does not list is refused at
 // enqueue, so nothing is queued or delivered; the status answers, and Pause holds delivery until Resume.
 feature("enqueue refuses a kind the edge conf does not list, the status answers, and Pause holds delivery until Resume", {
@@ -165,6 +212,9 @@ feature("Edge Node and Edge Clients render the #nodeCase case in qvt and tui", {
                 EdgeNode: "edge link",
                 "EdgeNode/Pair/EdgeUrl": "edge link",
                 "EdgeNode/Pair/Connect": "address first",
+                "EdgeNode/Pair/Discover": "edge link",
+                "EdgeNode/Pair/Apply": "edge link",
+                "EdgeNode/Pair/Test": "edge link",
                 EdgeClients: "edge link"
             }
         },
@@ -174,6 +224,9 @@ feature("Edge Node and Edge Clients render the #nodeCase case in qvt and tui", {
                 EdgeNode: "Pair with an edge node",
                 "EdgeNode/Pair/EdgeUrl": "Pairing code",
                 "EdgeNode/Pair/Connect": "address first",
+                "EdgeNode/Pair/Discover": "Pair with an edge node first",
+                "EdgeNode/Pair/Apply": "Pair with an edge node first",
+                "EdgeNode/Pair/Test": "Pair with an edge node first",
                 EdgeClients: "This node is not an edge node"
             }
         },
@@ -183,6 +236,9 @@ feature("Edge Node and Edge Clients render the #nodeCase case in qvt and tui", {
                 EdgeNode: "This node is an edge node",
                 "EdgeNode/Pair/EdgeUrl": "This node is an edge node",
                 "EdgeNode/Pair/Connect": "address first",
+                "EdgeNode/Pair/Discover": "This node is an edge node",
+                "EdgeNode/Pair/Apply": "This node is an edge node",
+                "EdgeNode/Pair/Test": "This node is an edge node",
                 EdgeClients: "Replicated sets"
             }
         }
