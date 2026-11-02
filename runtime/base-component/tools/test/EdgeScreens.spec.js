@@ -126,7 +126,7 @@ feature("Connect shows the answer step 1 kept in the session, and asks the edge 
 })
 
 // Discover's choices go in the session, never a URL (plans/Edge-Node.md §5.7); its transition needs no link.
-feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, adds the XMPP domain, takes calls alone, and asks Apply again", {
+feature("Discover keeps the choices in the session, refuses a setup with no area or no public host name, adds the XMPP domain, takes calls or phones alone, and asks Apply again", {
     when() {
         const test = ec.screen.makeTest().rootScreen(systemRoot).renderMode("qvt").withStaticData()
         const post = (parameters) => {
@@ -159,10 +159,14 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         // calls alone is a setup when the form offered it (callsOffered), and no choice when it did not
         const calls = post({callsOffered: "Y", callsOn: "Y"})
         const unoffered = post({callsOn: "Y"})
+        // phones the same way (sipOffered: the edge node's SIP engine was up)
+        const phones = post({sipOffered: "Y", sipOn: "Y"})
+        const phonesOff = post({sipOffered: "Y", webOn: "Y", passthroughNames: "erp.example.com"})
+        const phonesUnoffered = post({sipOn: "Y"})
         ec.web.sessionAttributes.remove("edgeSetup")
-        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered}
+        return {none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered, phones, phonesOff, phonesUnoffered}
     },
-    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered}) {
+    then({none, noName, local, chosen, appliedAfter, xmppDomain, xmpp, calls, unoffered, phones, phonesOff, phonesUnoffered}) {
         none.errors.includes("at least one area")
         none.kept == null
         noName.kept == null
@@ -184,6 +188,16 @@ feature("Discover keeps the choices in the session, refuses a setup with no area
         unoffered.errors.includes("at least one area")
         unoffered.kept == null
         chosen.kept.callsOffered == false
+        chosen.kept.sipOffered == false
+        chosen.kept.sipOn == false
+        phones.errors == ""
+        phones.kept.sipOn == true
+        phones.kept.sipOffered == true
+        phones.kept.callsOn == false
+        phonesOff.kept.sipOffered == true
+        phonesOff.kept.sipOn == false
+        phonesUnoffered.errors.includes("at least one area")
+        phonesUnoffered.kept == null
         xmppDomain ? xmpp.kept.xmppOn && xmpp.kept.passthroughNames.join(",") == "erp.example.com," + xmppDomain
             : xmpp.errors.includes("set xmpp_domain") && xmpp.kept == null
     }

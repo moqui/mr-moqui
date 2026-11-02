@@ -37,8 +37,8 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Comms-Framework.md](Comms-Framework.md): moving Comms from mr-boss to a framework component, `basic-comms`, with app extensions, chat federation and bridges, SIP/PSTN voice, voicemail and SFU conferencing, each embedded in the moqui binary with external servers as options. Decisions are in §8, milestones and acceptance in §7, and the libraries, reference applications and review findings in §10.
 
 **Deployment**
-- [Mobile-Desktop.md](Mobile-Desktop.md): Quasar + Tauri clients, shared Vue and Rust code, bundled and remote screens, offline data and optional local execution, mobile feasibility, and the Capacitor alternative.
-- [Edge-Node.md](Edge-Node.md): a small cloud edge node in front of a local node behind a firewall on a dynamic IP: the link the local node dials out (gRPC both ways), web access, comms at the edge with store and forward, mr-pass on gRPC, MoquiEdgeConf.xml and the attach wizard. Gap analysis, decisions and plan; E0–E4 built; the E4 check passed over REST and gRPC direct, the run on the link is pending.
+- [Mobile-Desktop.md](Mobile-Desktop.md): the qvt client in Tauri, built in order: a desktop local node as an Edge Client (a sidecar, then in process), an offline-capable client of a remote server with sync, then an Android app on that model and iOS; one host transport, device login keys, the call gate per platform, and the Capacitor alternative.
+- [Edge-Node.md](Edge-Node.md): a small cloud edge node in front of a local node behind a firewall on a dynamic IP: the link the local node dials out (gRPC both ways), web access, comms at the edge with store and forward, mr-pass on gRPC, MoquiEdgeConf.xml and the attach wizard. Gap analysis, decisions and plan; E0–E10 built, E11 not yet; the manual checks on a deployed edge node are pending.
 
 **[proposals/](proposals/)**: unbuilt, no code in the workspace; each is digested in Future-Plans.
 - [Messaging.md](proposals/Messaging.md): runtime-reflective FlatBuffers request/response and document subscriptions (1286 lines, 0 of 6 phases).

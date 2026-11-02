@@ -24,7 +24,7 @@
 //!   The secret comes only in the up connection's Hello answer, on a link whose keys both ends pinned; it is never
 //!   logged, stored or shown.
 //! - Its SIP engine (E8) tells its addresses the same way ([`set_sip_advert`]), and the local node keeps its `SipNode`
-//!   row from the Hello.
+//!   row from the Hello; the trunks it loaded, with their state, are for its offer ([`set_sip_trunks`], E10 phones).
 
 use std::sync::Mutex;
 
@@ -79,6 +79,61 @@ pub fn set_sip_advert(factory: &ExecutionContextFactory, advert: Option<SipAdver
 /// What this node's SIP engine advertises, while it runs.
 pub fn sip_advert(factory: &ExecutionContextFactory) -> Option<SipAdvert> {
     lock(&factory.extension(|_| SipAdverts::default()).0).clone()
+}
+
+/// A trunk an edge node's SIP engine loaded (from its copy of `voiceTrunks`), with its state: what its offer tells the
+/// local node (plans/Edge-Node.md §5.7, E10 phones).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SipTrunkState {
+    pub voice_trunk_id: String,
+    pub name: String,
+    /// `loaded` (no answer yet), `registered`, `ok` (a trunk that does not register answered OPTIONS), `failed` or
+    /// `unregistered`.
+    pub state: String,
+    /// Why it failed; empty otherwise.
+    pub error: String,
+}
+
+#[derive(Default)]
+struct SipTrunks(Mutex<Vec<SipTrunkState>>);
+
+/// On an edge node, as its SIP engine loads its trunks (empty as it stops): a new trunk is `loaded` until it answers;
+/// one it had loaded before keeps the state it had, as a reload (any batch of `voiceTrunks`) does not make a failing
+/// trunk work.
+pub fn set_sip_trunks(factory: &ExecutionContextFactory, trunks: Vec<SipTrunkState>) {
+    let slot = factory.extension(|_| SipTrunks::default());
+    let mut held = lock(&slot.0);
+    let merged = merge_sip_trunks(&held, trunks);
+    *held = merged;
+}
+
+/// `trunks` with the state of each one `before` had (by id).
+pub fn merge_sip_trunks(before: &[SipTrunkState], trunks: Vec<SipTrunkState>) -> Vec<SipTrunkState> {
+    trunks
+        .into_iter()
+        .map(|mut trunk| {
+            if let Some(old) = before.iter().find(|old| old.voice_trunk_id == trunk.voice_trunk_id) {
+                trunk.state.clone_from(&old.state);
+                trunk.error.clone_from(&old.error);
+            }
+            trunk
+        })
+        .collect()
+}
+
+/// On an edge node, a trunk's registration or ping answered: its state now.
+pub fn note_sip_trunk(factory: &ExecutionContextFactory, voice_trunk_id: &str, state: &str, error: &str) {
+    let slot = factory.extension(|_| SipTrunks::default());
+    let mut trunks = lock(&slot.0);
+    if let Some(trunk) = trunks.iter_mut().find(|trunk| trunk.voice_trunk_id == voice_trunk_id) {
+        trunk.state = state.to_string();
+        trunk.error = error.to_string();
+    }
+}
+
+/// The trunks this node's SIP engine has loaded now, with their state.
+pub fn sip_trunks(factory: &ExecutionContextFactory) -> Vec<SipTrunkState> {
+    lock(&factory.extension(|_| SipTrunks::default()).0).clone()
 }
 
 /// The edge node's TURN secret on a local node, by the edge node's instance id.

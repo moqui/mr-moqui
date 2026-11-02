@@ -66,6 +66,7 @@ fn expected() -> Expected {
         xmpp: XmppExpected::default(),
         turn_hosts: Vec::new(),
         media_ip: None,
+        sip: SipExpected::default(),
     }
 }
 
@@ -194,8 +195,8 @@ fn records_that_name_the_edge_node_pass_and_others_say_why_not() {
         "a failed lookup is a row that says so: {broken:?}"
     );
     assert!(
-        rows.iter().any(|row| row.later && row.name == "_sips._tcp.example.com"),
-        "the SIP records are listed for later"
+        !rows.iter().any(|row| row.name.starts_with("_sip")),
+        "no SIP records without a SIP domain, and none per mail domain: {rows:?}"
     );
     assert!(
         !rows.iter().any(|row| row.name.starts_with("_xmpp")),
@@ -278,6 +279,54 @@ fn the_xmpp_domains_client_srv_records_name_the_edge_node_and_its_tunnel_ports()
         .find(|row| row.name == "_xmpp-client._tcp.none.example.com")
         .unwrap();
     assert!(!missing.ok && missing.found.is_empty(), "{missing:?}");
+}
+
+#[test]
+fn the_sip_domains_srv_records_name_the_edge_node_and_its_sip_ports() {
+    let sip = |domain: &str, port: u16, tls_port: u16| Expected {
+        sip: SipExpected {
+            domain: domain.to_string(),
+            hosts: vec!["edge.example.net".to_string()],
+            port,
+            tls_port,
+        },
+        ..expected()
+    };
+    let mut fixed = Fixed::default();
+    fixed.srv.insert(
+        "_sips._tcp.sip.example.com".into(),
+        vec![srv(0, 5061, "Edge.example.net.")],
+    );
+    fixed.srv.insert(
+        "_sip._udp.sip.example.com".into(),
+        vec![srv(0, 5070, "edge.example.net")],
+    );
+    fixed.broken.push("_sip._tcp.sip.example.com".into());
+    let rows = check(&[], &[], &sip("SIP.example.com", 5060, 5061), &fixed);
+    let tls = rows
+        .iter()
+        .find(|row| row.name == "_sips._tcp.sip.example.com")
+        .unwrap();
+    assert!(tls.ok && tls.expected == "0 5 5061 edge.example.net", "{tls:?}");
+    let udp = rows.iter().find(|row| row.name == "_sip._udp.sip.example.com").unwrap();
+    assert!(!udp.ok && udp.note.contains("port 5060 (UDP)"), "another port: {udp:?}");
+    let tcp = rows.iter().find(|row| row.name == "_sip._tcp.sip.example.com").unwrap();
+    assert!(!tcp.ok && tcp.note.contains("timed out"), "{tcp:?}");
+    // a listener that is off has no records; a missing record says what it is for
+    let rows = check(&[], &[], &sip("sip.example.org", 0, 5061), &fixed);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(
+        rows[0].name == "_sips._tcp.sip.example.org" && !rows[0].ok && rows[0].note.contains("Phones over TLS"),
+        "{rows:?}"
+    );
+    // a realm that is no DNS name (an address, or moqui) has no SRV records to check
+    for realm in ["203.0.113.5", "moqui"] {
+        let rows = check(&[], &[], &sip(realm, 5060, 5061), &fixed);
+        assert!(
+            rows.len() == 1 && rows[0].later && rows[0].note.contains("sip_domain"),
+            "{realm}: {rows:?}"
+        );
+    }
 }
 
 #[test]

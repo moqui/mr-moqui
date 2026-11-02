@@ -328,6 +328,7 @@ impl Drop for SipNode {
         self.stop.store(true, Ordering::Release);
         if let Some(factory) = self.advertised.take().and_then(|factory| factory.upgrade()) {
             moqui_core::edge::media::set_sip_advert(&factory, None);
+            moqui_core::edge::media::set_sip_trunks(&factory, Vec::new());
         }
         *lock(engine()) = None;
         self.ua.shutdown();
@@ -998,6 +999,8 @@ impl Engine {
             }
         }
         let mut trunks = Vec::new();
+        // on an edge node, the trunks loaded for its offer (E10 phones), each loaded until it answers
+        let mut loaded = Vec::new();
         self.trunks.clear();
         if let Some(Json::Array(list)) = config.get("trunkList") {
             for trunk in list {
@@ -1008,6 +1011,12 @@ impl Engine {
                     continue;
                 };
                 let srtp = text(trunk, "mediaEncryption") != "plain";
+                loaded.push(moqui_core::edge::media::SipTrunkState {
+                    voice_trunk_id: id.clone(),
+                    name: text(trunk, "name"),
+                    state: "loaded".to_string(),
+                    error: String::new(),
+                });
                 self.trunks.insert(
                     id.clone(),
                     TrunkInfo {
@@ -1039,6 +1048,9 @@ impl Engine {
             }
         }
         tracing::info!("SIP: {} trunks", trunks.len());
+        if self.edge {
+            moqui_core::edge::media::set_sip_trunks(&self.factory, loaded);
+        }
         self.ua.set_trunks(trunks).await;
         true
     }
@@ -1104,6 +1116,9 @@ impl Engine {
                     TrunkState::Failed(err) => ("failed", err),
                     TrunkState::Unregistered => ("unregistered", String::new()),
                 };
+                if self.edge {
+                    moqui_core::edge::media::note_sip_trunk(&self.factory, &trunk, status, &error);
+                }
                 self.note(
                     NOTE_TRUNK_SERVICE,
                     serde_json::json!({"voiceTrunkId": trunk, "status": status, "errorText": error}),

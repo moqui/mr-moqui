@@ -16,7 +16,9 @@
 //! each set's batches up (`Link.Replicate`): first an empty batch at the cursor, then the keys noted since, read as
 //! they are after their commits, and the whole set when the edge node asks for it or none was sent in this process
 //! yet. The state (noted keys, epochs, cursors) is `moqui_core::edge::replica`; the edge node's side applies a batch
-//! with `moqui_core::edge::replica::apply_batch`.
+//! with `moqui_core::edge::replica::apply_batch`. A set the local node holds back (`moqui_core::edge::sip::withheld`:
+//! the trunks and fallbacks while phones are off, plans/Edge-Node.md §5.7 E10 phones) is sent empty, so the edge node's
+//! copy is emptied, and its changes are dropped; it is sent whole again when that changes.
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -113,16 +115,28 @@ impl Sender {
         // per set: consecutive failures, and when it may be tried again
         let mut failures = vec![0_u32; sets];
         let mut not_before = vec![tokio::time::Instant::now(); sets];
+        let held = |index: usize, replica: &Replica| {
+            replica
+                .sets()
+                .get(index)
+                .is_some_and(|set| moqui_core::edge::sip::withheld(&set.name))
+        };
         loop {
             let notified = wake.notified();
             let mut busy = false;
             for index in 0..sets {
+                // a set held back, or let go again, goes whole (empty while held back): compared with what its last
+                // full send was, kept with the set's state, so no change of the setting is missed
+                let holding = held(index, &self.replica);
+                self.replica.hold(index, holding);
                 let now = tokio::time::Instant::now();
                 if not_before[index] > now {
                     continue;
                 }
                 // a panic in a step is caught and logged, and the set is tried again (docs/dev/Practices-Rust.md §8)
-                let stepped = std::panic::AssertUnwindSafe(self.step(index)).catch_unwind().await;
+                let stepped = std::panic::AssertUnwindSafe(self.step(index, holding))
+                    .catch_unwind()
+                    .await;
                 let error = match stepped {
                     Ok(Ok(worked)) => {
                         busy |= worked;
@@ -160,8 +174,9 @@ impl Sender {
         }
     }
 
-    /// Send what set `index` has waiting: true when something was sent.
-    async fn step(&mut self, index: usize) -> Result<bool, String> {
+    /// Send what set `index` has waiting: true when something was sent. A set `withheld` sends no records: its full
+    /// send is empty and its changes are dropped.
+    async fn step(&mut self, index: usize, withheld: bool) -> Result<bool, String> {
         let Some(set) = self.replica.sets().get(index).cloned() else {
             return Ok(false);
         };
@@ -184,6 +199,11 @@ impl Sender {
                         self.replica.resync(index);
                     }
                 }
+                Ok(true)
+            }
+            Work::Changes { epoch, acked, .. } if withheld => {
+                // nothing of a set held back goes: its copy there is empty
+                self.replica.acked(index, &epoch, acked);
                 Ok(true)
             }
             Work::Changes { epoch, acked, keys } => {
@@ -231,9 +251,15 @@ impl Sender {
                 Ok(true)
             }
             Work::Snapshot { epoch, resyncs } => {
-                match self.snapshot(&set, &epoch).await {
+                match self.snapshot(&set, &epoch, withheld).await {
+                    Ok(seq) if withheld => {
+                        tracing::info!("Edge replication: set {} sent empty, as it is held back", set.name);
+                        self.replica.sent_whole(index, true);
+                        self.replica.snapshot_done(index, &epoch, seq, resyncs);
+                    }
                     Ok(seq) => {
                         tracing::info!("Edge replication: set {} sent whole ({seq} batches)", set.name);
+                        self.replica.sent_whole(index, false);
                         self.replica.snapshot_done(index, &epoch, seq, resyncs);
                     }
                     Err(err) => {
@@ -247,10 +273,11 @@ impl Sender {
     }
 
     /// Send `set` whole under `epoch`, page by page in key order (each page in parts by size), then the end: the
-    /// last batch's sequence.
-    async fn snapshot(&mut self, set: &moqui_core::edge::ReplicaSet, epoch: &str) -> Result<u64, String> {
+    /// last batch's sequence. With `empty`, only the end goes, which removes every record of the set there.
+    async fn snapshot(&mut self, set: &moqui_core::edge::ReplicaSet, epoch: &str, empty: bool) -> Result<u64, String> {
         let mut seq = 0_u64;
-        for entity_index in 0..set.entities.len() {
+        let entities = if empty { 0 } else { set.entities.len() };
+        for entity_index in 0..entities {
             let mut after: Option<Vec<(String, moqui_lib::object::Value)>> = None;
             loop {
                 let paging = (set.clone(), after.take());

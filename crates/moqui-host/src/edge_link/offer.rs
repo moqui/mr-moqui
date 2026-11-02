@@ -22,15 +22,18 @@
 use std::net::IpAddr;
 
 use moqui_core::context::ExecutionContextFactory;
+use moqui_core::edge::media::SipTrunkState;
 use moqui_core::edge::setup::{
-    self, CallsOffer, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, XmppOffer,
+    self, CallsOffer, ChatOffer, Configured, EdgeOffer, EdgeSetup, HostResult, MailOffer, PassOffer, SipOffer,
+    XmppOffer,
 };
 use moqui_core::edge::{EdgeHostInfo, HOST_PASSTHROUGH, HOST_TERMINATE};
 use moqui_lib::error::Error;
 
 use super::proto::{
     CallsOffer as ProtoCalls, ChatOffer as ProtoChat, ConfigureReply, ConfigureRequest, HostSetting,
-    MailOffer as ProtoMail, Offer, PassOffer as ProtoPass, WebOffer, XmppOffer as ProtoXmpp, XmppSetup,
+    MailOffer as ProtoMail, Offer, PassOffer as ProtoPass, SipOffer as ProtoSip, SipTrunk, WebOffer,
+    XmppOffer as ProtoXmpp, XmppSetup,
 };
 use super::{hosts, store, EdgeConfig};
 
@@ -135,15 +138,37 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
                 None => ProtoCalls::default(),
             },
         ),
+        // the SIP engine as it advertises itself (E8), and the trunks it loaded (E10 phones)
+        sip: Some(match moqui_core::edge::media::sip_advert(factory) {
+            Some(advert) => ProtoSip {
+                available: true,
+                sip_address: advert.sip_address,
+                tls_address: advert.tls_address,
+                domain: advert.domain,
+                registrar: advert.registrar,
+                trunks: moqui_core::edge::media::sip_trunks(factory)
+                    .into_iter()
+                    .map(|trunk| SipTrunk {
+                        voice_trunk_id: trunk.voice_trunk_id,
+                        name: trunk.name,
+                        state: trunk.state,
+                        error: trunk.error,
+                    })
+                    .collect(),
+                fallbacks: 0,
+                other_nodes: false,
+            },
+            None => ProtoSip::default(),
+        }),
         not_available: setup::NOT_AVAILABLE.iter().map(|area| (*area).to_string()).collect(),
         addresses,
         node_hosts: Vec::new(),
     }
 }
 
-/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat, pass, xmpp and calls when they
-/// are set up. Calls are named as of now; the Hello adds them as the media socket comes up after the link
-/// (`accept.rs` `hello`).
+/// The areas this edge node offers, by name, for its Hello: web always, and mail, chat, pass, xmpp, calls and sip when
+/// they are set up. Calls and sip are named as of now; the Hello adds them as the media socket or the SIP engine comes
+/// up after the link (`accept.rs` `hello`).
 pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let offer = base_offer(factory, config);
     let mut areas = vec!["web".to_string()];
@@ -162,11 +187,43 @@ pub(crate) fn areas(factory: &ExecutionContextFactory, config: &EdgeConfig) -> V
     if offer.calls.as_ref().is_some_and(|calls| calls.available) {
         areas.push(CALLS_AREA.to_string());
     }
+    if offer.sip.as_ref().is_some_and(|sip| sip.available) {
+        areas.push(SIP_AREA.to_string());
+    }
     areas
 }
 
 /// The area name of the edge node as media node (E7) in its Hello.
 pub(crate) const CALLS_AREA: &str = "calls";
+/// The area name of the edge node's SIP engine (E8, E10 phones) in its Hello.
+pub(crate) const SIP_AREA: &str = "sip";
+
+/// For the SIP offer to local node `node`: (its numbers with a fallback in its copy of `voiceFallbacks`, other local
+/// nodes are active too). The engine reads the copies only of the only active node (`sip/edge.rs` `paired_node`).
+fn sip_copies(factory: &ExecutionContextFactory, node: &str) -> Result<(u32, bool), Error> {
+    let Some(facade) = factory.entity() else {
+        return Ok((0, false));
+    };
+    let fallbacks = facade
+        .find(moqui_core::edge::replica::VALUE)?
+        .eq("pairedNodeId", moqui_lib::object::Value::string(node))
+        .eq(
+            "setName",
+            moqui_lib::object::Value::string(moqui_core::edge::sip::FALLBACKS_SET),
+        )
+        .disable_authz()
+        .count()?;
+    let others = facade
+        .find("moqui.edge.EdgeClient")?
+        .eq("statusId", moqui_lib::object::Value::string("EdgeClientActive"))
+        .condition(moqui_core::entity::Condition::not_equals(
+            "pairedNodeId",
+            moqui_lib::object::Value::string(node),
+        ))
+        .disable_authz()
+        .count()?;
+    Ok((u32::try_from(fallbacks).unwrap_or(0), others > 0))
+}
 
 fn host_setting(host: &EdgeHostInfo) -> HostSetting {
     HostSetting {
@@ -203,6 +260,13 @@ pub(crate) fn offer(
     // the media driver keys rooms by call alone, so it takes call messages only while one local node is linked (E7)
     if let Some(calls) = offer.calls.as_mut().filter(|calls| calls.available) {
         calls.other_nodes = linked.iter().any(|other| other != node);
+    }
+    if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
+        // a count that does not read leaves the rest of the offer: no fallbacks said, other nodes as the links say
+        (sip.fallbacks, sip.other_nodes) = sip_copies(factory, node).unwrap_or_else(|err| {
+            tracing::error!("Edge offer to {node}: the SIP copies were not counted: {err}");
+            (0, linked.iter().any(|other| other != node))
+        });
     }
     Ok(offer)
 }
@@ -418,6 +482,7 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
     let pass = offer.pass.unwrap_or_default();
     let xmpp = offer.xmpp.unwrap_or_default();
     let calls = offer.calls.unwrap_or_default();
+    let sip = offer.sip.unwrap_or_default();
     // a port that is not one (0, or past u16 from a newer peer) is off
     let port = |port: u32| u16::try_from(port).unwrap_or(0);
     EdgeOffer {
@@ -452,6 +517,25 @@ pub(crate) fn offer_of(offer: Offer) -> EdgeOffer {
             media_address: calls.media_address,
             turn_urls: calls.turn_urls,
             other_nodes: calls.other_nodes,
+        },
+        sip: SipOffer {
+            available: sip.available && !(sip.sip_address.is_empty() && sip.tls_address.is_empty()),
+            sip_address: sip.sip_address,
+            tls_address: sip.tls_address,
+            domain: sip.domain,
+            registrar: sip.registrar,
+            trunks: sip
+                .trunks
+                .into_iter()
+                .map(|trunk| SipTrunkState {
+                    voice_trunk_id: trunk.voice_trunk_id,
+                    name: trunk.name,
+                    state: trunk.state,
+                    error: trunk.error,
+                })
+                .collect(),
+            fallbacks: u64::from(sip.fallbacks),
+            other_nodes: sip.other_nodes,
         },
         not_available: offer.not_available,
         addresses: offer.addresses,

@@ -5,7 +5,9 @@ SFU, call links and guests, TURN and ICE-TCP, recording, captions, cascading med
 M0 (the audio core), V1–V5 (phone calls: SIP trunks, voicemail, call handling, the registrar, the IVR, queues,
 transfer and merge), C1 (chat actors and bridges), C7 (encrypted rooms and chat keys), C4-SMS (SMS and MMS on Telnyx)
 and C3a (XMPP for local users) built; see [§7.4](#74-built). XMPP clients reach a local server through an edge node's
-tunnel ports, and C3b's and C6b's split with an edge node is designed (§4.3, [Edge-Node](Edge-Node.md) E9). Next: C4
+tunnel ports, and C3b's and C6b's split with an edge node is designed (§4.3, [Edge-Node](Edge-Node.md) E9); calls and
+phone calls go through an edge node too, with a voicemail fallback while the local server is away (Edge-Node E7, E8),
+each set up in its wizard (E10). Next: C4
 (WhatsApp, Messenger, Instagram, Telegram), C3b, C6a, C6b and C6c.
 The decisions are in [§8](#8-decisions). The libraries, reference applications and review findings are in
 [§10](#10-libraries-and-sources).
@@ -1299,7 +1301,7 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 - **Messages:** the PWA, with web push.
 - **Native chat apps:** XMPP clients (C3a), which push through their own services (XEP-0357), and Element X with C6a.
 - **Native calls:** SIP soft phones registered to Moqui (V4).
-- **A native Moqui app:** later ([Usability](proposals/Usability.md)).
+- **A native Moqui app:** [Mobile-Desktop](Mobile-Desktop.md).
 
 ### 7.3 Verification and rollout
 

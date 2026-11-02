@@ -17,7 +17,7 @@
 //! so the wizard's link calls are the dialer's (`offer`, `configure`) and the rest is called as the services call it.
 //!
 //! - Discover: the edge node's offer has its mail (the MTA in moqui, its MX host and DKIM record), chat, PASS, its
-//!   XMPP tunnel ports, its public addresses, and calls and SIP as not available.
+//!   XMPP tunnel ports, its public addresses, its media node and its SIP engine, and no area as not available.
 //! - Configure: this node's host names are applied on the edge node, a name another node holds is refused, a name of
 //!   this node not listed is removed, and a request that is not input is refused whole.
 //! - Apply: the EDGE mail server with `edge:`, SYSTEM's and a hosted account's mail through it, and the chat and PASS
@@ -36,6 +36,13 @@
 //!   media address, the TURN secret and the row; Test finds the row live and preferred, `make#IceServers` signs the
 //!   edge node's TURN URLs with its secret, and that credential allocates on its TURN with a permission for the IP of
 //!   the media address. Calls off keeps the row as draining, which Test does not check, and Status says so.
+//! - Phones: the edge node runs a SIP engine (the process's one: the local node has none) on loopback. The offer and
+//!   the Hello name it, with another local node active making its copies unread; once that node is revoked, a trunk
+//!   set up on the local node replicates and the edge node's engine loads it. Discover shows the trunk with its
+//!   numbers and the fallback summary; Apply writes `edge_sip_enabled`, with lines for the sets, the link-kept row, the
+//!   realm and the fallbacks; Test finds the row live, the trunk loaded and the fallbacks there. Phones off sends both
+//!   sets empty, so the edge node's engine drops the trunk, which Test does not check, and Status says so; on again
+//!   brings it back. The DNS check takes the SIP domain's SRV records against fixed ones.
 
 #![cfg(all(
     unix,
@@ -43,7 +50,8 @@
     feature = "embedded-postgres",
     feature = "inbound-smtp",
     feature = "channels",
-    feature = "rtc"
+    feature = "rtc",
+    feature = "sip"
 ))]
 
 use std::collections::BTreeMap;
@@ -70,6 +78,10 @@ const OTHER: &str = "other-node";
 const BRIDGE: &str = "SETUP_BRIDGE";
 /// The address the edge node's media node advertises (documentation range, so Apply finds it public).
 const MEDIA_IP: &str = "203.0.113.5";
+/// The edge node's SIP realm (its sip_domain).
+const SIP_DOMAIN: &str = "sip.edge.example.test";
+const SIP_NUMBER: &str = "+15551230100";
+const SIP_PLAIN_NUMBER: &str = "+15551230101";
 
 const LOCAL_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
     <email-client idle-enabled="false"/>"#;
@@ -375,7 +387,7 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
             "What this node uses the edge node for",
             "sales@example.com",
             "Texts",
-            "Not available on edge nodes yet",
+            "so its SIP engine reads no node&#39;s trunks or fallbacks",
             "The system&#39;s mail has a server of its own now",
         ],
     );
@@ -724,6 +736,273 @@ fn calls_area(local: &Gate, media: &str) {
     assert_eq!(row("draining"), "N");
 }
 
+/// The edge node's copy of the local node's set `set`: how many records.
+fn copies(edge: &Gate, set: &str) -> usize {
+    let factory = edge.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    moqui_core::edge::replica::list_values(&facade(edge), Some(NODE), set, None, 100)
+        .unwrap()
+        .len()
+}
+
+/// The phones area of the wizard on the local node, with the edge node's SIP engine at `sip_address`.
+fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
+    let factory = Arc::clone(local.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let screens = moqui_core::screen::ScreenTest::new(&factory)
+        .root_screen("component://tools/screen/System.xml")
+        .render_mode("html");
+    let show = |path: &str, texts: &[&str]| {
+        let page = screens.test_render(path, BTreeMap::new(), None);
+        let text = page.text();
+        assert!(page.error_messages.is_empty(), "{path}: {:?}", page.error_messages);
+        for wanted in texts {
+            assert!(text.contains(wanted), "{path} has no {wanted}: {text}");
+        }
+    };
+    let post = |path: &str, fields: &[(&str, Value)]| {
+        let parameters: BTreeMap<String, Value> = fields
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), value.clone()))
+            .collect();
+        screens
+            .test_render(path, parameters, Some("post"))
+            .error_messages
+            .join(" | ")
+    };
+    let link = moqui_core::edge::link().unwrap();
+    let offered_trunks = || link.offer().unwrap().sip.trunks;
+    // the other local node gone, the edge node's engine reads this node's copies; then a trunk with two numbers, one
+    // with a fallback (john's: a message)
+    create(
+        edge,
+        "moqui.edge.EdgeClient",
+        &[("pairedNodeId", OTHER), ("statusId", "EdgeClientRevoked")],
+    );
+    assert!(!link.offer().unwrap().sip.other_nodes);
+    // a fake trunk on loopback that answers the engine's OPTIONS pings, until the walk ends
+    let fake = crate::sip::Trunk::new();
+    let trunk_port = fake.addr().port();
+    let answering = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let pings = {
+        let answering = Arc::clone(&answering);
+        std::thread::spawn(move || {
+            while answering.load(std::sync::atomic::Ordering::Acquire) {
+                let until = Instant::now() + Duration::from_millis(200);
+                if let Some((rsipstack::sip::SipMessage::Request(req), from)) = fake.recv(until) {
+                    if req.method.to_string() == "OPTIONS" {
+                        fake.reply(&req, from, 200, "", "");
+                    }
+                }
+            }
+        })
+    };
+    let trunk_id = to_plain_string(
+        &call(
+            local,
+            "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+            &[
+                ("name", Value::string("Setup trunk")),
+                ("host", Value::string("127.0.0.1")),
+                ("port", Value::I32(i32::from(trunk_port))),
+                ("transportEnumId", Value::string("VtrUdp")),
+                ("mediaEncryptionEnumId", Value::string("VmePlain")),
+                ("providerProfileEnumId", Value::string("VppPlainLan")),
+                ("username", Value::string("acct")),
+                ("password", Value::string("pw-of-acct")),
+                ("registerFlag", Value::string("N")),
+            ],
+        )["voiceTrunkId"],
+    );
+    let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
+    for (number, route) in [(SIP_NUMBER, Some(john.as_str())), (SIP_PLAIN_NUMBER, None)] {
+        let mut fields = vec![
+            ("phoneNumber", Value::string(number)),
+            ("voiceTrunkId", Value::string(&trunk_id)),
+        ];
+        if let Some(user) = route {
+            fields.push(("routeTypeEnumId", Value::string("PnrUser")));
+            fields.push(("routeId", Value::string(user)));
+        }
+        call(local, "org.moqui.impl.VoiceServices.store#PhoneNumber", &fields);
+    }
+    call(local, "org.moqui.impl.VoiceServices.refresh#PhoneFallbacks", &[]);
+    wait_until(
+        Duration::from_secs(10),
+        "the edge node's engine loads the trunk",
+        || offered_trunks().iter().any(|trunk| trunk.voice_trunk_id == trunk_id),
+    );
+    let loaded = offered_trunks();
+    assert_eq!(loaded[0].name, "Setup trunk", "{loaded:?}");
+    wait_until(Duration::from_secs(10), "the trunk answers the engine's ping", || {
+        offered_trunks()
+            .iter()
+            .any(|trunk| trunk.voice_trunk_id == trunk_id && trunk.state == "ok")
+    });
+    show(
+        "EdgeNode/Pair/Discover",
+        &[
+            &format!("This node&#39;s trunks and phones go through the edge node&#39;s SIP engine at {sip_address} (UDP/TCP)"),
+            "Phones through the edge node",
+            "Setup trunk",
+            &format!("{SIP_NUMBER}, {SIP_PLAIN_NUMBER}"),
+            "1 of 2 numbers have a fallback",
+            &format!("On, realm {SIP_DOMAIN}"),
+            "they cannot register while this node is away",
+            "following no call-handling rules or schedules",
+        ],
+    );
+    let unoffered = post("EdgeNode/Pair/Discover/chooseSetup", &[("sipOn", Value::string("Y"))]);
+    assert!(
+        unoffered.contains("at least one area"),
+        "a choice the form did not offer: {unoffered}"
+    );
+    assert_eq!(
+        post(
+            "EdgeNode/Pair/Discover/chooseSetup",
+            &[("sipOffered", Value::string("Y")), ("sipOn", Value::string("Y"))]
+        ),
+        "",
+        "phones alone is a setup"
+    );
+    show(
+        "EdgeNode/Pair/Apply",
+        &[
+            "This node&#39;s trunks and phones through the edge node&#39;s SIP engine",
+            &format!("_sip._udp.{SIP_DOMAIN}"),
+        ],
+    );
+    assert_eq!(post("EdgeNode/Pair/Apply/applySetup", &[]), "");
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_sip_enabled=true"), "{env}");
+    let sip_lines = |out: BTreeMap<String, Value>| -> Vec<BTreeMap<String, String>> {
+        list(out.get("lineList"))
+            .into_iter()
+            .filter(|line| line["area"] == "sip")
+            .collect()
+    };
+    let applied = sip_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("sipOn", Value::Bool(true))],
+    ));
+    for wanted in [
+        "This node's trunks and phones go through the edge node's SIP engine",
+        "The set voiceTrunks goes to the edge node whole again (cursor",
+        "The set voiceFallbacks goes to the edge node whole again",
+        &format!("go to the edge node's SIP engine at {sip_address}"),
+        &format!("Phones made here get verifiers for the edge node's realm {SIP_DOMAIN}"),
+        "1 of 2 numbers have a fallback for while this node is away; calls to the others are refused (480)",
+    ] {
+        assert!(
+            applied
+                .iter()
+                .any(|line| line["ok"] == "true" && line["text"].contains(wanted)),
+            "{wanted}: {applied:?}"
+        );
+    }
+    assert!(applied.iter().all(|line| line["ok"] == "true"), "{applied:?}");
+    // Test: the row live, the trunk loaded, the fallback there once the full sends Apply asked for are done
+    let tests = || -> BTreeMap<String, BTreeMap<String, String>> {
+        list(
+            call(
+                local,
+                "org.moqui.impl.EdgeServices.test#EdgeSetup",
+                &[("sipOn", Value::Bool(true))],
+            )
+            .get("testList"),
+        )
+        .into_iter()
+        .map(|row| (row["check"].clone(), row))
+        .collect()
+    };
+    wait_until(Duration::from_secs(10), "the fallbacks replicated", || {
+        tests()["sipFallbacks"]["ok"] == "true"
+    });
+    let tested = tests();
+    for check in ["sipNode", "sipTrunks", "sipFallbacks"] {
+        assert_eq!(tested[check]["ok"], "true", "{check}: {tested:?}");
+    }
+    assert!(
+        tested["sipTrunks"]["message"].contains("Setup trunk (ok)"),
+        "a reload (Apply's full sends) keeps the trunk's state: {tested:?}"
+    );
+    assert!(
+        tested["sipFallbacks"]["message"].contains("each of the 1 numbers"),
+        "{tested:?}"
+    );
+    // phone calls go to the edge node's SIP engine (Voice.js voiceNodes): the only voice node here
+    let active = || call(local, "org.moqui.impl.VoiceServices.get#VoiceCapabilities", &[]);
+    assert_eq!(active()["active"], Value::Bool(true), "{:?}", active());
+    show(
+        "EdgeNode/Status",
+        &[
+            &format!("Trunks and phones through the edge node at {sip_address}, registrar on"),
+            "1 trunks loaded there, 1 numbers with a fallback",
+        ],
+    );
+    // an Apply not asked about phones leaves them as they are
+    let untouched = sip_lines(call(local, "org.moqui.impl.EdgeServices.apply#EdgeSetup", &[]));
+    assert!(untouched.is_empty(), "{untouched:?}");
+    // phones off: both sets go empty, so the edge node's engine has no trunk; the row stays, taking no new call
+    let off = sip_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("sipOn", Value::Bool(false))],
+    ));
+    for wanted in [
+        "The set voiceTrunks goes to the edge node empty",
+        "The set voiceFallbacks goes to the edge node empty",
+        "stays but takes no new call",
+        "No phone is registered at the edge node's registrar",
+    ] {
+        assert!(
+            off.iter()
+                .any(|line| line["ok"] == "true" && line["text"].contains(wanted)),
+            "{wanted}: {off:?}"
+        );
+    }
+    let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
+    assert!(env.contains("edge_sip_enabled=false"), "{env}");
+    wait_until(
+        Duration::from_secs(10),
+        "the edge node's copies emptied and its engine without the trunk",
+        || copies(edge, "voiceTrunks") == 0 && copies(edge, "voiceFallbacks") == 0 && offered_trunks().is_empty(),
+    );
+    let edge_id = local_edge_id(local);
+    assert_eq!(
+        field(local, "moqui.call.SipNode", ("instanceId", &edge_id), "edgeLinked"),
+        "Y",
+        "the row stays"
+    );
+    assert_eq!(tests()["sipNode"]["checked"], "false");
+    let off = active();
+    assert_eq!(
+        off["active"],
+        Value::Bool(false),
+        "no new call goes to the edge node: {off:?}"
+    );
+    assert_eq!(to_plain_string(&off["reasonCode"]), "noSipServer", "{off:?}");
+    show("EdgeNode/Status", &["Off: the edge node gets no trunks or fallbacks"]);
+    // and on again, as the wizard leaves it
+    let on = sip_lines(call(
+        local,
+        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        &[("sipOn", Value::Bool(true))],
+    ));
+    assert!(on.iter().all(|line| line["ok"] == "true"), "{on:?}");
+    wait_until(Duration::from_secs(10), "the trunk loaded again", || {
+        offered_trunks().iter().any(|trunk| trunk.voice_trunk_id == trunk_id) && copies(edge, "voiceFallbacks") == 1
+    });
+    assert_eq!(active()["active"], Value::Bool(true));
+    answering.store(false, std::sync::atomic::Ordering::Release);
+    pings.join().unwrap();
+}
+
 /// The edge node's instance id, as the local node pinned it from its Hello.
 fn local_edge_id(local: &Gate) -> String {
     let factory = local.server.factory();
@@ -798,6 +1077,11 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("turn_public_host", "127.0.0.1"),
             ("turn_relay_ports", "51310-51400"),
             ("turn_auth_secret", "edge-setup-turn-secret"),
+            // its SIP engine, on loopback (the local node, started first, runs none)
+            ("sip_port", "0"),
+            ("sip_rtp_ports", "42700-42799"),
+            ("sip_registrar_enabled", "true"),
+            ("sip_domain", SIP_DOMAIN),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );
@@ -835,7 +1119,8 @@ fn a_local_node_is_attached_from_the_wizard() {
         paired.edge.capabilities.iter().any(|area| area == "mail")
             && paired.edge.capabilities.iter().any(|area| area == "chat")
             && paired.edge.capabilities.iter().any(|area| area == "xmpp")
-            && paired.edge.capabilities.iter().any(|area| area == "calls"),
+            && paired.edge.capabilities.iter().any(|area| area == "calls")
+            && paired.edge.capabilities.iter().any(|area| area == "sip"),
         "the Hello names the areas: {:?}",
         paired.edge.capabilities
     );
@@ -870,7 +1155,23 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(offer.chat.webhooks);
     assert!(!offer.pass.available, "no mr-pass in the test runtime");
     assert_eq!(offer.pass.client_id, "edge");
-    assert_eq!(offer.not_available, ["sip"]);
+    assert!(offer.not_available.is_empty(), "{:?}", offer.not_available);
+    let sip_address = offer.sip.sip_address.clone();
+    assert!(
+        offer.sip.available
+            && sip_address.starts_with("127.0.0.1:")
+            && offer.sip.tls_address.is_empty()
+            && offer.sip.domain == SIP_DOMAIN
+            && offer.sip.registrar,
+        "the SIP engine: {:?}",
+        offer.sip
+    );
+    assert!(
+        offer.sip.other_nodes && offer.sip.trunks.is_empty(),
+        "another local node active, so the engine reads no copies: {:?}",
+        offer.sip
+    );
+    let sip_port: u16 = sip_address.rsplit_once(':').unwrap().1.parse().unwrap();
     assert!(
         offer.calls.available && offer.calls.media_address == media && !offer.calls.other_nodes,
         "the media node: {:?}",
@@ -1088,6 +1389,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "_xmpps-client._tcp.chat.example.com",
         &[srv(xmpp_tls_port, "office.example.com")],
     );
+    records.fix_srv(&format!("_sip._udp.{SIP_DOMAIN}"), &[srv(sip_port, "edge.example.net")]);
     let dns = call(
         &local,
         "org.moqui.impl.EdgeServices.check#EdgeDns",
@@ -1111,6 +1413,10 @@ fn a_local_node_is_attached_from_the_wizard() {
                 Value::List(vec![Value::string("turn.example.net"), Value::string("127.0.0.1")]),
             ),
             ("mediaAddress", Value::string(&offer.calls.media_address)),
+            ("sipDomain", Value::string(&offer.sip.domain)),
+            ("sipHosts", Value::List(vec![Value::string("edge.example.net")])),
+            ("sipPort", Value::I64(i64::from(sip_port))),
+            ("sipTlsPort", Value::I64(0)),
         ],
     );
     let rows = list(dns.get("recordList"));
@@ -1137,6 +1443,12 @@ fn a_local_node_is_attached_from_the_wizard() {
     assert!(
         !ok("SRV", "_xmpps-client._tcp.chat.example.com"),
         "a record past the edge node"
+    );
+    assert!(ok("SRV", &format!("_sip._udp.{SIP_DOMAIN}")), "{rows:?}");
+    assert!(!ok("SRV", &format!("_sip._tcp.{SIP_DOMAIN}")), "no record yet");
+    assert!(
+        !rows.iter().any(|row| row["name"].starts_with("_sips.")),
+        "no TLS listener, so no _sips._tcp: {rows:?}"
     );
     assert_eq!(dns["passed"], Value::Bool(false));
 
@@ -1208,6 +1520,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         walk_the_wizard(&local, &sales);
         xmpp_area(&local, &edge);
         calls_area(&local, &media);
+        sip_area(&local, &edge, &sip_address);
     }
     assert_eq!(server("SYSTEM"), "edge:", "the wizard's Apply");
     restore(&local);

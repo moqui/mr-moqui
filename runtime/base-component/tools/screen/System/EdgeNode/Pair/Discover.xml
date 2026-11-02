@@ -21,8 +21,11 @@ along with this software (see the LICENSE.md file). If not, see
     node's tunnel ports; on by default when both are there, and Next adds the domain to the passthrough names when it
     is in neither list, since uploads and /xmpp-websocket ride on web access) and calls (new calls' media on the edge
     node's media node, with its TURN; on by default when it runs one, unless this node's edge_calls_enabled is false,
-    with a note that office-to-office media then goes through the cloud, with no cascading and one local node).
-    Phones are listed as not available yet. Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
+    with a note that office-to-office media then goes through the cloud, with no cascading and one local node) and
+    phones (the edge node's SIP engine with this node's trunks, from the replicated set voiceTrunks, and their
+    numbers; its registrar for outside phones; the numbers with a voicemail fallback; on by default when it runs one,
+    unless this node's edge_sip_enabled is false, with notes that outside phones cannot register while this node is
+    away and that the fallback follows no call-handling rules or schedules). Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
     hold no secret, and nothing goes in a URL. Status links here to set a paired node up again. Not paired, an edge
     node, a build without the link, and a link that is down see why instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -51,8 +54,10 @@ along with this software (see the LICENSE.md file). If not, see
                 xmppOn: on(xmppOn), xmppDomain: String(System.getProperty('xmpp_domain') || '').trim().replace(/\.$/, '').toLowerCase(),
                 // calls only when the form showed the choice (the edge node's media node was up); else Apply leaves
                 // this node's edge_calls_enabled as it is
-                callsOffered: on(callsOffered), callsOn: on(callsOffered) && on(callsOn)}
-            if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn && !choices.xmppOn && !choices.callsOn) {
+                callsOffered: on(callsOffered), callsOn: on(callsOffered) && on(callsOn),
+                // phones the same way (the edge node's SIP engine was up), for edge_sip_enabled
+                sipOffered: on(sipOffered), sipOn: on(sipOffered) && on(sipOn)}
+            if (!choices.webOn && !choices.mailOn && !choices.chatOn && !choices.passOn && !choices.xmppOn && !choices.callsOn && !choices.sipOn) {
                 ec.message.addError(L('Turn on at least one area')); return }
             if (choices.webOn && !choices.passthroughNames.length && !choices.terminateNames.length) {
                 ec.message.addValidationError(null, 'passthroughNames', null, L('Enter a host name, or turn web access off'), null); return }
@@ -152,6 +157,37 @@ along with this software (see the LICENSE.md file). If not, see
         callsOtherNodes = callsAvailable && !!calls.otherNodes
         callsMediaText = String(calls.mediaAddress || '')
         const turnUrls = Array.from(calls.turnUrls || [])
+        // phones: the edge node's SIP engine (E8), with this node's trunks (the replicated set voiceTrunks) and their
+        // numbers, which go through it, and the numbers' fallbacks (voiceFallbacks) for while this node is away
+        const sip = offer.sip || {}
+        sipAvailable = !!sip.available
+        sipOtherNodes = sipAvailable && !!sip.otherNodes
+        sipAddressText = [sip.sipAddress ? sip.sipAddress + ' (UDP/TCP)' : '', sip.tlsAddress ? sip.tlsAddress + ' (TLS)' : '']
+            .filter((text) => text).join(', ')
+        sipList = []
+        sipSummary = {}
+        if (sipAvailable) {
+            const loaded = new Map(Array.from(sip.trunks || []).map((trunk) => [trunk.voiceTrunkId, trunk]))
+            const trunks = Array.from(ec.entity.find('moqui.call.VoiceTrunk').orderBy('voiceTrunkId').limit(200).disableAuthz().list())
+                .filter((trunk) => trunk.disabled !== 'Y')
+            const numbers = Array.from(ec.entity.find('moqui.call.PhoneNumber').orderBy('phoneNumber').limit(1000).disableAuthz().list())
+            const covered = new Set(Array.from(ec.entity.find('moqui.call.PhoneNumberFallback').limit(1000).disableAuthz().list())
+                .map((row) => row.phoneNumber))
+            sipList = trunks.map((trunk) => {
+                const own = numbers.filter((number) => number.voiceTrunkId === trunk.voiceTrunkId)
+                const there = loaded.get(trunk.voiceTrunkId)
+                return {trunkText: (trunk.name || trunk.voiceTrunkId) + (trunk.host ? ' · ' + trunk.host : ''),
+                    numbersText: own.map((number) => number.phoneNumber).join(', ') || L('No numbers'),
+                    fallbackText: ec.resource.expand('${n} of ${m}', '', {n: own.filter((number) => covered.has(number.phoneNumber)).length, m: own.length}),
+                    stateText: there ? there.state + (there.error ? ': ' + there.error : '') : L('Not loaded there yet')}
+            })
+            const onTrunks = numbers.filter((number) => trunks.some((trunk) => trunk.voiceTrunkId === number.voiceTrunkId))
+            sipSummary = {
+                registrarText: sip.registrar ? ec.resource.expand('On, realm ${realm}: phones made here get verifiers for it', '', {realm: sip.domain || ''})
+                    : L('Off: outside phones cannot register to the edge node (sip_registrar_enabled there)'),
+                fallbackSummaryText: ec.resource.expand('${n} of ${m} numbers have a fallback (their voicemail box, or an outside number)', '',
+                    {n: onTrunks.filter((number) => covered.has(number.phoneNumber)).length, m: onTrunks.length})}
+        }
         // xmpp and calls too, for an edge node from before their areas that still lists them as not available
         const areaNames = {calls: L('calls'), sip: L('phones'), xmpp: L('XMPP chat clients')}
         notAvailableText = Array.from(offer.notAvailable || []).map((area) => areaNames[area] || area).join(', ')
@@ -166,7 +202,10 @@ along with this software (see the LICENSE.md file). If not, see
                 (xmpp.needsNode ? ' (' + L('to no node: set edge_xmpp_node') + ')' : '') : L('No XMPP tunnel'),
             callsText: callsAvailable ? ec.resource.expand('Media node at ${address}', '', {address: callsMediaText}) +
                 ' · ' + (turnUrls.length ? ec.resource.expand('TURN ${urls}', '', {urls: turnUrls.join(', ')}) : L('no TURN'))
-                : L('No media node')}
+                : L('No media node'),
+            sipText: sipAvailable ? ec.resource.expand('SIP at ${addresses}', '', {addresses: sipAddressText}) + ' · ' +
+                (sip.registrar ? L('registrar on') : L('registrar off')) + ' · ' +
+                ec.resource.expand('${n} trunks loaded', '', {n: Array.from(sip.trunks || []).length}) : L('No SIP engine')}
         // this node's choices: kept from an earlier visit, else filled in from the offer and this node's records
         let kept = null
         try { kept = JSON.parse(ec.web.sessionAttributes.edgeSetup || 'null') } catch (e) { kept = null }
@@ -217,7 +256,9 @@ along with this software (see the LICENSE.md file). If not, see
                 (firstHost ? 'https://' + firstHost + '/account/Sso' : ''),
             xmppOn: xmppAvailable && !!xmppDomain,
             // on when offered, unless this node turned it off before (edge_calls_enabled)
-            callsOn: callsAvailable && calls.enabled !== false}
+            callsOn: callsAvailable && calls.enabled !== false,
+            // the same for phones (edge_sip_enabled)
+            sipOn: sipAvailable && sip.enabled !== false}
         form = {webOn: choices.webOn ? 'Y' : '', passthroughNames: (choices.passthroughNames || []).join(', '),
             terminateNames: (choices.terminateNames || []).join(', '),
             mailOn: choices.mailOn ? 'Y' : '', mailDomains: (choices.mailDomains || []).join(', '),
@@ -225,7 +266,7 @@ along with this software (see the LICENSE.md file). If not, see
             chatOn: choices.chatOn ? 'Y' : '', chatBridgeIds: choices.chatBridgeIds || [],
             passOn: choices.passOn ? 'Y' : '', passSites: siteOptions.length ? (choices.passSites || []) : (choices.passSites || []).join(', '),
             passCallback: choices.passCallback || '', xmppOn: choices.xmppOn ? 'Y' : '', callsOn: choices.callsOn ? 'Y' : '',
-            callsOffered: callsAvailable ? 'Y' : ''}
+            callsOffered: callsAvailable ? 'Y' : '', sipOn: choices.sipOn ? 'Y' : '', sipOffered: sipAvailable ? 'Y' : ''}
         hasSites = siteOptions.length > 0
     ]]></script></actions>
     <widgets>
@@ -300,6 +341,10 @@ along with this software (see the LICENSE.md file). If not, see
                             <check><option key="Y" text="New calls have their media on the edge node's media node at ${callsMediaText}"/></check></conditional-field>
                         <default-field title="Calls"><display text="The edge node runs no media node (rtc_media_port)"/></default-field></field>
                     <field name="callsOffered"><default-field><hidden/></default-field></field>
+                    <field name="sipOn"><conditional-field condition="sipAvailable" title="Phones" tooltip="This node's trunks register from the edge node's SIP engine, which takes their calls and asks this node how to route each; phones outside the office register to its registrar. Off, the trunks and fallbacks are not sent to it">
+                            <check><option key="Y" text="This node's trunks and phones go through the edge node's SIP engine at ${sipAddressText}"/></check></conditional-field>
+                        <default-field title="Phones"><display text="The edge node runs no SIP engine (sip_port, sip_tls_port)"/></default-field></field>
+                    <field name="sipOffered"><default-field><hidden/></default-field></field>
                     <field-layout>
                         <field-group title="Web access"><field-ref name="webOn"/><field-ref name="passthroughNames"/><field-ref name="terminateNames"/></field-group>
                         <field-group title="Mail"><field-ref name="mailOn"/><field-ref name="mailDomains"/><field-ref name="systemMail"/><field-ref name="emailAccountIds"/></field-group>
@@ -307,6 +352,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field-group title="PASS"><field-ref name="passOn"/><field-ref name="passSites"/><field-ref name="passCallback"/></field-group>
                         <field-group title="XMPP"><field-ref name="xmppOn"/></field-group>
                         <field-group title="Calls"><field-ref name="callsOn"/><field-ref name="callsOffered"/></field-group>
+                        <field-group title="Phones"><field-ref name="sipOn"/><field-ref name="sipOffered"/></field-group>
                     </field-layout>
                 </form-single>
                 <section name="CallsNote" condition="callsAvailable"><widgets>
@@ -314,6 +360,26 @@ along with this software (see the LICENSE.md file). If not, see
                 </widgets></section>
                 <section name="CallsOtherNodes" condition="callsOtherNodes"><widgets>
                     <label type="p" text="Other local nodes are linked to the edge node too, so it takes call messages from none of them until only one is." style="text-warning q-mt-md q-mb-none"/>
+                </widgets></section>
+                <section name="Phones" condition="sipAvailable"><widgets>
+                    <label type="h6" text="Phones through the edge node" style="q-mt-md q-mb-sm"/>
+                    <form-list name="SipTrunks" list="sipList" skip-form="true" paginate="false">
+                        <field name="trunkText"><default-field title="Trunk"><display style="text-weight-medium"/></default-field></field>
+                        <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
+                        <field name="fallbackText"><default-field title="With a fallback"><display/></default-field></field>
+                        <field name="stateText"><default-field title="On the edge node"><display/></default-field></field>
+                    </form-list>
+                    <section name="NoTrunks" condition="!sipList.length"><widgets>
+                        <label type="p" text="This node has no enabled trunk yet. The trunks set up here go to the edge node and register from there." style="m-muted q-mb-none"/>
+                    </widgets></section>
+                    <form-single name="SipSummary" map="sipSummary">
+                        <field name="registrarText"><default-field title="Registrar for outside phones"><display/></default-field></field>
+                        <field name="fallbackSummaryText"><default-field title="Voicemail fallback"><display/></default-field></field>
+                    </form-single>
+                    <label type="p" text="Outside phones register to the edge node's registrar, which asks this node to check each password, so they cannot register while this node is away. While it is away, a call to a number with a fallback rings its outside number or takes a message, following no call-handling rules or schedules; a number with none is refused (480), so the trunk's own failover can act." style="m-muted q-mt-sm q-mb-none"/>
+                </widgets></section>
+                <section name="SipOtherNodes" condition="sipOtherNodes"><widgets>
+                    <label type="p" text="Other local nodes are active on the edge node too, so its SIP engine reads no node's trunks or fallbacks until only one is." style="text-warning q-mt-md q-mb-none"/>
                 </widgets></section>
                 <section name="Merged" condition="mergedText"><widgets>
                     <label type="p" text="Added the names the edge node has for this node now: ${mergedText}. A name taken out of the lists is removed from the edge node when you apply." style="text-warning q-mt-md q-mb-none"/>
@@ -333,10 +399,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="passText"><default-field title="PASS"><display/></default-field></field>
                     <field name="xmppText"><default-field title="XMPP"><display/></default-field></field>
                     <field name="callsText"><default-field title="Calls"><display/></default-field></field>
+                    <field name="sipText"><default-field title="Phones"><display/></default-field></field>
                     <field-layout>
                         <field-row><field-ref name="publicNamesText"/><field-ref name="mailText"/></field-row>
                         <field-row><field-ref name="chatText"/><field-ref name="passText"/></field-row>
                         <field-row><field-ref name="xmppText"/><field-ref name="callsText"/></field-row>
+                        <field-row><field-ref name="sipText"/></field-row>
                     </field-layout>
                 </form-single>
                 <label type="p" text="Next keeps these choices for Apply. Nothing is changed yet." style="text-caption m-muted q-mb-none q-mt-sm"/>

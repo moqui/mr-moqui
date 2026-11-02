@@ -290,7 +290,11 @@ along with this software (see the LICENSE.md file). If not, see
             edge_xmpp_node names another local node, and needsNode, when it is empty and this node is not the only
             one linked, so the tunnels go to none), calls (available while its media node runs, mediaAddress, turnUrls,
             otherNodes when other local nodes are linked too, so it takes call messages from none, and enabled, this
-            node's own edge_calls_enabled), notAvailable (areas not built yet: sip), addresses (the
+            node's own edge_calls_enabled), sip (available while its SIP engine runs, sipAddress and tlsAddress, domain,
+            the realm its registrar challenges with, registrar, trunks, the trunks its engine loaded from this node's
+            copy with voiceTrunkId, name, state and error, fallbacks, the numbers with a fallback in its copy,
+            otherNodes when other local nodes are active too, so its engine reads no node's copies, and enabled, this
+            node's own edge_sip_enabled), notAvailable (areas not built yet: none now), addresses (the
             edge node's public addresses, when it names them) and nodeHosts (this node's host names there now). edgeUrl is edge_node_url. Fails while the link is down.</description>
         <out-parameters>
             <parameter name="offer" type="Map"/>
@@ -322,7 +326,13 @@ along with this software (see the LICENSE.md file). If not, see
             that, and never after unpairing), so new calls have their media on the edge node, or on this node's own
             media nodes while calls on the edge node go on (a failed line when it has none live, as no new call can
             start then); lines check the media address (public), the TURN secret the link's Hello handed this node,
-            and the row (live, preferred). An area turned
+            and the row (live, preferred). Phones (sipOn given, and the edge node's SIP engine offered; left out, nothing
+            changes; nothing is sent to the edge node): edge_sip_enabled true or false in runtime/.env; while it is
+            false the replicated sets voiceTrunks and voiceFallbacks go to the edge node empty, so its engine has no
+            trunks and no fallback, and the edge node's link-kept SipNode row stays but takes no new call, and its
+            registrar signs no phone in; lines give the two sets' replication (cursor, keys waiting), the row (live,
+            with the Hello's addresses), the realm phones made here get (the edge node's) and those made for another,
+            the registrar, and the numbers with and without a fallback (480 while this node is away). An area turned
             off is left as it is. Each step is a line of lineList (area, ok, text); one that fails does not stop the others.
             Refused on an edge node; fails before any change when the edge node's offer cannot be read.</description>
         <in-parameters>
@@ -339,6 +349,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passCallback"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
             <parameter name="callsOn" type="Boolean"><description>Calls on or off; left out (as Discover does when it offered no calls) leaves edge_calls_enabled as it is</description></parameter>
+            <parameter name="sipOn" type="Boolean"><description>Phones on or off; left out (as Discover does when it offered no SIP engine) leaves edge_sip_enabled as it is</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="lineList" type="List"/>
@@ -357,9 +368,11 @@ along with this software (see the LICENSE.md file). If not, see
             address of is not checked); for xmppDomain, _xmpp-client._tcp (with xmppPort) and _xmpps-client._tcp (with
             xmppTlsPort), each record naming one of xmppHosts (the edge node's names, the first the one to set) and that
             port; a port of 0 is off and its record not listed; for each of turnHosts that is a name and not one of
-            hostNames, A and AAAA naming edgeAddresses or the address of mediaAddress (noted TURN for calls). recordList
-            has kind, name, expected, found, ok and a
-            note; _sips._tcp (each domain) and _xmpp-server._tcp (federation, C3b) are listed as later. In a build without
+            hostNames, A and AAAA naming edgeAddresses or the address of mediaAddress (noted TURN for calls); for
+            sipDomain (the edge node's SIP realm, when it is a DNS name), _sips._tcp (with sipTlsPort) and _sip._udp and
+            _sip._tcp (with sipPort), each record naming one of sipHosts (the edge node's names) and that port; a port
+            of 0 is off and its records not listed. recordList has kind, name, expected, found, ok and a note;
+            _xmpp-server._tcp (federation, C3b) is listed as later. In a build without
             the mail client's resolver (the imap feature) it fails, saying so.</description>
         <in-parameters>
             <parameter name="domains" type="List"/>
@@ -379,6 +392,11 @@ along with this software (see the LICENSE.md file). If not, see
                 go through it</description></parameter>
             <parameter name="mediaAddress"><description>The edge node's media address (ip:port), which its TURN host
                 names by default</description></parameter>
+            <parameter name="sipDomain"><description>The edge node's SIP realm (its sip_domain) when phones go
+                through it; empty for no SIP records</description></parameter>
+            <parameter name="sipHosts" type="List"/>
+            <parameter name="sipPort" type="Integer"><description>The port of its SIP address for UDP and TCP; 0 when off</description></parameter>
+            <parameter name="sipTlsPort" type="Integer"><description>The port of its SIP address for TLS; 0 when off</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="recordList" type="List"/>
@@ -403,7 +421,11 @@ along with this software (see the LICENSE.md file). If not, see
             make#IceServers gives a probe leg the edge node's TURN URLs with a credential signed with the secret its
             link handed this node (iceServers), and that credential allocates on its TURN over UDP with a permission
             for the IP of its media address (a TURN permission is for an IP alone), then the allocation is deleted (turn, up to 3 seconds; not checked without TURN or
-            a UDP listener). No outside
+            a UDP listener); with sipOn (not checked while edge_sip_enabled is false), the edge node's SipNode row is
+            kept by the link, live, with the Hello's addresses (sipNode), its engine has loaded every enabled trunk of
+            this node, none failed (sipTrunks; not checked with none), and its copy has every number's fallback, with
+            nothing waiting to replicate (sipFallbacks). No SIP request is sent: the edge node's engine answers OPTIONS
+            from its trunks only. No outside
             mail or provider is needed; the round trips' answers are waited for up to 10 seconds, and the XMPP checks
             (up to 3 seconds for the offer and 5 for each port) run alongside. testList has check, label, ok, checked and message; passed is true when
             none failed.</description>
@@ -418,6 +440,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="passSites" type="List"/>
             <parameter name="xmppOn" type="Boolean" default="false"/>
             <parameter name="callsOn" type="Boolean" default="false"/>
+            <parameter name="sipOn" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="testList" type="List"/>

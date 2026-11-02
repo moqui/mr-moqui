@@ -956,6 +956,10 @@ impl Inner {
         let mut failures = 0u32;
         loop {
             let outcome = self.register_once(&trunk, &call_id, &mut seq, REGISTER_EXPIRES).await;
+            // a loop that set_trunks replaced while its REGISTER was on its way tells nothing: the new loop does
+            if stop.is_cancelled() {
+                break;
+            }
             let wait = match outcome {
                 Ok(expires) => {
                     failures = 0;
@@ -980,8 +984,18 @@ impl Inner {
                 _ = stop.cancelled() => break,
             }
         }
-        // a trunk taken out or the server stopping: let the registration go
-        if !self.stop.is_cancelled() {
+        // a trunk taken out: let the registration go. One kept by set_trunks (the same id, loaded again) is left to
+        // its new loop, which registers it again: a REGISTER with expires 0 here would remove that binding too, and an
+        // `Unregistered` after the new loop's answer would show a working trunk as down.
+        let kept = lock(&self.trunks).get(&trunk.id).is_some_and(|entry| {
+            let new = &entry.config;
+            new.register
+                && new.host == trunk.host
+                && new.port == trunk.port
+                && new.transport == trunk.transport
+                && new.credentials.username == trunk.credentials.username
+        });
+        if !self.stop.is_cancelled() && !kept {
             let _ = tokio::time::timeout(
                 Duration::from_secs(5),
                 self.register_once(&trunk, &call_id, &mut seq, 0),
@@ -1009,6 +1023,10 @@ impl Inner {
                 Ok(Err(err)) => TrunkState::Failed(format!("no answer to OPTIONS: {err}")),
                 Err(_) => TrunkState::Failed("no answer to OPTIONS in time".to_string()),
             };
+            // a loop that set_trunks replaced tells nothing: the new loop does
+            if stop.is_cancelled() {
+                break;
+            }
             failures = if matches!(state, TrunkState::Failed(_)) {
                 failures + 1
             } else {
