@@ -21,7 +21,8 @@
 //!   app window shows the server's own `/qapps` and scripts. Both add the key (`moqui_client::proxy`).
 //! - [`sockets`]: `/notws` and `/callws`, which a page cannot open through a scheme, held by the host and bridged.
 //! - [`commands`]: sign-in, sign-out and the accounts, for the shell; [`windows`]: the shell and the app windows.
-//! - [`keystore`]: the OS key store, else a file only the user can read.
+//! - [`keystore`]: the OS key store, else a file only the user can read; [`renewal`]: the keys renewed before they
+//!   run out.
 //!
 //! The shell's origin may call the shell commands and the sockets; an app window's origin only the sockets, which
 //! reach nothing its requests do not already reach with the key (plans/Mobile-Desktop.md "Remote applications and
@@ -30,6 +31,7 @@
 mod assets;
 pub(crate) mod commands;
 mod keystore;
+mod renewal;
 mod scheme;
 pub(crate) mod sockets;
 mod windows;
@@ -129,6 +131,7 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Client::new(&dir, &resources)?);
     windows::add_capabilities(app);
     windows::shell_window(app)?;
+    renewal::start(app);
     Ok(())
 }
 

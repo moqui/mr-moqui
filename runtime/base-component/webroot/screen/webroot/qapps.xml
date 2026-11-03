@@ -19,8 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The settings of the qvt client for the desktop client's bundled shell (plans/Mobile-Desktop.md, MD3), which signs
         in by key and has no /qapps page to carry them: what this page writes (QvtConfig.js), under this screen's theme
         type, with no session token or page trace, for the runtime build of Vue, and server: {name, moquiVersion,
-        clientApi}. clientApi is the version of what the desktop client reads here and of the endpoints it calls. A
-        transition runs none of the pre-actions below. 401 without a user. -->
+        clientApi}. clientApi is the version of what the desktop client reads here and of the endpoints it calls (2 added
+        renewClientDevice). A transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const rumSettings = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserSettings').disableAuthz().call().settings || null
                 const config = qvtLib.build(ec, sri, { staticOnly: true, localeTag: localeTag, quasarLang: qvtLib.quasarLangOf(localeTag), rumSettings: rumSettings })
                 config.pageTraceId = ''
-                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 1 }
+                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 2 }
                 ec.web.sendJsonResponse(config)
             }
             ]]></script></actions>
@@ -57,6 +57,19 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.service.sync().name('org.moqui.impl.UserServices.revoke#UserDeviceKey').parameters({loginKey: loginKey}).disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
                 else ec.web.sendJsonResponse({revoked: true})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- A new key for the device of this request's key (renew#UserDeviceKey), which the desktop client asks for before
+        its key runs out; the old key ends ten minutes later. -->
+    <transition name="renewClientDevice" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else {
+                const renewed = ec.service.sync().name('org.moqui.impl.UserServices.renew#UserDeviceKey').disableAuthz().call()
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({loginKey: renewed.loginKey, thruDate: renewed.thruDate})
             }
             ]]></script></actions>
         <default-response type="none"/>

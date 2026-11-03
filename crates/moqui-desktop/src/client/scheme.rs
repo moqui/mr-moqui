@@ -15,7 +15,8 @@
 //! The app schemes of the client (plans/Mobile-Desktop.md §4 "One transport seam"). Chromium calls a handler on the main
 //! thread; each request goes to a worker thread here, which reads the shell's file or forwards the request to the
 //! account's server with its key (`moqui_client::proxy`), and answers from there. The body is whole, as the runtime
-//! takes it; a download goes through Chromium's (bridge.rs `on_download`), which asks the scheme again.
+//! takes it, so an attachment or a large file a window opens is saved by the host, streamed (`crate::download`); a
+//! small download goes through Chromium's (bridge.rs `on_download`), which asks the scheme again.
 //!
 //! The shell's settings, apps and counts (`moqui_client::cache::PATHS`) are kept per account when the server answers
 //! them, and answered from what was kept, marked `X-Moqui-Offline`, when it cannot be reached, so the shell opens with no
@@ -178,6 +179,16 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
             );
         }
     };
+    // an attachment or a large file the window opens: saved by the host, streamed, and the page left as it is
+    if let Some(name) = crate::download::saved_by_host(document, upstream.status, &upstream.headers, &bare) {
+        crate::download::save(app, name, move |out| {
+            upstream.copy_to(out).map_err(|err| err.to_string())
+        });
+        return Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Vec::new())
+            .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
+    }
     let status = upstream.status;
     let headers = upstream.headers.clone();
     let body = match upstream.body() {

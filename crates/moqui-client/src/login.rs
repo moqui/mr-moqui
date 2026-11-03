@@ -181,6 +181,85 @@ pub fn client_config(base: &str, key: &str) -> Result<Option<serde_json::Value>,
         .map_err(|err| Error::new(format!("{url}: {err}")))
 }
 
+/// The newest `server.clientApi` of `/qapps/clientConfig` this client knows: 1 the first, 2 added `renewClientDevice`.
+/// A server that sends a newer one may expect what this client does not do, so the shell asks for an update.
+pub const CLIENT_API: u64 = 2;
+
+/// The server's `clientApi` in its client config, 1 when it sends none.
+#[must_use]
+pub fn server_client_api(config: &serde_json::Value) -> u64 {
+    config
+        .pointer("/server/clientApi")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1)
+}
+
+/// The lifetime of this device's key, from the user's device list (`/qapps/clientDevices`, the row marked
+/// `current`): its `fromDate` and `thruDate` in milliseconds. `Ok(None)` when the key is no longer valid (401) or
+/// the list has no such row.
+///
+/// # Errors
+///
+/// Returns the transport's error, or the status of another refusal.
+pub fn key_period(base: &str, key: &str) -> Result<Option<(i64, i64)>, Error> {
+    let url = format!("{base}/qapps/clientDevices");
+    let response = client()?
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("login_key", key)
+        .send()
+        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+    let status = response.status().as_u16();
+    if status == 401 {
+        return Ok(None);
+    }
+    if status >= 400 {
+        return Err(Error::new(format!("{url}: HTTP {status}")));
+    }
+    let value: serde_json::Value = serde_json::from_str(&response.text().unwrap_or_default())
+        .map_err(|err| Error::new(format!("{url}: {err}")))?;
+    Ok(current_period(&value))
+}
+
+/// The `current` row's `fromDate` and `thruDate` in a `clientDevices` answer.
+fn current_period(value: &serde_json::Value) -> Option<(i64, i64)> {
+    let row = value
+        .get("deviceList")?
+        .as_array()?
+        .iter()
+        .find(|row| row.get("current").and_then(serde_json::Value::as_bool) == Some(true))?;
+    let millis = |name: &str| match row.get(name)? {
+        serde_json::Value::Number(number) => number.as_i64(),
+        serde_json::Value::String(text) => text.parse().ok(),
+        _ => None,
+    };
+    Some((millis("fromDate")?, millis("thruDate")?))
+}
+
+/// Whether a key good from `from` to `thru` is renewed at `now`: when less than a third of its life is left.
+#[must_use]
+pub fn renew_due(from: i64, thru: i64, now: i64) -> bool {
+    thru.saturating_sub(now) < thru.saturating_sub(from) / 3
+}
+
+/// A new key for this device (`/qapps/renewClientDevice`), with the same name and a full lifetime; the old key ends
+/// a few minutes later. `Ok(None)` when the key is no longer valid (401).
+///
+/// # Errors
+///
+/// Returns the transport's error, or the reason of a refusal (a server older than `clientApi` 2 has no such page).
+pub fn renew(base: &str, key: &str) -> Result<Option<String>, Error> {
+    let url = format!("{base}/qapps/renewClientDevice");
+    let (status, value) = post_json(&client()?, &url, &[], &[("login_key", key)])?;
+    if status == 401 {
+        return Ok(None);
+    }
+    match value.get("loginKey").and_then(serde_json::Value::as_str) {
+        Some(renewed) if status < 400 && !renewed.is_empty() => Ok(Some(renewed.to_string())),
+        _ => Err(Error::new(format!("{url}: HTTP {status}"))),
+    }
+}
+
 /// POST a form for JSON; a body that is not JSON is `null`.
 fn post_json(
     http: &reqwest::blocking::Client,

@@ -283,7 +283,8 @@ pub fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str
 
 /// The file name of an `attachment` disposition (`filename*=UTF-8''…` first, then `filename=`), as a plain name with
 /// no directory in it; `download` when it names none.
-fn attachment_name(disposition: &str) -> Option<String> {
+#[must_use]
+pub fn attachment_name(disposition: &str) -> Option<String> {
     let mut parts = disposition.split(';').map(str::trim);
     if !parts.next()?.eq_ignore_ascii_case("attachment") {
         return None;

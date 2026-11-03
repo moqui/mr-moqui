@@ -123,7 +123,10 @@
         openExternal: (url) => invoke("open_external", { url: String(url || "") })
     };
     if (node) {
-        window.moquiDesktop = Object.freeze(pageCommands);
+        // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)
+        window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
+            setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") })
+        }));
         return;
     }
     const socket = (url) => new HostSocket(url);

@@ -9539,6 +9539,8 @@
             }, { immediate: true });
             if (host && host.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) host.setPresence(status); },
                 { immediate: true });
+            // the Comms app the desktop app's mailto:, tel: and sip: links open (it cannot read a sidecar node's conf)
+            if (host && host.setCommsRoot && config.calls && config.calls.appRoot) host.setCommsRoot(config.calls.appRoot);
             if (config.qz && config.qz.enabled) this.loadQz();
         },
         unmounted() {

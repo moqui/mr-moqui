@@ -1102,4 +1102,10 @@ along with this software (see the LICENSE.md file). If not, see
             refused, and its notification socket closes within a minute.</description>
         <in-parameters><parameter name="loginKey" required="true"/></in-parameters>
     </service>
+    <service verb="renew" noun="UserDeviceKey" type="rust" location="moqui_core::service::user_keys::renew_device_key">
+        <description>A new key for the device of this request's login_key header, with the same deviceName and a full
+            login-key/@device-expire-hours, given once; the header's key ends ten minutes later, so requests already sent
+            with it still pass. An error when the request was not signed in by a device key of the user's.</description>
+        <out-parameters><parameter name="loginKey"/><parameter name="thruDate" type="Timestamp"/></out-parameters>
+    </service>
 </services>

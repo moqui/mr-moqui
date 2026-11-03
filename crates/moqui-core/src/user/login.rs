@@ -717,6 +717,51 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
     Ok(updated > 0)
 }
 
+/// How long a renewed device's old key still signs in, so a request already on its way with it is not refused.
+const RENEW_GRACE_MILLIS: i64 = 10 * 60 * 1000;
+
+/// A new key for the logged-in user's device whose key is `key` (as the client holds it), with the same `deviceName`
+/// and a full `login-key/@device-expire-hours`; the old key ends a few minutes later (plans/Mobile-Desktop.md §4,
+/// "Remote applications and authentication"). The new key and its `thruDate` in milliseconds, or `None` when `key` is
+/// not one of the user's unexpired device keys.
+///
+/// # Errors
+///
+/// Returns an error when the key cannot be hashed or a row cannot be read or written.
+pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
+    let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    if key.is_empty() {
+        return Ok(None);
+    }
+    let hashed = password::hash_login_key(key)?;
+    let now = now_millis();
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(mut old) = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("loginKey", Value::string(hashed))
+        .one()?
+    else {
+        return Ok(None);
+    };
+    // A find by the primary key alone: the owner and the device are checked here.
+    let device = text_field(&old, "deviceName");
+    let old_thru = field_millis(&old, "thruDate");
+    if text_field(&old, "userId") != user_id || device.is_empty() || old_thru.is_some_and(|thru| thru <= now) {
+        return Ok(None);
+    }
+    let hours = policy::login_key_device_expire_hours();
+    let renewed = make_login_key_for(&user_id, hours, Some(device.as_str()))?;
+    let grace = now.saturating_add(RENEW_GRACE_MILLIS);
+    old.set("thruDate", stamp_value(old_thru.map_or(grace, |thru| thru.min(grace))));
+    old.update(&facade)?;
+    #[allow(clippy::cast_possible_truncation)] // As make_login_key_for's expiry.
+    let thru = now.saturating_add((hours * HOUR_MILLIS).round() as i64);
+    Ok(Some((renewed, thru)))
+}
+
 /// A device key for the user `user_id`, made with no session of theirs: an installed app's SSO hand-back
 /// (`service/sso_app.rs`), where the browser signed in and the app takes the code. The account must be able to log
 /// in now (not disabled or terminated), and the sign-in is in its login history, as a session's login is; no session
