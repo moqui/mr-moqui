@@ -79,40 +79,13 @@ An app around the page (the desktop app, `crates/moqui-desktop/src/bridge.js`) m
 `saveFile({name, blob})`, each optional. Where it has one, the client calls it instead of a Web Notification, a new
 window or a download link, gives it the shell's counts and the user's presence, and does not start Web Push.
 
-The desktop app as a client of a remote server (configuration 3 of [Mobile-Desktop](../../../../../../plans/Mobile-Desktop.md))
-shows these scripts on its own origins, which every server and account share, and its pages cannot open a socket to
-the server. So `window.moquiDesktop` may also have:
-
-- `socket(url)`: a socket-like object the host holds for `/notws` and `/callws` (text frames), which
-  `moqui.openSocket(url)` returns in place of a WebSocket (the notification client and the call guest use it; the html
-  mode's notification socket calls `moquiDesktop.socket` itself; the terminal's `/termws` does not connect in a client).
-  The node the app runs in its own process, on its app scheme with no port, has `socket` too, for `/notws`, `/callws`
-  and `/termws`, whose binary frames it carries as an `ArrayBuffer` (and takes one, or a typed array, to send);
-- `storageScope`: what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox,
-  the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web;
-- `outbox`: the host's outbox (`add(kind, payload, files)`, `list`, `retry`, `discard`, `on(fn)`), which keeps and sends
-  what a page sends offline. `moqui.hostOutbox()` answers it, or null on the web; `moqui.chat` keeps its outbox there
-  (and moves the one `localStorage` held into it once), and Compose queues a mail send there;
-- `drafts`: the host's drafts and their files. `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`,
-  `saveFile`) is the drafts of Chat and Compose: the host's where there is one (this browser's moved in once), else
-  `localStorage` under `scopedKey`.
-
-The client's shell also gives `deviceName`, the name of its chat crypto device, which `WebrootCrypto.js` uses; its app
-windows set `window.__moquiCryptoInShell`, so `moqui.crypto` makes no device there (`ensureDevice` refuses with
-`elsewhere`, and `moqui.callKeys.prepare` too), and give `openInShell(path)`, which shows a comms screen (an encrypted
-room or call) in the shell, which owns the calls (`moqui.call` in an app window rings silently and opens a call there).
-`WebrootCall.render.js` is the render functions of `WebrootCall.js`'s components, loaded with it
-(`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled`).
-
-With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)`) says the server is out of reach: set
-by `moqui.request` from the host's `X-Moqui-Offline` answers (from the store, or its 502 when the server is not reached)
-and from no answer at all, cleared by the server's own answer and by the host's socket opening or bringing a message;
-`moqui.unreachable(err)` tells such a failure. The web never goes offline, so the screens'
-offline presentation is inert there.
-
-Its bundled shell runs on the runtime build of Vue: `moqui.bundledComponent(name)` answers a screen it bundled
-precompiled (`moqui.qvtBundled`), `loadComponent` answers one without fetching it, and on the runtime build a `.qvue` or
-`.qjs` that is not bundled is none.
+As a client of a remote server, the desktop app also gives `socket`, `storageScope`, `outbox`, `drafts`, `deviceName` and,
+in app windows, `openInShell`; the scripts keep what must outlive a page behind `moqui.hostOutbox()`, `moqui.drafts` and
+`moqui.scopedKey`, read `moqui.connection` from the host's `X-Moqui-Offline` answers, leave the chat crypto device to
+the shell in app windows (`elsewhere`), and the bundled shell runs on the runtime build of Vue
+(`moqui.bundledComponent`). `WebrootCall.render.js` is the precompiled renders of `WebrootCall.js`'s components, loaded
+after it (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled`). All of this is
+[Qvt-Client, In the desktop app](../../../../../../docs/ui/Qvt-Client.md#in-the-desktop-app).
 
 Tests: `moqui test-client webroot --offline` runs the page specs under `test/client/`; what needs a real browser is the
 Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).
@@ -120,4 +93,4 @@ Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).
 Sections of the reference: Page shell and settings · Loading a screen · The components the macros write · Shell data
 and providers · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record
 cards · List views: board, calendar and tree · Scan input · Layout panels: split, wizard and stack · Chat store and presence · Notification listeners ·
-Collaborative editing · Mail sign-in popup · Server-static screens · The tui screen model · Not here.
+In the desktop app · Collaborative editing · Mail sign-in popup · Server-static screens · The tui screen model · Not here.

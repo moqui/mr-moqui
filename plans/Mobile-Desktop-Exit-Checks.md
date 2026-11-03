@@ -1,6 +1,6 @@
 # Mobile-Desktop exit checks
 
-The checks on installed apps that close MD1, MD2 and MD3 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
+The checks on installed apps that close MD1, MD2, MD3 and MD4 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
 are run by hand on real machines, not in the test suites: several take a sleep, a second machine or minutes of
 waiting. Each says what to set up, what to do, and what to record. Record the results in §8 of the plan (a line per
 check: date, OS and version, app version, pass or what failed), and file what fails as a fix.
@@ -125,3 +125,47 @@ Switch to the client from the tray ("Use as a client of a server").
     - `tel:` link with the Dialer already shown: the second number fills it.
     - Turn the network off: a call's screen and the Dialer say they need a connection; on again, they come back.
     - Switch account or sign out in a call: it asks first, and the other people see this user leave.
+
+## MD4: offline data and bundled Comms
+
+In the client, against the remote server with BOSS. A personal account is one signed in with "This is my device", a
+shared one with "Shared device" (the build's `<client-conf device-mode>` is `choose`). The account's store is
+`client/data/<account>.db` in the app's config directory.
+
+1. **Personal and shared sign-in.** Sign in to one account as personal and another (another user or server) as shared.
+   - Record: the sign-in asked for the mode; `accounts.json` shows each account's `deviceMode`; each has its store.
+   - Sign in to the personal account again choosing shared: it stays personal and the shell says why.
+2. **Offline restart.** With the personal account, open a few rooms (one encrypted), a mail folder and a thread, and
+   start a chat draft and a Compose draft. Turn the network off (or stop the server), quit and open the app.
+   - Record: the shell opens offline; Chat shows the rooms and their messages to where they were read or mirrored, then
+     the end of kept history; the encrypted room's messages decrypt; the Inbox shows the folder and the thread; both
+     drafts are there.
+3. **Queued sends.** Still offline: send a chat message, one with an attachment, mark a room read, send a mail with an
+   attachment, and archive a thread. Quit and open the app again, still offline.
+   - Record: each shows as queued (the Inbox's Outbox for the mail); the room shows read and the thread archived at once.
+   - Turn the network on. Record: each is sent once (the server's room and Sent folder, and a browser of the other user,
+     show one message each, the attachments once); the queued rows go.
+4. **A reopened draft.** Online, save a Compose draft; go offline, reopen it from Drafts, change it and send.
+   - Record: it is queued; once online the one draft is sent, not a second copy (one message in Sent, none left in
+     Drafts).
+5. **Discarded.** Offline, queue a chat message and a mail, and Discard each from its row; go online. Record: nothing
+   is sent, and the store's files of the mail's attachment are gone.
+6. **Sign-out by mode.** Sign the shared account out with an item still queued.
+   - Record: the shell lists the unsent item and asks first; after it, the account's entry, its store file and its
+     files are gone, and signing in again shows no kept data (an app window's browser storage of it is cleared too).
+   - Sign the personal account out: its store is still there; signed in again and then offline, it reads as before.
+   - Revoke the shared account's device from BOSS on another device: its data is deleted as on sign-out; revoke the
+     personal one: its data is kept until the account is removed from the account menu.
+7. **The outbox moved from an MD3 build.** Install an MD3 build, sign in, go offline and queue two chat messages and a
+   chat draft (kept in the page's `localStorage`). Install the MD4 build over it and open it online.
+   - Record: both messages are sent once and the draft is in Chat; the browser storage no longer holds them.
+8. **Encrypted room offline.** Restart the app offline after reading an encrypted room. Record: its messages decrypt
+   (the store key from the key store); in an app window an encrypted room offers Open in Chat, and the device list
+   shows one device for this computer, "MR Moqui desktop on <host>".
+9. **Mirror bounds.** On a test build set `mirror-days` short (say 2), `prefetch-rooms` 3 and `prefetch-mail` 10.
+   - Record: a personal account's store holds rooms and mail back about two days and no further (older pages need the
+     server); a shared account's the three latest rooms and the inbox's ten latest threads.
+10. **Store cap.** On a test build set `store-max-mb` small (say 5) and read rooms and mail past it, with a queued send
+    and a draft.
+    - Record: the store file stays near the cap, the least recently read rooms and threads go first, and the queued
+      send and the draft are kept and sent.

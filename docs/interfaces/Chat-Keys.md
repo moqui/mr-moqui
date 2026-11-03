@@ -79,6 +79,14 @@ A device is one browser's crypto store for one user, as in Matrix: devices belon
   (`keysChanged`, `keyExists`, `badKeys`, `tooLarge`) is revoked and made again once; a second refusal stops this page's
   uploads (`state.status` error). `tooManyKeys` stops uploads until keys are claimed.
 
+**In the desktop client** ([Desktop-Client](../ui/Desktop-Client.md#chat-crypto)), the shell owns the account's
+device, named for the app and the computer ("MR Moqui desktop on <host>", `moquiDesktop.deviceName` in place of the
+browser and OS of the user agent). The host keeps its store key (`/ChatKeys/storeKey`) in the OS key store, so cached
+ciphertext decrypts offline, and drops it on a revocation and with the account. App windows make and open no device:
+`ensureDevice` and each call that needs it refuse with `reasonCode` `elsewhere` (`moqui.crypto.elsewhere()`), and an
+encrypted room there opens in the shell's Chat. The shell's device is new, not moved from a browser's store; its older
+room keys come from the key backup.
+
 ## Who reaches whom
 
 A user's key queries, claims and to-device sends reach their own devices and the devices of users who share a room (both

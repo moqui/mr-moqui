@@ -1,7 +1,8 @@
 # moqui-client
 
 The client of a remote MR Moqui server, for the desktop app's client mode and later the mobile app (configuration 3 of
-[Mobile-Desktop](../../plans/Mobile-Desktop.md), MD3). It has no Tauri, no framework and no async API (reqwest's blocking
+[Mobile-Desktop](../../plans/Mobile-Desktop.md), MD3 and MD4; how the desktop app uses it is
+[docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md)). It has no Tauri, no framework and no async API (reqwest's blocking
 client, so callers run on a plain thread), and builds for Android as well as the desktops. TLS is checked against the
 OS trust store; on Android that needs the app to bundle `rustls-platform-verifier`'s Android component (its Maven
 artifact) and call `rustls_platform_verifier::android::init_hosted` before the first request.
@@ -23,7 +24,7 @@ Each installed client is a device with its own login key. The host keeps the key
 - `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop, but not after a close
   for authentication.
 - `cache`: the shell's settings, apps and counts as MD3 kept them in files, moved once into the account's store.
-- `store`: an account's data for offline use (MD4), one SQLite file per account (`data/<account>.db`, owner-only, WAL,
+- `store`: an account's data for offline use, one SQLite file per account (`data/<account>.db`, owner-only, WAL,
   migrated by `user_version`): cached answers by path and sorted query; chat rooms and events, with the seq ranges
   held whole so an offline page stops at a gap; mail folders, threads and messages, replaced when re-read; the outbox
   of operations by `clientRef` (claimed atomically, ordered per target, recovered after a crash); drafts; and their

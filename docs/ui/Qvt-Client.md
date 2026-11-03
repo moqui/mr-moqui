@@ -2,7 +2,7 @@
 
 Reference for the client of the `qvt` render mode and the `/qapps` shell: the page shell, how a screen loads, the `m-*`
 components the macros write, shell data, preferences, the record and list views, chat, notifications, collaborative
-editing, server-static screens and the `tui` screen model. For screen and widget authors and for work on the client
+editing, the desktop app's seams, server-static screens and the `tui` screen model. For screen and widget authors and for work on the client
 files in `runtime/base-component/webroot/screen/webroot/js/`; relative paths below (`../libs`, `../css/...`,
 `test/client/...`) are from that directory. The `html` mode client, `moqui-html.js`, is in that directory's
 [README](../../runtime/base-component/webroot/screen/webroot/js/README.md).
@@ -815,7 +815,7 @@ header's Chat badge (`counts.chat`, the app's counts service adding `get#UnreadC
 **The outbox.** A screen sends a message with `moqui.chat.send({chatRoomId, url, params, text, threadRootEventSeq, hasFiles})`: `url` is
 its send transition, `params` its other parameters, `text` what its pending row shows. The item is kept first in `localStorage`
 (`moqui.chat.outbox.<userId>`, under the account's storage scope in a desktop client, so it outlives the page and other tabs see it through `storage` events) with a `clientRef`, then posted with
-it; the server answers a clientRef it has seen with the first message (`duplicate`), so a message is posted once however often it is tried.
+it (in the desktop client the host's outbox keeps and sends it instead: below, In the desktop app); the server answers a clientRef it has seen with the first message (`duplicate`), so a message is posted once however often it is tried.
 `send` resolves `{sent: true, json}` when answered now, `{queued: true}` when it waits, `{failed: true, error}` when refused, and rejects when
 the outbox cannot keep it (50 items, 64 KB each). A send that did not go is classified by its status (`classify`): no answer, 408, 429 and
 5xx try again after `backoff` (2, 5, 15, then 60 seconds); 401 and 403 hold until the next flush that sends all; another 4xx, or an answer
@@ -935,7 +935,7 @@ title, link and topic, and the message id as the tag, never the message body. A 
 open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed.
 
 The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
-In the desktop app, which defines `window.moquiDesktop` ([js README](../../runtime/base-component/webroot/screen/webroot/js/README.md)),
+In the desktop app, which defines `window.moquiDesktop` (below, In the desktop app),
 the client shows it as a native notification instead and does not start Web Push.
 
 **Account switch and logout.** A browser's subscription is one user's:
@@ -963,6 +963,70 @@ as a notification.
 
 The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
 names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
+
+## In the desktop app
+
+The desktop app's page bridge (`crates/moqui-desktop/src/bridge.js`) defines `window.moquiDesktop`, and the client calls
+what it has, each member optional. On a node's own origin: `notify({title, body, link, tag})`, `setCounts(counts)`,
+`setPresence(status)`, `openExternal(url)` and `saveFile({name, blob})`, used instead of a Web Notification, a new window
+or a download link; with it the client does not start Web Push.
+
+As a client of a remote server ([Desktop-Client](Desktop-Client.md)) the pages are on the app's own origins, which every
+server and account share, and cannot open a socket to the server. The shell (`moqui-shell`) shows the bundled screens;
+app windows (`moqui-app`) show the server's own `/qapps`. The bridge then also has:
+
+| Member | What |
+|---|---|
+| `socket(url)` | a socket-like object the host holds for `/notws` and `/callws` (text frames), which `moqui.openSocket(url)` returns in place of a WebSocket. The node in process has it too, for `/notws`, `/callws` and `/termws`, whose binary frames it carries as an `ArrayBuffer` |
+| `storageScope` | what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox, the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web |
+| `outbox` | the host's outbox of the window's account: `add(kind, payload, files)`, `list()`, `retry(id)`, `discard(id)`, `on(fn)` for each change; kinds `chat-send`, `chat-read`, `mail-send`, `mail-state` |
+| `drafts` | the host's drafts and their files: `get`, `list`, `put`, `remove`, `saveFile` |
+| `deviceName` | the shell's name for its chat crypto device ("MR Moqui desktop on <host>"), which `WebrootCrypto.js` uses |
+| `openInShell(path)` | app windows: shows a comms screen (an encrypted room, a call) in the shell, for the window's account while it is current |
+
+App windows also set `window.__moquiCryptoInShell`.
+
+**Storage seams.** The shared scripts keep what must outlive a page behind three seams, so the same screens run on the
+web and in the client:
+
+- `moqui.hostOutbox()` answers `moquiDesktop.outbox`, or null on the web. `moqui.chat` keeps its outbox there when there
+  is one, with its own flush off (the host sends with the same rules), and moves the outbox it kept in scoped
+  `localStorage` into it once, item by item, each taken off the browser's list when the host has it. Compose queues a
+  mail send there, with its files, when the server cannot be reached; an internal message is not queued.
+- `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`) is the drafts of Chat and Compose: the
+  host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are read, and
+  moves the drafts this browser kept before into the host once, the newer copy kept; in the client `get` and `keys`
+  answer nothing until then, so callers wait for it.
+- `moqui.scopedKey(key)` keeps the rest (the crypto device pointer and store) apart per account.
+
+**Connection.** With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)` hears each change)
+says the server is out of reach. `moqui.request` sets it from the host's answers marked `X-Moqui-Offline`:
+
+| `X-Moqui-Offline` | Meaning |
+|---|---|
+| `1` | answered from the account's store (the server did not answer) |
+| `unreachable` | the host's own 502: the server was not reached |
+
+No answer at all sets it too. The server's own answer clears it, even its own 502, and so does the host's socket
+opening or bringing a message. `moqui.unreachable(err)` tells such a failure from a refusal. The web never
+goes offline, so the screens' offline presentation (queued and failed sends, "needs a connection", the end of kept
+history) is inert there.
+
+**Bundled screens.** The shell runs on the runtime build of Vue. `moqui.bundledComponent(name)` answers a screen it
+bundled precompiled (`moqui.qvtBundled`), `loadComponent` answers one without fetching it, and on the runtime build a
+`.qvue` or `.qjs` that is not bundled is none: the shell opens it in an app window. BasicComms' chat panel, Chat,
+Inbox (Mail), Compose, Calls/Call and Calls/Dialer are bundled, from their own `.qvue` files
+([Desktop-Client](Desktop-Client.md#bundled-screens-and-app-windows)).
+
+**Crypto elsewhere.** The shell owns the account's chat crypto device and calls. In an app window
+(`window.__moquiCryptoInShell`) `moqui.crypto.elsewhere()` is true: `ensureDevice` and each call that needs the device
+refuse with `reasonCode` `elsewhere`, and an encrypted room offers Open in Chat. `moqui.callKeys.elsewhere()` follows it
+and `prepare` refuses with `elsewhere`. `moqui.call` there rings silently, and its Answer, Join and Return open the call
+in the shell (`openInShell`).
+
+**`WebrootCall.render.js`** is the render functions of `WebrootCall.js`'s components, precompiled so the shell's CSP needs
+no `unsafe-eval`. It loads after `WebrootCall.js` on `/qapps`, the guest page (`PublicShell.xml`) and the shell, and a
+golden test keeps it current (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled`).
 
 ## Collaborative editing
 

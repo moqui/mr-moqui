@@ -29,7 +29,9 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   attached once, and a send that went through answers `duplicate` true (`EmailMessage.clientRef`, found only among the
   user's own messages; `clientApi` 3). A send that failed is not sent again by its ref (it may have gone out); the user
   sends it. A client runs its queued operations of one ref one after another; a late retry after the draft was deleted
-  makes a new one.
+  makes a new one. `composeData` answers a draft's `clientRef`, so a client that reopens a draft offline queues its
+  send by the ref the server keeps. An internal message is not queued: its send is not taken once by a `clientRef` yet,
+  so a client keeps it as a draft until it has a connection ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)).
 - **Attach from Files and Save to Files.** Compose's Attach from Files opens the drive picker: the user's drives (My
   files first), the recent files, a folder or a search by name. A picked file is copied onto the message; a file over
   25 MB, or a folder, goes in as a view link instead. An attachment in the Inbox has Save to Files, which copies it into

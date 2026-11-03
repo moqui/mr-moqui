@@ -4,7 +4,7 @@ The desktop app: an MR Moqui node on this computer, shown in a [Tauri](https://t
 ([CEF](https://bitbucket.org/chromiumembedded/cef), through `tauri-runtime-cef`) on every desktop OS. It is
 configuration 1 (the `moqui` binary as a sidecar, MD1) and configuration 2 (the node in the app's process with no port,
 MD2) in [Mobile-Desktop](../../plans/Mobile-Desktop.md), in one app with a switch at run time, or with no node a client of
-a remote server (configuration 3, MD3).
+a remote server (configuration 3, MD3 and MD4).
 
 - The node in process has no port: the window reaches it through the app scheme `moqui-node`
   ([The node in process](#the-node-in-process)). The sidecar listens on 127.0.0.1 only, on a port kept in `node-port`
@@ -14,8 +14,8 @@ a remote server (configuration 3, MD3).
   links, open in the system browser or handler.
 - Closing the window hides it to the tray. Quit (tray menu or ⌘Q) stops the node and its Postgres.
 
-The `client` mode is configuration 3, a client of a remote server with no node here
-([Client of a server](#client-of-a-server)). The checks on installed apps that close MD1 to MD3 are in
+The `client` mode is configuration 3, a client of a remote server with no node here that keeps each account's data for
+offline use ([Client of a server](#client-of-a-server)). The checks on installed apps that close MD1 to MD4 are in
 [Mobile-Desktop-Exit-Checks](../../plans/Mobile-Desktop-Exit-Checks.md).
 
 The crate is not a member of the repository's workspace, so Tauri and CEF stay out of the server builds. It depends on
@@ -97,102 +97,40 @@ origin (and on a client's, [Client of a server](#client-of-a-server)), and the w
 
 `src/client/` and `shell/`, on [moqui-client](../moqui-client/README.md): the `client` mode (`MOQUI_DESKTOP_NODE=client`,
 or the tray's "Use as a client of a server", which writes `client` in `node-mode`) starts no node. The window shows the
-bundled shell, which opens with no network; each account is a server and a user, with a device key the host keeps.
+bundled shell, which opens with no network; each account is a server and a user, with a device key the host keeps. The
+full description is [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md).
 
-- **Schemes:** `moqui-shell` (`http://moqui-shell.localhost`) serves the shell's files (`shell/`, and the webroot's `js/`,
-  `libs/` and `css/` of `shell/libs.txt`; a bundle's staged copy in `shell-assets/`) under a CSP without `unsafe-eval`
-  (only `wasm-unsafe-eval`, for the crypto device's module) whose one worker is an encrypted call's staged SFrame
-  transform (`client/assets.rs`), and forwards the server's data (its JSON, images, media and
-  downloads; never its pages, frames or scripts, and nothing under its own paths, which are its files or a 404) to the
-  current account's server; the host's own 502, the server not reached, is marked `X-Moqui-Offline: unreachable`; `moqui-app`
-  (`http://moqui-app.localhost`) forwards everything, for the app windows (`remote-<n>`), which show the server's own
-  `/qapps`. Each request carries the key in the `login_key` header; the pages hold no credential and send no cookie.
-  How the schemes work around Chromium's handling of their HTML is in [Mobile-Desktop](../../plans/Mobile-Desktop.md#one-transport-seam).
-- **Store:** each account's data is in its store (`moqui_client::store`, `client/data/<account>.db`), opened when
-  first used (`client/stores.rs`), with the size cap of `<client-conf store-max-mb>`; the answers MD3 kept in
-  `client/cache/` move into it once.
-- **Offline:** the shell's `/qapps/clientConfig`, `/shellData` and `/shellCounts`, and the comms app's Chat
-  (`chatData`, `rooms`, `roomView`, `room`, `timeline`), Mail (`inboxData`, `threads`, `thread`) and Compose
-  (`composeData`) answers are kept when the server gives them (`client/offline.rs`, keyed less `_`,
-  `moquiSessionToken` and `pageTraceId`), and answered, marked `X-Moqui-Offline`, when it cannot be reached. Timeline
-  pages, a room view, the room list, a folder's thread pages (one store's cursor or mr-mantle's several) and a thread
-  are built from the stored rows in the server's shape, so pages never asked for whole still answer and pushes show; a
-  page in a gap (never fetched) needs the server (502), and `offline.gapBefore`/`gapAfter` say where the held stretch
-  ends (`hasMore*` stay false there). The page's chat store passphrase (`/ChatKeys/storeKey`) is kept in the key store and
-  answered offline to the shell only; a revoked device's is dropped.
-- **Pushes and mirror:** the chat pushes on the account's `/notws` are written into the store (`client/push.rs`:
-  edits, reactions and redactions folded into their message); a drop marks the timelines' heads stale. When the
-  shell's `/notws` opens, `client/mirror.rs` reads ahead on a thread of its own: a personal device all rooms and mail
-  folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first `prefetch-mail`
-  threads; after a drop, each room's latest page again.
-- **Outbox and drafts:** what a page sends offline is kept in the account's store and sent by the host
-  (`client/outbox.rs`, `client/flush.rs`), on a thread of its own for every account signed in here, with WebrootChat's
-  rules (no answer, 408, 429, 5xx again after 2, 5, 15, 60 s; 401 and 403 held until a sign-in or a renewed key; another
-  4xx failed with the server's message; 50 waiting, 64 KB each): a chat message (`chat-send`, acknowledged by its answer
-  and its pushed echo), a mark-read (`chat-read`), a compose (`mail-send`: the draft saved, its files uploaded, sent, each
-  once by its `clientRef`) and a thread's read, flag, archive, move or trash (`mail-state`). A mark-read and a mail state
-  change show in the stored rows at once. The pages call `moquiDesktop.outbox` (`add`, `list`, `retry`, `discard`, `on`
-  for each change) and `moquiDesktop.drafts` (`get`, `list`, `put`, `remove`, `saveFile`), for the calling window's
-  account; the shell's `outbox.unsent()` lists what a shared sign-out would delete. An internal message is not queued:
-  its send is not taken once by a `clientRef` yet (MD5), so Compose keeps it as a draft until there is a connection.
-  An operation held three times in a row fails, and a chat message with files fails after 20 hours. The drafts are
-  capped at 500 and 16 MB of text, their and the sends' files at a quarter of `store-max-mb`.
-- **Device mode:** `<client-conf device-mode>` in the runtime's merged conf (read without booting, `client/conf.rs`):
-  `personal` or `shared` for every account, or `choose`, where the sign-in asks. The mode is kept with the account; one
-  already personal stays so (the shell says why); one with none follows the build's mode. Sign-out or a revocation of
-  a shared account deletes its data, chat store keys and entry, and the pages clear its scoped browser storage and
-  IndexedDB (the shell as it loads, the next app window once); a personal one keeps them; removing an account always
-  deletes them (`client/modes.rs`).
-- **Renewal:** at start and every six hours, a key with less than a third of its life left is renewed
-  (`client/renewal.rs`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server
-  ends the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it
-  knows.
-- **Sign-in:** the shell's Sign in (`shell/screens/SignIn.qvue`) has the host post the password once to the server's
-  REST login with `createLoginKey` and a `deviceName`, with the second factor's code when it asks. Sign out revokes the
-  key (`/rest/logout` with `revokeLoginKey`); a 401, or `/notws` closing for authentication, has the host check the key
-  and, if it no longer signs in, forget it and show the sign-in.
-- **Single sign-on:** the sign-in's "Single sign-on" lists the server's identity providers; one opens the system
-  browser at the server's `/sso/appLogin`, where the user signs in and lets the app in, and the server hands the browser
-  back to the app's own scheme, `org.moqui.desktop:/sso` (registered with the OS as the app's, beside `mailto:` and the
-  others, and on Linux by an AppImage or development run when it starts a sign-in; not claimed by "Make default"; on
-  macOS the app's bundle registers it, which is checked on the installed app only), with a code the app takes with its PKCE verifier for a device key. A hand-back
-  the app is not waiting for is passed over.
-- **Apps and devices:** the account menu lists the account's apps and devices signed in by a key of their own
-  (`/qapps/clientDevices`), each to sign out; so does My Account's Account page in BOSS.
-- **Key store:** the macOS Keychain or the Secret Service (`keyring`), else a file in `client/keys/` in the app's config
-  directory that only the user can read, which the shell's account menu says. A development run uses the file unless
-  `MOQUI_DESKTOP_KEY_STORE=os` (each build is a new unsigned binary the Keychain would ask about).
-- **Sockets:** a page's `/notws` or `/callws` (`moquiDesktop.socket`, which `moqui.openSocket` uses) is held by the host
-  with the key, and its frames are handed to the page.
-- **Accounts:** the accounts are `client/accounts.json`; switching closes the other account's windows and sockets. The
-  pages' browser storage of a server's data is under the account (`moquiDesktop.storageScope`, MoquiLib `scopedKey`).
-- **Commands:** the main window (the shell) has the shell's commands, the page bridge's, the sockets, the outbox and the
-  drafts; an app window has the sockets, the outbox and the drafts of its own account. Tauri counts the app's scheme pages as local, so the capabilities name the windows, and each window's
-  navigation stays on its origin (the web opens in the system browser, a server page from the shell in an app window).
-- **Downloads:** an attachment or a large file is saved by the host, streamed, as for the node in process (above); a
-  small one is Chromium's. An event stream is answered 503, as on the node's scheme.
-- **Bundled screens:** `shell/bundled-screens.txt` lists them (the shell's own, and BasicComms' chat panel, Chat, Inbox,
-  Compose, Calls/Call and Calls/Dialer from their `.qvue` files, the web's own source, with WebrootCall.js's call
-  components precompiled in `WebrootCall.render.js`); they are precompiled into `shell/js/bundled-screens.js`,
-  checked by `cargo test -p moqui-core --lib bundled_screens_are_precompiled` (`UPDATE_GOLDEN=1` writes it again), with
-  the libraries they load in `libs.txt`. The shell shows those Comms screens itself, under the account's comms app
-  (`calls.appRoot`), and a link to them from the OS or a notification is kept until the shell takes it
-  (`client/windows.rs` `open_page`); any other screen opens in an app window. An app that extends them (BOSS) keeps its
-  transitions and `ext-action` items there.
-- **Chat crypto:** the shell owns the account's crypto device ("MR Moqui desktop on <host>"); an app window makes and
-  opens none (`window.__moquiCryptoInShell`), and an encrypted room there offers Open in Chat, which shows it in the
-  shell for the window's account while it is current (`open_in_shell`).
-- **Calls:** the shell owns the account's calls, so each has one owner of its media: it rings (a native notification
-  when its window is not focused or is hidden, which the host tells it, `bridge::tell_focus`; media plays with no
-  gesture, `--autoplay-policy`) and shows a call (the ring bar, the LiveCall window, Calls/Call) from a room, the
-  Dialer, a notification or a `tel:`/`sip:` link, with the camera and microphone granted as to the app windows, and the
-  encrypted ones' keys over its crypto device. An app window rings silently; its Answer, Join, Return and a call started
-  there open the call in the shell (`open_in_shell`), and it never ends the shell's call. Calls' History, Voicemail and
-  Recordings open in app windows. Offline, a call says it needs a connection; switching account or signing out in a
-  call asks first and leaves it. Specs: `ShellCalls`.
-- **Offline in the screens:** from `moqui.connection` (the host's `X-Moqui-Offline` answers), inert on the web: queued and
-  failed sends, the Inbox's Outbox, "needs a connection", and the sign-out's list of what is unsent. Specs:
-  `moqui test-client basic-comms --offline` (`ShellComms`).
+- **Schemes:** `moqui-shell` serves the shell's files under a CSP without `unsafe-eval` and forwards the server's data,
+  never its pages or scripts (`scheme.rs`, `assets.rs`); `moqui-app` forwards everything, for the app windows, which
+  show the server's own `/qapps`. Each request carries the key in the `login_key` header.
+- **Accounts and keys:** sign-in by password or SSO (`shell/screens/SignIn.qvue`), `client/accounts.json`, the OS key
+  store or a file only the user can read, renewal (`renewal.rs`), the account menu's Apps and devices.
+- **Device mode:** `personal`, `shared` or `choose` from `<client-conf>` (below), kept with the account (`modes.rs`): a
+  shared account's data and entry are deleted on sign-out or revocation, a personal one's kept until it is removed.
+- **Store and offline:** one SQLite store per account (`stores.rs`); the comms transitions' answers and rows kept and
+  answered offline, marked `X-Moqui-Offline` (`offline.rs`); the chat pushes folded in (`push.rs`); the mirror reads
+  ahead when the shell's socket opens (`mirror.rs`).
+- **Outbox and drafts:** chat sends and reads, mail sends and state changes queued in the store and sent by the host on
+  a thread of its own (`outbox.rs`, `flush.rs`), with WebrootChat's retry rules.
+- **Bundled screens:** `shell/bundled-screens.txt` (the shell's own, and BasicComms' chat panel, Chat, Inbox, Compose,
+  Calls/Call and Calls/Dialer), precompiled into `shell/js/bundled-screens.js` with the libraries of `libs.txt`; any
+  other screen opens in an app window (`windows.rs`). After a change to one:
+  `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
+- **Crypto and calls:** the shell owns the account's chat crypto device and its calls; an app window makes no device
+  (`elsewhere`) and opens encrypted rooms and calls in the shell (`open_in_shell`).
+
+### client-conf
+
+What the client keeps for offline use is set by the `<client-conf>` element of the bundled runtime's merged conf, read
+without booting a node (`client/conf.rs`), so each build sets its own in its runtime conf; the server does not read it.
+The defaults, in `MoquiDefaultConf.xml`:
+
+```xml
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+```
+
+The attributes are in `moqui-conf-3.xsd` and
+[Desktop-Client](../../docs/ui/Desktop-Client.md#device-modes-and-client-conf).
 
 ## OS integration
 
@@ -295,6 +233,7 @@ cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test
 
 The host side of the stdin-close stop, the Postgres takeover, the node in process (`in_process`) and the shared PDF
 page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p moqui-drivers`; the client's proxy,
-sockets, accounts and renewal in `cargo test -p moqui-client`, the device key renewal on the server in
+sockets, accounts, renewal, store and conf in `cargo test -p moqui-client`, the device key renewal on the server in
 `cargo test -p moqui-core --lib a_device_`, and the bundled screens in
-`cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
+`cargo test -p moqui-core --lib bundled_screens_are_precompiled`; the bundled Comms screens in the shell, in the page,
+with `moqui test-client basic-comms --offline` (`ShellComms`, `ShellCalls`).

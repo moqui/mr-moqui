@@ -135,6 +135,13 @@ with SFrame (RFC 9605), with keys the server never has, and the SFU forwards the
 - **Services:** `Calls.js` (the policy and the roster), `register#CallDevice`, `set#RoomCallEncryption`; the keys travel
   over [Chat keys](Chat-Keys.md) (C7 core).
 
+**In the desktop client** ([Desktop-Client](../ui/Desktop-Client.md#calls)), the shell owns the account's calls, as it
+owns its crypto device, so each call has one owner of its media: it rings (a native notification when its window is not
+seen) and shows the call, and an encrypted call's keys go over its device. Its CSP allows one worker, the staged SFrame
+transform (`worker-src`, answered with its own policy), and no new connect or media sources. An app window rings
+silently and opens a call in the shell; `moqui.callKeys.prepare` there refuses with `elsewhere`, so an encrypted call
+still fails closed rather than joining without keys.
+
 ### The policy
 
 `CallSession.encryptionMode` is one of the enumeration `CallEncryptionMode` (by enumCode): `dtls-srtp`, hop by hop

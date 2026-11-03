@@ -20,9 +20,9 @@ IronStone BOSS does this for its Comms; it hides BasicComms from the launcher an
 
 The desktop client bundles the chat panel, Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer in its shell,
 precompiled from these `.qvue` files, and shows them under the server's comms app root; it owns the calls (its app
-windows open them there). Their offline presentation (queued and failed sends, the Inbox's Outbox, "needs a
-connection", the gaps of what is kept) shows only there
-([crates/moqui-desktop](../../../crates/moqui-desktop/README.md#client-of-a-server)). After a change to one of them:
+windows open them there); the rest of the app opens in its app windows. Their offline presentation (queued and failed
+sends, the Inbox's Outbox, "needs a connection", the gaps of what is kept) shows only there
+([docs/ui/Desktop-Client.md](../../../docs/ui/Desktop-Client.md#bundled-screens-and-app-windows)). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 
 Test: `./moq test basic-comms`; the bundled screens in the page (no server) `./moq test-client basic-comms --offline`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
