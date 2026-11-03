@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `git://` files in a database repository on the seeded embedded Postgres: elFinder writes them (each write a commit,
+//! `git://` files in a database repository on the seeded embedded Postgres: `/resources` (the elFinder protocol) writes them (each write a commit,
 //! the objects `bytea` rows of `GitObject`), the file download reads one back, `export#GitRepository` writes the
 //! repository to disk, and the git command line, when installed, reads the export. The provider over each storage is
 //! `moqui-git/src/tests.rs`.
@@ -59,16 +59,16 @@ fn post(address: SocketAddr, auth: &str, path: &str, body: &str) -> (u16, String
     (status, text)
 }
 
-fn elfinder(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> (u16, String) {
+fn resources(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> (u16, String) {
     let mut body = format!("resourceRoot={}", encode(ROOT));
     for (key, value) in pairs {
         body.push_str(&format!("&{}={}", encode(key), encode(value)));
     }
-    post(address, auth, "/System/Resource/ElFinder/command", &body)
+    post(address, auth, "/resources", &body)
 }
 
 fn json(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> serde_json::Value {
-    let (status, body) = elfinder(address, auth, pairs);
+    let (status, body) = resources(address, auth, pairs);
     assert_eq!(status, 200, "{pairs:?}: {body}");
     serde_json::from_str(&body).unwrap_or_else(|err| panic!("{pairs:?}: {err}: {body}"))
 }
@@ -82,7 +82,7 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 #[test]
-fn a_database_git_repository_is_written_through_elfinder_and_exported() {
+fn a_database_git_repository_is_written_through_resources_and_exported() {
     if !crate::common::own_process() {
         return;
     }
@@ -114,7 +114,7 @@ fn a_database_git_repository_is_written_through_elfinder_and_exported() {
     }
     let got = json(address, &john, &[("cmd", "get"), ("target", &hash("docs/a.md"))]);
     assert_eq!(got["content"], "# A\n\nsecond, with ünïcode\n", "{got}");
-    let (status, text) = elfinder(
+    let (status, text) = resources(
         address,
         &john,
         &[("cmd", "file"), ("target", &hash("docs/a.md")), ("download", "1")],

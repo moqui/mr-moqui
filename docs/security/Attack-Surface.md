@@ -229,7 +229,8 @@ Because the root screen does not require a user, static files served as that scr
 | `/email/{emailMessageId}` | none; the id is the capability | `viewEmailMessage()` sends a 1x1 PNG (`image/png`, no charset, `Content-Disposition: inline`) for every id. A known `EmailMessage` whose status is not `ES_VIEWED` is updated to `ES_VIEWED` with `receivedDate` set, through `update#moqui.basic.email.EmailMessage` with authorization disabled. A suffix from the first `.` is removed when that `.` is past the first character (`NOTAREALID.png` marks `NOTAREALID`). A missing message is logged. A failure while marking is logged and the response stays the PNG. |
 | `/qapps/clientConfig`, `/qapps/clientDevices`, `/qapps/revokeClientDevice` POST, `/qapps/renewClientDevice` POST | 401 when there is no `userId` | The desktop client's settings (what `/qapps` writes in its page, with no session token), and the user's own device keys and one revoked (`get#UserDeviceKeys`, `revoke#UserDeviceKey` with authorization disabled; a key not the user's, or not a device's, is 400). `renewClientDevice` (`renew#UserDeviceKey`) gives a new key, once, for the device of the request's own `login_key` header, with its name and a full `device-expire-hours`, and ends the old key ten minutes later; a request not signed in by a device key of the user's is 400. The client calls them with its `login_key` header (plans/Mobile-Desktop.md). |
 | `/sso/appProviders`, `/sso/appLogin`, `/sso/appCode`, `/sso/appCodeConfirm` POST, `/sso/appToken` POST | none in the screen; see the right column | An installed app's SSO sign-in (RFC 8252, `service/sso_app.rs`): the AuthFlows offered; a start with an S256 challenge, a state and a redirect URI that is one of `webapp_app_redirect_uris` exactly (400 otherwise), kept in the session 15 minutes; after the provider's callback signs the browser in, a page asking the user to let the app in, whose confirmation needs the session token and gives a single-use code (hashed, a minute) to the redirect URI; `appToken` (no session token) takes the code with its PKCE verifier and redirect URI once, for a device key, logging no session in or out. A failure after the redirect URI was checked goes back to it with `error=`. |
-| `/robots.txt` | none | Disallows `apps`, `qapps`, `rest`, `status`, `menuData`, `shellData`, `shellSearch`, `shellCounts`, the user-status and chat paths, `richTextImage`, `llm`, `a2a`, `mcp`. |
+| `/resources` | 401 when there is no `userId` | `ElFinderServices.run#Command` with authorization on: `ResourceCommandServices` (`SecurityTypeData.xml`) grants it to `ADMIN` only. Reads and writes the `resourceRoot` it is given (`component://`, `file:` included); in production only `dbresource://`, `content://` and `git://` roots take writes. `read-only`, GET or POST; `cmd=file` sends the file, `cmd=upload` takes multipart. |
+| `/robots.txt` | none | Disallows `apps`, `qapps`, `rest`, `status`, `menuData`, `shellData`, `shellSearch`, `shellCounts`, the user-status and chat paths, `richTextImage`, `resources`, `llm`, `a2a`, `mcp`. |
 | `/favicon.ico` | none | The file under the webroot directory. |
 
 Other root screens that do not require a user: `Login` (`false`), `ChangePassword` (`false`), `SecondFactor` (`anonymous-all`), `echopath` (`false`, standalone, echoes extra path names), the `error` screens (`false`), `emailOAuth` (`false`), `sso` (`false`, compiled with the `sso` feature, which is on enterprise and maximal), `PublicShell` (`false`, chrome for token routes), `assist` (`false`), and `rest` (`false`). `apps` is `false` so its subscreens decide.
@@ -244,7 +245,7 @@ Other root screens that do not require a user: `Login` (`false`), `ChangePasswor
 
 `runtime/base-component/tools/MoquiConf.xml` mounts `system` and `tools` under `apps`. The URLs are `/apps/system` and `/apps/tools`, and the same names through the qapps extra path. There is no `/vapps` mount. `Tools.xml` and `System.xml` omit `require-authentication`, so both are required. `ADMIN` has inheritable always-all on each root, from the seed table above.
 
-SQL Runner, Service Run, Data Import, Data Snapshot, ElFinder, and `qzSign` are designed privileged tools. A screen-by-screen re-check of write refusals (production limits on ElFinder, and the rest of the Java tool table) was not done. The extra permission checks that were read, on top of screen artifact authorization:
+SQL Runner, Service Run, Data Import, Data Snapshot, and `qzSign` are designed privileged tools. The elFinder screen was removed (Dev-AIDE replaces it); its commands are `/resources` on webroot. A screen-by-screen re-check of write refusals (the rest of the Java tool table) was not done. The extra permission checks that were read, on top of screen artifact authorization:
 
 | Screen | Check |
 | --- | --- |
@@ -792,9 +793,9 @@ A public demo breaks one rule above on purpose: it loads the demo users, and any
 `ADMIN`. The demo component (`runtime/dev-component/demo`, loaded by `runtime/conf/MoquiDemoConf.xml`) narrows what
 that login reaches:
 
-- Data Import, Data Export, Data Snapshot, Speed Test, SQL Runner, SQL Script Runner, Service Run, Service Load Runner and
-  ElFinder are replaced by a screen that says they are disabled.
-- `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, git repositories,
+- Data Import, Data Export, Data Snapshot, Speed Test, SQL Runner, SQL Script Runner, Service Run and Service Load Runner
+  are replaced by a screen that says they are disabled.
+- `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
   `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.
 - SSH (`ssh-server enabled="false"`), DAV, the MCP server and client, A2A both ways and the gateway are off, and mail

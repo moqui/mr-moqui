@@ -12,18 +12,24 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The elFinder tools screen on the seeded embedded Postgres: the screen renders in html, and its `command` transition
-//! runs the connector against a `dbresource://` volume, with a multipart upload and the `file` download through
-//! `ec.web.sendResourceResponse`. The commands one by one are in `moqui-core/src/service/elfinder/tests.rs`.
+//! The `resources` transition of `webroot.xml` on the seeded embedded Postgres: the elFinder connector against a
+//! `dbresource://` volume, with a multipart upload and the `file` download through `ec.web.sendResourceResponse`, and
+//! its refusal without a user and for a user without the `ResourceCommandServices` authorization. The commands one by
+//! one are in `moqui-dav/src/elfinder/tests.rs`.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
 use std::net::SocketAddr;
 
-use crate::common::{basic, exchange, header, http_request, start};
+use crate::common::{basic, exchange, header, http_request, start_with_data};
 use base64::Engine as _;
 
-const SCREEN: &str = "/System/Resource/ElFinder";
+const ROUTE: &str = "/resources";
+/// A user with no group, so without the `ResourceCommandServices` authorization (password `moqui`).
+const DATA: &str = r#"<entity-facade-xml type="seed">
+    <moqui.security.UserAccount userId="RES_ANN" username="ann.resources" userFullName="Ann Resources"
+        currentPassword="16ac58bbfa332c1c55bd98b53e60720bfa90d394" passwordHashType="SHA" locale="en_US" timeZone="US/Central"/>
+</entity-facade-xml>"#;
 const ROOT: &str = "dbresource://gate-elfinder";
 
 fn hash(path: &str) -> String {
@@ -50,7 +56,7 @@ fn command(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> (u16, Vec
     }
     let request = http_request(
         "POST",
-        &format!("{SCREEN}/command"),
+        ROUTE,
         &[
             ("Authorization", auth),
             ("Content-Type", "application/x-www-form-urlencoded"),
@@ -67,23 +73,33 @@ fn json(address: SocketAddr, auth: &str, pairs: &[(&str, &str)]) -> serde_json::
 }
 
 #[test]
-fn the_elfinder_screen_renders_and_its_connector_runs_on_a_dbresource_volume() {
+fn the_resources_route_runs_the_connector_on_a_dbresource_volume() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = start("elfinder");
+    let gate = start_with_data("resources", DATA);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
 
-    let (status, _, page) = exchange(
-        address,
-        &http_request("GET", &format!("{SCREEN}.html"), &[("Authorization", &john)], ""),
+    // No user, and a user without the authorization: refused, and nothing is made.
+    let open = format!("resourceRoot={}&cmd=open&init=1", encode(ROOT));
+    let anonymous = http_request(
+        "POST",
+        ROUTE,
+        &[("Content-Type", "application/x-www-form-urlencoded")],
+        &open,
     );
-    assert_eq!(status, 200, "{page}");
-    assert!(!page.contains("Error rendering"), "{page}");
-    assert!(page.contains(r#"<div id="elfinder"></div>"#), "{page}");
-    assert!(page.contains("Resource/ElFinder/command"), "{page}");
-    assert!(page.contains("dbresource://mantle/content"), "{page}");
+    let (status, _, text) = exchange(address, &anonymous);
+    assert_eq!(status, 401, "{text}");
+    let ann = basic("ann.resources", "moqui");
+    for pairs in [
+        &[("cmd", "open"), ("init", "1")][..],
+        &[("cmd", "mkdir"), ("target", "db_cm9vdA"), ("name", "denied")][..],
+    ] {
+        let (status, _, text) = command(address, &ann, pairs);
+        assert!(status == 401 || status == 403, "{pairs:?}: {status} {text}");
+        assert!(!text.contains("\"added\""), "{pairs:?}: {text}");
+    }
 
     let opened = json(address, &john, &[("cmd", "open"), ("init", "1"), ("tree", "1")]);
     assert_eq!(opened["api"], "2.0", "{opened}");
@@ -116,7 +132,7 @@ fn the_elfinder_screen_renders_and_its_connector_runs_on_a_dbresource_volume() {
     let content_type = format!("multipart/form-data; boundary={boundary}");
     let request = http_request(
         "POST",
-        &format!("{SCREEN}/command"),
+        ROUTE,
         &[("Authorization", &john), ("Content-Type", &content_type)],
         &body,
     );

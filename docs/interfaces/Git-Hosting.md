@@ -25,7 +25,7 @@ the Moqui username. The kinds of repository behave as they do for `git://` locat
 - **`remote`**: a read-only mirror; it can be cloned and fetched, a push is refused. A fetch of the mirror takes every
   branch and tag and drops the ones the remote dropped.
 
-A repository is created on the Git Repositories tools screen (System, Resource Finder), by
+A repository is created on the Git Repositories tools screen (System, Resources), by
 `mantle.work.GitServices.create#ProjectRepository` from a project's Repositories tab, or as a `GitRepository` row.
 An empty repository can be cloned; the first push to one whose row names no branch makes `main` (or `master`, or the
 first branch pushed) its default branch.

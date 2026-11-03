@@ -30,6 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="SystemMessageServicesADMIN" artifactGroupId="SystemMessageServices" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- /resources (webroot.xml) reads and writes any resource root; VIEW does not cover run#Command, so it is refused -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="ResourceCommandServicesADMIN" artifactGroupId="ResourceCommandServices" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <!-- git repositories: clone and read, no push, no new repositories or mirrors (SecurityTypeData.xml) -->
     <moqui.security.ArtifactAuthz artifactAuthzId="GitRepositoriesADMIN" artifactGroupId="GitRepositories" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>

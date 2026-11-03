@@ -29,10 +29,10 @@ const stubbed = [
     ["component://tools/screen/Tools.xml", "Entity/SqlScriptRunner"],
     ["component://tools/screen/Tools.xml", "Service/ServiceRun"],
     ["component://tools/screen/Tools.xml", "Service/ServiceLoadRunner"],
-    ["component://tools/screen/System.xml", "Resource/ElFinder"],
 ]
 const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
+    "ResourceCommandServicesADMIN",
     "GitRepositoriesADMIN", "MONITOR_APP_ADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN",
 ]
 // ended for ADMIN (data/DemoSecurityData.xml)

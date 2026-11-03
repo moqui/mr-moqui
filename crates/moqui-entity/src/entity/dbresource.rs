@@ -504,6 +504,16 @@ impl EntityFacade {
             for parent in &parents {
                 found.extend(self.find_nodes(parent.as_deref(), segment)?);
             }
+            if found.is_empty() {
+                // made by this process after this transaction's snapshot ([`Self::make_directory`])
+                for parent in &parents {
+                    found.extend(
+                        self.lately_made(parent.as_deref(), Some(segment))?
+                            .into_iter()
+                            .map(|child| child.node),
+                    );
+                }
+            }
             if index + 1 == parts.len() {
                 return Ok(found);
             }
@@ -664,8 +674,47 @@ impl EntityFacade {
                 })
             })
             .collect();
+        for made in self.lately_made(parent, None)? {
+            if !children.iter().any(|child| child.node.id == made.node.id) {
+                children.push(made);
+            }
+        }
         children.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| oldest_first(&a.node.id, &b.node.id)));
         Ok(children)
+    }
+
+    /// The directories under `parent` (named `name`, when given) this process made lately ([`MadeDirectories`]) that are
+    /// still there. A find in a transaction that reads from before their commit (a snapshot) does not see them, so a read
+    /// right after [`Self::make_db_directory`] in the same transaction would find no directory; each is checked in a
+    /// transaction of its own, so one deleted since, by another process too, is not taken.
+    fn lately_made(&self, parent: Option<&str>, name: Option<&str>) -> Result<Vec<ChildNode>, Error> {
+        let lately_made = self.made_directories();
+        let candidates: Vec<(String, String)> = {
+            let mut made = moqui_lib::sync::lock(&lately_made);
+            made.retain(|dir| dir.at.elapsed() < MADE_FOR);
+            made.iter()
+                .filter(|dir| dir.parent.as_deref() == parent && name.is_none_or(|name| dir.name == name))
+                .map(|dir| (dir.name.clone(), dir.id.clone()))
+                .collect()
+        };
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.transactions_for(DB_RESOURCE)?
+            .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                let mut there = Vec::new();
+                for (name, id) in candidates {
+                    let Some(row) = self.find(DB_RESOURCE)?.eq("resourceId", Value::string(&id)).one()? else {
+                        continue;
+                    };
+                    let same_place = row.get("parentResourceId").and_then(Value::as_str) == parent
+                        && row.get("filename").and_then(Value::as_str) == Some(name.as_str());
+                    if let (true, Some(node)) = (same_place, node_of(&row)) {
+                        there.push(ChildNode { name, node });
+                    }
+                }
+                Ok(there)
+            })
     }
 
     /// The children under `parent` (`None`: the root), in filename order; a name made twice by a race is listed once.

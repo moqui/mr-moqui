@@ -44,11 +44,11 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
-/// The elFinder command that sends the file at `path` of the repository.
+/// The `/resources` command (elFinder protocol) that sends the file at `path` of the repository.
 fn file_url(path: &str) -> String {
     let hash = format!("db_{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(path));
     format!(
-        "/System/Resource/ElFinder/command?resourceRoot={}&cmd=file&target={hash}&download=1",
+        "/resources?resourceRoot={}&cmd=file&target={hash}&download=1",
         encode(ROOT)
     )
 }
@@ -154,10 +154,7 @@ fn large_files_stream_with_ranges_and_validators() {
     }
     std::thread::sleep(Duration::from_millis(500));
     let started = Instant::now();
-    let opened = format!(
-        "/System/Resource/ElFinder/command?resourceRoot={}&cmd=open&init=1",
-        encode(ROOT)
-    );
+    let opened = format!("/resources?resourceRoot={}&cmd=open&init=1", encode(ROOT));
     let (status, _, body) = exchange(
         address,
         &http_request("GET", &opened, &[("Authorization", john.as_str())], ""),
@@ -183,10 +180,7 @@ fn large_files_stream_with_ranges_and_validators() {
         "db_{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("media")
     );
-    let path = format!(
-        "/System/Resource/ElFinder/command?resourceRoot={}&cmd=upload&target={media}",
-        encode(ROOT)
-    );
+    let path = format!("/resources?resourceRoot={}&cmd=upload&target={media}", encode(ROOT));
     let head = format!(
         "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAuthorization: {john}\r\n\
          Content-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\n\r\n",
