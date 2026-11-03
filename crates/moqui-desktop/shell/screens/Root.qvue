@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The desktop client's shell for a signed-in account (js/shell.js, plans/Mobile-Desktop.md §4 configuration 3): the
     server's apps from its shellData, each opening in a window of its own (the server's page through the host); the account
-    menu (switch, add, sign out); the counts and notifications of the account's /notws, which the host holds; and the
+    menu (switch, add, the account's apps and devices to sign out, sign out); the counts and notifications of the account's /notws, which the host holds; and the
     bundled BasicComms ChatPanel, whose room opens in Chat in an app window. The root of its Vue app, so it is the $root the
     client's components ask for: basePath, linkBasePath, setUrl, userId and the notification client, as m-qapps-root has
     them. Bundled, precompiled (bundled-screens.txt). -->
@@ -48,6 +48,10 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-section avatar><q-icon name="sym_o_warning" color="warning"></q-icon></q-item-section>
                             <q-item-section><q-item-label caption>{{t('No key store on this computer: the device key is kept in a file only you can read.')}}</q-item-label></q-item-section>
                         </q-item>
+                        <q-item clickable v-close-popup @click="openDevices">
+                            <q-item-section avatar><q-icon name="sym_o_devices"></q-icon></q-item-section>
+                            <q-item-section>{{t('Apps and devices')}}</q-item-section>
+                        </q-item>
                         <q-item clickable v-close-popup @click="signOut">
                             <q-item-section avatar><q-icon name="sym_o_logout"></q-icon></q-item-section>
                             <q-item-section>{{t('Sign out of this account')}}</q-item-section>
@@ -73,6 +77,26 @@ along with this software (see the LICENSE.md file). If not, see
             </q-item>
         </q-list>
     </q-drawer>
+    <q-dialog v-model="devicesOpen">
+        <q-card class="m-shell-devices">
+            <q-card-section class="text-h6">{{t('Apps and devices')}}</q-card-section>
+            <q-card-section class="q-pt-none text-body2 m-muted">{{t('The apps signed in to your account with a key of their own. Sign one out if you no longer use it, or lost it.')}}</q-card-section>
+            <q-list separator>
+                <q-item v-for="device in devices" :key="device.loginKey">
+                    <q-item-section avatar><q-icon :name="device.current ? 'sym_o_computer' : 'sym_o_devices'"></q-icon></q-item-section>
+                    <q-item-section>
+                        <q-item-label>{{device.deviceName}}<span v-if="device.current" class="text-positive"> · {{t('this app')}}</span></q-item-label>
+                        <q-item-label caption>{{t('Last used')}} {{when(device.lastUsedDate || device.fromDate)}}</q-item-label>
+                    </q-item-section>
+                    <q-item-section side>
+                        <q-btn flat dense no-caps color="negative" :label="t('Sign out')" @click="signOutDevice(device)"></q-btn>
+                    </q-item-section>
+                </q-item>
+                <q-item v-if="devicesLoaded && !devices.length"><q-item-section class="m-muted">{{t('No apps or devices')}}</q-item-section></q-item>
+            </q-list>
+            <q-card-actions align="right"><q-btn flat no-caps :label="t('Close')" v-close-popup></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
     <q-page-container>
         <q-page padding>
             <q-card flat bordered class="m-shell-chat q-pa-sm">
@@ -86,6 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
 // a count of shellCounts: a number, or a map's total or count, as m-qapps-root reads it
 const countOf = (counts, key) => {
     const value = counts ? counts[key] : null;
@@ -110,7 +135,8 @@ module.exports = {
             notificationClient: null, socketState: null,
             apps: Array.isArray(data.apps) ? data.apps : [],
             shellCounts: moqui.isPlainObject(data.counts) ? data.counts : {},
-            chatPanel: moqui.bundledComponent(this.chatPath)
+            chatPanel: moqui.bundledComponent(this.chatPath),
+            devicesOpen: false, devices: [], devicesLoaded: false
         };
     },
     computed: {
@@ -161,6 +187,22 @@ module.exports = {
             this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
                 .onOk(() => host().signOut().catch((err) => this.failed(err)));
         },
+        // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
+        openDevices() {
+            this.devicesOpen = true;
+            this.devicesLoaded = false;
+            moqui.request('/qapps/clientDevices').then((result) => {
+                this.devices = (result.json && result.json.deviceList) || [];
+                this.devicesLoaded = true;
+            }, (err) => { this.devicesLoaded = true; this.failed(err && err.status ? t('The devices could not be read') : err); });
+        },
+        signOutDevice(device) {
+            if (device.current) { this.devicesOpen = false; this.signOut(); return; }
+            this.$q.dialog({ title: t('Sign out'), message: fill(t('Sign {name} out? It needs to sign in again.'), { name: device.deviceName }), cancel: true })
+                .onOk(() => moqui.request('/qapps/revokeClientDevice', { method: 'POST', params: { loginKey: device.loginKey } })
+                    .then(() => { this.devices = this.devices.filter((other) => other.loginKey !== device.loginKey); }, (err) => this.failed(err && err.status ? t('Not signed out') : err)));
+        },
+        when(millis) { return millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''; },
         // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
         // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
         addNotify() {},

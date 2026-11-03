@@ -113,17 +113,31 @@ pub(crate) async fn client_sign_in(
         (SignIn::Key(key), Some(config)) => (key, config),
         (SignIn::Key(_), None) => return Err("The server did not answer who signed in".to_string()),
     };
+    signed_in(&app, &base, &username, &key, &config)?;
+    Ok(json!({ "status": "signed-in" }))
+}
+
+/// A sign-in done (by password, or by SSO): the account kept with its key, made current, and the shell loading it.
+fn signed_in(app: &AppHandle, base: &str, username: &str, key: &str, config: &Value) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    let username = config["username"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(username)
+        .to_string();
+    if username.is_empty() {
+        return Err("The server did not say who signed in".to_string());
+    }
     let account = Account {
-        id: account_id(&base, &username),
-        server: base,
-        username: config["username"].as_str().unwrap_or(&username).to_string(),
+        id: account_id(base, &username),
+        server: base.to_string(),
+        username,
         user_id: config["userId"].as_str().unwrap_or_default().to_string(),
         display: config["userFullName"].as_str().unwrap_or_default().to_string(),
         server_name: config["server"]["name"].as_str().unwrap_or_default().to_string(),
     };
-    client.keys.set(&account.id, &key).map_err(|err| err.to_string())?;
-    if let Ok(bytes) = serde_json::to_vec(&config) {
+    client.keys.set(&account.id, key).map_err(|err| err.to_string())?;
+    if let Ok(bytes) = serde_json::to_vec(config) {
         client.cache.put(&account.id, "/qapps/clientConfig", &bytes);
     }
     {
@@ -133,8 +147,112 @@ pub(crate) async fn client_sign_in(
         accounts.set_current(&id);
         accounts.save().map_err(|err| err.to_string())?;
     }
-    switched(&app, &client);
-    Ok(json!({ "status": "signed-in" }))
+    switched(app, &client);
+    Ok(())
+}
+
+/// The identity providers of `server` the shell may offer: `[{id, description, icon}]`.
+#[tauri::command]
+pub(crate) async fn client_sso_providers(server: String) -> Result<Value, String> {
+    let base = base_url(&server).map_err(|err| err.to_string())?;
+    let providers = blocking(move || moqui_client::sso::providers(&base).map_err(|err| err.to_string())).await?;
+    Ok(Value::Array(
+        providers
+            .into_iter()
+            .map(|provider| json!({ "id": provider.id, "description": provider.description, "icon": provider.icon }))
+            .collect(),
+    ))
+}
+
+/// Sign in to `server` through its provider `auth_flow_id` in the system browser: the server hands the browser back to
+/// the app (`org.moqui.desktop:/sso`, [`sso_returned`]), which then signs in as a password sign-in does.
+#[tauri::command(async)]
+pub(crate) fn client_sso_start(app: AppHandle, server: String, auth_flow_id: String) -> Result<(), String> {
+    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    let base = base_url(&server).map_err(|err| err.to_string())?;
+    let (pending, url) = moqui_client::sso::start(
+        &base,
+        auth_flow_id.trim(),
+        moqui_client::sso::DESKTOP_REDIRECT,
+        &super::device_name(),
+    )
+    .map_err(|err| err.to_string())?;
+    let url = tauri::Url::parse(&url).map_err(|err| err.to_string())?;
+    *moqui_lib::sync::lock(&client.sso) = Some(pending);
+    crate::os::claim_app_scheme();
+    crate::open_externally(&url);
+    Ok(())
+}
+
+/// Give up an SSO sign-in waiting for the browser: a hand-back of it is passed over.
+#[tauri::command(async)]
+pub(crate) fn client_sso_cancel(app: AppHandle) -> Result<(), String> {
+    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    *moqui_lib::sync::lock(&client.sso) = None;
+    Ok(())
+}
+
+/// The server's hand-back of an SSO sign-in (`org.moqui.desktop:/sso?code=…&state=…`): the code of the sign-in this
+/// app started taken for a device key, off the main thread. A link when no sign-in is waiting is passed over; one for
+/// an old sign-in or of another state is refused, and the shell shows why on its sign-in.
+pub(crate) fn sso_returned(app: &AppHandle, link: &tauri::Url) {
+    let Some(client) = app.try_state::<Client>() else {
+        return;
+    };
+    // the sign-in of this link's state, taken only then: a link of another state (any page can open one) changes
+    // nothing here, the sign-in under way included
+    let state = moqui_client::sso::link_state(link.as_str());
+    let pending = {
+        let mut slot = moqui_lib::sync::lock(&client.sso);
+        if slot
+            .as_ref()
+            .is_some_and(|pending| state.as_deref() == Some(pending.state.as_str()))
+        {
+            slot.take()
+        } else {
+            None
+        }
+    };
+    let Some(pending) = pending else {
+        tracing::warn!("An SSO sign-in came back that this app is not waiting for; it is passed over");
+        return;
+    };
+    if pending.stale() {
+        sign_in_failed(app, "That sign-in took too long; sign in again.", &pending.server);
+        return;
+    }
+    let code = match moqui_client::sso::callback(link.as_str(), &pending) {
+        Ok(code) => code,
+        Err(err) => {
+            sign_in_failed(app, &err.to_string(), &pending.server);
+            return;
+        }
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let done = moqui_client::sso::exchange(&pending, &code, &super::device_name())
+            .map_err(|err| err.to_string())
+            .and_then(|key| {
+                let config = moqui_client::login::client_config(&pending.server, &key)
+                    .map_err(|err| err.to_string())?
+                    .ok_or("The server did not take the new key")?;
+                signed_in(&app, &pending.server, "", &key, &config)
+            });
+        if let Err(err) = done {
+            tracing::warn!("The SSO sign-in to {} did not finish: {err}", pending.server);
+            sign_in_failed(&app, &err, &pending.server);
+        }
+    });
+}
+
+/// The shell's sign-in to `server`, saying why a sign-in failed.
+fn sign_in_failed(app: &AppHandle, reason: &str, server: &str) {
+    let mut url = tauri::Url::parse("http://query.invalid/").unwrap_or_else(|_| unreachable!("a fixed url parses"));
+    url.query_pairs_mut()
+        .append_pair("signIn", "1")
+        .append_pair("failed", reason)
+        .append_pair("server", server);
+    windows::load_shell(app, url.query());
 }
 
 /// Have the server send a second factor's code to `factor`.
@@ -255,8 +373,10 @@ pub(crate) fn forget_key(app: &AppHandle, id: &str) {
     }
 }
 
-/// The current account changed: the other account's windows and sockets close, and the shell loads it.
+/// The current account changed: the other account's windows and sockets close, a sign-in still waiting for the browser
+/// is given up, and the shell loads it.
 fn switched(app: &AppHandle, client: &Client) {
+    *moqui_lib::sync::lock(&client.sso) = None;
     client.sockets.close_all();
     windows::close_remotes(app, None);
     windows::load_shell(app, None);

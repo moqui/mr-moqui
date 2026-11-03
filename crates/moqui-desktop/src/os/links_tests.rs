@@ -105,3 +105,22 @@ fn links_among_the_arguments_are_those_of_the_schemes() {
         .collect();
     assert_eq!(links, ["mailto:a@example.com", "tel:123"]);
 }
+
+#[test]
+fn a_launch_keeps_the_apps_own_sso_link() {
+    let args = [
+        "MR-Moqui",
+        "--no-sandbox",
+        "org.moqui.desktop:/sso?code=c1&state=s1",
+        "https://example.com/",
+        "mailto:a@example.com",
+    ];
+    let links: Vec<String> = from_args(args.map(String::from))
+        .into_iter()
+        .map(|url| url.to_string())
+        .collect();
+    assert_eq!(
+        links,
+        ["org.moqui.desktop:/sso?code=c1&state=s1", "mailto:a@example.com"]
+    );
+}

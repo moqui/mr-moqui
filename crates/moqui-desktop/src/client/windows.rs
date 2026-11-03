@@ -28,7 +28,7 @@ use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
 /// plugin's check its `window.Notification` makes.
-const SHELL_PERMISSIONS: [&str; 16] = [
+const SHELL_PERMISSIONS: [&str; 19] = [
     "allow-client-state",
     "allow-client-sign-in",
     "allow-client-send-code",
@@ -37,6 +37,9 @@ const SHELL_PERMISSIONS: [&str; 16] = [
     "allow-client-add-account",
     "allow-client-remove-account",
     "allow-client-open-remote",
+    "allow-client-sso-providers",
+    "allow-client-sso-start",
+    "allow-client-sso-cancel",
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",

@@ -144,6 +144,10 @@
         switchAccount: (id) => ask("client_switch_account", { id: String(id) }),
         addAccount: () => ask("client_add_account"),
         removeAccount: (id) => ask("client_remove_account", { id: String(id) }),
-        openRemote: (path) => ask("client_open_remote", { path: String(path || "") })
+        openRemote: (path) => ask("client_open_remote", { path: String(path || "") }),
+        // SSO in the system browser: the server's providers, and a sign-in through one (the server hands it back)
+        ssoProviders: (server) => ask("client_sso_providers", { server: String(server || "") }),
+        ssoStart: (server, authFlowId) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || "") }),
+        ssoCancel: () => ask("client_sso_cancel")
     }));
 })();

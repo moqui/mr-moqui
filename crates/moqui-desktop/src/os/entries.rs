@@ -113,8 +113,9 @@ pub(crate) fn scheme_mime_types() -> Vec<String> {
 /// A `.desktop` entry that opens the schemes' links with `program` (`%u`: the link is its argument). Not shown in
 /// the menus: a package's own entry is the one there.
 pub(crate) fn handler_entry(program: &Path) -> String {
+    // and the app's own scheme, which no other app handles
     let mut mime = scheme_mime_types().join(";");
-    mime.push(';');
+    mime.push_str(&format!(";x-scheme-handler/{};", super::links::APP_SCHEME));
     format!(
         "[Desktop Entry]\nType=Application\nName={PRODUCT_NAME}\nExec={} %u\nTerminal=false\nNoDisplay=true\nMimeType={mime}\n",
         exec_value(&[&program.to_string_lossy()])

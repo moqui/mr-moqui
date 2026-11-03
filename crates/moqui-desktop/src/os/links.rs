@@ -19,8 +19,13 @@
 
 use tauri::Url;
 
-/// The schemes the app takes, as `plugins.deep-link.desktop.schemes` in tauri.conf.json registers them with the OS.
+/// The schemes of the links the app opens for the user, which "Make default for email and calls" claims; with
+/// [`APP_SCHEME`] they are `plugins.deep-link.desktop.schemes` in tauri.conf.json, registered with the OS.
 pub(crate) const SCHEMES: [&str; 3] = ["mailto", "tel", "sip"];
+
+/// The app's own scheme: the server's hand-back of an SSO sign-in (`org.moqui.desktop:/sso?code=…`, RFC 8252), for the
+/// client of a server (`crate::client`).
+pub(crate) const APP_SCHEME: &str = "org.moqui.desktop";
 
 /// The Comms app when `comms_app_root` is not set, as in the node's own links (basic-comms/MoquiConf.xml).
 pub(crate) const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
@@ -30,7 +35,7 @@ pub(crate) const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
 pub(crate) fn from_args(args: impl IntoIterator<Item = String>) -> Vec<Url> {
     args.into_iter()
         .filter_map(|arg| Url::parse(&arg).ok())
-        .filter(|url| SCHEMES.contains(&url.scheme()))
+        .filter(|url| SCHEMES.contains(&url.scheme()) || url.scheme() == APP_SCHEME)
         .collect()
 }
 

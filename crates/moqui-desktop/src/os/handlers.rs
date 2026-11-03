@@ -80,6 +80,58 @@ pub(crate) fn make_default() -> Result<(), String> {
 #[cfg(target_os = "linux")]
 pub(crate) fn make_default() -> Result<(), String> {
     use super::entries;
+    use std::process::Command;
+
+    let file = desktop_entry()?;
+    let status = Command::new("xdg-mime")
+        .arg("default")
+        .arg(&file)
+        .args(entries::scheme_mime_types())
+        .status()
+        .map_err(|err| format!("xdg-mime did not run: {err}"))?;
+    if status.success() {
+        tracing::info!("Default handler of mailto:, tel: and sip: is now {file}");
+        Ok(())
+    } else {
+        Err(format!("xdg-mime default {file} ended with {status}"))
+    }
+}
+
+/// The app's own scheme (`org.moqui.desktop:`, an SSO sign-in's hand-back) handled by this app: the installed package's
+/// entry says so already; an AppImage or a development run writes the user's handler entry and makes it the scheme's
+/// handler, which no other app claims. macOS has it from the app's bundle.
+#[cfg(target_os = "linux")]
+pub(crate) fn claim_app_scheme() -> Result<(), String> {
+    use std::process::Command;
+
+    let file = desktop_entry()?;
+    if file != super::entries::handler_file_name() {
+        return Ok(());
+    }
+    let mime = format!("x-scheme-handler/{}", super::links::APP_SCHEME);
+    let status = Command::new("xdg-mime")
+        .arg("default")
+        .arg(&file)
+        .arg(&mime)
+        .status()
+        .map_err(|err| format!("xdg-mime did not run: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xdg-mime default {file} {mime} ended with {status}"))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn claim_app_scheme() -> Result<(), String> {
+    Ok(())
+}
+
+/// The desktop entry that runs this app with a link: the installed package's, else the handler entry it writes for
+/// the user (an AppImage, a development run).
+#[cfg(target_os = "linux")]
+fn desktop_entry() -> Result<String, String> {
+    use super::entries;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
@@ -108,18 +160,7 @@ pub(crate) fn make_default() -> Result<(), String> {
         }
         entries::handler_file_name()
     };
-    let status = Command::new("xdg-mime")
-        .arg("default")
-        .arg(&file)
-        .args(entries::scheme_mime_types())
-        .status()
-        .map_err(|err| format!("xdg-mime did not run: {err}"))?;
-    if status.success() {
-        tracing::info!("Default handler of mailto:, tel: and sip: is now {file}");
-        Ok(())
-    } else {
-        Err(format!("xdg-mime default {file} ended with {status}"))
-    }
+    Ok(file)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

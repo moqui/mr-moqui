@@ -9,6 +9,8 @@ publish.workspace = true
 # Builds for aarch64-linux-android as well as the desktops (plans/Mobile-Desktop.md §5): no async API (reqwest's blocking
 # client), no moqui-core, no platform key store (the host supplies one through keys::KeyStore).
 [dependencies]
+base64 = { workspace = true }
+getrandom = { workspace = true }
 moqui-lib = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

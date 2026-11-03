@@ -63,7 +63,7 @@ fn the_entries_exec_the_program() {
     assert!(autostart.contains("\nExec=\"/home/jo/My Apps/MR.AppImage\"\n"));
     let handler = handler_entry(Path::new("/usr/bin/moqui-desktop"));
     assert!(handler.contains("\nExec=/usr/bin/moqui-desktop %u\n"));
-    assert!(handler.contains("\nMimeType=x-scheme-handler/mailto;x-scheme-handler/tel;x-scheme-handler/sip;\n"));
+    assert!(handler.contains("\nMimeType=x-scheme-handler/mailto;x-scheme-handler/tel;x-scheme-handler/sip;x-scheme-handler/org.moqui.desktop;\n"));
     assert_eq!(handler_file_name(), "org.moqui.desktop.desktop");
 }
 

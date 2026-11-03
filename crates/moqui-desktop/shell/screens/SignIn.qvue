@@ -12,7 +12,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The desktop client's sign-in (js/shell.js, plans/Mobile-Desktop.md §4 "Remote applications and authentication"): the
-    server and the user's name and password, then the code of a second factor when the account has one. The host signs in
+    server and the user's name and password, then the code of a second factor when the account has one; or the server's
+    single sign-on, in the system browser, which the server hands back to the app. The host signs in
     (src/client/, moquiDesktop.signIn): it posts the password once to the server's REST login for a device key, which it
     keeps in the OS key store, and the page never holds the key. The accounts this computer has are offered to sign in to
     again or to switch to. Bundled, precompiled (bundled-screens.txt). -->
@@ -37,7 +38,19 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
             <div v-if="sent" class="text-positive">{{t('Code sent')}}</div>
         </q-card-section>
+        <q-card-section v-if="!codeAsk && (providers.length || waiting)" class="q-pt-none">
+            <div v-if="waiting" role="status" class="row items-center no-wrap q-gutter-x-sm">
+                <span class="col text-body2">{{t('Continue in your browser; this app signs in when it is done.')}}</span>
+                <q-btn flat dense no-caps :label="t('Cancel')" @click="cancelSso"></q-btn>
+            </div>
+            <div v-else class="column q-gutter-y-xs">
+                <div class="text-caption m-muted">{{t('Or sign in with')}}</div>
+                <q-btn v-for="provider in providers" :key="provider.id" outline no-caps color="primary" :icon="provider.icon || 'sym_o_login'"
+                        :label="provider.description || provider.id" :disable="busy" @click="sso(provider)"></q-btn>
+            </div>
+        </q-card-section>
         <q-card-actions align="right">
+            <q-btn v-if="!codeAsk && !providers.length && !waiting" flat no-caps :label="t('Single sign-on')" :disable="busy || !server.trim()" @click="findProviders"></q-btn>
             <q-btn v-if="codeAsk" flat no-caps :label="t('Back')" :disable="busy" @click="back"></q-btn>
             <q-btn v-else-if="canCancel" flat no-caps :label="t('Cancel')" :disable="busy" @click="cancel"></q-btn>
             <q-btn type="submit" unelevated no-caps color="primary" :label="t('Sign in')" :loading="busy" :disable="!ready"></q-btn>
@@ -70,14 +83,18 @@ const message = (err) => String((err && (err.message || err.error)) || err || t(
 module.exports = {
     name: 'DesktopSignIn',
     // asked: Add an account, from the shell of a signed-in one (which Cancel goes back to)
-    props: { state: Object, failed: String, asked: Boolean },
+    // retryServer: the server a sign-in that did not finish was to, to try again
+    props: { state: Object, failed: String, asked: Boolean, retryServer: String },
     data() {
         const current = this.asked ? null
             : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
-        return { server: current ? current.server : '', username: current ? current.username : '', password: '', code: '',
-            codeAsk: null, sent: false, busy: false, error: '', accounts: (this.state && this.state.accounts) || [] };
+        return { server: this.retryServer || (current ? current.server : ''), username: current && !this.retryServer ? current.username : '', password: '', code: '',
+            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [] };
     },
+    // another server: its providers are not the last one's
+    watch: { serverText() { this.providers = []; this.waiting = false; } },
     computed: {
+        serverText() { return this.server.trim(); },
         ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
@@ -96,6 +113,23 @@ module.exports = {
                 }
             }, (err) => { this.busy = false; this.error = message(err); });
         },
+        // the server's identity providers, for its SSO sign-in in the system browser
+        findProviders() {
+            this.busy = true;
+            this.error = '';
+            host().ssoProviders(this.server.trim()).then((list) => {
+                this.busy = false;
+                this.providers = list || [];
+                if (!this.providers.length) this.error = t('This server offers no single sign-on.');
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        sso(provider) {
+            this.error = '';
+            this.busy = true;
+            host().ssoStart(this.server.trim(), provider.id).then(() => { this.busy = false; this.waiting = true; },
+                (err) => { this.busy = false; this.error = message(err); });
+        },
+        cancelSso() { host().ssoCancel().then(() => { this.waiting = false; }, (err) => { this.error = message(err); }); },
         back() { this.codeAsk = null; this.code = ''; this.sent = false; this.error = ''; },
         cancel() { host().switchAccount(this.state.current).catch((err) => { this.error = message(err); }); },
         sendCode(factor) {

@@ -87,6 +87,9 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             crate::client::commands::client_add_account,
             crate::client::commands::client_remove_account,
             crate::client::commands::client_open_remote,
+            crate::client::commands::client_sso_providers,
+            crate::client::commands::client_sso_start,
+            crate::client::commands::client_sso_cancel,
             crate::client::sockets::socket_open,
             crate::client::sockets::socket_send,
             crate::client::sockets::socket_close

@@ -542,6 +542,7 @@ module.exports = {
         const returned = (function (exports) {
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
 // a count of shellCounts: a number, or a map's total or count, as m-qapps-root reads it
 const countOf = (counts, key) => {
     const value = counts ? counts[key] : null;
@@ -566,7 +567,8 @@ module.exports = {
             notificationClient: null, socketState: null,
             apps: Array.isArray(data.apps) ? data.apps : [],
             shellCounts: moqui.isPlainObject(data.counts) ? data.counts : {},
-            chatPanel: moqui.bundledComponent(this.chatPath)
+            chatPanel: moqui.bundledComponent(this.chatPath),
+            devicesOpen: false, devices: [], devicesLoaded: false
         };
     },
     computed: {
@@ -617,6 +619,22 @@ module.exports = {
             this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
                 .onOk(() => host().signOut().catch((err) => this.failed(err)));
         },
+        // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
+        openDevices() {
+            this.devicesOpen = true;
+            this.devicesLoaded = false;
+            moqui.request('/qapps/clientDevices').then((result) => {
+                this.devices = (result.json && result.json.deviceList) || [];
+                this.devicesLoaded = true;
+            }, (err) => { this.devicesLoaded = true; this.failed(err && err.status ? t('The devices could not be read') : err); });
+        },
+        signOutDevice(device) {
+            if (device.current) { this.devicesOpen = false; this.signOut(); return; }
+            this.$q.dialog({ title: t('Sign out'), message: fill(t('Sign {name} out? It needs to sign in again.'), { name: device.deviceName }), cancel: true })
+                .onOk(() => moqui.request('/qapps/revokeClientDevice', { method: 'POST', params: { loginKey: device.loginKey } })
+                    .then(() => { this.devices = this.devices.filter((other) => other.loginKey !== device.loginKey); }, (err) => this.failed(err && err.status ? t('Not signed out') : err)));
+        },
+        when(millis) { return millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''; },
         // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
         // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
         addNotify() {},
@@ -685,7 +703,10 @@ module.exports = {
                   const _component_q_header = _resolveComponent("q-header")
                   const _component_m_menu_icon = _resolveComponent("m-menu-icon")
                   const _component_q_drawer = _resolveComponent("q-drawer")
+                  const _component_q_card_section = _resolveComponent("q-card-section")
+                  const _component_q_card_actions = _resolveComponent("q-card-actions")
                   const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_dialog = _resolveComponent("q-dialog")
                   const _component_q_page = _resolveComponent("q-page")
                   const _component_q_page_container = _resolveComponent("q-page-container")
                   const _component_q_layout = _resolveComponent("q-layout")
@@ -889,6 +910,28 @@ module.exports = {
                                             : _createCommentVNode("", true),
                                           _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                             clickable: "",
+                                            onClick: _ctx.openDevices
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, { name: "sym_o_devices" })
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Apps and devices')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])), [
+                                            [_directive_close_popup]
+                                          ]),
+                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            clickable: "",
                                             onClick: _ctx.signOut
                                           }, {
                                             default: _withCtx(() => [
@@ -1004,6 +1047,114 @@ module.exports = {
                         ]),
                         _: 1
                       }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      _createVNode(_component_q_dialog, {
+                        modelValue: _ctx.devicesOpen,
+                        "onUpdate:modelValue": $event => ((_ctx.devicesOpen) = $event)
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_card, { class: "m-shell-devices" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card_section, { class: "text-h6" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.t('Apps and devices')), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_section, { class: "q-pt-none text-body2 m-muted" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.t('The apps signed in to your account with a key of their own. Sign one out if you no longer use it, or lost it.')), 1)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_list, { separator: "" }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.devices, (device) => {
+                                    return (_openBlock(), _createBlock(_component_q_item, {
+                                      key: device.loginKey
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: device.current ? 'sym_o_computer' : 'sym_o_devices'
+                                            }, null, 8, ["name"])
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_label, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(device.deviceName), 1),
+                                                (device.current)
+                                                  ? (_openBlock(), _createElementBlock("span", {
+                                                      key: 0,
+                                                      class: "text-positive"
+                                                    }, " · " + _toDisplayString(_ctx.t('this app')), 1))
+                                                  : _createCommentVNode("", true)
+                                              ]),
+                                              _: 2
+                                            }, 1024),
+                                            _createVNode(_component_q_item_label, { caption: "" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Last used')) + " " + _toDisplayString(_ctx.when(device.lastUsedDate || device.fromDate)), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024),
+                                        _createVNode(_component_q_item_section, { side: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_btn, {
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              color: "negative",
+                                              label: _ctx.t('Sign out'),
+                                              onClick: $event => (_ctx.signOutDevice(device))
+                                            }, null, 8, ["label", "onClick"])
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  }), 128)),
+                                  (_ctx.devicesLoaded && !_ctx.devices.length)
+                                    ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('No apps or devices')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : _createCommentVNode("", true)
+                                ]),
+                                _: 1
+                              }),
+                              _createVNode(_component_q_card_actions, { align: "right" }, {
+                                default: _withCtx(() => [
+                                  _withDirectives(_createVNode(_component_q_btn, {
+                                    flat: "",
+                                    "no-caps": "",
+                                    label: _ctx.t('Close')
+                                  }, null, 8, ["label"]), [
+                                    [_directive_close_popup]
+                                  ])
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue"]),
                       _createVNode(_component_q_page_container, null, {
                         default: _withCtx(() => [
                           _createVNode(_component_q_page, { padding: "" }, {
@@ -1051,14 +1202,18 @@ const message = (err) => String((err && (err.message || err.error)) || err || t(
 module.exports = {
     name: 'DesktopSignIn',
     // asked: Add an account, from the shell of a signed-in one (which Cancel goes back to)
-    props: { state: Object, failed: String, asked: Boolean },
+    // retryServer: the server a sign-in that did not finish was to, to try again
+    props: { state: Object, failed: String, asked: Boolean, retryServer: String },
     data() {
         const current = this.asked ? null
             : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
-        return { server: current ? current.server : '', username: current ? current.username : '', password: '', code: '',
-            codeAsk: null, sent: false, busy: false, error: '', accounts: (this.state && this.state.accounts) || [] };
+        return { server: this.retryServer || (current ? current.server : ''), username: current && !this.retryServer ? current.username : '', password: '', code: '',
+            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [] };
     },
+    // another server: its providers are not the last one's
+    watch: { serverText() { this.providers = []; this.waiting = false; } },
     computed: {
+        serverText() { return this.server.trim(); },
         ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
@@ -1077,6 +1232,23 @@ module.exports = {
                 }
             }, (err) => { this.busy = false; this.error = message(err); });
         },
+        // the server's identity providers, for its SSO sign-in in the system browser
+        findProviders() {
+            this.busy = true;
+            this.error = '';
+            host().ssoProviders(this.server.trim()).then((list) => {
+                this.busy = false;
+                this.providers = list || [];
+                if (!this.providers.length) this.error = t('This server offers no single sign-on.');
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        sso(provider) {
+            this.error = '';
+            this.busy = true;
+            host().ssoStart(this.server.trim(), provider.id).then(() => { this.busy = false; this.waiting = true; },
+                (err) => { this.busy = false; this.error = message(err); });
+        },
+        cancelSso() { host().ssoCancel().then(() => { this.waiting = false; }, (err) => { this.error = message(err); }); },
         back() { this.codeAsk = null; this.code = ''; this.sent = false; this.error = ''; },
         cancel() { host().switchAccount(this.state.current).catch((err) => { this.error = message(err); }); },
         sendCode(factor) {
@@ -1230,11 +1402,64 @@ module.exports = {
                                   ]),
                                   _: 1
                                 })),
+                            (!_ctx.codeAsk && (_ctx.providers.length || _ctx.waiting))
+                              ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                  key: 2,
+                                  class: "q-pt-none"
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_ctx.waiting)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 0,
+                                          role: "status",
+                                          class: "row items-center no-wrap q-gutter-x-sm"
+                                        }, [
+                                          _createElementVNode("span", { class: "col text-body2" }, _toDisplayString(_ctx.t('Continue in your browser; this app signs in when it is done.')), 1),
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            label: _ctx.t('Cancel'),
+                                            onClick: _ctx.cancelSso
+                                          }, null, 8, ["label", "onClick"])
+                                        ]))
+                                      : (_openBlock(), _createElementBlock("div", {
+                                          key: 1,
+                                          class: "column q-gutter-y-xs"
+                                        }, [
+                                          _createElementVNode("div", { class: "text-caption m-muted" }, _toDisplayString(_ctx.t('Or sign in with')), 1),
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.providers, (provider) => {
+                                            return (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: provider.id,
+                                              outline: "",
+                                              "no-caps": "",
+                                              color: "primary",
+                                              icon: provider.icon || 'sym_o_login',
+                                              label: provider.description || provider.id,
+                                              disable: _ctx.busy,
+                                              onClick: $event => (_ctx.sso(provider))
+                                            }, null, 8, ["icon", "label", "disable", "onClick"]))
+                                          }), 128))
+                                        ]))
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true),
                             _createVNode(_component_q_card_actions, { align: "right" }, {
                               default: _withCtx(() => [
-                                (_ctx.codeAsk)
+                                (!_ctx.codeAsk && !_ctx.providers.length && !_ctx.waiting)
                                   ? (_openBlock(), _createBlock(_component_q_btn, {
                                       key: 0,
+                                      flat: "",
+                                      "no-caps": "",
+                                      label: _ctx.t('Single sign-on'),
+                                      disable: _ctx.busy || !_ctx.server.trim(),
+                                      onClick: _ctx.findProviders
+                                    }, null, 8, ["label", "disable", "onClick"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.codeAsk)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
                                       flat: "",
                                       "no-caps": "",
                                       label: _ctx.t('Back'),
@@ -1243,7 +1468,7 @@ module.exports = {
                                     }, null, 8, ["label", "disable", "onClick"]))
                                   : (_ctx.canCancel)
                                     ? (_openBlock(), _createBlock(_component_q_btn, {
-                                        key: 1,
+                                        key: 2,
                                         flat: "",
                                         "no-caps": "",
                                         label: _ctx.t('Cancel'),

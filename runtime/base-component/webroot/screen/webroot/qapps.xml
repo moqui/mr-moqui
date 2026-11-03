@@ -38,6 +38,30 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- The user's apps and devices signed in by a key of their own, for the desktop client's Devices (get#UserDeviceKeys:
+        current is the device of this request's key), and one signed out (revoke#UserDeviceKey). The services act on the
+        current user's own keys only, so they run without authorization, as the shell's own services do. 401 without a
+        user. -->
+    <transition name="clientDevices" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else ec.web.sendJsonResponse({deviceList: ec.service.sync().name('org.moqui.impl.UserServices.get#UserDeviceKeys').disableAuthz().call().deviceList ?? []})
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="revokeClientDevice" method="post">
+        <parameter name="loginKey" required="true"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else {
+                ec.service.sync().name('org.moqui.impl.UserServices.revoke#UserDeviceKey').parameters({loginKey: loginKey}).disableAuthz().call()
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({revoked: true})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <pre-actions><script><![CDATA[
         // if user not logged in save current path and params then redirect to Login
         if (!ec.user.userId) { ec.web.saveScreenLastInfo(null, null); sri.sendRedirectAndStopRender('/Login') }

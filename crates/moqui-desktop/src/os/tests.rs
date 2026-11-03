@@ -29,5 +29,7 @@ fn the_identifier_name_and_schemes_are_those_of_tauri_conf() {
         .iter()
         .map(|scheme| scheme.as_str().unwrap())
         .collect();
-    assert_eq!(schemes, links::SCHEMES);
+    let mut ours = links::SCHEMES.to_vec();
+    ours.push(links::APP_SCHEME);
+    assert_eq!(schemes, ours);
 }

@@ -22,6 +22,7 @@
 //! - [`proxy`]: a request of the page forwarded to the server with the key, its answer made safe for the page.
 //! - [`socket`]: `/notws` and `/callws` held by the host and bridged to the page.
 //! - [`cache`]: the last answers the shell opens on when the server cannot be reached.
+//! - [`sso`]: sign-in through the server's identity providers in the system browser, handed back to the app (RFC 8252).
 //!
 //! Blocking I/O on threads, as `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`), whose patterns this
 //! follows: no async API. reqwest's blocking client runs a runtime of its own, so a caller must be on a plain thread,
@@ -38,5 +39,6 @@ pub mod keys;
 pub mod login;
 pub mod proxy;
 pub mod socket;
+pub mod sso;
 
 pub use moqui_lib::error::Error;

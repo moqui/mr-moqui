@@ -63,7 +63,8 @@
         return "The server did not answer with its settings (HTTP " + answer.status + ").";
     };
 
-    const signIn = (state, failed, asked) => mount("Shell/SignIn", { state, failed: failed || "", asked: !!asked }, null);
+    const signIn = (state, failed, asked, retryServer) =>
+        mount("Shell/SignIn", { state, failed: failed || "", asked: !!asked, retryServer: retryServer || "" }, null);
 
     const start = () => {
         if (!host || !host.state) {
@@ -71,14 +72,18 @@
             return;
         }
         qvt.applyRenders();
-        const asked = new URL(location.href).searchParams.get("signIn");
+        const params = new URL(location.href).searchParams;
+        const asked = params.get("signIn");
+        // why the host showed the sign-in (an SSO sign-in that did not finish), and its server
+        const failedBefore = params.get("failed") || "";
+        const retryServer = params.get("server") || "";
         let state = { accounts: [] };
         host.state().then((given) => {
             state = given || state;
             // what this page keeps in the browser's storage is the account's (MoquiLib scopedKey)
             moqui.storageScope = state.current || "";
             if (!state.current || !state.signedIn || asked) {
-                signIn(state, "", asked);
+                signIn(state, failedBefore, asked, retryServer);
                 return null;
             }
             return Promise.all([fetchJson("/qapps/clientConfig"), fetchJson("/shellData")]).then(([configAnswer, shellAnswer]) => {

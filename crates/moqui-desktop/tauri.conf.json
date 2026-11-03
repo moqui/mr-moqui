@@ -38,7 +38,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["mailto", "tel", "sip"]
+        "schemes": ["mailto", "tel", "sip", "org.moqui.desktop"]
       }
     }
   }

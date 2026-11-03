@@ -63,6 +63,8 @@ pub(crate) struct Client {
     next_window: AtomicU64,
     /// A check that the current account's key still signs in is under way.
     checking: AtomicBool,
+    /// An SSO sign-in waiting for the browser to come back.
+    sso: Mutex<Option<moqui_client::sso::Pending>>,
 }
 
 impl Client {
@@ -77,6 +79,7 @@ impl Client {
             windows: Mutex::new(Vec::new()),
             next_window: AtomicU64::new(1),
             checking: AtomicBool::new(false),
+            sso: Mutex::new(None),
         })
     }
 
@@ -147,6 +150,11 @@ pub(crate) fn open_link(app: &AppHandle, url: &Url) {
     if let Err(err) = windows::open_remote(app, &path) {
         tracing::warn!("Could not open {path}: {err}");
     }
+}
+
+/// The server's hand-back of an SSO sign-in (the `org.moqui.desktop:` link), for the sign-in this app started.
+pub(crate) fn sso_returned(app: &AppHandle, link: &Url) {
+    commands::sso_returned(app, link);
 }
 
 /// An app window closed: its sockets go with it.

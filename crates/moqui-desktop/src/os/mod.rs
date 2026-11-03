@@ -133,6 +133,11 @@ pub(crate) fn setup(app: &AppHandle) {
 /// to the node's page for the last one, or keep it until the node listens.
 pub(crate) fn opened(app: &AppHandle, links: Vec<Url>) {
     crate::show_main(app);
+    // the server's hand-back of an SSO sign-in, to the client
+    if let Some(link) = links.iter().rev().find(|link| link.scheme() == links::APP_SCHEME) {
+        crate::client::sso_returned(app, link);
+        return;
+    }
     let Some(link) = links
         .into_iter()
         .rev()
@@ -159,6 +164,14 @@ pub(crate) fn opened(app: &AppHandle, links: Vec<Url>) {
                 tracing::warn!("Could not open {page} for {link}: {err}");
             }
         }
+    }
+}
+
+/// The app's own scheme handled by this app, before an SSO sign-in sends the browser back to it (Linux AppImages and
+/// development runs; a failure is logged).
+pub(crate) fn claim_app_scheme() {
+    if let Err(err) = handlers::claim_app_scheme() {
+        tracing::warn!("org.moqui.desktop: links may not reach this app: {err}");
     }
 }
 
