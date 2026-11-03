@@ -535,4 +535,830 @@ module.exports = {
         }
         return { component: component, style: null, scoped: false };
     } };
+    moqui.qvtBundled["Shell/Root"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+// a count of shellCounts: a number, or a map's total or count, as m-qapps-root reads it
+const countOf = (counts, key) => {
+    const value = counts ? counts[key] : null;
+    if (moqui.isPlainObject(value)) return Number(value.total !== undefined ? value.total : value.count) || 0;
+    return Number(value) || 0;
+};
+
+module.exports = {
+    name: 'DesktopShell',
+    props: { state: Object, config: Object, shellData: Object, offline: Boolean, chatPath: String },
+    provide() {
+        // the bundled ChatPanel's screen: its path is the server's, so its requests go to the comms app's Chat transitions
+        return { mScreen: { path: this.chatPath } };
+    },
+    data() {
+        const data = this.shellData || {};
+        return {
+            drawer: false,
+            // as m-qapps-root: what the client's components read of their $root
+            appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
+            userId: this.config.userId, username: this.config.username,
+            notificationClient: null, socketState: null,
+            apps: Array.isArray(data.apps) ? data.apps : [],
+            shellCounts: moqui.isPlainObject(data.counts) ? data.counts : {},
+            chatPanel: moqui.bundledComponent(this.chatPath)
+        };
+    },
+    computed: {
+        accounts() { return (this.state && this.state.accounts) || []; },
+        currentId() { return this.state && this.state.current; },
+        keyStore() { return this.state && this.state.keyStore; },
+        serverName() { return (this.config.server && this.config.server.name) || (this.config.shell && this.config.shell.title) || 'MR Moqui'; },
+        userName() { return this.config.userFullName || this.config.username || ''; },
+        // the shell's counts as m-qapps-root shows them (its keys chat, email, messages, notifications), each opening its
+        // screen in an app window
+        countItems() {
+            const shell = (this.shellData && this.shellData.shell) || {};
+            const commsRoot = String((this.config.calls && this.config.calls.appRoot) || '/qapps/BasicComms');
+            const items = [
+                { key: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: commsRoot + '/Chat' },
+                { key: 'email', icon: 'sym_o_mail', label: t('Mail'), link: shell.mailScreen || commsRoot + '/Inbox' },
+                shell.messagesScreen ? { key: 'messages', icon: 'sym_o_forum', label: t('Messages'), link: shell.messagesScreen } : null,
+                { key: 'notifications', icon: 'sym_o_notifications', label: t('Notifications'), link: commsRoot }
+            ];
+            return items.filter((item) => item).map((item) => Object.assign(item, { count: countOf(this.shellCounts, item.key) }));
+        }
+    },
+    watch: {
+        // each count as a number for the tray and the badge, as m-qapps-root hands them
+        shellCounts: {
+            handler(counts) {
+                const desktop = host();
+                if (!desktop || !desktop.setCounts) return;
+                const out = {};
+                Object.keys(counts || {}).forEach((key) => { out[key] = countOf(counts, key); });
+                desktop.setCounts(out);
+            },
+            immediate: true
+        },
+        // the socket back after an offline start: the shell opens again, with what the server has now
+        socketState(state) { if (state === 'open' && this.offline) location.reload(); }
+    },
+    methods: {
+        t,
+        // what a host command that failed says, in a toast
+        failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
+        // a link of the client's components (ChatPanel's Open in Comms, a room it cannot open here, a toast's link): the
+        // server's page in an app window
+        setUrl(url) { if (url) host().openRemote(String(url)).catch((err) => this.failed(err)); },
+        switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
+        addAccount() { host().addAccount().catch((err) => this.failed(err)); },
+        signOut() {
+            this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
+                .onOk(() => host().signOut().catch((err) => this.failed(err)));
+        },
+        // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
+        // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
+        addNotify() {},
+        reLoginCheckShow() {
+            // the host checks the key on a 401 of its own; the sign-in shows once it has found the key no longer taken
+            setTimeout(() => host().state().then((state) => { if (!state || !state.signedIn) location.reload(); }, () => {}), 2000);
+        },
+        onNotification(message) {
+            if (!message || message.topic !== 'shellCounts') return;
+            let counts = message.message;
+            if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
+            if (moqui.isPlainObject(counts)) this.shellCounts = counts;
+        }
+    },
+    created() {
+        // the root the client's helpers talk to (toasts, links, a 401), as m-qapps-root is on /qapps
+        moqui.webrootVue = this;
+        moqui.appRootPath = '';
+        // the account's /notws, held by the host (moqui.openSocket): counts, notifications, the chat store
+        if (this.config.notificationEndpoint) {
+            const client = new moqui.NotificationClient('ws://' + location.host + this.config.notificationEndpoint);
+            client.onState((state) => { this.socketState = state; });
+            client.registerListener('ALL');
+            client.registerListener('shellCounts', (message) => this.onNotification(message));
+            this.notificationClient = client;
+        }
+    },
+    mounted() {
+        if (moqui.chat) moqui.chat.start(this);
+        // my presence on the tray, as m-qapps-root hands it
+        const desktop = host();
+        if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },
+            { immediate: true });
+        // the counts while the socket is down, every five minutes, as m-qapps-root polls them
+        this.countsTimer = setInterval(() => {
+            if (this.notificationClient && this.notificationClient.isOpen()) return;
+            moqui.request('/shellCounts').then((result) => {
+                const counts = result.json && moqui.isPlainObject(result.json.counts) ? result.json.counts : null;
+                if (counts) this.shellCounts = counts;
+            }, () => {});
+        }, 5 * 60 * 1000);
+    },
+    unmounted() { clearInterval(this.countsTimer); }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, resolveDirective: _resolveDirective, withDirectives: _withDirectives, resolveDynamicComponent: _resolveDynamicComponent } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_toolbar_title = _resolveComponent("q-toolbar-title")
+                  const _component_q_chip = _resolveComponent("q-chip")
+                  const _component_q_badge = _resolveComponent("q-badge")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_separator = _resolveComponent("q-separator")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_menu = _resolveComponent("q-menu")
+                  const _component_q_toolbar = _resolveComponent("q-toolbar")
+                  const _component_q_header = _resolveComponent("q-header")
+                  const _component_m_menu_icon = _resolveComponent("m-menu-icon")
+                  const _component_q_drawer = _resolveComponent("q-drawer")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_page = _resolveComponent("q-page")
+                  const _component_q_page_container = _resolveComponent("q-page-container")
+                  const _component_q_layout = _resolveComponent("q-layout")
+                  const _directive_close_popup = _resolveDirective("close-popup")
+
+                  return (_openBlock(), _createBlock(_component_q_layout, { view: "hHh lpR fFf" }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_header, {
+                        elevated: "",
+                        class: "bg-primary text-white"
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_toolbar, null, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                round: "",
+                                dense: "",
+                                icon: "sym_o_menu",
+                                "aria-label": _ctx.t('Menu'),
+                                onClick: $event => (_ctx.drawer = !_ctx.drawer)
+                              }, null, 8, ["aria-label", "onClick"]),
+                              _createVNode(_component_q_toolbar_title, { class: "ellipsis" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.serverName), 1)
+                                ]),
+                                _: 1
+                              }),
+                              (_ctx.offline)
+                                ? (_openBlock(), _createBlock(_component_q_chip, {
+                                    key: 0,
+                                    dense: "",
+                                    square: "",
+                                    color: "warning",
+                                    "text-color": "black",
+                                    icon: "sym_o_cloud_off"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('Offline: showing what was last seen')), 1)
+                                    ]),
+                                    _: 1
+                                  }))
+                                : (_ctx.socketState === 'closed')
+                                  ? (_openBlock(), _createBlock(_component_q_chip, {
+                                      key: 1,
+                                      dense: "",
+                                      square: "",
+                                      color: "grey-7",
+                                      "text-color": "white",
+                                      icon: "sym_o_sync_problem"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Reconnecting')), 1)
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : _createCommentVNode("", true),
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.countItems, (item) => {
+                                return (_openBlock(), _createBlock(_component_q_btn, {
+                                  key: item.key,
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  icon: item.icon,
+                                  "aria-label": item.count ? item.label + ': ' + item.count : item.label,
+                                  onClick: $event => (_ctx.setUrl(item.link))
+                                }, {
+                                  default: _withCtx(() => [
+                                    (item.count)
+                                      ? (_openBlock(), _createBlock(_component_q_badge, {
+                                          key: 0,
+                                          floating: "",
+                                          rounded: "",
+                                          color: "red"
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(item.count > 99 ? '99+' : item.count), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024))
+                                      : _createCommentVNode("", true),
+                                    _createVNode(_component_q_tooltip, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(item.label), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024)
+                                  ]),
+                                  _: 2
+                                }, 1032, ["icon", "aria-label", "onClick"]))
+                              }), 128)),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                "no-caps": "",
+                                class: "q-ml-sm",
+                                icon: "sym_o_account_circle",
+                                label: _ctx.userName
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_menu, {
+                                    anchor: "bottom right",
+                                    self: "top right"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_list, { class: "m-shell-account-menu" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, { header: "" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.t('Accounts')), 1)
+                                            ]),
+                                            _: 1
+                                          }),
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.accounts, (account) => {
+                                            return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                              key: account.id,
+                                              clickable: "",
+                                              active: account.id === _ctx.currentId,
+                                              onClick: $event => (_ctx.switchAccount(account.id))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, {
+                                                      name: account.id === _ctx.currentId ? 'sym_o_check' : 'sym_o_person'
+                                                    }, null, 8, ["name"])
+                                                  ]),
+                                                  _: 2
+                                                }, 1024),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_label, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(account.display || account.username), 1)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1024),
+                                                    _createVNode(_component_q_item_label, { caption: "" }, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode(_toDisplayString(account.serverName || account.server), 1)
+                                                      ]),
+                                                      _: 2
+                                                    }, 1024)
+                                                  ]),
+                                                  _: 2
+                                                }, 1024)
+                                              ]),
+                                              _: 2
+                                            }, 1032, ["active", "onClick"])), [
+                                              [_directive_close_popup]
+                                            ])
+                                          }), 128)),
+                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            clickable: "",
+                                            onClick: _ctx.addAccount
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, { name: "sym_o_person_add" })
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Add an account')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])), [
+                                            [_directive_close_popup]
+                                          ]),
+                                          _createVNode(_component_q_separator),
+                                          (_ctx.keyStore === 'file')
+                                            ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, {
+                                                        name: "sym_o_warning",
+                                                        color: "warning"
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('No key store on this computer: the device key is kept in a file only you can read.')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }))
+                                            : _createCommentVNode("", true),
+                                          _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            clickable: "",
+                                            onClick: _ctx.signOut
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_icon, { name: "sym_o_logout" })
+                                                ]),
+                                                _: 1
+                                              }),
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Sign out of this account')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["onClick"])), [
+                                            [_directive_close_popup]
+                                          ])
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }, 8, ["label"])
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_drawer, {
+                        modelValue: _ctx.drawer,
+                        "onUpdate:modelValue": $event => ((_ctx.drawer) = $event),
+                        "show-if-above": "",
+                        bordered: "",
+                        width: 240
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_list, null, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_item_label, { header: "" }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.t('Applications')), 1)
+                                ]),
+                                _: 1
+                              }),
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.apps, (app) => {
+                                return (_openBlock(), _createBlock(_component_q_item, {
+                                  key: app.name,
+                                  clickable: "",
+                                  onClick: $event => (_ctx.setUrl(app.path))
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_section, { avatar: "" }, {
+                                      default: _withCtx(() => [
+                                        (app.imageType === 'icon' && app.image)
+                                          ? (_openBlock(), _createBlock(_component_m_menu_icon, {
+                                              key: 0,
+                                              name: app.image
+                                            }, null, 8, ["name"]))
+                                          : (_openBlock(), _createBlock(_component_q_icon, {
+                                              key: 1,
+                                              name: "sym_o_apps"
+                                            }))
+                                      ]),
+                                      _: 2
+                                    }, 1024),
+                                    _createVNode(_component_q_item_section, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(app.title || app.name), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024),
+                                    _createVNode(_component_q_item_section, { side: "" }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_icon, {
+                                          name: "sym_o_open_in_new",
+                                          size: "xs"
+                                        })
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 2
+                                }, 1032, ["onClick"]))
+                              }), 128)),
+                              (!_ctx.apps.length)
+                                ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, { caption: "" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(_ctx.offline ? _ctx.t('The apps show once the server is reached.') : _ctx.t('No applications')), 1)
+                                            ]),
+                                            _: 1
+                                          })
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      _createVNode(_component_q_page_container, null, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_page, { padding: "" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_card, {
+                                flat: "",
+                                bordered: "",
+                                class: "m-shell-chat q-pa-sm"
+                              }, {
+                                default: _withCtx(() => [
+                                  (_ctx.chatPanel)
+                                    ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.chatPanel), { key: 0 }))
+                                    : (_openBlock(), _createElementBlock("div", {
+                                        key: 1,
+                                        class: "q-pa-md m-muted"
+                                      }, _toDisplayString(_ctx.t('Chat is not available on this server.')), 1))
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      })
+                    ]),
+                    _: 1
+                  }))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
+    } };
+    moqui.qvtBundled["Shell/SignIn"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+const message = (err) => String((err && (err.message || err.error)) || err || t('Sign-in failed'));
+
+module.exports = {
+    name: 'DesktopSignIn',
+    // asked: Add an account, from the shell of a signed-in one (which Cancel goes back to)
+    props: { state: Object, failed: String, asked: Boolean },
+    data() {
+        const current = this.asked ? null
+            : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
+        return { server: current ? current.server : '', username: current ? current.username : '', password: '', code: '',
+            codeAsk: null, sent: false, busy: false, error: '', accounts: (this.state && this.state.accounts) || [] };
+    },
+    computed: {
+        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
+        canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
+    },
+    methods: {
+        t,
+        submit() {
+            if (!this.ready || this.busy) return;
+            this.busy = true;
+            this.error = '';
+            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim() }).then((answer) => {
+                this.busy = false;
+                // signed in: the host shows the account's shell
+                if (answer && answer.status === 'code') {
+                    this.codeAsk = { text: answer.text, sendable: answer.sendable || [] };
+                    this.code = '';
+                }
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        back() { this.codeAsk = null; this.code = ''; this.sent = false; this.error = ''; },
+        cancel() { host().switchAccount(this.state.current).catch((err) => { this.error = message(err); }); },
+        sendCode(factor) {
+            this.busy = true;
+            this.sent = false;
+            this.error = '';
+            host().sendCode({ server: this.server.trim(), username: this.username.trim(), password: this.password, factor }).then(() => {
+                this.busy = false;
+                this.sent = true;
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        choose(account) {
+            if (account.signedIn) { host().switchAccount(account.id); return; }
+            this.server = account.server;
+            this.username = account.username;
+            this.password = '';
+            this.back();
+        },
+        remove(account) {
+            this.$q.dialog({ title: t('Remove from this computer'), cancel: true,
+                message: fill(t('Remove {name} on {server} from this computer? Its device key is revoked, and what was kept for it is deleted.'),
+                    { name: account.display || account.username, server: account.serverName || account.server }) })
+                .onOk(() => host().removeAccount(account.id).then((state) => { if (state) this.accounts = state.accounts || []; }, (err) => { this.error = message(err); }));
+        }
+    }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withModifiers: _withModifiers } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_card_section = _resolveComponent("q-card-section")
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_card_actions = _resolveComponent("q-card-actions")
+                  const _component_q_card = _resolveComponent("q-card")
+                  const _component_q_form = _resolveComponent("q-form")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_tooltip = _resolveComponent("q-tooltip")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+
+                  return (_openBlock(), _createElementBlock("div", { class: "m-shell-sign-in q-pa-md" }, [
+                    _createVNode(_component_q_form, { onSubmit: _ctx.submit }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_card, {
+                          flat: "",
+                          bordered: ""
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_card_section, null, {
+                              default: _withCtx(() => [
+                                _createElementVNode("div", { class: "text-h6" }, _toDisplayString(_ctx.codeAsk ? _ctx.t('Authentication code') : _ctx.t('Sign in to a server')), 1),
+                                (_ctx.failed || _ctx.error)
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 0,
+                                      role: "alert",
+                                      class: "text-negative q-mt-sm"
+                                    }, _toDisplayString(_ctx.error || _ctx.failed), 1))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              _: 1
+                            }),
+                            (!_ctx.codeAsk)
+                              ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                  key: 0,
+                                  class: "q-gutter-y-sm"
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.server,
+                                      "onUpdate:modelValue": $event => ((_ctx.server) = $event),
+                                      outlined: "",
+                                      dense: "",
+                                      label: _ctx.t('Server'),
+                                      placeholder: "erp.example.com",
+                                      autocomplete: "url",
+                                      disable: _ctx.busy,
+                                      autofocus: !_ctx.server
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable", "autofocus"]),
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.username,
+                                      "onUpdate:modelValue": $event => ((_ctx.username) = $event),
+                                      outlined: "",
+                                      dense: "",
+                                      label: _ctx.t('Username'),
+                                      autocomplete: "username",
+                                      disable: _ctx.busy
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable"]),
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.password,
+                                      "onUpdate:modelValue": $event => ((_ctx.password) = $event),
+                                      outlined: "",
+                                      dense: "",
+                                      type: "password",
+                                      label: _ctx.t('Password'),
+                                      autocomplete: "current-password",
+                                      disable: _ctx.busy,
+                                      autofocus: !!_ctx.server
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable", "autofocus"])
+                                  ]),
+                                  _: 1
+                                }))
+                              : (_openBlock(), _createBlock(_component_q_card_section, {
+                                  key: 1,
+                                  class: "q-gutter-y-sm"
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createElementVNode("div", null, _toDisplayString(_ctx.codeAsk.text), 1),
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.code,
+                                      "onUpdate:modelValue": $event => ((_ctx.code) = $event),
+                                      outlined: "",
+                                      dense: "",
+                                      label: _ctx.t('Code'),
+                                      autocomplete: "one-time-code",
+                                      disable: _ctx.busy,
+                                      autofocus: ""
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable"]),
+                                    (_ctx.codeAsk.sendable && _ctx.codeAsk.sendable.length)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 0,
+                                          class: "row q-gutter-sm"
+                                        }, [
+                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.codeAsk.sendable, (factor) => {
+                                            return (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: factor.id,
+                                              flat: "",
+                                              dense: "",
+                                              "no-caps": "",
+                                              color: "primary",
+                                              icon: "sym_o_send",
+                                              label: _ctx.t('Send code to') + ' ' + factor.label,
+                                              disable: _ctx.busy,
+                                              onClick: $event => (_ctx.sendCode(factor.id))
+                                            }, null, 8, ["label", "disable", "onClick"]))
+                                          }), 128))
+                                        ]))
+                                      : _createCommentVNode("", true),
+                                    (_ctx.sent)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 1,
+                                          class: "text-positive"
+                                        }, _toDisplayString(_ctx.t('Code sent')), 1))
+                                      : _createCommentVNode("", true)
+                                  ]),
+                                  _: 1
+                                })),
+                            _createVNode(_component_q_card_actions, { align: "right" }, {
+                              default: _withCtx(() => [
+                                (_ctx.codeAsk)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 0,
+                                      flat: "",
+                                      "no-caps": "",
+                                      label: _ctx.t('Back'),
+                                      disable: _ctx.busy,
+                                      onClick: _ctx.back
+                                    }, null, 8, ["label", "disable", "onClick"]))
+                                  : (_ctx.canCancel)
+                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: 1,
+                                        flat: "",
+                                        "no-caps": "",
+                                        label: _ctx.t('Cancel'),
+                                        disable: _ctx.busy,
+                                        onClick: _ctx.cancel
+                                      }, null, 8, ["label", "disable", "onClick"]))
+                                    : _createCommentVNode("", true),
+                                _createVNode(_component_q_btn, {
+                                  type: "submit",
+                                  unelevated: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  label: _ctx.t('Sign in'),
+                                  loading: _ctx.busy,
+                                  disable: !_ctx.ready
+                                }, null, 8, ["label", "loading", "disable"])
+                              ]),
+                              _: 1
+                            })
+                          ]),
+                          _: 1
+                        })
+                      ]),
+                      _: 1
+                    }, 8, ["onSubmit"]),
+                    (_ctx.accounts.length)
+                      ? (_openBlock(), _createBlock(_component_q_card, {
+                          key: 0,
+                          flat: "",
+                          bordered: "",
+                          class: "q-mt-md"
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_list, { separator: "" }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_item_label, { header: "" }, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(_ctx.t('Accounts on this computer')), 1)
+                                  ]),
+                                  _: 1
+                                }),
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.accounts, (account) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: account.id,
+                                    clickable: "",
+                                    onClick: $event => (_ctx.choose(account))
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, {
+                                            name: account.signedIn ? 'sym_o_check_circle' : 'sym_o_person'
+                                          }, null, 8, ["name"])
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(account.display || account.username), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_label, { caption: "" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(account.serverName || account.server), 1),
+                                              (!account.signedIn)
+                                                ? (_openBlock(), _createElementBlock("span", { key: 0 }, " · " + _toDisplayString(_ctx.t('signed out')), 1))
+                                                : _createCommentVNode("", true)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, { side: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            round: "",
+                                            dense: "",
+                                            icon: "sym_o_delete",
+                                            "aria-label": _ctx.t('Remove from this computer'),
+                                            onClick: _withModifiers($event => (_ctx.remove(account)), ["stop"])
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_tooltip, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.t('Remove from this computer')), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["aria-label", "onClick"])
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["onClick"]))
+                                }), 128))
+                              ]),
+                              _: 1
+                            })
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true)
+                  ]))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
+    } };
 })(globalThis.moqui);

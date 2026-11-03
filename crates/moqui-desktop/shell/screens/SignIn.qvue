@@ -1,0 +1,125 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The desktop client's sign-in (js/shell.js, plans/Mobile-Desktop.md §4 "Remote applications and authentication"): the
+    server and the user's name and password, then the code of a second factor when the account has one. The host signs in
+    (src/client/, moquiDesktop.signIn): it posts the password once to the server's REST login for a device key, which it
+    keeps in the OS key store, and the page never holds the key. The accounts this computer has are offered to sign in to
+    again or to switch to. Bundled, precompiled (bundled-screens.txt). -->
+<template><div class="m-shell-sign-in q-pa-md">
+    <q-form @submit="submit">
+    <q-card flat bordered>
+        <q-card-section>
+            <div class="text-h6">{{codeAsk ? t('Authentication code') : t('Sign in to a server')}}</div>
+            <div v-if="failed || error" role="alert" class="text-negative q-mt-sm">{{error || failed}}</div>
+        </q-card-section>
+        <q-card-section v-if="!codeAsk" class="q-gutter-y-sm">
+            <q-input v-model="server" outlined dense :label="t('Server')" placeholder="erp.example.com" autocomplete="url" :disable="busy" :autofocus="!server"></q-input>
+            <q-input v-model="username" outlined dense :label="t('Username')" autocomplete="username" :disable="busy"></q-input>
+            <q-input v-model="password" outlined dense type="password" :label="t('Password')" autocomplete="current-password" :disable="busy" :autofocus="!!server"></q-input>
+        </q-card-section>
+        <q-card-section v-else class="q-gutter-y-sm">
+            <div>{{codeAsk.text}}</div>
+            <q-input v-model="code" outlined dense :label="t('Code')" autocomplete="one-time-code" :disable="busy" autofocus></q-input>
+            <div v-if="codeAsk.sendable && codeAsk.sendable.length" class="row q-gutter-sm">
+                <q-btn v-for="factor in codeAsk.sendable" :key="factor.id" flat dense no-caps color="primary" icon="sym_o_send"
+                        :label="t('Send code to') + ' ' + factor.label" :disable="busy" @click="sendCode(factor.id)"></q-btn>
+            </div>
+            <div v-if="sent" class="text-positive">{{t('Code sent')}}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+            <q-btn v-if="codeAsk" flat no-caps :label="t('Back')" :disable="busy" @click="back"></q-btn>
+            <q-btn v-else-if="canCancel" flat no-caps :label="t('Cancel')" :disable="busy" @click="cancel"></q-btn>
+            <q-btn type="submit" unelevated no-caps color="primary" :label="t('Sign in')" :loading="busy" :disable="!ready"></q-btn>
+        </q-card-actions>
+    </q-card>
+    </q-form>
+    <q-card v-if="accounts.length" flat bordered class="q-mt-md">
+        <q-list separator>
+            <q-item-label header>{{t('Accounts on this computer')}}</q-item-label>
+            <q-item v-for="account in accounts" :key="account.id" clickable @click="choose(account)">
+                <q-item-section avatar><q-icon :name="account.signedIn ? 'sym_o_check_circle' : 'sym_o_person'"></q-icon></q-item-section>
+                <q-item-section>
+                    <q-item-label>{{account.display || account.username}}</q-item-label>
+                    <q-item-label caption>{{account.serverName || account.server}}<span v-if="!account.signedIn"> · {{t('signed out')}}</span></q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                    <q-btn flat round dense icon="sym_o_delete" :aria-label="t('Remove from this computer')" @click.stop="remove(account)"><q-tooltip>{{t('Remove from this computer')}}</q-tooltip></q-btn>
+                </q-item-section>
+            </q-item>
+        </q-list>
+    </q-card>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+const message = (err) => String((err && (err.message || err.error)) || err || t('Sign-in failed'));
+
+module.exports = {
+    name: 'DesktopSignIn',
+    // asked: Add an account, from the shell of a signed-in one (which Cancel goes back to)
+    props: { state: Object, failed: String, asked: Boolean },
+    data() {
+        const current = this.asked ? null
+            : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
+        return { server: current ? current.server : '', username: current ? current.username : '', password: '', code: '',
+            codeAsk: null, sent: false, busy: false, error: '', accounts: (this.state && this.state.accounts) || [] };
+    },
+    computed: {
+        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
+        canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
+    },
+    methods: {
+        t,
+        submit() {
+            if (!this.ready || this.busy) return;
+            this.busy = true;
+            this.error = '';
+            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim() }).then((answer) => {
+                this.busy = false;
+                // signed in: the host shows the account's shell
+                if (answer && answer.status === 'code') {
+                    this.codeAsk = { text: answer.text, sendable: answer.sendable || [] };
+                    this.code = '';
+                }
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        back() { this.codeAsk = null; this.code = ''; this.sent = false; this.error = ''; },
+        cancel() { host().switchAccount(this.state.current).catch((err) => { this.error = message(err); }); },
+        sendCode(factor) {
+            this.busy = true;
+            this.sent = false;
+            this.error = '';
+            host().sendCode({ server: this.server.trim(), username: this.username.trim(), password: this.password, factor }).then(() => {
+                this.busy = false;
+                this.sent = true;
+            }, (err) => { this.busy = false; this.error = message(err); });
+        },
+        choose(account) {
+            if (account.signedIn) { host().switchAccount(account.id); return; }
+            this.server = account.server;
+            this.username = account.username;
+            this.password = '';
+            this.back();
+        },
+        remove(account) {
+            this.$q.dialog({ title: t('Remove from this computer'), cancel: true,
+                message: fill(t('Remove {name} on {server} from this computer? Its device key is revoked, and what was kept for it is deleted.'),
+                    { name: account.display || account.username, server: account.serverName || account.server }) })
+                .onOk(() => host().removeAccount(account.id).then((state) => { if (state) this.accounts = state.accounts || []; }, (err) => { this.error = message(err); }));
+        }
+    }
+};
+</script>

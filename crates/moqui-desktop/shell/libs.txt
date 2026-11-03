@@ -1,0 +1,9 @@
+# The libraries of webroot/libs the shell may load (by directory), staged in a bundle by ./moq desktop build and the only
+# ones a development run serves too (src/client/assets.rs), so a library the bundle lacks fails in development first.
+# vue, quasar and the icon fonts load with the page; dompurify and marked when the chat store or m-markdown needs them.
+vue
+quasar
+material-symbols
+material-icons
+dompurify
+marked

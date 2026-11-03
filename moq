@@ -720,7 +720,9 @@ help_desktop() {
 Runs (dev, the default) or bundles (build) the desktop app in crates/moqui-desktop: Tauri 3 (alpha)
 on Chromium (CEF). The node runs in the app's own process, or as the moqui binary in a child process
 (the sidecar) with MOQUI_DESKTOP_NODE=sidecar or the tray's node item (plans/Mobile-Desktop.md,
-configurations 1 and 2). dev's sidecar is target/release/moqui, else target/debug/moqui (./moq build);
+configurations 1 and 2). With MOQUI_DESKTOP_NODE=client, or the tray's client item, there is no node:
+the app is a client of a remote server, with its bundled shell in crates/moqui-desktop/shell
+(configuration 3), whose files build stages in the bundle too. dev's sidecar is target/release/moqui, else target/debug/moqui (./moq build);
 build puts the Maximal binary in the bundle. It first writes target/moqui-app, the crate that links
 the framework and the component crates, which the app depends on. It needs the Tauri CLI of the same
 version, from cargo:
@@ -1381,8 +1383,9 @@ task_desktop() {
     fi
     if [ "$command" = build ]; then
         stage_desktop_runtime "$ROOT/target/desktop-runtime"
+        stage_desktop_shell "$ROOT/target/desktop-shell"
         stage_desktop_sidecar "$ROOT/target/desktop-bin"
-        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
+        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/","../../target/desktop-shell/":"shell-assets/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
         local updater
         updater=$(desktop_updater_config) || exit 1
         [ -z "$updater" ] || tauri_args+=(--config "$updater")
@@ -1550,6 +1553,28 @@ stage_desktop_sidecar() {
     [ -n "$triple" ] || die "could not get the host target triple from rustc -vV"
     run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
     run_cmd cp "$bin" "$stage/moqui-$triple" || die "could not stage $(rel "$bin") for the bundle"
+}
+
+# The client's shell a bundled desktop app carries in its resources, in $1 (crates/moqui-desktop/src/client/assets.rs):
+# the shell's page and scripts as shell/, and the webroot's client and the libraries the shell loads as webroot/js,
+# webroot/css and webroot/libs/<id>.
+stage_desktop_shell() {
+    local stage=$1 webroot=$ROOT/runtime/base-component/webroot/screen/webroot lib
+    need_tool rsync
+    # the libraries of shell/libs.txt only: one dropped from the list goes from the stage too
+    run_cmd rm -rf -- "${stage:?}/webroot/libs"
+    run_cmd mkdir -p "$stage/webroot/libs" || die "could not create $(rel "$stage")"
+    run_cmd rsync -a --delete --exclude '.DS_Store' --exclude bundled-screens.txt --exclude screens \
+        "$ROOT/crates/moqui-desktop/shell/" "$stage/shell/" || die "could not stage the shell"
+    for lib in js css; do
+        run_cmd rsync -a --delete --exclude '.DS_Store' "$webroot/$lib/" "$stage/webroot/$lib/" \
+            || die "could not stage webroot/$lib"
+    done
+    while IFS= read -r lib; do
+        case $lib in '' | '#'*) continue ;; esac
+        run_cmd rsync -a --delete --exclude '.DS_Store' "$webroot/libs/$lib/" "$stage/webroot/libs/$lib/" \
+            || die "could not stage webroot/libs/$lib"
+    done < "$ROOT/crates/moqui-desktop/shell/libs.txt"
 }
 
 # The runtime a bundled desktop app carries in its resources, in $1: what ./moq archive --no-data puts in, less the

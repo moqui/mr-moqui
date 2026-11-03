@@ -2,3 +2,5 @@
 # file, relative to the repository). After a change here or to one of the files:
 #   UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled
 BasicComms/Panel/Chat runtime/base-component/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue
+Shell/Root crates/moqui-desktop/shell/screens/Root.qvue
+Shell/SignIn crates/moqui-desktop/shell/screens/SignIn.qvue

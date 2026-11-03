@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The desktop client's shell (plans/Mobile-Desktop.md §4, configuration 3): bundled with the app, served by the host's
+    moqui-shell scheme, under a CSP without unsafe-eval that the host sends with it. js/shell.js starts it. -->
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MR Moqui</title>
+    <link rel="stylesheet" href="/libs/material-symbols/outlined.css">
+    <link rel="stylesheet" href="/libs/material-icons/material-icons.css">
+    <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+    <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
+    <link rel="stylesheet" href="/shell/shell.css">
+</head>
+<body>
+    <div id="shell"><div class="m-shell-starting">MR Moqui</div></div>
+    <script src="/libs/vue/vue.runtime.global.prod.js"></script>
+    <script src="/libs/quasar/quasar.umd.prod.js"></script>
+    <script src="/libs/quasar/lang/en-US.umd.prod.js"></script>
+    <script src="/libs/quasar/icon-set/material-symbols-outlined.umd.prod.js"></script>
+    <script src="/js/MoquiLib.js"></script>
+    <script src="/js/MoquiL10n.js"></script>
+    <script src="/js/WebrootChat.js"></script>
+    <script src="/js/WebrootExt.js"></script>
+    <script src="/js/WebrootVue.qvt.render.js"></script>
+    <script src="/js/WebrootVue.qvt.js"></script>
+    <script src="/shell/js/bundled-screens.js"></script>
+    <script src="/shell/js/shell.js"></script>
+</body>
+</html>

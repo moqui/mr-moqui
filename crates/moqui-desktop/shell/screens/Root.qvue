@@ -1,0 +1,208 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The desktop client's shell for a signed-in account (js/shell.js, plans/Mobile-Desktop.md §4 configuration 3): the
+    server's apps from its shellData, each opening in a window of its own (the server's page through the host); the account
+    menu (switch, add, sign out); the counts and notifications of the account's /notws, which the host holds; and the
+    bundled BasicComms ChatPanel, whose room opens in Chat in an app window. The root of its Vue app, so it is the $root the
+    client's components ask for: basePath, linkBasePath, setUrl, userId and the notification client, as m-qapps-root has
+    them. Bundled, precompiled (bundled-screens.txt). -->
+<template><q-layout view="hHh lpR fFf">
+    <q-header elevated class="bg-primary text-white">
+        <q-toolbar>
+            <q-btn flat round dense icon="sym_o_menu" :aria-label="t('Menu')" @click="drawer = !drawer"></q-btn>
+            <q-toolbar-title class="ellipsis">{{serverName}}</q-toolbar-title>
+            <q-chip v-if="offline" dense square color="warning" text-color="black" icon="sym_o_cloud_off">{{t('Offline: showing what was last seen')}}</q-chip>
+            <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem">{{t('Reconnecting')}}</q-chip>
+            <q-btn v-for="item in countItems" :key="item.key" flat dense no-caps :icon="item.icon" :aria-label="item.count ? item.label + ': ' + item.count : item.label" @click="setUrl(item.link)">
+                <q-badge v-if="item.count" floating rounded color="red">{{item.count > 99 ? '99+' : item.count}}</q-badge>
+                <q-tooltip>{{item.label}}</q-tooltip>
+            </q-btn>
+            <q-btn flat no-caps class="q-ml-sm" icon="sym_o_account_circle" :label="userName">
+                <q-menu anchor="bottom right" self="top right">
+                    <q-list class="m-shell-account-menu">
+                        <q-item-label header>{{t('Accounts')}}</q-item-label>
+                        <q-item v-for="account in accounts" :key="account.id" clickable v-close-popup :active="account.id === currentId" @click="switchAccount(account.id)">
+                            <q-item-section avatar><q-icon :name="account.id === currentId ? 'sym_o_check' : 'sym_o_person'"></q-icon></q-item-section>
+                            <q-item-section>
+                                <q-item-label>{{account.display || account.username}}</q-item-label>
+                                <q-item-label caption>{{account.serverName || account.server}}</q-item-label>
+                            </q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="addAccount">
+                            <q-item-section avatar><q-icon name="sym_o_person_add"></q-icon></q-item-section>
+                            <q-item-section>{{t('Add an account')}}</q-item-section>
+                        </q-item>
+                        <q-separator></q-separator>
+                        <q-item v-if="keyStore === 'file'">
+                            <q-item-section avatar><q-icon name="sym_o_warning" color="warning"></q-icon></q-item-section>
+                            <q-item-section><q-item-label caption>{{t('No key store on this computer: the device key is kept in a file only you can read.')}}</q-item-label></q-item-section>
+                        </q-item>
+                        <q-item clickable v-close-popup @click="signOut">
+                            <q-item-section avatar><q-icon name="sym_o_logout"></q-icon></q-item-section>
+                            <q-item-section>{{t('Sign out of this account')}}</q-item-section>
+                        </q-item>
+                    </q-list>
+                </q-menu>
+            </q-btn>
+        </q-toolbar>
+    </q-header>
+    <q-drawer v-model="drawer" show-if-above bordered :width="240">
+        <q-list>
+            <q-item-label header>{{t('Applications')}}</q-item-label>
+            <q-item v-for="app in apps" :key="app.name" clickable @click="setUrl(app.path)">
+                <q-item-section avatar>
+                    <m-menu-icon v-if="app.imageType === 'icon' && app.image" :name="app.image"></m-menu-icon>
+                    <q-icon v-else name="sym_o_apps"></q-icon>
+                </q-item-section>
+                <q-item-section>{{app.title || app.name}}</q-item-section>
+                <q-item-section side><q-icon name="sym_o_open_in_new" size="xs"></q-icon></q-item-section>
+            </q-item>
+            <q-item v-if="!apps.length">
+                <q-item-section><q-item-label caption>{{offline ? t('The apps show once the server is reached.') : t('No applications')}}</q-item-label></q-item-section>
+            </q-item>
+        </q-list>
+    </q-drawer>
+    <q-page-container>
+        <q-page padding>
+            <q-card flat bordered class="m-shell-chat q-pa-sm">
+                <component v-if="chatPanel" :is="chatPanel"></component>
+                <div v-else class="q-pa-md m-muted">{{t('Chat is not available on this server.')}}</div>
+            </q-card>
+        </q-page>
+    </q-page-container>
+</q-layout></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+// a count of shellCounts: a number, or a map's total or count, as m-qapps-root reads it
+const countOf = (counts, key) => {
+    const value = counts ? counts[key] : null;
+    if (moqui.isPlainObject(value)) return Number(value.total !== undefined ? value.total : value.count) || 0;
+    return Number(value) || 0;
+};
+
+module.exports = {
+    name: 'DesktopShell',
+    props: { state: Object, config: Object, shellData: Object, offline: Boolean, chatPath: String },
+    provide() {
+        // the bundled ChatPanel's screen: its path is the server's, so its requests go to the comms app's Chat transitions
+        return { mScreen: { path: this.chatPath } };
+    },
+    data() {
+        const data = this.shellData || {};
+        return {
+            drawer: false,
+            // as m-qapps-root: what the client's components read of their $root
+            appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
+            userId: this.config.userId, username: this.config.username,
+            notificationClient: null, socketState: null,
+            apps: Array.isArray(data.apps) ? data.apps : [],
+            shellCounts: moqui.isPlainObject(data.counts) ? data.counts : {},
+            chatPanel: moqui.bundledComponent(this.chatPath)
+        };
+    },
+    computed: {
+        accounts() { return (this.state && this.state.accounts) || []; },
+        currentId() { return this.state && this.state.current; },
+        keyStore() { return this.state && this.state.keyStore; },
+        serverName() { return (this.config.server && this.config.server.name) || (this.config.shell && this.config.shell.title) || 'MR Moqui'; },
+        userName() { return this.config.userFullName || this.config.username || ''; },
+        // the shell's counts as m-qapps-root shows them (its keys chat, email, messages, notifications), each opening its
+        // screen in an app window
+        countItems() {
+            const shell = (this.shellData && this.shellData.shell) || {};
+            const commsRoot = String((this.config.calls && this.config.calls.appRoot) || '/qapps/BasicComms');
+            const items = [
+                { key: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: commsRoot + '/Chat' },
+                { key: 'email', icon: 'sym_o_mail', label: t('Mail'), link: shell.mailScreen || commsRoot + '/Inbox' },
+                shell.messagesScreen ? { key: 'messages', icon: 'sym_o_forum', label: t('Messages'), link: shell.messagesScreen } : null,
+                { key: 'notifications', icon: 'sym_o_notifications', label: t('Notifications'), link: commsRoot }
+            ];
+            return items.filter((item) => item).map((item) => Object.assign(item, { count: countOf(this.shellCounts, item.key) }));
+        }
+    },
+    watch: {
+        // each count as a number for the tray and the badge, as m-qapps-root hands them
+        shellCounts: {
+            handler(counts) {
+                const desktop = host();
+                if (!desktop || !desktop.setCounts) return;
+                const out = {};
+                Object.keys(counts || {}).forEach((key) => { out[key] = countOf(counts, key); });
+                desktop.setCounts(out);
+            },
+            immediate: true
+        },
+        // the socket back after an offline start: the shell opens again, with what the server has now
+        socketState(state) { if (state === 'open' && this.offline) location.reload(); }
+    },
+    methods: {
+        t,
+        // what a host command that failed says, in a toast
+        failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
+        // a link of the client's components (ChatPanel's Open in Comms, a room it cannot open here, a toast's link): the
+        // server's page in an app window
+        setUrl(url) { if (url) host().openRemote(String(url)).catch((err) => this.failed(err)); },
+        switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
+        addAccount() { host().addAccount().catch((err) => this.failed(err)); },
+        signOut() {
+            this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
+                .onOk(() => host().signOut().catch((err) => this.failed(err)));
+        },
+        // as m-qapps-root, for the client's helpers (moqui.notifyMessages, handleAjaxError): the shell keeps no notify
+        // history, and a 401 has the host check the key (it shows the sign-in when the key is no longer taken)
+        addNotify() {},
+        reLoginCheckShow() {
+            // the host checks the key on a 401 of its own; the sign-in shows once it has found the key no longer taken
+            setTimeout(() => host().state().then((state) => { if (!state || !state.signedIn) location.reload(); }, () => {}), 2000);
+        },
+        onNotification(message) {
+            if (!message || message.topic !== 'shellCounts') return;
+            let counts = message.message;
+            if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
+            if (moqui.isPlainObject(counts)) this.shellCounts = counts;
+        }
+    },
+    created() {
+        // the root the client's helpers talk to (toasts, links, a 401), as m-qapps-root is on /qapps
+        moqui.webrootVue = this;
+        moqui.appRootPath = '';
+        // the account's /notws, held by the host (moqui.openSocket): counts, notifications, the chat store
+        if (this.config.notificationEndpoint) {
+            const client = new moqui.NotificationClient('ws://' + location.host + this.config.notificationEndpoint);
+            client.onState((state) => { this.socketState = state; });
+            client.registerListener('ALL');
+            client.registerListener('shellCounts', (message) => this.onNotification(message));
+            this.notificationClient = client;
+        }
+    },
+    mounted() {
+        if (moqui.chat) moqui.chat.start(this);
+        // my presence on the tray, as m-qapps-root hands it
+        const desktop = host();
+        if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },
+            { immediate: true });
+        // the counts while the socket is down, every five minutes, as m-qapps-root polls them
+        this.countsTimer = setInterval(() => {
+            if (this.notificationClient && this.notificationClient.isOpen()) return;
+            moqui.request('/shellCounts').then((result) => {
+                const counts = result.json && moqui.isPlainObject(result.json.counts) ? result.json.counts : null;
+                if (counts) this.shellCounts = counts;
+            }, () => {});
+        }, 5 * 60 * 1000);
+    },
+    unmounted() { clearInterval(this.countsTimer); }
+};
+</script>
