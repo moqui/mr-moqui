@@ -16,6 +16,28 @@ along with this software (see the LICENSE.md file). If not, see
         require-authentication="false" screen-theme-type-enum-id="STT_INTERNAL_QUASAR" default-menu-title="Applications" allow-extra-path="true">
     <!-- NOTE: require-authentication=false so no permission required but in pre-actions if no user logged in goes to login screen -->
 
+    <!-- The settings of the qvt client for the desktop client's bundled shell (plans/Mobile-Desktop.md, MD3), which signs
+        in by key and has no /qapps page to carry them: what this page writes (QvtConfig.js), under this screen's theme
+        type, with no session token or page trace, for the runtime build of Vue, and server: {name, moquiVersion,
+        clientApi}. clientApi is the version of what the desktop client reads here and of the endpoints it calls. A
+        transition runs none of the pre-actions below. 401 without a user. -->
+    <transition name="clientConfig" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const qvtLib = ec.resource.script('component://webroot/screen/includes/QvtConfig.js')
+                const localeTag = String(ec.user.locale || 'en_US').replace('_', '-')
+                const rumSettings = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserSettings').disableAuthz().call().settings || null
+                const config = qvtLib.build(ec, sri, { staticOnly: true, localeTag: localeTag, quasarLang: qvtLib.quasarLangOf(localeTag), rumSettings: rumSettings })
+                config.pageTraceId = ''
+                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 1 }
+                ec.web.sendJsonResponse(config)
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
     <pre-actions><script><![CDATA[
         // if user not logged in save current path and params then redirect to Login
         if (!ec.user.userId) { ec.web.saveScreenLastInfo(null, null); sri.sendRedirectAndStopRender('/Login') }
@@ -24,10 +46,9 @@ along with this software (see the LICENSE.md file). If not, see
         // vue.global.prod.js is the build with the template compiler, which server-merged qvt and the string templates of the m-* components need
         // (and unsafe-eval in a CSP). vue.runtime.global.prod.js has no compiler: webapp_qvt_static_only=true loads it, for a deployment whose pages
         // get only server-static templates and whose components are precompiled (plans/archive/QvtServerStatic.md, Server compile).
-        const quasarLangs = ['en-US', 'de', 'es', 'fr', 'it', 'pt-BR', 'ja', 'zh-CN', 'ru', 'nl']
+        const qvtLib = ec.resource.script('component://webroot/screen/includes/QvtConfig.js')
         const localeTag = String(ec.user.locale || 'en_US').replace('_', '-')
-        const language = localeTag.split('-')[0]
-        let quasarLang = quasarLangs.includes(localeTag) ? localeTag : quasarLangs.find((tag) => tag.split('-')[0] === language) || 'en-US'
+        const quasarLang = qvtLib.quasarLangOf(localeTag)
         const staticOnly = System.getProperty('webapp_qvt_static_only') == 'true'
         footer_scripts.add(staticOnly ? '/libs/vue/vue.runtime.global.prod.js' : '/libs/vue/vue.global.prod.js')
         footer_scripts.add('/libs/quasar/quasar.umd.prod.js')
@@ -63,154 +84,10 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')
 
-        // The settings of the client: one JSON block in the shell, WebrootVue.qvt.html.fancy.
-        const qzEnabled = ec.user.getPreference('qz.print.enabled') == 'true'
-        // The snapshot of the user for the browser ec of a server-static screen: the account without its password columns, and the
-        // preferences the user has set (ec.user.getPreference falls back to group and default values, so each is read through it).
-        const account = ec.user.userAccount || {}
-        const preferences = {}
-        if (ec.user.userId) {
-            const found = ec.entity.find('moqui.security.UserPreference').condition('userId', ec.user.userId).disableAuthz().list()
-            for (let i = 0; i < found.length; i++) {
-                const key = found.get(i).get('preferenceKey')
-                preferences[key] = ec.user.getPreference(key)
-            }
-        }
-        // SHELL_START_APP: the app /qapps opens on with no path, when the user may open it (the apps of the kept shell providers);
-        // without the user's choice, the AppList
-        // SHELL_DENSITY: comfortable (the default) or compact (docs/ui/Qvt-Client.md, Preferences)
-        let startApp = ''
-        const startPref = ec.user.userId ? ec.user.getPreference('SHELL_START_APP') : null
-        if (startPref) {
-            try {
-                if (sri.getShellProviders('notificationTopics').apps.some((app) => app.name === startPref)) startApp = startPref
-            } catch (e) { ec.logger.warn('Start app ' + startPref + ' not checked: ' + e) }
-        }
-        const density = (ec.user.userId && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'
-        const logoList = sri.getThemeValues('STRT_HEADER_LOGO')
-        const titleList = sri.getThemeValues('STRT_HEADER_TITLE')
-        // STRT_AVATAR_URL is a template with the characters ${userId}. Do not expand it here: the browser replaces the user id.
-        const avatarList = sri.getThemeValues('STRT_AVATAR_URL')
-        // The Quasar configuration of the theme (brand colors, notify, loadingBar) as JSON in a STRT_QUASAR_CONFIG resource; a bad one is logged and skipped.
-        let quasarConfig = null
-        for (const text of sri.getThemeValues('STRT_QUASAR_CONFIG')) {
-            try { quasarConfig = Object.assign(quasarConfig || {}, JSON.parse(text)) } catch (e) { ec.logger.error('Theme STRT_QUASAR_CONFIG is not JSON: ' + e) }
-        }
-        // Appearance (docs/ui/Qvt-Client.md, Appearance): the color schemes of the theme and the fonts a user may choose, the user's choices
-        // (the THEME_* preferences, through getPreference so a group's default counts), and the style sheets of the chosen scheme and
-        // fonts, which the page links before the client starts. A scheme's version is a hash of its colors, so a changed one is fetched again.
-        const appearanceKeys = ['THEME_COLOR_SCHEME', 'THEME_FONT_BODY', 'THEME_FONT_HEADING', 'THEME_FONT_MONO', 'THEME_SIZE_SMALL', 'THEME_SIZE_LARGE',
-            'THEME_PRIMARY_COLOR', 'THEME_MOTION', 'THEME_LINE_HEIGHT', 'THEME_LINKS_UNDERLINE', 'THEME_RADIUS']
-        const appearanceValues = {}
-        for (const key of appearanceKeys) { const value = ec.user.userId ? ec.user.getPreference(key) : null; if (value) appearanceValues[key] = String(value) }
-        const textHash = (text) => { let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0; return hash.toString(36) }
-        const colorSchemes = []
-        const schemeRows = ec.entity.find('moqui.screen.ScreenColorScheme').condition('screenThemeId', sri.getCurrentThemeId())
-                .orderBy('sequenceNum').disableAuthz().useCache(true).list()
-        for (let i = 0; i < schemeRows.length; i++) {
-            const row = schemeRows.get(i)
-            const scheme = { id: row.colorSchemeId, description: row.description || row.colorSchemeId, light: {}, dark: {} }
-            const colorRows = ec.entity.find('moqui.screen.ScreenColorSchemeColor').condition('colorSchemeId', row.colorSchemeId)
-                    .disableAuthz().useCache(true).list()
-            for (let j = 0; j < colorRows.length; j++) {
-                const color = colorRows.get(j)
-                const mode = color.colorModeEnumId === 'SCM_DARK' ? scheme.dark : color.colorModeEnumId === 'SCM_LIGHT' ? scheme.light : null
-                if (mode) mode[color.colorName] = color.colorValue || ''
-            }
-            scheme.custom = !!(Object.keys(scheme.light).length || Object.keys(scheme.dark).length || row.extraCss)
-            scheme.version = textHash(JSON.stringify([scheme.light, scheme.dark, row.extraCss || '']))
-            colorSchemes.push(scheme)
-        }
-        const fontOptions = []
-        const fontRows = ec.entity.find('moqui.screen.ScreenFontOption').orderBy('sequenceNum').disableAuthz().useCache(true).list()
-        for (let i = 0; i < fontRows.length; i++) {
-            const row = fontRows.get(i)
-            fontOptions.push({ id: row.fontOptionId, description: row.description || row.fontOptionId,
-                kind: row.fontKindEnumId === 'SFK_MONO' ? 'mono' : row.fontKindEnumId === 'SFK_SERIF' ? 'serif' : 'sans',
-                family: row.fontFamily || '', stylesheet: row.stylesheetLocation || '' })
-        }
-        const appearanceLinks = []
-        const chosenScheme = colorSchemes.find((scheme) => scheme.id === appearanceValues.THEME_COLOR_SCHEME)
-        if (chosenScheme && chosenScheme.custom) appearanceLinks.push({ id: 'm-color-scheme',
-            href: '/apps/colorSchemeCss?colorSchemeId=' + encodeURIComponent(chosenScheme.id) + '&v=' + chosenScheme.version })
-        for (const [key, role] of [['THEME_FONT_BODY', 'body'], ['THEME_FONT_HEADING', 'heading'], ['THEME_FONT_MONO', 'mono']]) {
-            const font = fontOptions.find((option) => option.id === appearanceValues[key])
-            if (font && font.stylesheet && !appearanceLinks.some((link) => link.href === font.stylesheet))
-                appearanceLinks.push({ id: 'm-font-' + role, href: font.stylesheet })
-        }
-        const darkPref = ec.user.getPreference('QUASAR_DARK')
-        qvtConfig = {
-            pageTraceId: ec.context.sharedMap.telemetryPageTraceId || '', rum: rumSettings,
-            sessionToken: ec.web.sessionToken, appHost: ec.web.getHostName(true), appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
-            userId: ec.user.userId, username: ec.user.username, userFullName: (ec.user.userAccount && ec.user.userAccount.userFullName) || '',
-            locale: localeTag, timeZone: ec.user.timeZone, quasarLang: quasarLang.replace(/-([a-zA-Z])/g, (m, ch) => ch.toUpperCase()),
-            darkMode: darkPref == 'auto' ? 'auto' : darkPref == 'true', leftOpen: ec.user.getPreference('QUASAR_LEFT_OPEN') == 'true',
-            leftMini: ec.user.getPreference('QUASAR_LEFT_MINI') == 'true',
-            density: density, startApp: startApp,
-            notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
-            // calls (js/WebrootCall.js): the Comms app the call links and transitions are under, for a signed-in user with the socket
-            calls: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) ? { appRoot: (System.getProperty('comms_app_root') || '/qapps/BasicComms').replace(/\/+$/, '') } : null,
-            // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
-            terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
-            navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),
-            qz: { enabled: qzEnabled },
-            // Assist (js/WebrootAssist.js): the agents are built and on, and the user may use them (AgentUse); else the drawer makes no request
-            assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
-            userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
-            appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, links: appearanceLinks },
-            preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
-            avatarUrl: avatarList.length ? String(avatarList[0]) : '',
-            qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },
-            // the shell (m-qapps-root): the theme's logo, title and footer, the logout URL, and its labels in the user's language
-            shell: { logoUrl: logoList.length ? sri.buildUrl(logoList[0]).url : '', title: titleList.length ? ec.resource.expand(titleList[0], '') : '',
-                logoutUrl: sri.buildUrl('/Login/logout').url, footerHtml: sri.getThemeValues('STRT_FOOTER_ITEM').map((item) => sri.renderInlineText(item)).join('') },
-            labels: { sendCodeTo: ec.l10n.localize('Send code to'), documentation: ec.l10n.localize('Documentation'), notifyHistory: ec.l10n.localize('Notify History'),
-                screenHistory: ec.l10n.localize('Screen History'), account: ec.l10n.localize('Account'), welcome: ec.l10n.localize('Welcome'),
-                logout: ec.l10n.localize('Logout'), switchDarkLight: ec.l10n.localize('Switch Dark/Light'), reLogin: ec.l10n.localize('Re-Login'),
-                authenticationCode: ec.l10n.localize('Authentication Code'), signIn: ec.l10n.localize('Sign in'), password: ec.l10n.localize('Password'),
-                reloadPage: ec.l10n.localize('Reload Page'), terminal: ec.l10n.localize('Terminal UI'),
-                // the suite shell: launcher, search and palette, quick create, the tray and its counts, the keys (docs/ui/Qvt-Client.md)
-                menu: ec.l10n.localize('Menu'), applications: ec.l10n.localize('Applications'), allApplications: ec.l10n.localize('All applications'), search: ec.l10n.localize('Search'),
-                quickCreate: ec.l10n.localize('Create'), quickCreateFirst: ec.l10n.localize('Create in this app'), today: ec.l10n.localize('Today'),
-                chat: ec.l10n.localize('Chat'), mail: ec.l10n.localize('Mail'), messages: ec.l10n.localize('Messages'), notifications: ec.l10n.localize('Notifications'), close: ec.l10n.localize('Close'),
-                closeTopmost: ec.l10n.localize('Close the dialog, menu or panel'), keyboardShortcuts: ec.l10n.localize('Keyboard shortcuts'),
-                keysEverywhere: ec.l10n.localize('Everywhere'), recent: ec.l10n.localize('Recent'), screens: ec.l10n.localize('Screens'),
-                savedFinds: ec.l10n.localize('Saved finds'), actions: ec.l10n.localize('Actions'), more: ec.l10n.localize('More'),
-                noResults: ec.l10n.localize('Nothing found'), paletteHint: ec.l10n.localize('Search screens, records and actions'),
-                paletteEmpty: ec.l10n.localize('Type to search screens, records, people and actions'),
-                paletteKeys: ec.l10n.localize('↑ ↓ to move, Enter to open, Ctrl+Enter in a new tab'),
-                // the account menu's status (js/WebrootChat.js)
-                statusOnline: ec.l10n.localize('Online'), statusAway: ec.l10n.localize('Away'), statusDnd: ec.l10n.localize('Do not disturb'),
-                statusInvisible: ec.l10n.localize('Invisible'), statusOffline: ec.l10n.localize('Offline'),
-                setStatus: ec.l10n.localize('Set a status message'), clearStatus: ec.l10n.localize('Clear status message'),
-                statusText: ec.l10n.localize("What's your status?"), emoji: ec.l10n.localize('Emoji'), clearAfter: ec.l10n.localize('Clear after'),
-                dontClear: ec.l10n.localize("Don't clear"), minutes30: ec.l10n.localize('30 minutes'), hour1: ec.l10n.localize('1 hour'),
-                hours4: ec.l10n.localize('4 hours'), thisWeek: ec.l10n.localize('This week'),
-                save: ec.l10n.localize('Save'), cancel: ec.l10n.localize('Cancel'),
-                // the Appearance dialog (m-appearance-dialog)
-                appearance: ec.l10n.localize('Appearance'), appearanceMode: ec.l10n.localize('Mode'), modeLight: ec.l10n.localize('Light'),
-                modeDark: ec.l10n.localize('Dark'), modeAuto: ec.l10n.localize('Auto (system)'), colorScheme: ec.l10n.localize('Color scheme'),
-                accentColor: ec.l10n.localize('Accent color'), schemeColor: ec.l10n.localize('Scheme color'), fonts: ec.l10n.localize('Fonts'),
-                fontBody: ec.l10n.localize('Text'), fontHeading: ec.l10n.localize('Headings'), fontMono: ec.l10n.localize('Code'),
-                themeDefault: ec.l10n.localize('Theme default'), textSize: ec.l10n.localize('Text size'),
-                sizeSmall: ec.l10n.localize('Small text (tables, captions)'), sizeLarge: ec.l10n.localize('Large text (headings)'),
-                density: ec.l10n.localize('Density'), densityComfortable: ec.l10n.localize('Comfortable'), densityCompact: ec.l10n.localize('Compact'),
-                motion: ec.l10n.localize('Motion'), motionAuto: ec.l10n.localize('Follow the system'), motionReduce: ec.l10n.localize('Reduce'),
-                motionFull: ec.l10n.localize('Full'), readability: ec.l10n.localize('Readability'), lineRelaxed: ec.l10n.localize('Relaxed line spacing'),
-                linksUnderline: ec.l10n.localize('Underline links'), corners: ec.l10n.localize('Corners'), cornersDefault: ec.l10n.localize('Rounded'),
-                cornersSquare: ec.l10n.localize('Square'), cornersRound: ec.l10n.localize('More rounded'), resetDefaults: ec.l10n.localize('Reset to defaults'),
-                done: ec.l10n.localize('Done'),
-                // the account menu's Notifications on this device (js/WebrootPush.js)
-                pushNotifications: ec.l10n.localize('Notifications on this device'), pushBlocked: ec.l10n.localize("Blocked in the browser's site settings"),
-                pushBlockedHelp: ec.l10n.localize("Notifications are blocked for this site; allow them in the browser's site settings"),
-                pushInstall: ec.l10n.localize('Add to Home Screen to get notifications when closed'), pushPageOpen: ec.l10n.localize('While a page is open'),
-                pushServerOff: ec.l10n.localize('While a page is open; this server does not send push'), pushClosed: ec.l10n.localize('Also when the app is closed'),
-                pushFailed: ec.l10n.localize('Could not turn on notifications on this device'),
-                // the drawer's rail toggle
-                expandMenu: ec.l10n.localize('Expand the menu'), collapseMenu: ec.l10n.localize('Collapse the menu'),
-                // Assist (js/WebrootAssist.js; its other texts are moqui.assist.labels)
-                assist: ec.l10n.localize('Assist'), askAssist: ec.l10n.localize('Ask Assist') }
-        }
+        // The settings of the client: one JSON block in the shell, WebrootVue.qvt.html.fancy; built in QvtConfig.js, which the
+        // desktop client's clientConfig (above) shares, with this page's session token added.
+        qvtConfig = qvtLib.build(ec, sri, { staticOnly: staticOnly, localeTag: localeTag, quasarLang: quasarLang, rumSettings: rumSettings })
+        qvtConfig.sessionToken = ec.web.sessionToken
         // conditional QZ Tray scripts, only for a user who turned printing on; the client loads them
     ]]></script></pre-actions>
 

@@ -523,7 +523,36 @@ fn check_login_key(key: &str) -> Result<(), Error> {
     let Some(account) = find_user_id(&facade, &user_id)? else {
         return Err(Error::new(INVALID_LOGIN));
     };
-    recorded_login(&text_field(&account, "username"))
+    recorded_login(&text_field(&account, "username"))?;
+    // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
+    if !text_field(&row, "deviceName").is_empty() {
+        note_key_used(&facade, &row, &hashed);
+    }
+    Ok(())
+}
+
+/// Write a device key's `lastUsedDate`, at most once a minute (a client signs every request in by its key), in a
+/// transaction of its own; the login stands whatever happens to the note.
+fn note_key_used(facade: &EntityFacade, row: &EntityValue, hashed: &str) {
+    let now = now_millis();
+    if field_millis(row, "lastUsedDate").is_some_and(|used| now - used <= 60_000) {
+        return;
+    }
+    let written = facade.transactions_for(USER_LOGIN_KEY).and_then(|tx| {
+        tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(USER_LOGIN_KEY)?
+                .eq("loginKey", Value::string(hashed))
+                .update_all([("lastUsedDate".to_string(), stamp_value(now))])
+                .map(|_| ())
+        })
+    });
+    if let Err(err) = written {
+        tracing::warn!(
+            "device key of {}: last use not written: {err}",
+            text_field(row, "userId")
+        );
+    }
 }
 
 /// Log in with an app password (`UserAppPassword`), the password of one device's DAV or SFTP client, which the web login
@@ -645,6 +674,50 @@ pub fn new_app_password() -> Result<String, Error> {
 ///
 /// Returns an error when nobody is logged in or a write fails.
 pub fn get_login_key(expire_hours: Option<f64>) -> Result<String, Error> {
+    make_login_key(expire_hours.unwrap_or_else(policy::login_key_expire_hours), None)
+}
+
+/// A new login key for one device of the logged-in user, named `device` in the user's device list
+/// (`get#UserDeviceKeys`) and good for the conf's `login-key/@device-expire-hours`. The desktop and mobile clients sign
+/// in with it (plans/Mobile-Desktop.md §4, "Remote applications and authentication"); revoking it signs that device
+/// out.
+///
+/// # Errors
+///
+/// Returns an error when nobody is logged in or a write fails.
+pub fn get_device_key(device: &str) -> Result<String, Error> {
+    let device: String = device.trim().chars().take(255).collect();
+    make_login_key(
+        policy::login_key_device_expire_hours(),
+        Some(device.as_str()).filter(|name| !name.is_empty()),
+    )
+}
+
+/// End the logged-in user's login key `key` (as the client holds it), as a device signing out does. Answers whether
+/// there was such a key of the user's.
+///
+/// # Errors
+///
+/// Returns an error when the key cannot be hashed or the row cannot be written.
+pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
+    let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
+        return Ok(false);
+    };
+    if key.is_empty() {
+        return Ok(false);
+    }
+    let hashed = password::hash_login_key(key)?;
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let updated = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("loginKey", Value::string(hashed))
+        .eq("userId", Value::string(&user_id))
+        .update_all([("thruDate".to_string(), now_value())])?;
+    Ok(updated > 0)
+}
+
+fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
     let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
         return Err(Error::of_kind(
             crate::context::ErrorKind::AuthenticationRequired,
@@ -653,7 +726,6 @@ pub fn get_login_key(expire_hours: Option<f64>) -> Result<String, Error> {
     };
     let login_key = super::factor::random_string(40)?;
     let hashed = password::hash_login_key(&login_key)?;
-    let hours = expire_hours.unwrap_or_else(policy::login_key_expire_hours);
     let from = now_millis();
     #[allow(clippy::cast_possible_truncation)] // An expiry past i64 milliseconds is not a real key.
     let thru = from.saturating_add((hours * HOUR_MILLIS).round() as i64);
@@ -664,6 +736,9 @@ pub fn get_login_key(expire_hours: Option<f64>) -> Result<String, Error> {
     row.set("userId", Value::string(&user_id));
     row.set("fromDate", stamp_value(from));
     row.set("thruDate", stamp_value(thru));
+    if let Some(device) = device {
+        row.set("deviceName", Value::string(device));
+    }
     // Java creates the key with requireNewTransaction, so a caller's rollback does not lose it.
     let tx = facade.transactions_for(USER_LOGIN_KEY)?;
     tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {

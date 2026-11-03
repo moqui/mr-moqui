@@ -20,11 +20,11 @@ fn answers_are_kept_per_account_for_the_shells_paths_only() {
     let _ = std::fs::remove_dir_all(&dir);
     let cache = Cache::new(&dir);
     cache.put("a", "/shellData", b"{\"apps\":[]}");
-    cache.put("a", "/clientConfig", b"{}");
+    cache.put("a", "/qapps/clientConfig", b"{}");
     cache.put("a", "/apps/Other", b"secret");
     cache.put("../b", "/shellData", b"x");
     assert_eq!(cache.get("a", "/shellData").as_deref(), Some(&b"{\"apps\":[]}"[..]));
-    assert_eq!(cache.get("a", "/clientConfig").as_deref(), Some(&b"{}"[..]));
+    assert_eq!(cache.get("a", "/qapps/clientConfig").as_deref(), Some(&b"{}"[..]));
     assert_eq!(cache.get("a", "/apps/Other"), None);
     assert_eq!(cache.get("b", "/shellData"), None);
     cache.forget("a");

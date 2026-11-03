@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 /// The requests whose answers are kept: the shell's settings, apps and counts. Query strings are not part of the name,
 /// so only these exact paths are kept.
-pub const PATHS: [&str; 3] = ["/clientConfig", "/shellData", "/shellCounts"];
+pub const PATHS: [&str; 3] = ["/qapps/clientConfig", "/shellData", "/shellCounts"];
 
 /// Answers kept in `<dir>/<account>/<name>.json`.
 #[derive(Debug, Clone)]

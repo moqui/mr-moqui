@@ -755,7 +755,7 @@
     <user-facade>
         <password encrypt-hash-type="SHA-256" min-length="8" min-digits="1" min-others="1"
                   history-limit="5" change-weeks="104" email-require-change="false" email-expire-hours="48"/>
-        <login-key encrypt-hash-type="SHA-256" expire-hours="144"/><!-- default expire 6 days, 144 hours -->
+        <login-key encrypt-hash-type="SHA-256" expire-hours="144" device-expire-hours="2160"/><!-- default expire 6 days, 144 hours; a device's key 90 days -->
         <login max-failures="3" disable-minutes="5" history-store="true"/>
         <!-- privileged-groups: UserGroupMember create/update/delete for these groups is allowed only if the caller is
             already a member (seed/install and disableAuthz skip the check). SYSMSG_RECEIVE is one: its members may call

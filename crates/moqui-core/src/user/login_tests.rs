@@ -719,6 +719,58 @@ fn an_api_key_logs_in_until_it_is_revoked_or_expires() {
 }
 
 #[test]
+fn a_device_key_lasts_ninety_days_notes_its_use_and_signs_out_alone() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    let device = get_device_key("  Ada's laptop  ").unwrap();
+    let other = get_device_key("Ada's phone").unwrap();
+    let session = get_login_key(None).unwrap();
+    let row_of = |key: &str| {
+        let hashed = password::hash_login_key(key).unwrap();
+        facade
+            .find(USER_LOGIN_KEY)
+            .unwrap()
+            .eq("loginKey", Value::string(hashed))
+            .one()
+            .unwrap()
+            .expect("the key's row")
+    };
+    let row = row_of(&device);
+    assert_eq!(text(&row, "deviceName"), "Ada's laptop");
+    let thru = field_millis(&row, "thruDate").unwrap() - field_millis(&row, "fromDate").unwrap();
+    assert_eq!(thru, 2160 * 60 * 60 * 1000, "the conf default is 90 days");
+    assert!(field_millis(&row, "lastUsedDate").is_none());
+    assert_eq!(text(&row_of(&session), "deviceName"), "");
+    logout().unwrap();
+
+    // a sign-in by the device's key notes its use; a session's key is not written to
+    login_user_key(&device).unwrap();
+    let used = field_millis(&row_of(&device), "lastUsedDate").expect("the use is noted");
+    logout().unwrap();
+    login_user_key(&device).unwrap();
+    assert_eq!(
+        field_millis(&row_of(&device), "lastUsedDate"),
+        Some(used),
+        "at most once a minute"
+    );
+    logout().unwrap();
+    login_user_key(&session).unwrap();
+    assert!(field_millis(&row_of(&session), "lastUsedDate").is_none());
+
+    // signing the device out ends its key only
+    assert!(revoke_login_key(&device).unwrap());
+    assert!(!revoke_login_key("not a key").unwrap());
+    logout().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert_eq!(login_user_key(&device).unwrap_err().to_string(), INVALID_LOGIN);
+    login_user_key(&other).unwrap();
+    logout().unwrap();
+    session::reset_session();
+}
+
+#[test]
 fn a_service_call_with_credentials_puts_the_callers_user_back() {
     let (ctx, facade) = open_ctx();
     let _guard = ctx.enter();

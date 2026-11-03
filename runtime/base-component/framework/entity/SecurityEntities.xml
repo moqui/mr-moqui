@@ -409,7 +409,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userId" type="id"/>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
-        <field name="description" type="text-medium"/>
+        <field name="description" type="text-medium"><description>Set on an access token (create#UserAccessToken)</description></field>
+        <field name="deviceName" type="text-medium"><description>Set on a device's key (the REST login's deviceName): the
+            desktop or mobile client that keeps it, shown in the user's device list (get#UserDeviceKeys)</description></field>
+        <field name="lastUsedDate" type="date-time"><description>A device's key only; written at most once a minute</description></field>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
     <entity entity-name="UserAppPassword" package="moqui.security" use="transactional" cache="never">

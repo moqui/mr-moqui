@@ -34,6 +34,10 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="username" required="true"/>
         <parameter name="password" required="true"/>
         <parameter name="code"/>
+        <!-- createLoginKey=true answers a loginKey for the login_key header; with deviceName it is that device's key, in the
+            user's device list (the Rust body in crates/moqui-core/src/screen/dispatch.rs) -->
+        <parameter name="createLoginKey"/>
+        <parameter name="deviceName"/>
         <actions>
             <set field="loggedIn" from="ec.user.loginUser(username, password)"/>
             <if condition="ec.message.hasError()">
@@ -95,6 +99,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- logout: REST API calls from a browser or session aware client will have an active session, use this for explicit logout and terminate session -->
     <transition name="logout" begin-transaction="false">
+        <!-- revokeLoginKey=true also ends the login key in the request's login_key header: a device signing out -->
+        <parameter name="revokeLoginKey"/>
         <actions><script>
             if (ec.user.username) { ec.user.logoutUser(); ec.web.sendTextResponse("successful") }
             else { ec.web.sendTextResponse("no_user") }

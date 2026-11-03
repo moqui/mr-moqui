@@ -434,3 +434,76 @@ fn wrong_codes_count_as_failed_logins_and_disable_the_account() {
     let response = flow.post("/rest/login", "username=ada&password=Secret1!", &mut Session::default());
     assert_eq!(response.status, 401, "{}", response.body_text());
 }
+
+/// A desktop or mobile client (plans/Mobile-Desktop.md, MD3): the REST login with `createLoginKey` and `deviceName`
+/// makes that device's key, the user's device list shows it, `logout` with `revokeLoginKey` ends the key it signed in
+/// with, and `revoke#UserDeviceKey` signs another device out.
+#[test]
+fn a_device_signs_in_by_key_is_listed_and_signs_out_by_revoking_its_key() {
+    let flow = Flow::open();
+    flow.user("ada", "ada@example.com");
+    let device_key = |name: &str| {
+        let body = format!("username=ada&password=Secret1%21&createLoginKey=true&deviceName={name}");
+        let response = flow.post("/rest/login", &body, &mut Session::default());
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        json(&response)["loginKey"].as_str().expect("a device key").to_string()
+    };
+    let laptop = device_key("Ada%27s%20laptop");
+    let phone = device_key("Phone");
+    let devices = || {
+        flow.as_user(Some("ada"), || {
+            let out = crate::service::sync("org.moqui.impl.UserServices.get#UserDeviceKeys", &BTreeMap::new()).unwrap();
+            let Some(Value::List(list)) = out.get("deviceList") else {
+                panic!("{out:?}")
+            };
+            list.iter()
+                .map(|row| {
+                    let Value::Map(row) = row else { panic!("{row:?}") };
+                    let name = row.get("deviceName").map(moqui_lib::object::to_plain_string);
+                    let key = row.get("loginKey").map(moqui_lib::object::to_plain_string);
+                    (name.unwrap_or_default(), key.unwrap_or_default())
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let listed = devices();
+    let names: Vec<&str> = listed.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(names.contains(&"Ada's laptop") && names.contains(&"Phone"), "{names:?}");
+
+    // the laptop signs out: its key ends with the session, by the header alone (no cookie, no CSRF token)
+    let mut logout = request("POST", "/rest/logout");
+    logout.set_header("content-type", "application/x-www-form-urlencoded");
+    logout.set_header("login_key", &laptop);
+    logout.body = b"revokeLoginKey=true".to_vec();
+    let response = serve_at(&flow.factory, logout, &webroot().to_string_lossy());
+    assert_eq!(response.body_text(), "successful");
+    // a key ends at its thruDate, now: it is refused from the next millisecond
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    flow.as_user(None, || {
+        assert!(
+            crate::user::login_user_key(&laptop).is_err(),
+            "the laptop's key is ended"
+        );
+        crate::user::login_user_key(&phone).expect("the phone's key still signs in");
+    });
+    let listed = devices();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+
+    // the phone is signed out from another device; another user's key is not theirs to revoke
+    flow.user("bob", "bob@example.com");
+    let phone_hash = listed[0].1.clone();
+    let refused = flow.as_user(Some("bob"), || {
+        let parameters = BTreeMap::from([("loginKey".to_string(), Value::string(&phone_hash))]);
+        let _ = crate::service::sync("org.moqui.impl.UserServices.revoke#UserDeviceKey", &parameters);
+        crate::context::ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap()
+    });
+    assert!(!refused.is_empty(), "bob may not revoke ada's device");
+    flow.as_user(Some("ada"), || {
+        let parameters = BTreeMap::from([("loginKey".to_string(), Value::string(&phone_hash))]);
+        crate::service::sync("org.moqui.impl.UserServices.revoke#UserDeviceKey", &parameters).unwrap();
+    });
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert!(devices().is_empty());
+    flow.as_user(None, || assert!(crate::user::login_user_key(&phone).is_err()));
+}

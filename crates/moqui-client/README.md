@@ -13,7 +13,7 @@ Each installed client is a device with its own login key. The host keeps the key
 - `keys`: where the keys are kept. `KeyStore` is filled by the host with the OS key store; `FileKeyStore`, a 0600 file,
   is the fallback where there is none.
 - `login`: password sign-in (REST `login` with `createLoginKey=true` and `deviceName`), the second factor's code,
-  sign-out that revokes the key (`/rest/logout` with `revokeLoginKey=true`), and the server's `/clientConfig`.
+  sign-out that revokes the key (`/rest/logout` with `revokeLoginKey=true`), and the server's `/qapps/clientConfig`.
 - `proxy`: a page's request forwarded to the same path on the server with the key. Only plain request headers pass;
   cookies are dropped from the answer and a redirect to the server is pointed back at the app scheme.
 - `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop, but not after a close

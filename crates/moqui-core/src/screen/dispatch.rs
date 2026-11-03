@@ -50,7 +50,7 @@ pub(crate) fn run(call: &Call<'_>) -> Result<Option<bool>, Error> {
         "m1" => entity_rest(call, true)?,
         "s1" => service_rest(call)?,
         "login" => login(call)?,
-        "logout" => logout_transition()?,
+        "logout" => logout_transition(call)?,
         "sendOtp" => send_otp(call)?,
         "verifyOtp" => verify_otp(call)?,
         "sm" => crate::service::receive_rest_message(call.request, call.extra)?,
@@ -201,9 +201,10 @@ fn service_list(call: &Call<'_>, verb: &str, items: &[Value]) -> Result<Value, E
 
 /// A user who needs a second factor gets the factor info back instead of a login, unless a valid
 /// `code` came with the password. With `createLoginKey=true` a login also answers a new `loginKey` for the
-/// `login_key` header (an addition to Java's: the terminal client keeps a key, never the password).
+/// `login_key` header (an addition to Java's: the terminal client keeps a key, never the password); with a
+/// `deviceName` too, the key is that device's, in the user's device list (plans/Mobile-Desktop.md, MD3).
 fn login(call: &Call<'_>) -> Result<bool, Error> {
-    let key = truthy(call.parameters.get("createLoginKey"));
+    let key = truthy(call.parameters.get("createLoginKey")).then(|| text_param(call.parameters, "deviceName"));
     let username = text_param(call.parameters, "username");
     let password = text_param(call.parameters, "password");
     if let Err(err) = login_user(&username, &password) {
@@ -213,7 +214,7 @@ fn login(call: &Call<'_>) -> Result<bool, Error> {
     }
     if !user::session::session_attribute_flag(user::AUTHC_FACTOR_REQUIRED) {
         let logged_in = user::current_username()?.is_some();
-        send_logged_in(logged_in, key && logged_in);
+        send_logged_in(logged_in, key.as_deref().filter(|_| logged_in));
         return Ok(true);
     }
     let code = text_param(call.parameters, "code");
@@ -224,7 +225,7 @@ fn login(call: &Call<'_>) -> Result<bool, Error> {
         if truthy(validated.get("verified")) {
             let verified_user = text_param(&validated, "username");
             user::internal_login_user(&verified_user)?;
-            send_logged_in(true, key);
+            send_logged_in(true, key.as_deref());
             return Ok(true);
         }
         add_message(CODE_NOT_VALID);
@@ -275,7 +276,7 @@ fn verify_otp(call: &Call<'_>) -> Result<bool, Error> {
             false
         }
     };
-    send_logged_in(logged_in, false);
+    send_logged_in(logged_in, None);
     Ok(true)
 }
 
@@ -295,13 +296,19 @@ fn call_user_service(name: &str, pairs: &[(&str, &str)]) -> Result<Option<BTreeM
     Ok(Some(result?))
 }
 
-/// `{loggedIn}`, and with `key` a new login key for the user (`get_login_key`, at the conf's expiry); a key that could
-/// not be made is logged and left out, and the login stands.
-fn send_logged_in(logged_in: bool, key: bool) {
+/// `{loggedIn}`, and with `key` a new login key for the user: a device's (`get_device_key`) when `key` names one, else
+/// one at the conf's expiry (`get_login_key`). A key that could not be made is logged and left out, and the login
+/// stands.
+fn send_logged_in(logged_in: bool, key: Option<&str>) {
     let mut map = indexmap::IndexMap::new();
     map.insert("loggedIn".to_string(), Value::Bool(logged_in));
-    if key {
-        match user::get_login_key(None) {
+    if let Some(device) = key {
+        let made = if device.trim().is_empty() {
+            user::get_login_key(None)
+        } else {
+            user::get_device_key(device)
+        };
+        match made {
             Ok(login_key) => {
                 map.insert("loginKey".to_string(), Value::string(login_key));
             }
@@ -324,9 +331,25 @@ fn truthy(value: Option<&Value>) -> bool {
     }
 }
 
-fn logout_transition() -> Result<bool, Error> {
+/// With `revokeLoginKey=true`, the login key the request signed in with (its `login_key` header) ends too: a device
+/// signing out (plans/Mobile-Desktop.md, MD3).
+fn logout_transition(call: &Call<'_>) -> Result<bool, Error> {
     if user::current_username()?.is_some() {
+        // the sign-out goes ahead whether or not the key could be ended; the client hears which
+        let mut not_revoked = None;
+        if truthy(call.parameters.get("revokeLoginKey")) {
+            if let Some(key) = call.request.header("login_key") {
+                if let Err(err) = user::revoke_login_key(key) {
+                    tracing::error!("Login key not revoked at logout: {err}");
+                    not_revoked = Some(err);
+                }
+            }
+        }
         logout()?;
+        if not_revoked.is_some() {
+            web::send_json_error(500, "Logged out, but the login key was not revoked");
+            return Ok(true);
+        }
         web::send_text_response("successful");
     } else {
         web::send_text_response("no_user");

@@ -154,14 +154,14 @@ pub fn sign_out(base: &str, key: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// The server's client config for the user the key signs in (`/clientConfig`): the user, the server's name and
+/// The server's client config for the user the key signs in (`/qapps/clientConfig`): the user, the server's name and
 /// the shell's settings. `Ok(None)` when the key is no longer valid (401).
 ///
 /// # Errors
 ///
 /// Returns the transport's error, or the status of another refusal.
 pub fn client_config(base: &str, key: &str) -> Result<Option<serde_json::Value>, Error> {
-    let url = format!("{base}/clientConfig");
+    let url = format!("{base}/qapps/clientConfig");
     let response = client()?
         .get(&url)
         .header("Accept", "application/json")

@@ -853,6 +853,9 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="expire-hours" type="xs:nonNegativeInteger" default="144">
                 <xs:annotation><xs:documentation>Expire key after this many hours</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="device-expire-hours" type="xs:nonNegativeInteger" default="2160">
+                <xs:annotation><xs:documentation>Expire a device's key (the REST login with createLoginKey and deviceName, which
+                    a desktop or mobile client keeps instead of the password) after this many hours</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="login">

@@ -82,6 +82,14 @@ pub(crate) fn login_key_expire_hours() -> f64 {
         .unwrap_or(144.0)
 }
 
+/// `login-key/@device-expire-hours`, 2160 (90 days): a device's key (`get_device_key`), which a desktop or mobile
+/// client keeps instead of the password, so it lasts as an access token does. A fraction is allowed.
+pub(crate) fn login_key_device_expire_hours() -> f64 {
+    conf_text_opt("login-key", "device-expire-hours")
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(2160.0)
+}
+
 /// How long an emailed reset password stays usable, `password/@email-expire-hours`.
 pub(crate) fn email_expire_hours() -> i64 {
     conf_number("password", "email-expire-hours", 48)

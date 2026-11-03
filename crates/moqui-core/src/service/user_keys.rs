@@ -14,8 +14,9 @@
 
 //! A user's own credentials for git and SSH, in `org.moqui.impl.UserServices`: SSH public keys (`UserSshKey`, which
 //! the SSH server matches by SHA-256 fingerprint) and access tokens (a `UserLoginKey` with a description, shown once
-//! when it is made, taken as the password of git over HTTPS or as an `api_key`), and app passwords (`UserAppPassword`, one
-//! per device, taken by the DAV servers, SFTP to drives and git, not by the web login). No Java counterpart. Each service
+//! when it is made, taken as the password of git over HTTPS or as an `api_key`), app passwords (`UserAppPassword`, one
+//! per device, taken by the DAV servers, SFTP to drives and git, not by the web login), and the keys of the desktop and
+//! mobile clients (a `UserLoginKey` with a `deviceName`). No Java counterpart. Each service
 //! works on the current user's rows only, so it reads and writes them with authorization off.
 
 use std::collections::BTreeMap;
@@ -56,6 +57,8 @@ pub(in crate::service) fn register(
     rust_service!(map, create_app_password)?;
     rust_service!(map, revoke_app_password)?;
     rust_service!(map, get_app_passwords)?;
+    rust_service!(map, get_device_keys)?;
+    rust_service!(map, revoke_device_key)?;
     rust_service!(map, get_scram_credentials)?;
     rust_service!(map, check_plain_password)?;
     Ok(())
@@ -499,6 +502,80 @@ fn get_app_passwords(
         })
         .collect();
     Ok(out([("appPasswordList", Value::List(list))]))
+}
+
+/// `get#UserDeviceKeys`: the current user's devices signed in by key (a `UserLoginKey` with a `deviceName`: the
+/// desktop and mobile clients), unexpired, most recently used first. `loginKey` is the stored hash, which names the
+/// device for revoke; `current` marks the device of this request's `login_key` header.
+fn get_device_keys(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(out([("deviceList", Value::List(Vec::new()))]));
+    };
+    let current = crate::web::current_request()
+        .and_then(|request| request.header("login_key").map(str::to_string))
+        .filter(|key| !key.is_empty())
+        .and_then(|key| crate::user::hash_login_key(&key).ok());
+    let now = crate::user::now_millis();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut rows: Vec<(i64, Value)> = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("userId", Value::string(&user_id))
+        .condition(moqui_db::sql::Condition::is_not_null("deviceName"))
+        .list()?
+        .iter()
+        .filter(|row| {
+            row.get("thruDate")
+                .and_then(crate::user::value_millis)
+                .is_none_or(|thru| thru > now)
+        })
+        .map(|row| {
+            let mut map = indexmap::IndexMap::new();
+            for field in ["loginKey", "deviceName", "fromDate", "lastUsedDate", "thruDate"] {
+                map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
+            }
+            let key = row.get("loginKey").map(to_plain_string);
+            map.insert("current".to_string(), Value::Bool(key.is_some() && key == current));
+            let used = ["lastUsedDate", "fromDate"]
+                .iter()
+                .find_map(|field| row.get(field).and_then(crate::user::value_millis))
+                .unwrap_or(0);
+            (used, Value::Map(map))
+        })
+        .collect();
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+    Ok(out([(
+        "deviceList",
+        Value::List(rows.into_iter().map(|(_, row)| row).collect()),
+    )]))
+}
+
+/// `revoke#UserDeviceKey`: sign one of the current user's devices out, by its `loginKey` (the stored hash). Its next
+/// request is refused, and its notification socket closes within a minute.
+fn revoke_device_key(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(key) = text(parameters, "loginKey") else {
+        add_error("loginKey is required");
+        return Ok(BTreeMap::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let updated = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("loginKey", Value::string(&key))
+        .eq("userId", Value::string(&user_id))
+        .condition(moqui_db::sql::Condition::is_not_null("deviceName"))
+        .update_all([("thruDate".to_string(), crate::user::now_value())])?;
+    if updated == 0 {
+        add_error("you have no such device");
+    }
+    Ok(BTreeMap::new())
 }
 
 #[cfg(test)]

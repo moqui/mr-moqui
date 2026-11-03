@@ -39,9 +39,10 @@ pub use login::app_password_key;
 pub(crate) use login::login_user_local;
 pub use login::stamp_value;
 pub use login::{
-    apply_header_keys, change_password, get_login_key, header_login_session, internal_login_user, login_anonymous,
-    login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key, logout,
-    logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login, now_value, with_client_ip,
+    apply_header_keys, change_password, get_device_key, get_login_key, header_login_session, internal_login_user,
+    login_anonymous, login_app_password, login_external_user, login_key_user_by_hash, login_user, login_user_key,
+    logout, logout_anonymous_only, looks_like_app_password, new_app_password, note_header_login, now_value,
+    revoke_login_key, with_client_ip,
 };
 pub use login::{last_auth_millis, recent_auth};
 pub use login::{now_effective_millis, value_millis};
