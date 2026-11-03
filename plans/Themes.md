@@ -1,6 +1,6 @@
 # Themes
 
-Built Oct 27–Nov 2, 2026 (commits c44d5f85, a5a6c555 and 06d5d5c9, then the appearance policy and OpenStep): the theme's default color scheme and the System app's Theme screen for corporate branding without code; light and dark accent colors, per-color scheme overrides and five new color schemes; the scheme's colors inlined from the page config, so switching a scheme applies at once; the theme's user appearance policy, so a theme decides what a user may override and the scheme's primary is the theme's by default; and OpenStep, the NeXTSTEP/OpenSTEP look. The user guide is [docs/ui/Qvt-Client.md](../docs/ui/Qvt-Client.md) (Appearance); what is still open is in [Remaining-Work](Remaining-Work.md#screens-client-and-shell).
+Built Oct 27–Nov 2, 2026 (commits c44d5f85, a5a6c555, 06d5d5c9 and 578f119a): the theme's default color scheme and the System app's Theme screen for corporate branding without code; light and dark accent colors, per-color scheme overrides and five new color schemes; the scheme's colors inlined from the page config, so switching a scheme applies at once; the theme's user appearance policy, so a theme decides what a user may override and the scheme's primary is the theme's by default; and OpenStep, the NeXTSTEP/OpenSTEP look. The user guide is [docs/ui/Qvt-Client.md](../docs/ui/Qvt-Client.md) (Appearance); what is still open is in [Remaining-Work](Remaining-Work.md#screens-client-and-shell).
 
 ## Objective and scope
 
@@ -37,7 +37,7 @@ All in [`ScreenEntities.xml`](../runtime/base-component/framework/entity/ScreenE
 
 The webroot seeds [`WebrootQuasarThemeData.xml`](../runtime/base-component/webroot/data/WebrootQuasarThemeData.xml) for `DEFAULT_QUASAR`:
 
-- **Eleven color schemes.** `DEFAULT` has no colors, so it is the theme's own (the style sheet's tokens and the `STRT_QUASAR_CONFIG` brand). The others set the standard colors for light and dark: Slate, Forest, Warm, High Contrast (black and white surfaces, darker brand steps, stronger borders and a wide focus ring in its extra CSS), Ocean, Indigo, Crimson, Teal, Graphite (a neutral, brand-free grey for a system that carries its own brand elsewhere) and OpenStep (a NeXTSTEP/OpenStep cool blue-grey desktop, white document panels, charcoal title bar, a grey primary, white selected rows and active menu rows with black text, square beveled buttons and dark text on grey buttons; the main header bar stays flat except Search, which keeps its box; its dark mode is a charcoal variant, since NeXTSTEP had none).
+- **Eleven color schemes.** `DEFAULT` has no colors, so it is the theme's own (the style sheet's tokens and the `STRT_QUASAR_CONFIG` brand). The others set the standard colors for light and dark: Slate, Forest, Warm, High Contrast (black and white surfaces, darker brand steps, stronger borders and a wide focus ring in its extra CSS), Ocean, Indigo, Crimson, Teal, Graphite (a neutral, brand-free grey for a system that carries its own brand elsewhere) and OpenStep (a NeXTSTEP/OpenStep cool blue-grey desktop, white document panels, charcoal title bar, a grey primary, white selected rows and active menu rows with black text, square beveled buttons and dark text on grey buttons; the main header bar stays flat except Search, which keeps its grey box and black text; its dark mode is a charcoal variant, since NeXTSTEP had none).
 - **Eleven fonts.** Five sans (System, Roboto, Inter, Source Sans 3, Atkinson Hyperlegible), three serif (System, Merriweather, Source Serif 4) and three mono (System, JetBrains Mono, IBM Plex Mono); the web fonts load from Google Fonts, as the theme's Roboto does.
 
 **The tokens** are the names a scheme and a user's overrides address: the tokens of [`WebrootVue.qvt.css`](../runtime/base-component/webroot/screen/webroot/css/WebrootVue.qvt.css) without their prefix.
@@ -52,16 +52,16 @@ The style sheet starts with the tokens: the fonts, text sizes and line height on
 1. the Quasar brand the `STRT_QUASAR_CONFIG` JSON writes on the body
 2. the theme's own defaults (the tokens above)
 3. the scheme's sheet: a brand color as `--q-*` with `!important` (over the Quasar brand), the rest as `--m-*`; in dark mode `panel-bg` and `page-bg` also set Quasar's `--q-dark` and `--q-dark-page`, which Quasar's dark components use, and the link gives way to the user's dark accent when the theme allows it (`var(--m-accent-dark-link, …)`)
-4. the user's accent, when the theme allows it, and the user's overrides, in a sheet after the scheme link, so the user's colors win over the scheme's
+4. the user's accent, when the theme allows it, and the user's overrides, in a sheet after the scheme's style, so the user's colors win over the scheme's
 
-A color name or value that could end its declaration (a name pattern, a value character set) is logged and left out, in both the transition and the page pre-action. The other borders and tints the style sheet keeps as black or white at a low alpha read on any surface and are not tokens.
+A color name or value that could end its declaration (a name pattern, a value character set) is logged and left out by the transition, and left out by the page pre-action too. The other borders and tints the style sheet keeps as black or white at a low alpha read on any surface and are not tokens.
 
 ## 4. Page load and instant switching
 
 - The pre-actions of [`qapps.xml`](../runtime/base-component/webroot/screen/webroot/qapps.xml) fill `config.appearance`: the theme's color schemes (each with its light and dark colors, its generated CSS and a `version` hash of its colors and extra CSS), the fonts, the user's `THEME_*` values (a locked one left out), the theme's `defaultSchemeId`, the style sheets the page links and the normalized appearance `policy`.
 - [`WebrootVue.qvt.html.fancy`](../runtime/base-component/webroot/screen/includes/WebrootVue.qvt.html.fancy) links the chosen scheme's and fonts' style sheets after the theme's, before the client starts, so the first paint is in the right colors.
 - `moqui.applyAppearanceAll` sets the rest when the shell is created; each preference key has its applier in `moqui.preferenceAppliers`.
-- **Switching a scheme applies at once without a fetch** (06d5d5c9): the scheme's colors are inlined from the page config the pre-action generated, and the linked sheet is replaced for the next load; the `version` hash busts the cache when an administrator changes a scheme.
+- **Switching a scheme applies at once without a fetch** (06d5d5c9): the scheme's colors are inlined from the page config the pre-action generated, and the page's linked sheet is replaced by that inline style at once; the `version` hash busts the cache when an administrator changes a scheme.
 - The `colorSchemeCss` transition of [`apps.xml`](../runtime/base-component/webroot/screen/webroot/apps.xml) (read-only, no session token; a scheme is not private) serves the same sheet as a URL for the page's link.
 
 ## 5. User preferences (Appearance)
@@ -75,7 +75,7 @@ The account menu's **Appearance…** opens `m-appearance-dialog`. Each choice ap
 | `THEME_FONT_BODY`, `THEME_FONT_HEADING`, `THEME_FONT_MONO` | a `ScreenFontOption` id | `--m-font-body`, `--m-font-heading`, `--m-font-mono` on the html element, and the font's style sheet linked as `m-font-<role>` |
 | `THEME_SIZE_SMALL`, `THEME_SIZE_LARGE` | `0.9`, `1`, `1.1`, `1.25`, `1.4` | `--m-fs-small-scale` (table text, captions, chips, code) and `--m-fs-large-scale` (headings) |
 | `THEME_PRIMARY_COLOR`, `THEME_PRIMARY_COLOR_DARK` | a CSS color each (checked by `moqui.isCssColor`, else ignored), one for light and one for dark; only when the theme's appearance policy sets `accent: true`, else the scheme's `primary` is the theme's | `--q-primary` per mode (`!important`, over the scheme and the Quasar brand), in a style sheet so it switches with the mode; in dark mode the link color is mixed from the dark accent |
-| `THEME_COLOR_OVERRIDES` | a JSON `{name: {light, dark}}` (each a CSS color), one entry per token of the scheme; only when the theme's policy allows the colors | the same tokens the scheme's style sheet uses, in a style sheet after the scheme link so the user's colors win |
+| `THEME_COLOR_OVERRIDES` | a JSON `{name: {light, dark}}` (each a CSS color), one entry per token of the scheme; only when the theme's policy allows the colors | the same tokens the scheme's style sheet uses, in a style sheet after the scheme's style so the user's colors win |
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
@@ -108,7 +108,7 @@ The policy is per theme, and a theme is assigned per user or group (`UserScreenT
 
 ## 7. Tests
 
-- The page test "the appearance applies at once" ([`WebrootVue.qvt.shell.page.js`](../runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.shell.page.js)): the scheme and font sheets, the tokens, a checked accent color and the body classes, and the dialog mounted on the account menu.
+- The page test "the appearance applies at once" ([`WebrootVue.qvt.shell.page.js`](../runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.shell.page.js)): the scheme style and font sheets, the tokens, a checked accent color and the body classes, and the dialog mounted on the account menu.
 - The page test "the theme's appearance policy": a forced mode, a locked control and a stale preference that is ignored; `crates/moqui-core/src/screen/sri/appearance_tests.rs` covers the policy parse, lock and denial rules.
 - OpenStep has no separate spec: its colors and `extraCss` are seed data in `WebrootQuasarThemeData.xml`; the white selection, flat header with the Search box, square buttons and dark button text were checked in the browser.
 
