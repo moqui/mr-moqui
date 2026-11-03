@@ -183,23 +183,21 @@ pub fn renew(factory: &ExecutionContextFactory) -> Result<Renewal, Error> {
     Ok(renewal)
 }
 
-/// The keeper thread: [`renew`] every `heartbeat-seconds`, until the factory is dropped. A failure is logged.
+/// The keeper thread: [`renew`] every `heartbeat-seconds`, until the factory is dropped or its shutdown begins, which
+/// waits for it before the database stops. A failure is logged.
 pub(crate) fn start_keeper(factory: &Arc<ExecutionContextFactory>) {
     let every = Duration::from_secs(u64::from(crate::facade(factory).conf().limits.heartbeat_seconds.max(1)));
     let weak = Arc::downgrade(factory);
-    let spawned = std::thread::Builder::new()
-        .name("moqui-agent-lease".to_string())
-        .spawn(move || loop {
-            std::thread::sleep(every);
-            let Some(factory) = weak.upgrade() else {
-                return;
-            };
-            let context = factory.new_context();
-            let _entered = context.enter();
-            if let Err(error) = renew(&factory) {
-                tracing::error!("the agent run leases could not be renewed: {error}");
-            }
-        });
+    let spawned = factory.spawn_background("moqui-agent-lease", move || loop {
+        let Some(factory) = ExecutionContextFactory::sleep_while_running(&weak, every) else {
+            return;
+        };
+        let context = factory.new_context();
+        let _entered = context.enter();
+        if let Err(error) = renew(&factory) {
+            tracing::error!("the agent run leases could not be renewed: {error}");
+        }
+    });
     if let Err(error) = spawned {
         tracing::error!("the agent lease keeper did not start: {error}");
     }

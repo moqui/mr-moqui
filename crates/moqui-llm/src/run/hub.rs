@@ -205,7 +205,7 @@ impl RunHub {
             (id, !std::mem::replace(&mut state.tail_started, true))
         };
         if start_tail {
-            start_remote_tail(Arc::downgrade(self), Arc::downgrade(factory));
+            start_remote_tail(Arc::downgrade(self), factory);
         }
         Watch {
             hub: Arc::clone(self),
@@ -313,28 +313,30 @@ impl Follower {
 }
 
 /// The remote tail's thread: every [`TAIL_EVERY`], one query for the stored events of every watched run this node
-/// does not work. It ends with the factory or the hub. A query that fails is logged and tried at the next round.
-fn start_remote_tail(hub: Weak<RunHub>, factory: Weak<ExecutionContextFactory>) {
-    let spawned = std::thread::Builder::new()
-        .name("moqui-agent-tail".to_string())
-        .spawn(move || loop {
-            std::thread::sleep(TAIL_EVERY);
-            let (Some(hub), Some(factory)) = (hub.upgrade(), factory.upgrade()) else {
-                return;
-            };
-            let local = super::engine(&factory).local_ids();
-            let remote: Vec<(String, i64)> = hub
-                .watched()
-                .into_iter()
-                .filter(|(run_id, _)| !local.contains(run_id))
-                .collect();
-            if remote.is_empty() {
-                continue;
-            }
-            if let Err(error) = tail_once(&factory, &hub, &remote) {
-                tracing::error!("the remote tail of agent run events could not read: {error}");
-            }
-        });
+/// does not work. It ends with the factory or the hub, or when the factory's shutdown begins, which waits for it before
+/// the database stops. A query that fails is logged and tried at the next round.
+fn start_remote_tail(hub: Weak<RunHub>, factory: &Arc<ExecutionContextFactory>) {
+    let weak = Arc::downgrade(factory);
+    let spawned = factory.spawn_background("moqui-agent-tail", move || loop {
+        let (Some(factory), Some(hub)) = (
+            ExecutionContextFactory::sleep_while_running(&weak, TAIL_EVERY),
+            hub.upgrade(),
+        ) else {
+            return;
+        };
+        let local = super::engine(&factory).local_ids();
+        let remote: Vec<(String, i64)> = hub
+            .watched()
+            .into_iter()
+            .filter(|(run_id, _)| !local.contains(run_id))
+            .collect();
+        if remote.is_empty() {
+            continue;
+        }
+        if let Err(error) = tail_once(&factory, &hub, &remote) {
+            tracing::error!("the remote tail of agent run events could not read: {error}");
+        }
+    });
     if let Err(error) = spawned {
         tracing::error!("the remote tail of agent run events did not start: {error}");
     }

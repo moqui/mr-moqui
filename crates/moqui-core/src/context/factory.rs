@@ -546,6 +546,22 @@ impl ExecutionContextFactory {
         self.background.spawn(name, work)
     }
 
+    /// Sleep `duration` on a [`Self::spawn_background`] thread, looking at least every quarter second. The factory, or
+    /// None when it is gone or its shutdown began: the thread's loop then ends, and the shutdown does not wait out the
+    /// whole interval.
+    pub fn sleep_while_running(factory: &std::sync::Weak<Self>, duration: std::time::Duration) -> Option<Arc<Self>> {
+        const STEP: std::time::Duration = std::time::Duration::from_millis(250);
+        let until = std::time::Instant::now() + duration;
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            std::thread::sleep(left.min(STEP));
+            let factory = factory.upgrade().filter(|factory| !factory.is_shutting_down())?;
+            if left <= STEP {
+                return Some(factory);
+            }
+        }
+    }
+
     /// True once [`Self::shutdown`] began.
     pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(std::sync::atomic::Ordering::SeqCst)

@@ -64,3 +64,30 @@ fn wait_gives_up_at_the_limit_and_takes_no_more_threads() {
     );
     stop.store(true, Ordering::SeqCst);
 }
+
+#[test]
+fn a_background_sleep_ends_early_when_the_shutdown_begins() {
+    use super::super::ExecutionContextFactory;
+    let context = ExecutionContextFactory::test_context();
+    let factory = Arc::clone(context.factory());
+    let weak = Arc::downgrade(&factory);
+    assert!(ExecutionContextFactory::sleep_while_running(&weak, Duration::from_millis(10)).is_some());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    factory
+        .spawn_background("bg-sleeper", move || {
+            let started = Instant::now();
+            let woke = ExecutionContextFactory::sleep_while_running(&weak, Duration::from_secs(60));
+            let _ = sender.send((woke.is_none(), started.elapsed()));
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let started = Instant::now();
+    factory.shutdown();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the shutdown waited out the sleep"
+    );
+    let (ended, slept) = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(ended, "the sleep gave the factory back after the shutdown began");
+    assert!(slept < Duration::from_secs(5));
+}
