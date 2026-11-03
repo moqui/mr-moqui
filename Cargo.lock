@@ -4672,6 +4672,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-client"
+version = "0.1.0"
+dependencies = [
+ "moqui-lib",
+ "reqwest",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tracing",
+ "tungstenite",
+]
+
+[[package]]
 name = "moqui-collab"
 version = "0.1.0"
 dependencies = [

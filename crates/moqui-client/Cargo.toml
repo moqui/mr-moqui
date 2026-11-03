@@ -1,0 +1,23 @@
+[package]
+name = "moqui-client"
+description = "The client of a remote MR Moqui server: accounts, device keys, sign-in, the request proxy and the host-held sockets. No Tauri, no framework."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Builds for aarch64-linux-android as well as the desktops (plans/Mobile-Desktop.md §5): no async API (reqwest's blocking
+# client), no moqui-core, no platform key store (the host supplies one through keys::KeyStore).
+[dependencies]
+moqui-lib = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+tungstenite = { workspace = true }
+
+[lints]
+workspace = true
