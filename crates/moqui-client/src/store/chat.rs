@@ -251,6 +251,47 @@ impl Store {
         Ok(())
     }
 
+    /// Raise the head range of a timeline (or of the thread whose root is `thread`) to `seq`, for a pushed event that is
+    /// no row of its own (an edit, a reaction or a redaction, folded into the event it changes): its seq is part of the
+    /// stretch the socket has kept up.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the range cannot be written.
+    pub fn raise_chat_head(&self, chat_room_id: &str, thread: Option<i64>, seq: i64) -> Result<(), Error> {
+        self.conn
+            .execute(
+                "UPDATE chat_range SET high = MAX(high, ?1) WHERE chat_room_id = ?2 AND thread_seq = ?3 AND head = 1",
+                params![seq, chat_room_id, thread.unwrap_or(0)],
+            )
+            .map_err(failed("chat range not kept"))?;
+        Ok(())
+    }
+
+    /// The top of the head range of a timeline (or of the thread whose root is `thread`): the newest seq the store has
+    /// kept up with pushes. None when no range is the head (never read, or the socket dropped since).
+    pub fn chat_head(&self, chat_room_id: &str, thread: Option<i64>) -> Option<i64> {
+        self.rows(
+            "chat head",
+            "SELECT high FROM chat_range WHERE chat_room_id = ?1 AND thread_seq = ?2 AND head = 1",
+            params![chat_room_id, thread.unwrap_or(0)],
+            |row| row.get(0),
+        )
+        .pop()
+    }
+
+    /// The event `event_seq` of a room, whether or not it is in a range; none when it is not kept or cannot be read
+    /// (logged). For folding a pushed change into the event it changes.
+    pub fn chat_event(&self, chat_room_id: &str, event_seq: i64) -> Option<ChatEvent> {
+        self.rows(
+            "chat event",
+            "SELECT chat_room_id, event_seq, event, thread_seq FROM chat_event WHERE chat_room_id = ?1 AND event_seq = ?2",
+            params![chat_room_id, event_seq],
+            event_of,
+        )
+        .pop()
+    }
+
     /// No range is the head any more: pushes may have been missed (the socket dropped, the app stopped), so newer
     /// events are a gap until a page from the server reaches the latest again.
     ///

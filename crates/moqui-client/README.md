@@ -22,7 +22,7 @@ Each installed client is a device with its own login key. The host keeps the key
   cookies are dropped from the answer and a redirect to the server is pointed back at the app scheme.
 - `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop, but not after a close
   for authentication.
-- `cache`: the last answers of the shell's settings, apps and counts, per account, for a start with no network.
+- `cache`: the shell's settings, apps and counts as MD3 kept them in files, moved once into the account's store.
 - `store`: an account's data for offline use (MD4), one SQLite file per account (`data/<account>.db`, owner-only, WAL,
   migrated by `user_version`): cached answers by path and sorted query; chat rooms and events, with the seq ranges
   held whole so an offline page stops at a gap; mail folders, threads and messages, replaced when re-read; the outbox

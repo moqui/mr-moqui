@@ -12,68 +12,71 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The last answers of a few requests the shell opens on, kept per account, so the shell starts with no network
-//! (plans/Mobile-Desktop.md §8, MD3: "the app opens its UI without a network"). The host keeps a good answer of one of
-//! [`PATHS`] and serves it, marked offline, when the server cannot be reached. Durable client data is MD4's.
+//! The answers the shell opens on, which MD3 kept as files (`<dir>/<account>/<name>.json`) and MD4 keeps in the
+//! account's [`crate::store`] as cached answers: [`migrate`] moves an account's files into its store once and removes
+//! them; [`forget`] removes any left of an account that is removed before its store was opened.
 
 use std::path::{Path, PathBuf};
 
-/// The requests whose answers are kept: the shell's settings, apps and counts. Query strings are not part of the name,
-/// so only these exact paths are kept.
+use crate::store::Store;
+
+/// The requests the shell opens on: its settings, apps and counts, kept by path alone (no query).
 pub const PATHS: [&str; 3] = ["/qapps/clientConfig", "/shellData", "/shellCounts"];
 
-/// Answers kept in `<dir>/<account>/<name>.json`.
-#[derive(Debug, Clone)]
-pub struct Cache {
-    dir: PathBuf,
+/// Move the answers kept for `account` in `dir` (the MD3 cache directory) into its store, as answers of their paths
+/// with no query, and remove the files. An answer the store already has (written since) is not replaced. A file that
+/// cannot be read or kept is logged and left for the next try; the directory goes once it is empty. Gives how many
+/// were moved.
+pub fn migrate(dir: &Path, account: &str, store: &Store) -> usize {
+    let Some(account_dir) = account_dir(dir, account) else {
+        return 0;
+    };
+    if !account_dir.is_dir() {
+        return 0;
+    }
+    let mut moved = 0;
+    for path in PATHS {
+        let file = account_dir.join(file_name(path));
+        let Ok(body) = std::fs::read(&file) else { continue };
+        if store.answer(path, "").is_none() {
+            if let Err(err) = store.put_answer(path, "", "application/json", &body) {
+                tracing::warn!("Client cache {} not moved into the store: {err}", file.display());
+                continue;
+            }
+            moved += 1;
+        }
+        if let Err(err) = std::fs::remove_file(&file) {
+            tracing::warn!("Client cache {} not removed: {err}", file.display());
+        }
+    }
+    // only once empty: a file not moved stays for the next try
+    if std::fs::remove_dir(&account_dir).is_ok() {
+        let _ = std::fs::remove_dir(dir);
+    }
+    moved
 }
 
-impl Cache {
-    pub fn new(dir: &Path) -> Self {
-        Self { dir: dir.to_path_buf() }
-    }
-
-    /// The kept answer of `path` for `account`.
-    pub fn get(&self, account: &str, path: &str) -> Option<Vec<u8>> {
-        std::fs::read(self.file(account, path)?).ok()
-    }
-
-    /// Keep `body` as the answer of `path` for `account`; a path not in [`PATHS`] is not kept. A failure is logged:
-    /// the cache only helps.
-    pub fn put(&self, account: &str, path: &str, body: &[u8]) {
-        let Some(file) = self.file(account, path) else { return };
-        let written = crate::files::write_private(&file, body);
-        if let Err(err) = written {
-            tracing::warn!("Client cache {} not written: {err}", file.display());
+/// Remove the files kept for `account` in `dir`, when the account is removed.
+pub fn forget(dir: &Path, account: &str) {
+    let Some(account_dir) = account_dir(dir, account) else {
+        return;
+    };
+    match std::fs::remove_dir_all(&account_dir) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(dir);
         }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => tracing::warn!("Client cache {} not removed: {err}", account_dir.display()),
     }
+}
 
-    /// Forget an account's answers, when it is removed.
-    pub fn forget(&self, account: &str) {
-        let Some(dir) = self.account_dir(account) else { return };
-        match std::fs::remove_dir_all(&dir) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => tracing::warn!("Client cache {} not removed: {err}", dir.display()),
-        }
-    }
+fn account_dir(dir: &Path, account: &str) -> Option<PathBuf> {
+    crate::files::plain_name(account).then(|| dir.join(account))
+}
 
-    fn account_dir(&self, account: &str) -> Option<PathBuf> {
-        let plain = !account.is_empty()
-            && !account.starts_with('.')
-            && account
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_');
-        plain.then(|| self.dir.join(account))
-    }
-
-    fn file(&self, account: &str, path: &str) -> Option<PathBuf> {
-        if !PATHS.contains(&path) {
-            return None;
-        }
-        let name = path.trim_start_matches('/').replace('/', "_");
-        Some(self.account_dir(account)?.join(format!("{name}.json")))
-    }
+/// The file name MD3 kept an answer of `path` in.
+fn file_name(path: &str) -> String {
+    format!("{}.json", path.trim_start_matches('/').replace('/', "_"))
 }
 
 #[cfg(test)]

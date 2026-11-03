@@ -1230,6 +1230,11 @@
         changes, and only the newest max-files rolled files of each kind are kept. -->
     <logging dir="${moqui_log_dir}" max-size-mb="100" max-files="30"/>
 
+    <!-- The desktop and mobile apps as clients of a server (plans/Mobile-Desktop.md §6, MD4): what they keep of an
+        account's data for offline use. A build embeds its own in its runtime conf (device-mode personal for a person's
+        own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
+    <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+
     <!-- Rust: java names for fresh schemas; set entity_sql_name_style=legacy before opening an old Rust database. -->
     <entity-facade sql-name-style="${entity_sql_name_style ?: 'java'}"
             default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""

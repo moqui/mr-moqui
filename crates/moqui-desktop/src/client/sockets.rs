@@ -22,6 +22,10 @@
 //! When the server closes one, the host lets it go and the page opens another, as it would a browser socket; a close
 //! for authentication has the host check the key.
 //!
+//! A client's `/notws` frames are also written into the account's store (`push.rs`, MD4). A drop of any of the
+//! account's `/notws` marks the timelines' heads stale, as pushes may be missed while it is down, and has the mirror
+//! (`mirror.rs`) read them again when the shell's opens next; the shell's opening starts the mirror.
+//!
 //! The node in process (`crate::node::scheme`, no port) has its pages' sockets here too: `/notws`, `/callws` and
 //! `/termws`, opened in process (`moqui_host::in_process`) with the window's cookies.
 
@@ -141,6 +145,7 @@ pub(crate) fn socket_open(app: AppHandle, webview: Webview, path: String) -> Res
     let sink_app = app.clone();
     let sink_label = label.clone();
     let sink_account = account.clone();
+    let notifications = path.split_once('?').map_or(path.as_str(), |(bare, _)| bare) == "/notws";
     let sink = Box::new(move |event: Event| {
         let script = format!(
             "window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {})",
@@ -148,6 +153,9 @@ pub(crate) fn socket_open(app: AppHandle, webview: Webview, path: String) -> Res
         );
         if let Some(window) = sink_app.get_webview_window(&sink_label) {
             let _ = window.eval(script);
+        }
+        if notifications {
+            notified(&sink_app, &sink_label, &sink_account, &event);
         }
         match event {
             // the page opens another, as it would after a browser socket closed
@@ -171,6 +179,34 @@ pub(crate) fn socket_open(app: AppHandle, webview: Webview, path: String) -> Res
     let socket = moqui_client::socket::open(&account.server, &key, &path, sink).map_err(|err| err.to_string())?;
     open.insert(id, (label, Held::Remote(socket)));
     Ok(id)
+}
+
+/// An event of a client's `/notws` for the store: a frame kept (`push.rs`), the heads marked stale when the socket
+/// drops (noted for the mirror), and the mirror started when the shell's opens.
+fn notified(app: &AppHandle, label: &str, account: &moqui_client::account::Account, event: &Event) {
+    let Some(client) = app.try_state::<Client>() else {
+        return;
+    };
+    match event {
+        Event::Text(text) => {
+            client.with_store(&account.id, |store| {
+                super::push::keep_frame(store, &account.user_id, text)
+            });
+        }
+        Event::Closed | Event::Revoked => {
+            // pushes may be missed until it is back: newer events are a gap until the mirror reads them again
+            client.mirror.dropped(&account.id);
+            mark_stale(&client, &account.id);
+        }
+        Event::Open if label == "main" => super::mirror::start(app, &account.id),
+        Event::Open => {}
+    }
+}
+
+fn mark_stale(client: &Client, account: &str) {
+    if let Some(Err(err)) = client.with_store(account, moqui_client::store::Store::mark_chat_heads_stale) {
+        tracing::warn!("The chat heads of {account} were not marked stale: {err}");
+    }
 }
 
 /// Whether a page of the node may open a socket at `path` (with its query).

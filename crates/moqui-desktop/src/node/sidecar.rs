@@ -221,6 +221,8 @@ impl Reader {
     /// stderr rather than to its log (one runtime, one set of files), and kept for the message if it ends.
     fn stderr(self, stderr: impl Read) {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            // not under the tests, whose output this would cut into (the harness does not capture a raw stderr write)
+            #[cfg(not(test))]
             let _ = writeln!(std::io::stderr(), "{line}");
             self.keep(line);
         }

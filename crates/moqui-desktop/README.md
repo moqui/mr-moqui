@@ -105,8 +105,29 @@ bundled shell, which opens with no network; each account is a server and a user,
   (`http://moqui-app.localhost`) forwards everything, for the app windows (`remote-<n>`), which show the server's own
   `/qapps`. Each request carries the key in the `login_key` header; the pages hold no credential and send no cookie.
   How the schemes work around Chromium's handling of their HTML is in [Mobile-Desktop](../../plans/Mobile-Desktop.md#one-transport-seam).
-- **Offline:** the shell's `/qapps/clientConfig`, `/shellData` and `/shellCounts` are kept per account and answered,
-  marked `X-Moqui-Offline`, when the server cannot be reached.
+- **Store:** each account's data is in its store (`moqui_client::store`, `client/data/<account>.db`), opened when
+  first used (`client/stores.rs`), with the size cap of `<client-conf store-max-mb>`; the answers MD3 kept in
+  `client/cache/` move into it once.
+- **Offline:** the shell's `/qapps/clientConfig`, `/shellData` and `/shellCounts`, and the comms app's Chat
+  (`chatData`, `rooms`, `roomView`, `room`, `timeline`), Mail (`inboxData`, `threads`, `thread`) and Compose
+  (`composeData`) answers are kept when the server gives them (`client/offline.rs`, keyed less `_`,
+  `moquiSessionToken` and `pageTraceId`), and answered, marked `X-Moqui-Offline`, when it cannot be reached. Timeline
+  pages, a room view, the room list, a folder's thread pages (one store's cursor or mr-mantle's several) and a thread
+  are built from the stored rows in the server's shape, so pages never asked for whole still answer and pushes show; a
+  page in a gap (never fetched) needs the server (502), and `offline.gapBefore`/`gapAfter` say where the held stretch
+  ends (`hasMore*` stay false there). The page's chat store passphrase (`/ChatKeys/storeKey`) is kept in the key store and
+  answered offline to the shell only; a revoked device's is dropped.
+- **Pushes and mirror:** the chat pushes on the account's `/notws` are written into the store (`client/push.rs`:
+  edits, reactions and redactions folded into their message); a drop marks the timelines' heads stale. When the
+  shell's `/notws` opens, `client/mirror.rs` reads ahead on a thread of its own: a personal device all rooms and mail
+  folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first `prefetch-mail`
+  threads; after a drop, each room's latest page again.
+- **Device mode:** `<client-conf device-mode>` in the runtime's merged conf (read without booting, `client/conf.rs`):
+  `personal` or `shared` for every account, or `choose`, where the sign-in asks. The mode is kept with the account; one
+  already personal stays so (the shell says why); one with none follows the build's mode. Sign-out or a revocation of
+  a shared account deletes its data, chat store keys and entry, and the pages clear its scoped browser storage and
+  IndexedDB (the shell as it loads, the next app window once); a personal one keeps them; removing an account always
+  deletes them (`client/modes.rs`).
 - **Renewal:** at start and every six hours, a key with less than a third of its life left is renewed
   (`client/renewal.rs`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server
   ends the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it

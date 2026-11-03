@@ -21,7 +21,7 @@
 //! - [`login`]: password sign-in with `createLoginKey`, the second factor, and sign-out that revokes the key.
 //! - [`proxy`]: a request of the page forwarded to the server with the key, its answer made safe for the page.
 //! - [`socket`]: `/notws` and `/callws` held by the host and bridged to the page.
-//! - [`cache`]: the last answers the shell opens on when the server cannot be reached.
+//! - [`cache`]: the shell's answers as MD3 kept them in files, moved once into the account's [`store`].
 //! - [`store`]: an account's data on the device for offline reading and writing: cached answers, chat, mail, the
 //!   outbox, drafts and files, in SQLite under a size cap.
 //! - [`conf`]: the client's settings from the `<client-conf>` element of the Moqui XML conf (the device mode, the

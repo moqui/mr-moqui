@@ -18,18 +18,23 @@
 //! takes it, so an attachment or a large file a window opens is saved by the host, streamed (`crate::download`); a
 //! small download goes through Chromium's (bridge.rs `on_download`), which asks the scheme again.
 //!
-//! The shell's settings, apps and counts (`moqui_client::cache::PATHS`) are kept per account when the server answers
-//! them, and answered from what was kept, marked `X-Moqui-Offline`, when it cannot be reached, so the shell opens with no
-//! network. A 401 to a request with the key has the host check the key and, if it no longer signs in, forget it and
-//! show the sign-in.
+//! The shell's settings, apps and counts, and the comms app's chat and mail transitions, are kept in the account's store
+//! when the server answers them (`offline.rs`), and answered from it, marked `X-Moqui-Offline`, when it cannot be
+//! reached, so the shell and the comms screens open with no network. The page's chat store passphrase
+//! (`/ChatKeys/storeKey`) is kept in the key store, and answered offline to the shell only. A 401 to a request with the
+//! key has the host check the key and, if it no longer signs in, sign the account out here.
 
 use moqui_client::account::Account;
 use moqui_client::proxy::{header, Request};
 use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
+use super::offline::{self, Kind};
 use super::{assets, Client, APP_ORIGIN, SHELL_ORIGIN};
 use crate::scheme::{document_request, has_script_policy, plain, run};
+
+/// The page's chat store passphrase (WebrootCrypto.js `storeKeysOf`, docs/interfaces/Chat-Keys.md "Store key").
+const STORE_KEY_PATH: &str = "/ChatKeys/storeKey";
 
 /// `moqui-shell`: the shell's files, and the rest forwarded to the current account's server.
 pub(crate) fn shell(
@@ -106,7 +111,16 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
     };
     let get = request.method() == tauri::http::Method::GET;
     let document = document_request(request.headers());
-    let cached = get && moqui_client::cache::PATHS.contains(&bare.as_str());
+    let query = path.split_once('?').map_or("", |(_, query)| query).to_string();
+    let kept = if get && !document {
+        offline::classify(&bare, &client.comms_root_of(&account.id))
+    } else {
+        None
+    };
+    // the crypto device whose store passphrase is asked for
+    let store_key_device = (request.method() == tauri::http::Method::POST && bare == STORE_KEY_PATH)
+        .then(|| store_key_device(request.body()))
+        .flatten();
     let forwarded = Request {
         method: request.method().as_str().to_string(),
         path,
@@ -121,15 +135,28 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
         Ok(upstream) => upstream,
         Err(err) => {
             tracing::info!("{} {bare}: {err}", account.server);
-            if cached {
-                if let Some(body) = client.cache.get(&account.id, &bare) {
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/json")
-                        .header("X-Moqui-Offline", "1")
-                        .body(body)
-                        .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
+            let offline_body = match (kept, &store_key_device) {
+                (Some(kind), _) => client
+                    .with_store(&account.id, |store| offline::answer(store, kind, &bare, &query))
+                    .flatten(),
+                // the passphrase only to the shell, which runs no server code
+                (None, Some(device)) if origin == SHELL_ORIGIN => {
+                    client.keys.chat_store_key(&account.id, device).map(|key| {
+                        serde_json::json!({ "storeKey": key, "legacyStoreKey": null })
+                            .to_string()
+                            .into_bytes()
+                    })
                 }
+                _ => None,
+            };
+            if let Some(body) = offline_body {
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/json")
+                    .header("Cache-Control", "no-store")
+                    .header("X-Moqui-Offline", "1")
+                    .body(body)
+                    .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
             }
             return plain(
                 StatusCode::BAD_GATEWAY,
@@ -170,8 +197,15 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
     if status == 401 && key.is_some() {
         check_key(app, &account);
     }
-    if cached && status == 200 && header(&headers, "content-type").is_some_and(|kind| kind.contains("json")) {
-        client.cache.put(&account.id, &bare, &body);
+    let json = header(&headers, "content-type").is_some_and(|kind| kind.contains("json"));
+    if let (Some(kind), true, true) = (kept, status == 200, json) {
+        if kind == Kind::Shell && bare == "/qapps/clientConfig" {
+            client.config_seen(&account.id, &body);
+        }
+        client.with_store(&account.id, |store| offline::keep(store, kind, &bare, &query, &body));
+    }
+    if let (Some(device), true) = (&store_key_device, json) {
+        store_key_answered(&client, &account.id, device, &body);
     }
     let html = header(&headers, "content-type").is_some_and(|kind| kind.to_ascii_lowercase().starts_with("text/html"));
     let mut response = Response::builder().status(status);
@@ -221,9 +255,39 @@ pub(crate) fn check_key(app: &AppHandle, account: &Account) {
                 "The device key of {} no longer signs in; signing it out here",
                 account.id
             );
-            super::commands::forget_key(&app, &account.id);
+            super::commands::signed_out(&app, &account.id);
         }
     }));
+}
+
+/// The `deviceId` of a `/ChatKeys/storeKey` request's JSON body.
+pub(crate) fn store_key_device(body: &[u8]) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    json["deviceId"]
+        .as_str()
+        .filter(|device| !device.is_empty())
+        .map(str::to_string)
+}
+
+/// What the server answered to `/ChatKeys/storeKey` for `device`, for the key store: the passphrase to keep (a new
+/// revision replaces the old), none to drop it (the device is revoked or unknown), or no change (another refusal).
+pub(crate) fn store_key_change(body: &[u8]) -> Option<Option<String>> {
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if let Some(key) = json["storeKey"].as_str().filter(|key| !key.is_empty()) {
+        return Some(Some(key.to_string()));
+    }
+    matches!(json["reasonCode"].as_str(), Some("revoked" | "notFound")).then_some(None)
+}
+
+fn store_key_answered(client: &Client, account: &str, device: &str, body: &[u8]) {
+    let changed = match store_key_change(body) {
+        Some(Some(key)) => client.keys.set_chat_store_key(account, device, &key),
+        Some(None) => client.keys.remove_chat_store_key(account, device),
+        None => Ok(()),
+    };
+    if let Err(err) = changed {
+        tracing::warn!("The chat store key of {account} was not kept: {err}");
+    }
 }
 
 /// Whether the shell may have the server's answer to a request: its fetches and images, not a document, frame, script,

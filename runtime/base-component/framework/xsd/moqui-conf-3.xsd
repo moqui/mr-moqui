@@ -42,6 +42,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="smtp-server"/>
                 <xs:element minOccurs="0" ref="edge"/>
                 <xs:element minOccurs="0" ref="logging"/>
+                <xs:element minOccurs="0" ref="client-conf"/>
                 <xs:element minOccurs="0" ref="dev-reload"/>
                 <xs:element minOccurs="0" ref="dev-aide"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
@@ -1822,6 +1823,39 @@ along with this software (see the LICENSE.md file). If not, see
             as remote locations or on a classpath that is inside a war or ear file, or that is from a special
             ClassLoader.</xs:documentation></xs:annotation>
         <xs:complexType><xs:attribute name="location" type="xs:string" use="required"/></xs:complexType>
+    </xs:element>
+
+    <!-- ===================== Client Apps (the desktop and mobile apps of a server) ===================== -->
+    <xs:element name="client-conf">
+        <xs:annotation><xs:documentation>The desktop and mobile apps as clients of a remote server (configuration 3,
+            plans/Mobile-Desktop.md §6, MD4): how much of an account's data the app keeps on the device for offline use,
+            and for how long. Read by the app from the conf of its bundled runtime (crates/moqui-client conf.rs), so a
+            build sets its own in its runtime conf; the server does not read it. A bad value is logged and its default
+            used.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="device-mode" default="choose">
+                <xs:annotation><xs:documentation>Whose device this is. personal (a person's own phone or desktop): a full
+                    mirror within the limits, kept on sign-out and on revocation and deleted only when the account is
+                    removed. shared (a hot desk, a packing terminal, a point of sale): what was seen and a small
+                    prefetch, deleted on sign-out and on revocation. choose: the sign-in asks, and the answer is kept
+                    with the account; an account already personal stays personal.</xs:documentation></xs:annotation>
+                <xs:simpleType><xs:restriction base="xs:token">
+                    <xs:enumeration value="choose"/>
+                    <xs:enumeration value="personal"/>
+                    <xs:enumeration value="shared"/>
+                </xs:restriction></xs:simpleType>
+            </xs:attribute>
+            <xs:attribute name="mirror-days" type="xs:string" default="90"><xs:annotation><xs:documentation>How far
+                back a personal device mirrors chat rooms and mail folders, in days; at least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="prefetch-rooms" type="xs:string" default="20"><xs:annotation><xs:documentation>How
+                many of the latest chat rooms a shared device reads ahead (each room's latest page); 0 for
+                none.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="prefetch-mail" type="xs:string" default="100"><xs:annotation><xs:documentation>How
+                many of the inbox's latest threads a shared device reads ahead; 0 for none.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="store-max-mb" type="xs:string" default="512"><xs:annotation><xs:documentation>The
+                size cap of an account's store on the device, in MB; past it the least recently read cached data goes
+                (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
     </xs:element>
 
     <!-- ====================== Database Conf Root ======================= -->

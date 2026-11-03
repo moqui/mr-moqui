@@ -46,3 +46,23 @@ fn the_shell_takes_the_servers_data_not_its_pages_or_scripts() {
         "text/html,application/xhtml+xml"
     )])));
 }
+
+#[test]
+fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation() {
+    use super::{store_key_change, store_key_device};
+    assert_eq!(store_key_device(br#"{"deviceId":"ABCDEF"}"#).as_deref(), Some("ABCDEF"));
+    assert_eq!(store_key_device(br#"{"deviceId":""}"#), None);
+    assert_eq!(store_key_device(b"deviceId=ABCDEF"), None);
+    assert_eq!(
+        store_key_change(br#"{"storeKey":"k-43","legacyStoreKey":null}"#),
+        Some(Some("k-43".to_string()))
+    );
+    assert_eq!(
+        store_key_change(br#"{"reasonCode":"revoked","errors":"x"}"#),
+        Some(None)
+    );
+    assert_eq!(store_key_change(br#"{"reasonCode":"notFound"}"#), Some(None));
+    // another refusal, or no key: no change
+    assert_eq!(store_key_change(br#"{"reasonCode":"failed"}"#), None);
+    assert_eq!(store_key_change(br#"{"storeKey":null,"legacyStoreKey":"old"}"#), None);
+}

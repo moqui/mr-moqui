@@ -206,7 +206,13 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
     let label = format!("remote-{}", client.next_window.fetch_add(1, Ordering::Relaxed));
     // the account's storage scope for the server's own scripts (MoquiLib scopedKey), then the bridge
     let scope = serde_json::to_string(&account.id).map_err(|err| err.to_string())?;
-    let script = format!("window.__moquiStorageScope = {scope};\n{}", crate::bridge::SCRIPT);
+    // and the storage of accounts deleted since an app window last opened, which this one clears once (bridge.js)
+    let cleared = std::mem::take(&mut moqui_lib::sync::lock(&client.cleared).app);
+    let cleared = serde_json::to_string(&cleared).map_err(|err| err.to_string())?;
+    let script = format!(
+        "window.__moquiStorageScope = {scope};\nwindow.__moquiClearScopes = {cleared};\n{}",
+        crate::bridge::SCRIPT
+    );
     let title = if account.server_name.is_empty() {
         account.server.clone()
     } else {

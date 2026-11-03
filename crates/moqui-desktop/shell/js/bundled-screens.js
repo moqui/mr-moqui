@@ -621,7 +621,12 @@ module.exports = {
         switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
         addAccount() { host().addAccount().catch((err) => this.failed(err)); },
         signOut() {
-            this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
+            // a shared device's account goes with its data (client-conf device-mode; a personal one keeps it)
+            const current = this.accounts.find((account) => account.id === this.currentId);
+            const shared = !!(current && current.deviceMode === 'shared');
+            this.$q.dialog({ title: t('Sign out'), cancel: true, message: shared
+                ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
+                : t('Sign out of this account on this computer? Its device key is revoked.') })
                 .onOk(() => host().signOut().catch((err) => this.failed(err)));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
@@ -668,6 +673,8 @@ module.exports = {
         }
     },
     mounted() {
+        // what the host had to tell after the sign-in (an account kept as a personal device's)
+        if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
@@ -1228,13 +1235,18 @@ module.exports = {
         const current = this.asked ? null
             : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
         return { server: this.retryServer || (current ? current.server : ''), username: current && !this.retryServer ? current.username : '', password: '', code: '',
-            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [] };
+            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [],
+            // an account kept here signs in again as it was
+            deviceMode: (current && current.deviceMode) || '' };
     },
     // another server: its providers are not the last one's
     watch: { serverText() { this.providers = []; this.waiting = false; } },
     computed: {
         serverText() { return this.server.trim(); },
-        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
+        // the build's conf leaves it to the user (client-conf device-mode choose)
+        asksMode() { return !!(this.state && this.state.deviceMode === 'choose'); },
+        modeReady() { return !this.asksMode || !!this.deviceMode; },
+        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password && this.modeReady); },
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
     methods: {
@@ -1243,7 +1255,8 @@ module.exports = {
             if (!this.ready || this.busy) return;
             this.busy = true;
             this.error = '';
-            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim() }).then((answer) => {
+            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim(),
+                deviceMode: this.asksMode ? this.deviceMode : null }).then((answer) => {
                 this.busy = false;
                 // signed in: the host shows the account's shell
                 if (answer && answer.status === 'code') {
@@ -1263,9 +1276,10 @@ module.exports = {
             }, (err) => { this.busy = false; this.error = message(err); });
         },
         sso(provider) {
+            if (!this.modeReady) { this.error = t('Say whether this is your device or a shared one.'); return; }
             this.error = '';
             this.busy = true;
-            host().ssoStart(this.server.trim(), provider.id).then(() => { this.busy = false; this.waiting = true; },
+            host().ssoStart(this.server.trim(), provider.id, this.asksMode ? this.deviceMode : null).then(() => { this.busy = false; this.waiting = true; },
                 (err) => { this.busy = false; this.error = message(err); });
         },
         cancelSso() { host().ssoCancel().then(() => { this.waiting = false; }, (err) => { this.error = message(err); }); },
@@ -1285,6 +1299,7 @@ module.exports = {
             this.server = account.server;
             this.username = account.username;
             this.password = '';
+            if (account.deviceMode) this.deviceMode = account.deviceMode;
             this.back();
         },
         remove(account) {
@@ -1305,6 +1320,7 @@ module.exports = {
                 return function render(_ctx, _cache) {
                   const _component_q_card_section = _resolveComponent("q-card-section")
                   const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_radio = _resolveComponent("q-radio")
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_q_card_actions = _resolveComponent("q-card-actions")
                   const _component_q_card = _resolveComponent("q-card")
@@ -1373,7 +1389,35 @@ module.exports = {
                                       autocomplete: "current-password",
                                       disable: _ctx.busy,
                                       autofocus: !!_ctx.server
-                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable", "autofocus"])
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "disable", "autofocus"]),
+                                    (_ctx.asksMode)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 0,
+                                          role: "radiogroup",
+                                          "aria-label": _ctx.t('Whose device is this?'),
+                                          class: "column q-pt-xs"
+                                        }, [
+                                          _createVNode(_component_q_radio, {
+                                            modelValue: _ctx.deviceMode,
+                                            "onUpdate:modelValue": $event => ((_ctx.deviceMode) = $event),
+                                            val: "personal",
+                                            dense: "",
+                                            disable: _ctx.busy,
+                                            label: _ctx.t('This is my device')
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "disable", "label"]),
+                                          _createElementVNode("div", { class: "text-caption m-muted q-pl-lg" }, _toDisplayString(_ctx.t('Messages and mail are kept here for offline use, also after you sign out.')), 1),
+                                          _createVNode(_component_q_radio, {
+                                            modelValue: _ctx.deviceMode,
+                                            "onUpdate:modelValue": $event => ((_ctx.deviceMode) = $event),
+                                            val: "shared",
+                                            dense: "",
+                                            disable: _ctx.busy,
+                                            class: "q-mt-xs",
+                                            label: _ctx.t('Shared device')
+                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "disable", "label"]),
+                                          _createElementVNode("div", { class: "text-caption m-muted q-pl-lg" }, _toDisplayString(_ctx.t('What you open is kept only while you are signed in, and deleted when you sign out.')), 1)
+                                        ], 8, ["aria-label"]))
+                                      : _createCommentVNode("", true)
                                   ]),
                                   _: 1
                                 }))

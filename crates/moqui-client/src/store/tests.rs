@@ -750,3 +750,27 @@ fn forget_removes_the_database_and_files() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_folded_push_raises_the_head_and_its_target_is_read_back() {
+    let dir = dir("folded");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    store
+        .put_chat_page("R1", &page(None, None, 10), &events("R1", 1..=3), false, false)
+        .unwrap();
+    // an edit at seq 4 is no row: the head covers it, so the next message after it joins the range
+    store.raise_chat_head("R1", None, 4).unwrap();
+    store
+        .put_chat_page("R1", &page(None, Some(4), 10), &events("R1", 5..=5), false, false)
+        .unwrap();
+    let slice = store.chat_events("R1", &page(None, None, 10));
+    assert_eq!(seqs(&slice), [1, 2, 3, 5]);
+    assert!(!slice.gap_after && !slice.gap_before);
+    assert_eq!(store.chat_event("R1", 2).unwrap().event, "{\"eventSeq\":2}");
+    assert_eq!(store.chat_head("R1", None), Some(5));
+    store.mark_chat_heads_stale().unwrap();
+    assert_eq!(store.chat_head("R1", None), None);
+    assert!(store.chat_event("R1", 4).is_none());
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}

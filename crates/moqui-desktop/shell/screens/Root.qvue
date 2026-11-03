@@ -190,7 +190,12 @@ module.exports = {
         switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
         addAccount() { host().addAccount().catch((err) => this.failed(err)); },
         signOut() {
-            this.$q.dialog({ title: t('Sign out'), message: t('Sign out of this account on this computer? Its device key is revoked.'), cancel: true })
+            // a shared device's account goes with its data (client-conf device-mode; a personal one keeps it)
+            const current = this.accounts.find((account) => account.id === this.currentId);
+            const shared = !!(current && current.deviceMode === 'shared');
+            this.$q.dialog({ title: t('Sign out'), cancel: true, message: shared
+                ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
+                : t('Sign out of this account on this computer? Its device key is revoked.') })
                 .onOk(() => host().signOut().catch((err) => this.failed(err)));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
@@ -237,6 +242,8 @@ module.exports = {
         }
     },
     mounted() {
+        // what the host had to tell after the sign-in (an account kept as a personal device's)
+        if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();

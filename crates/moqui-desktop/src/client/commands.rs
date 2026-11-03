@@ -17,16 +17,21 @@
 //! opening a server page in an app window. The password passes through once; only the key is kept, in the key store,
 //! and no command answers it.
 //!
+//! The device mode (`modes.rs`): the sign-in asks for it when the build's conf says `choose`, and it is kept with the
+//! account when it is created here; sign-out and a revocation of a `shared` account delete its data and the account,
+//! and removing an account always does.
+//!
 //! The network calls run on Tauri's blocking pool (`spawn_blocking`): reqwest's blocking client must not run on the
 //! main thread or in an async task. The others are `async` commands too, off the main thread: they read the key store,
 //! or open and close windows.
 
 use moqui_client::account::{account_id, base_url, Account};
+use moqui_client::conf::DeviceMode;
 use moqui_client::login::SignIn;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
-use super::{windows, Client};
+use super::{modes, windows, Client};
 
 /// Run `work` off the main thread and the async runtime.
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -35,8 +40,8 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
         .map_err(|err| format!("The request did not finish: {err}"))?
 }
 
-/// The accounts, the current one, whether it is signed in, the key store (`os` or `file`) and the newest `clientApi`
-/// this app knows. No key.
+/// The accounts (each with its device mode), the current one, whether it is signed in, the key store (`os` or `file`),
+/// the newest `clientApi` this app knows and the build's device mode (`choose` has the sign-in ask). No key.
 pub(crate) fn state_json(client: &Client) -> Value {
     // the accounts as they are now, read without holding them while the keys are looked up
     let (current, accounts) = {
@@ -56,6 +61,7 @@ pub(crate) fn state_json(client: &Client) -> Value {
                 "display": account.display,
                 "serverName": account.server_name,
                 "signedIn": client.keys.get(&account.id).is_some(),
+                "deviceMode": account.device_mode.map(DeviceMode::as_str),
             })
         })
         .collect();
@@ -66,17 +72,30 @@ pub(crate) fn state_json(client: &Client) -> Value {
         "signedIn": signed_in,
         "keyStore": client.keys.kind,
         "clientApi": moqui_client::login::CLIENT_API,
+        "deviceMode": client.conf().device_mode.as_str(),
     })
 }
 
+/// [`state_json`], as the shell loads, with what it is to do once: tell the current account's user something
+/// (`notice`), and clear the browser storage of accounts whose data was deleted (`clearScopes`, their storage scopes).
 #[tauri::command(async)]
 pub(crate) fn client_state(app: AppHandle) -> Result<Value, String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
-    Ok(state_json(&client))
+    let mut state = state_json(&client);
+    let notice = state["current"]
+        .as_str()
+        .and_then(|id| moqui_lib::sync::lock(&client.notice).remove(id));
+    if let Some(notice) = notice {
+        state["notice"] = Value::String(notice);
+    }
+    let cleared = std::mem::take(&mut moqui_lib::sync::lock(&client.cleared).shell);
+    state["clearScopes"] = json!(cleared);
+    Ok(state)
 }
 
 /// Sign in to `server` as `username`, with `code` once the server asks for one: `{status: "code", text, sendable}`,
-/// or `{status: "signed-in"}`, with the account current and the shell loading it.
+/// or `{status: "signed-in"}`, with the account current and the shell loading it. `device_mode` is the user's choice,
+/// `personal` or `shared`, when the build's conf says `choose`.
 #[tauri::command]
 pub(crate) async fn client_sign_in(
     app: AppHandle,
@@ -84,7 +103,12 @@ pub(crate) async fn client_sign_in(
     username: String,
     password: String,
     code: Option<String>,
+    device_mode: Option<String>,
 ) -> Result<Value, String> {
+    let wanted = {
+        let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+        modes::wanted(client.conf().device_mode, device_mode.as_deref())?
+    };
     let base = base_url(&server).map_err(|err| err.to_string())?;
     let username = username.trim().to_string();
     if username.is_empty() || password.is_empty() {
@@ -120,12 +144,20 @@ pub(crate) async fn client_sign_in(
         (SignIn::Key(key), Some(config)) => (key, config),
         (SignIn::Key(_), None) => return Err("The server did not answer who signed in".to_string()),
     };
-    signed_in(&app, &base, &username, &key, &config)?;
+    signed_in(&app, &base, &username, &key, &config, wanted)?;
     Ok(json!({ "status": "signed-in" }))
 }
 
-/// A sign-in done (by password, or by SSO): the account kept with its key, made current, and the shell loading it.
-fn signed_in(app: &AppHandle, base: &str, username: &str, key: &str, config: &Value) -> Result<(), String> {
+/// A sign-in done (by password, or by SSO): the account kept with its key and the device mode it runs as (`wanted`
+/// for a new account; one already personal stays so, and the shell says why), made current, and the shell loading it.
+fn signed_in(
+    app: &AppHandle,
+    base: &str,
+    username: &str,
+    key: &str,
+    config: &Value,
+    wanted: Option<DeviceMode>,
+) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
     let username = config["username"]
         .as_str()
@@ -145,16 +177,32 @@ fn signed_in(app: &AppHandle, base: &str, username: &str, key: &str, config: &Va
         device_mode: None,
     };
     client.keys.set(&account.id, key).map_err(|err| err.to_string())?;
-    if let Ok(bytes) = serde_json::to_vec(config) {
-        client.cache.put(&account.id, "/qapps/clientConfig", &bytes);
-    }
-    {
+    let id = account.id.clone();
+    let told = {
         let mut accounts = moqui_lib::sync::lock(&client.accounts);
-        let id = account.id.clone();
-        accounts.put(account);
+        let kept = accounts.get(&id).and_then(|kept| kept.device_mode);
+        let (mode, told) = modes::resolved(kept, wanted);
+        accounts.put(Account {
+            device_mode: mode,
+            ..account
+        });
         accounts.set_current(&id);
         accounts.save().map_err(|err| err.to_string())?;
+        told
+    };
+    if told {
+        moqui_lib::sync::lock(&client.notice).insert(id.clone(), modes::KEPT_PERSONAL.to_string());
     }
+    if let Ok(bytes) = serde_json::to_vec(config) {
+        client.config_seen(&id, &bytes);
+        let kept = client.with_store(&id, |store| {
+            store.put_answer("/qapps/clientConfig", "", "application/json", &bytes)
+        });
+        if let Some(Err(err)) = kept {
+            tracing::warn!("The client config of {id} was not kept: {err}");
+        }
+    }
+    client.mirror.forget(&id);
     switched(app, &client);
     Ok(())
 }
@@ -173,10 +221,17 @@ pub(crate) async fn client_sso_providers(server: String) -> Result<Value, String
 }
 
 /// Sign in to `server` through its provider `auth_flow_id` in the system browser: the server hands the browser back to
-/// the app (`org.moqui.desktop:/sso`, [`sso_returned`]), which then signs in as a password sign-in does.
+/// the app (`org.moqui.desktop:/sso`, [`sso_returned`]), which then signs in as a password sign-in does, with the
+/// `device_mode` chosen.
 #[tauri::command(async)]
-pub(crate) fn client_sso_start(app: AppHandle, server: String, auth_flow_id: String) -> Result<(), String> {
+pub(crate) fn client_sso_start(
+    app: AppHandle,
+    server: String,
+    auth_flow_id: String,
+    device_mode: Option<String>,
+) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    let wanted = modes::wanted(client.conf().device_mode, device_mode.as_deref())?;
     let base = base_url(&server).map_err(|err| err.to_string())?;
     let (pending, url) = moqui_client::sso::start(
         &base,
@@ -186,7 +241,7 @@ pub(crate) fn client_sso_start(app: AppHandle, server: String, auth_flow_id: Str
     )
     .map_err(|err| err.to_string())?;
     let url = tauri::Url::parse(&url).map_err(|err| err.to_string())?;
-    *moqui_lib::sync::lock(&client.sso) = Some(pending);
+    *moqui_lib::sync::lock(&client.sso) = Some((pending, wanted));
     crate::os::claim_app_scheme();
     crate::open_externally(&url);
     Ok(())
@@ -214,14 +269,14 @@ pub(crate) fn sso_returned(app: &AppHandle, link: &tauri::Url) {
         let mut slot = moqui_lib::sync::lock(&client.sso);
         if slot
             .as_ref()
-            .is_some_and(|pending| state.as_deref() == Some(pending.state.as_str()))
+            .is_some_and(|(pending, _)| state.as_deref() == Some(pending.state.as_str()))
         {
             slot.take()
         } else {
             None
         }
     };
-    let Some(pending) = pending else {
+    let Some((pending, wanted)) = pending else {
         tracing::warn!("An SSO sign-in came back that this app is not waiting for; it is passed over");
         return;
     };
@@ -244,7 +299,7 @@ pub(crate) fn sso_returned(app: &AppHandle, link: &tauri::Url) {
                 let config = moqui_client::login::client_config(&pending.server, &key)
                     .map_err(|err| err.to_string())?
                     .ok_or("The server did not take the new key")?;
-                signed_in(&app, &pending.server, "", &key, &config)
+                signed_in(&app, &pending.server, "", &key, &config, wanted)
             });
         if let Err(err) = done {
             tracing::warn!("The SSO sign-in to {} did not finish: {err}", pending.server);
@@ -279,7 +334,8 @@ pub(crate) async fn client_send_code(
 }
 
 /// Sign the current account out: its key revoked on the server (when it answers) and forgotten here; the shell then
-/// shows the sign-in. The account stays in the list, to sign in to again.
+/// shows the sign-in. A personal account stays in the list with its data, to sign in to again; a shared one is removed
+/// with its data ([`signed_out`]).
 #[tauri::command]
 pub(crate) async fn client_sign_out(app: AppHandle) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
@@ -294,7 +350,7 @@ pub(crate) async fn client_sign_out(app: AppHandle) -> Result<(), String> {
             tracing::warn!("The device key of {} was not revoked on the server: {err}", account.id);
         }
     }
-    forget_key(&app, &account.id);
+    signed_out(&app, &account.id);
     Ok(())
 }
 
@@ -320,8 +376,8 @@ pub(crate) fn client_add_account(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove an account from this computer: its key revoked (when the server answers) and forgotten, its kept answers
-/// deleted. Answers the accounts as `client_state` does.
+/// Remove an account from this computer, whatever its device mode: its key revoked (when the server answers) and
+/// forgotten, its store, its chat store keys and its entry deleted. Answers the accounts as `client_state` does.
 #[tauri::command]
 pub(crate) async fn client_remove_account(app: AppHandle, id: String) -> Result<Value, String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
@@ -340,20 +396,44 @@ pub(crate) async fn client_remove_account(app: AppHandle, id: String) -> Result<
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
     windows::close_remotes(&app, Some(&id));
-    client.cache.forget(&id);
-    let was_current = {
-        let mut accounts = moqui_lib::sync::lock(&client.accounts);
-        let was_current = accounts.current().is_some_and(|account| account.id == id);
-        accounts.remove(&id);
-        accounts.save().map_err(|err| err.to_string())?;
-        was_current
-    };
-    // the shell showed it: its sockets go, and the shell shows the sign-in
+    let was_current = moqui_lib::sync::lock(&client.accounts)
+        .current()
+        .is_some_and(|account| account.id == id);
+    // the shell showed it: its sockets and its mirror go before its data, and the shell shows the sign-in
     if was_current {
+        client.mirror.cancel();
         client.sockets.close_all();
+    }
+    let removed = remove_account(&client, &id);
+    if was_current {
         windows::load_shell(&app, None);
     }
+    removed?;
     Ok(state_json(&client))
+}
+
+/// Delete an account here: its entry (so no store of it opens again), then its store, its chat store keys, what was
+/// noted of it, and (by the pages, `Cleared`) its browser storage. Every part is tried: a list that cannot be saved is
+/// logged and its error answered after the rest is deleted (the account is gone from the list in memory all the same).
+/// The device key is the caller's.
+fn remove_account(client: &Client, id: &str) -> Result<(), String> {
+    let saved = {
+        let mut accounts = moqui_lib::sync::lock(&client.accounts);
+        accounts.remove(id);
+        accounts.save().map_err(|err| err.to_string())
+    };
+    if let Err(err) = &saved {
+        tracing::error!("The account list without {id} was not saved: {err}");
+    }
+    client.stores.forget(id);
+    if let Err(err) = client.keys.forget_chat_store_keys(id) {
+        tracing::error!("The chat store keys of {id} were not removed from the key store: {err}");
+    }
+    moqui_lib::sync::lock(&client.comms).remove(id);
+    moqui_lib::sync::lock(&client.notice).remove(id);
+    moqui_lib::sync::lock(&client.cleared).add(id);
+    client.mirror.forget(id);
+    saved
 }
 
 /// A page of the current account's server in an app window: `path` on the server (`/qapps/...`).
@@ -362,9 +442,10 @@ pub(crate) fn client_open_remote(app: AppHandle, path: String) -> Result<(), Str
     windows::open_remote(&app, &path)
 }
 
-/// Forget an account's key here (signed out, or the server no longer takes it): its windows and sockets close, and the
-/// shell shows the sign-in when it was the current one.
-pub(crate) fn forget_key(app: &AppHandle, id: &str) {
+/// An account signed out here (by the user, or the server no longer takes its key): its key forgotten, its windows and
+/// sockets closed, and the shell shows the sign-in when it was the current one. A shared account's data and the account
+/// itself are deleted ([`modes::forgets_on_sign_out`]); a personal one keeps all, to sign in to again.
+pub(crate) fn signed_out(app: &AppHandle, id: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
@@ -372,11 +453,22 @@ pub(crate) fn forget_key(app: &AppHandle, id: &str) {
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
     windows::close_remotes(app, Some(id));
-    let current = moqui_lib::sync::lock(&client.accounts)
-        .current()
-        .is_some_and(|account| account.id == id);
+    let (current, mode) = {
+        let accounts = moqui_lib::sync::lock(&client.accounts);
+        let current = accounts.current().is_some_and(|account| account.id == id);
+        (current, accounts.get(id).and_then(|account| account.device_mode))
+    };
     if current {
+        client.mirror.cancel();
         client.sockets.close_all();
+    }
+    if modes::forgets_on_sign_out(mode, client.conf().device_mode) {
+        tracing::info!("{id} is a shared device's account: its data on this computer is deleted");
+        if let Err(err) = remove_account(&client, id) {
+            tracing::error!("The shared account {id} was not removed: {err}");
+        }
+    }
+    if current {
         windows::load_shell(app, None);
     }
 }
@@ -385,6 +477,7 @@ pub(crate) fn forget_key(app: &AppHandle, id: &str) {
 /// is given up, and the shell loads it.
 fn switched(app: &AppHandle, client: &Client) {
     *moqui_lib::sync::lock(&client.sso) = None;
+    client.mirror.cancel();
     client.sockets.close_all();
     windows::close_remotes(app, None);
     windows::load_shell(app, None);

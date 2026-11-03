@@ -146,7 +146,43 @@
         return;
     }
     const socket = (url) => new HostSocket(url);
+    // The browser storage of accounts whose data the host deleted (a shared device's account signed out, an account
+    // removed): the keys and IndexedDB databases under their storage scopes (MoquiLib scopedKey, `<account>:`), on this
+    // origin. Other accounts' are under other scopes and stay.
+    const clearScopes = (scopes) => {
+        const prefixes = (Array.isArray(scopes) ? scopes : []).filter((scope) => typeof scope === "string" && scope).map((scope) => scope + ":");
+        if (!prefixes.length) return Promise.resolve();
+        const owned = (name) => prefixes.some((prefix) => String(name).indexOf(prefix) === 0);
+        [window.localStorage, window.sessionStorage].forEach((storage) => {
+            try {
+                for (let i = storage.length - 1; i >= 0; i--) {
+                    const key = storage.key(i);
+                    if (key && owned(key)) storage.removeItem(key);
+                }
+            } catch (err) {
+                /* storage off: nothing kept */
+            }
+        });
+        const idb = window.indexedDB;
+        if (!idb || !idb.databases) return Promise.resolve();
+        return idb.databases().then((databases) => Promise.all(databases.filter((db) => db.name && owned(db.name)).map((db) => new Promise((resolve) => {
+            const request = idb.deleteDatabase(db.name);
+            request.onsuccess = request.onerror = request.onblocked = () => resolve();
+        })))).catch((err) => console.info("Deleted accounts' browser databases not all removed", err));
+    };
     if (appWindow) {
+        // the scopes the host gave this window to clear, once (its later pages carry the same list)
+        const scopes = window.__moquiClearScopes;
+        if (Array.isArray(scopes) && scopes.length) {
+            let first = true;
+            try {
+                first = !window.sessionStorage.getItem("moqui.scopesCleared");
+                window.sessionStorage.setItem("moqui.scopesCleared", "1");
+            } catch (err) {
+                /* no session storage: cleared on each page, which holds nothing of theirs */
+            }
+            if (first) clearScopes(scopes);
+        }
         // a server's page: its sockets, and the storage scope of its account (MoquiLib scopedKey); no other command
         window.moquiDesktop = Object.freeze({ socket, storageScope: String(window.__moquiStorageScope || "") });
         return;
@@ -155,8 +191,12 @@
         socket,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key
         state: () => ask("client_state"),
+        // the storage of the accounts state's clearScopes names, as the shell loads
+        clearScopes,
+        // deviceMode: personal or shared, when the build asks (state's deviceMode is choose)
         signIn: (given) => ask("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),
-            password: String(given.password || ""), code: given.code ? String(given.code) : null }),
+            password: String(given.password || ""), code: given.code ? String(given.code) : null,
+            deviceMode: given.deviceMode ? String(given.deviceMode) : null }),
         sendCode: (given) => ask("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), factor: String(given.factor || "") }),
         signOut: () => ask("client_sign_out"),
@@ -166,7 +206,8 @@
         openRemote: (path) => ask("client_open_remote", { path: String(path || "") }),
         // SSO in the system browser: the server's providers, and a sign-in through one (the server hands it back)
         ssoProviders: (server) => ask("client_sso_providers", { server: String(server || "") }),
-        ssoStart: (server, authFlowId) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || "") }),
+        ssoStart: (server, authFlowId, deviceMode) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
+            deviceMode: deviceMode ? String(deviceMode) : null }),
         ssoCancel: () => ask("client_sso_cancel")
     }));
 })();

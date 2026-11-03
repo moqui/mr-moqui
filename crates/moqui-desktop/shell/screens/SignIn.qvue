@@ -15,8 +15,10 @@ along with this software (see the LICENSE.md file). If not, see
     server and the user's name and password, then the code of a second factor when the account has one; or the server's
     single sign-on, in the system browser, which the server hands back to the app. The host signs in
     (src/client/, moquiDesktop.signIn): it posts the password once to the server's REST login for a device key, which it
-    keeps in the OS key store, and the page never holds the key. The accounts this computer has are offered to sign in to
-    again or to switch to. Bundled, precompiled (bundled-screens.txt). -->
+    keeps in the OS key store, and the page never holds the key. When the build's conf asks (client-conf device-mode
+    choose), the user says whose device this is: a personal one keeps the account's data after sign-out, a shared one
+    deletes it. The accounts this computer has are offered to sign in to again or to switch to. Bundled, precompiled
+    (bundled-screens.txt). -->
 <template><div class="m-shell-sign-in q-pa-md">
     <q-form @submit="submit">
     <q-card flat bordered>
@@ -28,6 +30,12 @@ along with this software (see the LICENSE.md file). If not, see
             <q-input v-model="server" outlined dense :label="t('Server')" placeholder="erp.example.com" autocomplete="url" :disable="busy" :autofocus="!server"></q-input>
             <q-input v-model="username" outlined dense :label="t('Username')" autocomplete="username" :disable="busy"></q-input>
             <q-input v-model="password" outlined dense type="password" :label="t('Password')" autocomplete="current-password" :disable="busy" :autofocus="!!server"></q-input>
+            <div v-if="asksMode" role="radiogroup" :aria-label="t('Whose device is this?')" class="column q-pt-xs">
+                <q-radio v-model="deviceMode" val="personal" dense :disable="busy" :label="t('This is my device')"></q-radio>
+                <div class="text-caption m-muted q-pl-lg">{{t('Messages and mail are kept here for offline use, also after you sign out.')}}</div>
+                <q-radio v-model="deviceMode" val="shared" dense :disable="busy" class="q-mt-xs" :label="t('Shared device')"></q-radio>
+                <div class="text-caption m-muted q-pl-lg">{{t('What you open is kept only while you are signed in, and deleted when you sign out.')}}</div>
+            </div>
         </q-card-section>
         <q-card-section v-else class="q-gutter-y-sm">
             <div>{{codeAsk.text}}</div>
@@ -89,13 +97,18 @@ module.exports = {
         const current = this.asked ? null
             : ((this.state && this.state.accounts) || []).find((account) => account.id === (this.state && this.state.current));
         return { server: this.retryServer || (current ? current.server : ''), username: current && !this.retryServer ? current.username : '', password: '', code: '',
-            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [] };
+            codeAsk: null, sent: false, busy: false, error: '', providers: [], waiting: false, accounts: (this.state && this.state.accounts) || [],
+            // an account kept here signs in again as it was
+            deviceMode: (current && current.deviceMode) || '' };
     },
     // another server: its providers are not the last one's
     watch: { serverText() { this.providers = []; this.waiting = false; } },
     computed: {
         serverText() { return this.server.trim(); },
-        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password); },
+        // the build's conf leaves it to the user (client-conf device-mode choose)
+        asksMode() { return !!(this.state && this.state.deviceMode === 'choose'); },
+        modeReady() { return !this.asksMode || !!this.deviceMode; },
+        ready() { return this.codeAsk ? !!this.code.trim() : !!(this.server.trim() && this.username.trim() && this.password && this.modeReady); },
         canCancel() { return this.asked && this.accounts.some((account) => account.id === (this.state && this.state.current) && account.signedIn); }
     },
     methods: {
@@ -104,7 +117,8 @@ module.exports = {
             if (!this.ready || this.busy) return;
             this.busy = true;
             this.error = '';
-            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim() }).then((answer) => {
+            host().signIn({ server: this.server.trim(), username: this.username.trim(), password: this.password, code: this.code.trim(),
+                deviceMode: this.asksMode ? this.deviceMode : null }).then((answer) => {
                 this.busy = false;
                 // signed in: the host shows the account's shell
                 if (answer && answer.status === 'code') {
@@ -124,9 +138,10 @@ module.exports = {
             }, (err) => { this.busy = false; this.error = message(err); });
         },
         sso(provider) {
+            if (!this.modeReady) { this.error = t('Say whether this is your device or a shared one.'); return; }
             this.error = '';
             this.busy = true;
-            host().ssoStart(this.server.trim(), provider.id).then(() => { this.busy = false; this.waiting = true; },
+            host().ssoStart(this.server.trim(), provider.id, this.asksMode ? this.deviceMode : null).then(() => { this.busy = false; this.waiting = true; },
                 (err) => { this.busy = false; this.error = message(err); });
         },
         cancelSso() { host().ssoCancel().then(() => { this.waiting = false; }, (err) => { this.error = message(err); }); },
@@ -146,6 +161,7 @@ module.exports = {
             this.server = account.server;
             this.username = account.username;
             this.password = '';
+            if (account.deviceMode) this.deviceMode = account.deviceMode;
             this.back();
         },
         remove(account) {

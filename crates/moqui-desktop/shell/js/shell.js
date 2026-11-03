@@ -78,7 +78,8 @@
         const failedBefore = params.get("failed") || "";
         const retryServer = params.get("server") || "";
         let state = { accounts: [] };
-        host.state().then((given) => {
+        // the browser storage of accounts the host deleted goes first (a shared device's account signed out)
+        host.state().then((given) => (host.clearScopes ? host.clearScopes(given && given.clearScopes) : Promise.resolve()).then(() => given)).then((given) => {
             state = given || state;
             // what this page keeps in the browser's storage is the account's (MoquiLib scopedKey)
             moqui.storageScope = state.current || "";
