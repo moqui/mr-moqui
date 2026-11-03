@@ -358,6 +358,27 @@
     };
     moqui.addComponentStyle = addStyle;
 
+    // A screen bundled with the client, precompiled (moqui.qvtBundled, from vue_check::precompiled_qvue: a desktop client's
+    // shell, which has no template compiler and no eval), by its name: its component, made the first time with its style
+    // added; null when there is none or it did not make (logged once). A shell names a screen under the paths it is asked
+    // for by adding them to moqui.qvtBundled; a .qvue, .qjs or .qvt ending is not part of the name.
+    moqui.bundledComponent = (name) => {
+        const key = String(name || "").replace(/\.(qvue|qjs|qvt)$/, "");
+        const bundled = moqui.qvtBundled && moqui.qvtBundled[key];
+        if (!bundled || bundled.failed) return null;
+        if (!bundled.made) {
+            try {
+                bundled.made = bundled.make(root.Vue);
+            } catch (err) {
+                console.error("The bundled screen " + key + " did not make", err);
+                bundled.failed = true;
+                return null;
+            }
+            if (bundled.made.style) addStyle(bundled.made.style, bundled.made.scoped);
+        }
+        return markRaw(bundled.made.component);
+    };
+
     // path: the screen path, extraPath, search and bodyParameters as the router has them. renderModes lists the render
     // modes the screen says it supports: qjs or qvue makes the request for that companion instead of qvt. Without them (a string
     // URL: an m-dynamic-container or m-dynamic-dialog, a tray tab, a quick-create kind) the request is .qvt with
@@ -394,6 +415,12 @@
         const use = { path, extraPath, search, divId };
         // A server-static template is cached as the means to make a component, since each use fetches its own data.
         const give = (comp) => callback(comp && comp.mqStatic ? comp.mqStatic(use) : comp);
+        // a screen the client has bundled is not fetched
+        const bundled = moqui.bundledComponent(path);
+        if (bundled) {
+            give(bundled);
+            return { abort() {} };
+        }
         const cached = moqui.componentCache.get(path);
         if (cached) {
             give(cached);
@@ -412,6 +439,14 @@
         else { url += "." + qvtExt; negotiate = !renderModes; }
         if (extraPath && extraPath.length > 0) url += "/" + extraPath;
         if (search && search.length > 0) url += "?" + search;
+        // A client on the runtime build (no template compiler, no eval: a desktop client's shell) cannot make a component of a
+        // .qvue or .qjs it has not bundled; its caller gets none, and can open the screen another way.
+        const runtimeBuild = moqui.config && moqui.config.qvt && moqui.config.qvt.build === "runtime";
+        if (runtimeBuild && (kind === vueExt || kind === jsExt)) {
+            console.info("loadComponent " + url + ": not bundled, and this client cannot load it");
+            callback(null);
+            return { abort() {} };
+        }
 
         const controller = new root.AbortController();
         const hasBody = bodyParameters && !moqui.isEmptyObject(bodyParameters);

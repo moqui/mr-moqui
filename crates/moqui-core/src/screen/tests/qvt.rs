@@ -630,6 +630,168 @@ fn a_qvt_render_error_is_logged_and_written_in_its_place() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The desktop client's bundled screens (`crates/moqui-desktop/shell/bundled-screens.txt`) as they are now, precompiled
+/// (`js/bundled-screens.js` there, plans/Mobile-Desktop.md MD3): the file is made again and compared. `UPDATE_GOLDEN=1`
+/// writes it. Like the render file, it has no `with` and no eval, so the shell runs under a CSP without `unsafe-eval`.
+#[test]
+fn bundled_screens_are_precompiled() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| std::fs::read_to_string(repo.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
+    let compiler = read("runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
+    let list = read("crates/moqui-desktop/shell/bundled-screens.txt");
+    let entries: Vec<(&str, String)> = list
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let (name, file) = line.split_once(char::is_whitespace).expect("a name and a file");
+            (name, read(file.trim()))
+        })
+        .collect();
+    let screens: Vec<crate::screen::vue_check::BundledQvue<'_>> = entries
+        .iter()
+        .map(|(name, source)| crate::screen::vue_check::BundledQvue { name, source })
+        .collect();
+    let made = crate::screen::vue_check::precompiled_qvue(&compiler, &screens).unwrap();
+    let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        made_bundle(&made, &names),
+        Vec::<String>::new(),
+        "the bundle as the shell makes it"
+    );
+    let path = repo.join("crates/moqui-desktop/shell/js/bundled-screens.js");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &made).unwrap();
+        return;
+    }
+    let kept = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        kept == made,
+        "{} is not the bundled screens as they are: UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled",
+        path.display()
+    );
+}
+
+/// Run a bundle of `precompiled_qvue` as the shell does, with a stand-in Vue and `moqui`, and make each of `names`:
+/// what is wrong (a screen that is missing or does not make, a component left with a template or without a render).
+fn made_bundle(made: &str, names: &[&str]) -> Vec<String> {
+    use rquickjs::CatchResultExt;
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    context.with(|ctx| {
+        ctx.eval::<(), _>(
+            "globalThis.moqui = { define: function () {}, l10n: null };
+             globalThis.Vue = new Proxy({}, { get: function () { return function () { return {}; }; } });",
+        )
+        .unwrap();
+        if let Err(err) = ctx.eval::<(), _>(made).catch(&ctx) {
+            return vec![format!("the bundle did not run: {err}")];
+        }
+        let names = serde_json::to_string(names).unwrap();
+        let json: String = ctx
+            .eval(format!(
+                "(function () {{ var wrong = []; {names}.forEach(function (name) {{
+                    var entry = moqui.qvtBundled[name];
+                    if (!entry) {{ wrong.push(name + ': missing'); return; }}
+                    var made; try {{ made = entry.make(globalThis.Vue); }} catch (err) {{ wrong.push(name + ': ' + err); return; }}
+                    var seen = [];
+                    (function walk(c, path) {{ if (!c || typeof c !== 'object' || seen.indexOf(c) >= 0) return; seen.push(c);
+                        if (typeof c.template === 'string') wrong.push(path + ': a template is left');
+                        if (path === name && typeof c.render !== 'function') wrong.push(path + ': no render');
+                        var cs = c.components || {{}}; Object.keys(cs).forEach(function (n) {{
+                            if (cs[n] && typeof cs[n] === 'object' && 'template' in cs[n]) wrong.push(path + '/' + n + ': a template is left');
+                            walk(cs[n], path + '/' + n); }}); }})(made.component, name);
+                }}); return JSON.stringify(wrong); }})()"
+            ))
+            .catch(&ctx)
+            .unwrap();
+        serde_json::from_str(&json).unwrap()
+    })
+}
+
+/// A bundled `.qvue` comes out as a script whose `make` answers its component with render functions, for its template
+/// and its components' string templates (a component listed twice, or listing itself, once), and its style.
+#[test]
+fn a_bundled_qvue_makes_its_component_with_render_functions() {
+    use rquickjs::CatchResultExt;
+    let compiler = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
+    )
+    .unwrap();
+    let source = r#"<!-- a header comment -->
+<template><div class="x"><item-row v-for="item in items" :key="item" :item="item"></item-row>{{ title }}</div></template>
+<script>
+const rows = { template: `<span class="row">
+    {{ item }}</span>`, props: ['item'] };
+rows.components = { again: rows };
+module.exports = {
+    name: 'Sample',
+    components: { 'item-row': rows, 'same-row': rows },
+    data() { return { items: ['a'], title: 'T' }; }
+};
+</script>
+<style scoped="true">.x { color: red; }</style>"#;
+    let bundled = |name: &'static str, source: &'static str| crate::screen::vue_check::BundledQvue { name, source };
+    let made = crate::screen::vue_check::precompiled_qvue(&compiler, &[bundled("Sample", source)]).unwrap();
+    assert_eq!(made_bundle(&made, &["Sample"]), Vec::<String>::new());
+    assert_eq!(
+        made.matches("target.render =").count(),
+        2,
+        "the root and the one row component: {made}"
+    );
+    let runtime = rquickjs::Runtime::new().unwrap();
+    let context = rquickjs::Context::full(&runtime).unwrap();
+    let checked: String = context.with(|ctx| {
+        ctx.eval::<(), _>(
+            "globalThis.moqui = { define: function () {} };
+             globalThis.Vue = new Proxy({}, { get: function () { return function () { return {}; }; } });",
+        )
+        .unwrap();
+        ctx.eval::<(), _>(made.as_str()).catch(&ctx).unwrap();
+        ctx.eval(
+            "(function () { var b = moqui.qvtBundled.Sample.make(globalThis.Vue); var row = b.component.components['item-row'];
+                return [b.component.name, row === b.component.components['same-row'], typeof row.components.again.render,
+                    b.style.trim(), String(b.scoped)].join('|'); })()",
+        )
+        .catch(&ctx)
+        .unwrap()
+    });
+    assert_eq!(checked, "Sample|true|function|.x { color: red; }|true");
+    // a leading export default, as parseVue takes it
+    let exported = crate::screen::vue_check::precompiled_qvue(
+        &compiler,
+        &[bundled(
+            "Exported",
+            "<template><p>{{ n }}</p></template><script>export  default { data() { return { n: 1 }; } };</script>",
+        )],
+    )
+    .unwrap();
+    assert_eq!(made_bundle(&exported, &["Exported"]), Vec::<String>::new());
+    // what cannot be bundled is named
+    let no_run = crate::screen::vue_check::precompiled_qvue(
+        &compiler,
+        &[bundled(
+            "Broken",
+            "<template><p/></template><script>window.x.y = 1;</script>",
+        )],
+    )
+    .unwrap_err();
+    assert!(
+        no_run.to_string().contains("Broken") && no_run.to_string().contains("did not run"),
+        "{no_run}"
+    );
+    let setup = crate::screen::vue_check::precompiled_qvue(
+        &compiler,
+        &[bundled(
+            "Setup",
+            "<template><p/></template><script setup>const a = 1;</script>",
+        )],
+    )
+    .unwrap_err();
+    assert!(setup.to_string().contains("Setup"), "{setup}");
+}
+
 /// `WebrootVue.qvt.render.js` is the render functions of the client components as their templates are now: the file
 /// is made again and compared. `UPDATE_GOLDEN=1` writes it.
 #[test]

@@ -348,6 +348,46 @@ test("an m-screen-context registers with the root, follows its props and leaves 
     assert.match(qvt.components["m-qapps-root"].template, /<q-page-container id="m-canvas">/);
 });
 
+test("a screen the client bundled is not fetched, and its style is added once", async () => {
+    const original = moqui.request;
+    const requests = [];
+    moqui.request = (url) => { requests.push(url); return Promise.reject(new Error("not to be fetched")); };
+    const render = () => null;
+    let makes = 0;
+    const entry = { make: () => { makes++; return { component: { name: "ChatPanel", render }, style: ".m-bundled-test { color: red; }", scoped: false }; } };
+    const errors = [];
+    const savedError = console.error;
+    console.error = (...args) => errors.push(args.join(" "));
+    // a shell names a bundled screen under the path its caller asks for
+    moqui.qvtBundled = { "BasicComms/Panel/Chat": entry, "/apps/Comms/Panel/Chat": entry, Broken: { make: () => { throw new Error("no"); } } };
+    try {
+        const comp = await new Promise((resolve) => moqui.loadComponent("/apps/Comms/Panel/Chat", resolve));
+        assert.equal(comp.name, "ChatPanel");
+        assert.equal(comp.render, render);
+        assert.equal(moqui.bundledComponent("BasicComms/Panel/Chat.qvue").name, "ChatPanel");
+        assert.equal(makes, 1, "made once");
+        assert.equal(moqui.bundledComponent("Other"), null);
+        // one that does not make is none, logged once
+        assert.equal(moqui.bundledComponent("Broken"), null);
+        assert.equal(moqui.bundledComponent("Broken"), null);
+        assert.equal(errors.length, 1);
+        assert.deepEqual(requests, []);
+        const styles = Array.from(document.head.querySelectorAll("style[data-mq-style]")).filter((el) => el.textContent.includes("m-bundled-test"));
+        assert.equal(styles.length, 1);
+        styles.forEach((el) => el.remove());
+        // on the runtime build a .qvue that is not bundled is none, not fetched
+        moqui.config = { qvt: { build: "runtime" } };
+        const none = await new Promise((resolve) => moqui.loadComponent("/apps/Comms/Chat.qvue", resolve));
+        assert.equal(none, null);
+        assert.deepEqual(requests, []);
+    } finally {
+        moqui.request = original;
+        console.error = savedError;
+        delete moqui.qvtBundled;
+        delete moqui.config;
+    }
+});
+
 test("loadComponent asks for the best client mode of a screen whose render modes it does not know", async () => {
     const requests = [];
     const original = moqui.request;
