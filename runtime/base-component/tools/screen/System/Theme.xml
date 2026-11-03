@@ -14,13 +14,13 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Theme (System): the look of the current screen theme, for a corporate branding without code. The resources are the
     ScreenThemeResource rows of the theme: the shell's logo (STRT_HEADER_LOGO, the top left corner), its title and footer items, the
-    STRT_DEFAULT_COLOR_SCHEME, the color scheme a user gets without an own choice (the THEME_COLOR_SCHEME preference), and the
-    STRT_APPEARANCE_POLICY, the user appearance policy (JSON: what the user may override, and a forced mode; plans/Themes.md,
-    Appearance policy). The
+    STRT_DEFAULT_COLOR_SCHEME, the color scheme a user gets without an own choice (the THEME_COLOR_SCHEME preference), the
+    STRT_APPEARANCE_POLICY, the user appearance policy (JSON: what the user may override, and a forced mode), and the
+    STRT_APPEARANCE_SERVICE services that adjust the appearance per user (docs/ui/Qvt-Client.md, Appearance). The
     color schemes are the theme's ScreenColorScheme rows, with a ScreenColorSchemeColor per mode (light, dark) and token (the
     names of webroot/screen/webroot/css/WebrootVue.qvt.css without their prefix: primary, page-bg, panel-bg, header-bg, ...); the
-    colorSchemeCss transition of the webroot apps screen sends them as one style sheet (webroot/screen/webroot/js/README.md,
-    Appearance). The generic CRUD services keep the rows; a change shows on the next page load, and a user's own choice of a
+    colorSchemeCss transition of the webroot apps screen sends them as one style sheet, and a scheme's default fonts are used for a
+    role the user has chosen no font for (docs/ui/Qvt-Client.md, Appearance). The generic CRUD services keep the rows; a change shows on the next page load, and a user's own choice of a
     scheme or accent color wins over the theme's default. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Theme" default-menu-index="15" menu-image="sym_o_palette" menu-image-type="icon">
@@ -64,43 +64,15 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <script><![CDATA[
-            // The Quasar theme of the shell (STT_INTERNAL_QUASAR), found the way the shell finds it (sri/theme.rs): the user's,
-            // a group's, the type's enumCode, else DEFAULT_QUASAR. This screen's own theme is the internal one, so the branding
-            // (the resources, the color schemes and their colors) is kept on the Quasar theme the shell renders
-            const themeType = 'STT_INTERNAL_QUASAR'
-            let quasarThemeId = ''
-            if (ec.user.userId) {
-                const userTheme = ec.entity.find('moqui.security.UserScreenTheme').condition('userId', ec.user.userId)
-                        .condition('screenThemeTypeEnumId', themeType).disableAuthz().useCache(true).one()
-                if (userTheme) quasarThemeId = userTheme.screenThemeId || ''
-            }
-            if (!quasarThemeId) {
-                const now = new Date()
-                const memberRows = ec.entity.find('moqui.security.UserGroupMember').condition('userId', ec.user.userId)
-                        .disableAuthz().useCache(true).list()
-                const groups = []
-                for (let i = 0; i < memberRows.length; i++) {
-                    const member = memberRows.get(i)
-                    const from = member.fromDate ? new Date(member.fromDate) : null
-                    const thru = member.thruDate ? new Date(member.thruDate) : null
-                    if ((!from || from <= now) && (!thru || thru > now)) groups.push(member.userGroupId)
-                }
-                groups.sort().reverse()  // ALL_USERS comes after the named groups
-                groups.push('ALL_USERS')
-                if (groups.length) {
-                    const groupThemes = ec.entity.find('moqui.security.UserGroupScreenTheme')
-                            .condition('userGroupId', 'in', groups).condition('screenThemeTypeEnumId', themeType)
-                            .orderBy('-sequenceNum', 'userGroupId').disableAuthz().useCache(true).list()
-                    if (groupThemes.length) quasarThemeId = groupThemes.get(0).screenThemeId || ''
-                }
-            }
-            if (!quasarThemeId) {
-                const typeEnum = ec.entity.find('moqui.basic.Enumeration').condition('enumId', themeType)
-                        .disableAuthz().useCache(true).one()
-                if (typeEnum && typeEnum.enumCode) quasarThemeId = typeEnum.enumCode
-            }
-            if (!quasarThemeId) quasarThemeId = 'DEFAULT_QUASAR'
-            themeId = quasarThemeId
+            // The Quasar theme of the shell (STT_INTERNAL_QUASAR), the one the shell renders for this user: get#Appearance finds it as
+            // a render does (the user's, a group's, the type's enumCode, else DEFAULT_QUASAR) and answers the policy in effect after
+            // the theme's appearance services. This screen's own theme is the internal one, so the branding (the resources, the color
+            // schemes and their colors) is kept on the Quasar theme the shell renders
+            const appearance = ec.service.sync().name('org.moqui.impl.ShellServices.get#Appearance').disableAuthz().call().appearance || {}
+            themeId = appearance.screenThemeId || 'DEFAULT_QUASAR'
+            const lockedKeys = (appearance.policy && appearance.policy.lockedKeys) || []
+            lockedText = lockedKeys.length ? lockedKeys.join(', ') : 'none'
+            defaultSchemeText = appearance.defaultSchemeId || 'none'
         ]]></script>
         <entity-find entity-name="moqui.screen.ScreenThemeResource" list="themeResourceList" use-clone="true">
             <econdition field-name="screenThemeId" value="${themeId}"/>
@@ -119,25 +91,31 @@ along with this software (see the LICENSE.md file). If not, see
         <entity-find entity-name="moqui.basic.Enumeration" list="resourceTypeOptions" order-by="sequenceNum,enumId">
             <econdition field-name="enumTypeId" value="ScreenThemeResourceType"/>
         </entity-find>
+        <entity-find entity-name="moqui.screen.ScreenFontOption" list="fontOptionList" order-by="sequenceNum,fontOptionId"/>
         <entity-find entity-name="moqui.basic.Enumeration" list="colorModeOptions" order-by="sequenceNum,enumId">
             <econdition field-name="enumTypeId" value="ScreenColorMode"/>
         </entity-find>
         <script><![CDATA[
             schemeOptions = colorSchemeList.map((scheme) => ({key: scheme.colorSchemeId, text: scheme.description || scheme.colorSchemeId}))
             // the tokens of the style sheet (webroot/screen/webroot/css/WebrootVue.qvt.css), without their prefix
+            // and the shape tokens, whose values are any CSS value (a gradient, a border, a shadow) the scheme's sheet lets through
             tokenOptions = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'page-bg', 'panel-bg',
-                'header-bg', 'header-fg', 'drawer-bg', 'text', 'text-muted', 'link', 'negative-text', 'border', 'divider']
+                'header-bg', 'header-fg', 'drawer-bg', 'text', 'text-muted', 'link', 'negative-text', 'border', 'divider',
+                'header-bg-image', 'header-border', 'header-shadow', 'page-bg-image', 'btn-radius', 'btn-border', 'btn-primary-bg',
+                'card-radius', 'card-border', 'card-shadow', 'drawer-current-bg', 'drawer-current-fg']
                     .map((name) => ({key: name, text: name}))
+            fontOptions = fontOptionList.map((font) => ({key: font.fontOptionId, text: font.description || font.fontOptionId}))
         ]]></script>
     </actions>
 
     <widgets>
         <label type="h5" text="Theme" style="q-mt-none q-mb-sm"/>
         <label type="p" text="The look of the theme ${themeId}: its resources (the logo, the title, the footer, the default color scheme), its color schemes and their colors. A change shows on the next page load; a user's own choice of a scheme wins over the theme's default, and the user's accent too when the appearance policy allows it." style="text-caption m-muted q-mb-md"/>
+        <label type="p" text="In effect for you now: the default scheme ${defaultSchemeText}; the preferences the policy locks: ${lockedText}." style="text-caption q-mb-md"/>
         <container-row>
             <row-col lg="6" md="12">
                 <container-box><box-header title="Resources"/><box-body>
-                    <label type="p" text="One row per resource of the theme. The default color scheme (type Default Color Scheme, a scheme id such as SLATE) is the scheme every user gets without an own choice. The user appearance policy (type User Appearance Policy) is JSON such as {&quot;appearance&quot;: false, &quot;mode&quot;: &quot;dark&quot;} for a station whose look is fixed, or {&quot;scheme&quot;: false} to lock one group of controls; the accent is the scheme's primary unless the policy sets &quot;accent&quot;: true, and the other controls are allowed when absent." style="text-caption m-muted q-mb-sm"/>
+                    <label type="p" text="One row per resource of the theme. The default color scheme (type Default Color Scheme, a scheme id such as SLATE) is the scheme every user gets without an own choice. The user appearance policy (type Appearance Policy) is JSON such as {&quot;appearance&quot;: false, &quot;mode&quot;: &quot;dark&quot;} for a station whose look is fixed, or {&quot;scheme&quot;: false} to lock one group of controls (mode, density, scheme, accent, colors, fonts, sizes, motion), with &quot;lockedKeys&quot; for single preferences; with no policy the user may change everything. An Appearance Service resource names a service that gets userId, screenThemeId and appearance and answers appearance, to decide by station, tenant or host." style="text-caption m-muted q-mb-sm"/>
                     <container-dialog id="CreateResourceDialog" button-text="New Resource">
                         <form-single name="CreateThemeResource" transition="createThemeResource">
                             <field name="screenThemeId"><default-field><hidden default-value="${themeId}"/></default-field></field>
@@ -171,13 +149,19 @@ along with this software (see the LICENSE.md file). If not, see
             </row-col>
             <row-col lg="6" md="12">
                 <container-box><box-header title="Color schemes"/><box-body>
-                    <label type="p" text="The schemes a user may choose (Appearance in the account menu). A scheme without colors is the theme's own; its extra CSS comes after the colors." style="text-caption m-muted q-mb-sm"/>
+                    <label type="p" text="The schemes a user may choose (Appearance in the account menu). A scheme without colors is the theme's own; its default fonts are the user's until the user picks others (set a font here, not as --m-font-* in the extra CSS, so its style sheet loads); its extra CSS comes after the colors." style="text-caption m-muted q-mb-sm"/>
                     <container-dialog id="CreateSchemeDialog" button-text="New Scheme">
                         <form-single name="CreateColorScheme" transition="createColorScheme">
                             <field name="colorSchemeId"><default-field title="Id"><text-line size="20"/></default-field></field>
                             <field name="screenThemeId"><default-field><hidden default-value="${themeId}"/></default-field></field>
                             <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                             <field name="sequenceNum"><default-field title="Sequence"><text-line size="5"/></default-field></field>
+                            <field name="defaultFontBodyId"><default-field title="Body font">
+                                <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="defaultFontHeadingId"><default-field title="Heading font">
+                                <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="defaultFontMonoId"><default-field title="Mono font">
+                                <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                             <field name="extraCss"><default-field title="Extra CSS"><text-area rows="3" cols="60"/></default-field></field>
                             <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                         </form-single>
@@ -187,6 +171,12 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="colorSchemeId"><default-field title="Id"><display/></default-field></field>
                         <field name="description"><default-field title="Description"><text-line size="25"/></default-field></field>
                         <field name="sequenceNum"><default-field title="Seq."><display/></default-field></field>
+                        <field name="defaultFontBodyId"><default-field title="Body font">
+                            <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                        <field name="defaultFontHeadingId"><default-field title="Heading font">
+                            <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                        <field name="defaultFontMonoId"><default-field title="Mono font">
+                            <drop-down allow-empty="true"><list-options list="fontOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                         <field name="extraCss"><default-field title="Extra CSS"><text-area rows="2" cols="30"/></default-field></field>
                         <field name="_useRowSubmit"><default-field><hidden default-value="true"/></default-field></field>
                         <field name="_rowSubmit"><default-field title="Update"><check><option key="true" text=" "/></check></default-field></field>
@@ -204,7 +194,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </form-list>
                 </box-body></container-box>
                 <container-box><box-header title="Scheme colors"/><box-body>
-                    <label type="p" text="The colors of the theme's schemes, one row per mode and token. The token names are the ones of the style sheet without their prefix (primary, page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, ...); a #hex value shows as a swatch that opens the color picker, and any other CSS color (rgb(), hsl(), oklch(), var()) shows in the CSS value field." style="text-caption m-muted q-mb-sm"/>
+                    <label type="p" text="The colors of the theme's schemes, one row per mode and token. The token names are the ones of the style sheet without their prefix (primary, page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, ...), and the shape tokens (header-bg-image, btn-primary-bg, card-shadow, drawer-current-bg, ...) for a gradient, a border or a shadow; a #hex value shows as a swatch that opens the color picker, and any other CSS color (rgb(), hsl(), oklch(), var()) shows in the CSS value field." style="text-caption m-muted q-mb-sm"/>
                     <container-dialog id="CreateColorDialog" button-text="New Color">
                         <form-single name="CreateSchemeColor" transition="createSchemeColor">
                             <field name="colorSchemeId"><default-field title="Scheme">
