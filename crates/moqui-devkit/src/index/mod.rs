@@ -703,6 +703,93 @@ impl MemoryIndex {
     }
 }
 
+/// A [`MemoryIndex`]'s references by the artifact on each side and its artifacts by their parent, for many reference lists
+/// read in one pass (the docs of a whole tree): [`Self::refs`] answers as [`MemoryIndex::refs`] does, without a scan of
+/// every reference for each artifact.
+pub struct RefTable<'a> {
+    index: &'a MemoryIndex,
+    to: HashMap<&'a str, Vec<usize>>,
+    from: HashMap<&'a str, Vec<usize>>,
+    children: HashMap<&'a str, Vec<usize>>,
+}
+
+impl MemoryIndex {
+    /// The reference table of this index.
+    #[must_use]
+    pub fn ref_table(&self) -> RefTable<'_> {
+        let mut to: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut from: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (at, (_, row)) in self.refs.iter().enumerate() {
+            if let Some(id) = row.to_id.as_deref() {
+                to.entry(id).or_default().push(at);
+            }
+            from.entry(row.from.as_str()).or_default().push(at);
+        }
+        let mut children: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (at, artifact) in self.artifacts.iter().enumerate() {
+            if let Some(parent) = artifact.parent.as_deref() {
+                children.entry(parent).or_default().push(at);
+            }
+        }
+        RefTable {
+            index: self,
+            to,
+            from,
+            children,
+        }
+    }
+}
+
+impl RefTable<'_> {
+    /// The artifacts whose parent is `id`, in file order.
+    #[must_use]
+    pub fn children(&self, id: &str) -> Vec<ArtifactRow> {
+        self.children
+            .get(id)
+            .map(|list| list.iter().map(|at| self.index.artifacts[*at].clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// What uses `id`, or what it uses, as [`MemoryIndex::refs`].
+    #[must_use]
+    pub fn refs(&self, id: &str, direction: Direction) -> Vec<RefEntry> {
+        let parameters = with_parameters(id, &[]);
+        let mut ids: Vec<&str> = vec![id];
+        if let Some(list) = self.children.get(id) {
+            ids.extend(
+                list.iter()
+                    .map(|at| &self.index.artifacts[*at])
+                    .filter(|artifact| artifact.kind != "record" && (parameters || artifact.kind != "parameter"))
+                    .map(|artifact| artifact.id.as_str()),
+            );
+        }
+        let by = match direction {
+            Direction::In => &self.to,
+            Direction::Out => &self.from,
+        };
+        let mut found: Vec<usize> = ids
+            .iter()
+            .filter_map(|id| by.get(id))
+            .flatten()
+            .copied()
+            .filter(|at| direction == Direction::In || parameters || !to_parameter(&self.index.refs[*at].1))
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+            .into_iter()
+            .map(|at| {
+                let (path, row) = &self.index.refs[at];
+                let other = match direction {
+                    Direction::In => self.index.describe(&row.from),
+                    Direction::Out => row.to_id.as_deref().and_then(|to| self.index.describe(to)),
+                };
+                entry(path, row, other)
+            })
+            .collect()
+    }
+}
+
 fn entry(path: &str, row: &RefRow, other: Option<ArtifactRow>) -> RefEntry {
     RefEntry {
         path: path.to_string(),

@@ -1,0 +1,8 @@
+<#-- The root of a tree of docs (plans/Autodoc.md): each artifact type with its count. The names: the doc's header
+     and trees; md is AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# Artifacts
+
+Generated from the Moqui artifact definitions by Autodoc.
+
+${md.table(["Artifacts", "Docs"], trees.map((tree) => [md.link(tree.title, tree.href), String(tree.count)]))}

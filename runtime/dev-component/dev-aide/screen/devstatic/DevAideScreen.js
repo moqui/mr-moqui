@@ -662,7 +662,10 @@
   <div class="col row no-wrap m-dev-screen-body">
     <div class="m-dev-screen-side column no-wrap">
       <q-btn-toggle dense no-caps flat spread v-model="panel" @update:model-value="v => v === 'actions' && loadComposer()"
-          :options="[{ label: 'Extension points', value: 'points' }, { label: 'Outline', value: 'outline' }, { label: 'Actions', value: 'actions' }]" id="DevScreenPanel"></q-btn-toggle>
+          :options="[{ label: 'Extension points', value: 'points' }, { label: 'Outline', value: 'outline' }, { label: 'Actions', value: 'actions' }, { label: 'Doc', value: 'doc' }]" id="DevScreenPanel"></q-btn-toggle>
+      <div v-if="panel === 'doc' && view" class="col scroll" id="DevScreenDoc">
+        <m-dev-artifact-doc :base="ctx.base" :artifact-id="'screen:' + view.location" :stamp="view"></m-dev-artifact-doc>
+      </div>
       <div v-show="panel === 'actions'" class="col scroll q-pa-xs" id="DevScreenActions">
         <q-select dense outlined options-dense emit-value map-options v-model="actionsKey" :options="actionHolders.map(a => ({ label: a.label, value: a.key }))"
             label="Actions of" class="q-mb-xs"></q-select>

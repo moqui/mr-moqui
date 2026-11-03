@@ -96,6 +96,54 @@ test("a table is in a scrolling q-table container, code keeps its language, and 
 test("the markdown component's template compiles and takes its props", () => {
     const comp = moqui.qvt.components["m-markdown"];
     assert.ok(comp);
-    ["text", "basePath", "resolveLink", "headingPrefix", "stripTitle", "wikiLinks"].forEach((name) => assert.ok(Object.keys(comp.props).includes(name), name));
+    ["text", "basePath", "resolveLink", "headingPrefix", "stripTitle", "wikiLinks", "mermaid", "copyable"].forEach((name) => assert.ok(Object.keys(comp.props).includes(name), name));
     assert.deepEqual(comp.emits, ["outline", "rendered", "link"]);
+});
+
+test("a mermaid fence is a pre for the diagram, its text escaped; mermaid false and the other languages stay code blocks", () => {
+    const text = "```mermaid\nflowchart LR\n  a[\"A <b>\"] --> b\n```\n\n```js\nx\n```";
+    const out = md.render(marked, text, {});
+    assert.match(out.html, /<pre class="m-md-mermaid">flowchart LR\n {2}a\[&quot;A &lt;b&gt;&quot;\] --&gt; b<\/pre>/);
+    assert.match(out.html, /<pre><code class="language-js">x/);
+    assert.match(md.render(marked, text, { mermaid: false }).html, /<pre><code class="language-mermaid">flowchart LR/);
+    assert.match(md.render(marked, "```mermaid extra\ngraph TD\n```", {}).html, /<pre class="m-md-mermaid">graph TD/);
+    assert.ok(md.render(marked, "```mermaidish\nx\n```", {}).html.indexOf("m-md-mermaid") < 0);
+});
+
+test("moqui.mermaid draws a diagram from a pre's text, with strict security", async () => {
+    const node = document.createElement("pre");
+    node.textContent = "flowchart LR\n  a[\"One\"] --> b[\"Two\"]";
+    document.body.appendChild(node);
+    try {
+        await moqui.mermaid.run([node], { theme: "default" });
+        assert.ok(node.querySelector("svg"), "an svg in the pre");
+        assert.equal(globalThis.mermaid.mermaidAPI.getConfig().securityLevel, "strict");
+    } finally { node.remove(); }
+});
+
+// The goldens of the Autodoc diagrams (crates/moqui-devkit/src/autodoc/testdata/mermaid), parsed by this Mermaid: what
+// the generator writes is a diagram the docs can draw.
+const AUTODOC_DIAGRAMS = ["usage.mmd", "usage-empty.mmd", "er.mmd", "class.mmd", "flow.mmd"];
+
+test("every Autodoc diagram golden parses with the vendored Mermaid", async () => {
+    await moqui.mermaid.load();
+    let rejected = false;
+    try { await globalThis.mermaid.parse("flowchart LR\n  a[\"x\" --> "); } catch (err) { rejected = true; }
+    assert.ok(rejected, "a broken diagram does not parse");
+    for (const name of AUTODOC_DIAGRAMS) {
+        const response = await fetch("/files/crates/moqui-devkit/src/autodoc/testdata/mermaid/" + name);
+        assert.ok(response.ok, name + " is served");
+        const text = await response.text();
+        let problem = "";
+        try { await globalThis.mermaid.parse(text); } catch (err) { problem = name + ": " + (err && err.message || err); }
+        assert.equal(problem, "");
+    }
+    // every diagram of the fixture project's generated docs
+    const tree = await (await fetch("/files/crates/moqui-devkit/src/autodoc/testdata/mermaid/tree.json")).json();
+    assert.ok(tree.length > 10, "the tree's diagrams are served");
+    const problems = [];
+    for (const diagram of tree) {
+        try { await globalThis.mermaid.parse(diagram.text); } catch (err) { problems.push(diagram.doc + ": " + (err && err.message || err)); }
+    }
+    assert.deepEqual(problems, []);
 });

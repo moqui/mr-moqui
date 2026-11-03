@@ -39,9 +39,11 @@ use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::document::Document;
+use moqui_core::live_settings::log_filter::{self, Console};
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use tracing::field::{Field, Visit};
+use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata, Subscriber};
 
@@ -132,25 +134,21 @@ pub fn install_without_console() {
 fn install_subscriber(console: Option<Option<Level>>) {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     INSTALLED.get_or_init(|| {
-        let level = match moqui_lib::env::get_prop_or_env("moqui_log_level")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "trace" => Level::TRACE,
-            "debug" => Level::DEBUG,
-            "warn" | "warning" => Level::WARN,
-            "error" => Level::ERROR,
-            _ => Level::INFO,
-        };
+        let level = log_filter::level_from_env();
         let color = color_enabled(
             &moqui_lib::env::get_prop_or_env("moqui_log_color"),
             std::env::var_os("NO_COLOR").is_some(),
             std::io::stderr().is_terminal(),
         );
-        let _ = tracing::subscriber::set_global_default(LineSubscriber {
+        log_filter::install(
             level,
-            console: console.map(|console| console.unwrap_or(level)),
+            match console {
+                None => Console::Off,
+                Some(None) => Console::All,
+                Some(Some(least)) => Console::AtLeast(least),
+            },
+        );
+        let _ = tracing::subscriber::set_global_default(LineSubscriber {
             next_span: AtomicU64::new(1),
             color,
         });
@@ -511,23 +509,23 @@ pub fn host_name() -> &'static str {
     })
 }
 
+/// The levels, the console and the target rules are the process's [`log_filter`], which Monitor › Settings may
+/// change for a while (plans/Monitor-Settings.md); the files take every line it takes.
 struct LineSubscriber {
-    level: Level,
-    /// The lowest level written to stderr, or None for no stderr; the files take every line at `level`.
-    console: Option<Level>,
     next_span: AtomicU64,
     /// Stderr uses the colored console header. Decided once in [`install`].
     color: bool,
 }
 
 impl Subscriber for LineSubscriber {
+    /// Cached per callsite as always or never; [`log_filter`] rebuilds that cache when the filter changes. It holds
+    /// rsipstack at WARN.
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        // rsipstack logs each SIP message whole at INFO: SDES keys (a=crypto), digest answers, numbers. Its warnings
-        // and errors carry none of them, so only those are taken, at any level.
-        if metadata.target().starts_with("rsipstack") && *metadata.level() > Level::WARN {
-            return false;
-        }
-        *metadata.level() <= self.level
+        log_filter::current().enabled(metadata.target(), *metadata.level())
+    }
+
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        Some(LevelFilter::from_level(log_filter::current().max_level()))
     }
 
     fn new_span(&self, _span: &Attributes<'_>) -> Id {
@@ -557,7 +555,7 @@ impl Subscriber for LineSubscriber {
             message: &fields.message,
             extra: &fields.extra,
         };
-        if self.console.is_some_and(|console| level <= console) {
+        if log_filter::current().to_console(level) {
             let _ = writeln!(std::io::stderr(), "{}", console_line(&text, self.color));
         }
         let plain = plain_line(&text);

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The orders of the shop, with Create order. -->
+<screen default-menu-title="Orders">
+    <parameter name="statusId"/>
+    <transition name="createOrder"><service-call name="shop.OrderServices.create#Order"/><default-response url="."/></transition>
+    <actions>
+        <entity-find entity-name="shop.order.ShopOrder" list="orderList"><econdition field-name="statusId" ignore-if-empty="true"/></entity-find>
+    </actions>
+    <widgets>
+        <form-list name="OrderList" list="orderList">
+            <field name="orderId"><default-field title="Order"><display/></default-field></field>
+            <field name="grandTotal"><default-field><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

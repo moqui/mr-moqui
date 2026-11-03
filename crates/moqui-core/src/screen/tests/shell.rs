@@ -427,18 +427,24 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
             ("localized", Value::string("Quick note (en)")),
         ],
     );
-    let services = [
-        dir.join("service/test/Shell.xml"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/base-component/framework/service/org/moqui/impl/ShellServices.xml"),
-    ];
-    {
-        let ctx = world.factory.new_context();
-        let _entered = ctx.enter();
-        let failures = crate::service::lint(&services).unwrap();
-        assert!(failures.is_empty(), "{failures:?}");
-    }
+    load_services(&world, &[dir.join("service/test/Shell.xml"), shell_services_xml()]);
     world
+}
+
+fn shell_services_xml() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/service/org/moqui/impl/ShellServices.xml")
+}
+
+fn load_services(world: &World, services: &[PathBuf]) {
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(services).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// `org.moqui.impl.ShellServices` alone, for a world without the test tree.
+fn shell_services(world: &World) {
+    load_services(world, &[shell_services_xml()]);
 }
 
 fn get(world: &World, root: &str, user: Option<&str>, path: &str, query: &[(&str, &str)]) -> (u16, serde_json::Value) {
@@ -1315,6 +1321,7 @@ fn the_drawer_choice_is_a_preference_the_shell_data_gives_back() {
 #[test]
 fn a_color_scheme_is_a_style_sheet_of_its_tokens() {
     let world = World::open("");
+    shell_services(&world);
     let root = super::webroot().to_string_lossy().into_owned();
     let mut scheme = world.facade.make_value("moqui.screen.ScreenColorScheme").unwrap();
     scheme.set("colorSchemeId", Value::string("TEST_SCHEME"));
@@ -1378,6 +1385,100 @@ fn a_color_scheme_is_a_style_sheet_of_its_tokens() {
     let response = sheet("NO_SUCH_SCHEME");
     assert_eq!(response.status, 200, "{}", response.body_text());
     assert_eq!(response.body_text(), "");
+}
+
+const APPEARANCE_SERVICES: &str = r#"<services>
+    <service verb="adjust" noun="Appearance" authenticate="false">
+        <description>as a station's component would: the second scheme by default, and no fonts to choose</description>
+        <in-parameters><parameter name="userId"/><parameter name="screenThemeId"/><parameter name="appearance" type="Map"/></in-parameters>
+        <out-parameters><parameter name="appearance" type="Map"/></out-parameters>
+        <actions><script>appearance.defaultSchemeId = 'SECOND'; appearance.policy.fonts = false; appearance.seenUser = userId</script></actions>
+    </service>
+    <service verb="fail" noun="Appearance" authenticate="false">
+        <in-parameters><parameter name="appearance" type="Map"/></in-parameters>
+        <out-parameters><parameter name="appearance" type="Map"/></out-parameters>
+        <actions><script>throw new Error('the station is down')</script></actions>
+    </service>
+</services>"#;
+
+/// A theme's appearance (`get#Appearance`): its default scheme, its policy and its appearance services, each getting what
+/// the one before answered (a failing one is skipped). `setPreference` refuses a key the result locks with a 403 and
+/// stores the others; the locked value is not given back.
+#[test]
+fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change() {
+    let world = World::open("");
+    world.user("plain", None);
+    let dir = std::env::temp_dir().join(format!("moqui-appearance-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("service/test")).unwrap();
+    std::fs::write(dir.join("service/test/Look.xml"), APPEARANCE_SERVICES).unwrap();
+    load_services(&world, &[dir.join("service/test/Look.xml"), shell_services_xml()]);
+    row(
+        &world,
+        "moqui.screen.ScreenTheme",
+        &[
+            ("screenThemeId", Value::string("DEFAULT_QUASAR")),
+            ("screenThemeTypeEnumId", Value::string("STT_INTERNAL_QUASAR")),
+        ],
+    );
+    for (id, sequence) in [("FIRST", 1), ("SECOND", 2)] {
+        row(
+            &world,
+            "moqui.screen.ScreenColorScheme",
+            &[
+                ("colorSchemeId", Value::string(id)),
+                ("screenThemeId", Value::string("DEFAULT_QUASAR")),
+                ("sequenceNum", Value::I64(sequence)),
+            ],
+        );
+    }
+    theme_value(&world, "DEFAULT_QUASAR", 1, "STRT_DEFAULT_COLOR_SCHEME", "FIRST");
+    theme_value(&world, "DEFAULT_QUASAR", 2, "STRT_APPEARANCE_POLICY", r#"{"accent": false}"#);
+    theme_value(&world, "DEFAULT_QUASAR", 3, "STRT_APPEARANCE_SERVICE", "test.Look.fail#Appearance");
+    theme_value(&world, "DEFAULT_QUASAR", 4, "STRT_APPEARANCE_SERVICE", "test.Look.adjust#Appearance");
+
+    let root = super::webroot().to_string_lossy().into_owned();
+    let set = |key: &str, value: &str| {
+        let mut post = request("POST", "/apps/setPreference");
+        post.set_header("authorization", basic("plain"));
+        post.set_header("accept", "application/json");
+        post.set_header("content-type", "application/x-www-form-urlencoded");
+        post.body = format!("preferenceKey={key}&preferenceValue={value}").into_bytes();
+        serve_at(&world.factory, post, &root)
+    };
+    for key in ["THEME_PRIMARY_COLOR", "THEME_FONT_BODY"] {
+        let response = set(key, "x");
+        assert_eq!(response.status, 403, "{key}: {}", response.body_text());
+        assert!(response.body_text().contains(key), "{}", response.body_text());
+    }
+    assert_eq!(set("THEME_RADIUS", "square").status, 200);
+    assert_eq!(set("QUASAR_LEFT_OPEN", "true").status, 200, "not an appearance preference");
+
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("plain").unwrap();
+    assert!(crate::user::set_preference("THEME_PRIMARY_COLOR_DARK", Some("#fff")).is_err());
+    let out = crate::service::sync("org.moqui.impl.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
+    let appearance = out.get("appearance").map(moqui_lib::json::to_json).unwrap();
+    assert_eq!(appearance["screenThemeId"], json!("DEFAULT_QUASAR"), "{appearance}");
+    assert_eq!(appearance["seenUser"], json!("plain"), "{appearance}");
+    assert_eq!(appearance["defaultSchemeId"], json!("SECOND"), "{appearance}");
+    assert_eq!(appearance["schemeId"], json!("SECOND"), "{appearance}");
+    assert_eq!(appearance["policy"]["accent"], json!(false), "{appearance}");
+    assert_eq!(appearance["policy"]["fonts"], json!(false), "{appearance}");
+    assert_eq!(appearance["policy"]["scheme"], json!(true), "{appearance}");
+    assert_eq!(appearance["values"], json!({"THEME_RADIUS": "square"}), "{appearance}");
+    assert_eq!(
+        names(&appearance["colorSchemes"], "id"),
+        ["FIRST", "SECOND"],
+        "{appearance}"
+    );
+    // the policy alone, as JSON text, is the same
+    let out = crate::service::sync("org.moqui.impl.ShellServices.get#AppearancePolicy", &BTreeMap::new()).unwrap();
+    let text = out.get("policy").map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    let policy: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(policy, appearance["policy"], "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// One execution context renders several screens, as a spec, a TUI session or an agent's renders do: the shell data

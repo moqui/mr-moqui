@@ -1,0 +1,16 @@
+<#-- An entity package's page (plans/Autodoc.md): its entities and an E-R diagram of them and what they relate to.
+     The names: the doc's header, entities, namesOnly and diagrams; md is AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# Package ${md.code(packageName)}
+
+${md.nav(up, rootHref)}
+
+## Entities
+
+${md.table(["Entity", "Summary"], entities.map((entity) => [md.link(entity.title, entity.href), md.plain(entity.summary)]))}
+<#if diagrams.er>
+## Entities and relationships
+
+${namesOnly ? "The package has too many entities for their key fields; the diagram has their names.\n" : ""}
+${md.mermaid(diagrams.er)}
+</#if>

@@ -28,6 +28,7 @@
 
 use serde::Serialize;
 
+pub mod autodoc;
 pub mod check;
 pub mod eca;
 pub mod groovy_convert;

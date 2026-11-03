@@ -1,0 +1,75 @@
+<#-- An entity's or view entity's doc (plans/Autodoc.md). The names: the doc's header (title, name, location, line,
+     component, description, up, rootHref), entity, usedBy, uses and diagrams; md is AutodocLib.js. A site component's
+     template/autodoc/Entity.fancy takes the place of this one. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+<#assign withOrigin = entity.fields.some((field) => field.extension)>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+- **${entity.isView ? "View entity" : "Entity"}:** ${md.code(name)}
+- **Defined in:** ${md.defined(component, location, line)}
+<#if !entity.isView>
+- **Table:** ${md.code(entity.table)}<#if entity.group> · **Group:** ${md.plain(entity.group)}</#if> · **Cache:** ${md.plain(entity.cache)}<#if entity.audit> · **Audit log:** ${md.plain(entity.audit)}</#if>
+</#if>
+<#if entity.pkFields>
+- **Primary key:** ${md.code(entity.pkFields)}
+</#if>
+<#if entity.shortAlias>
+- **Short alias:** ${md.code(entity.shortAlias)}
+</#if>
+
+${description}
+
+## Fields
+
+${md.table(withOrigin ? ["Field", "Type", "PK", "Not null", "Default", "Description", "From"] : ["Field", "Type", "PK", "Not null", "Default", "Description"],
+    entity.fields.map((field) => [md.code(field.name), md.code(field.type), md.yes(field.pk), md.yes(field.notNull), md.code(field.default), field.description]
+        .concat(withOrigin ? [md.plain(field.extension)] : [])))}
+<#if entity.relationships.length>
+## Relationships
+
+${md.table(["Type", "Related", "Title", "Key map", "Description"], entity.relationships.map((relationship) =>
+    [md.plain(relationship.type), md.link(relationship.relatedTitle, relationship.relatedHref), md.plain(relationship.title), md.code(relationship.keyMap), relationship.description]))}
+</#if>
+<#if diagrams.relationships && entity.relationships.length>
+${md.mermaid(diagrams.relationships)}
+</#if>
+<#if entity.indexes.length>
+## Indexes
+
+${md.table(["Index", "Unique", "Fields"], entity.indexes.map((index) => [md.code(index.name), md.yes(index.unique), md.code(index.fields)]))}
+</#if>
+<#if entity.members.length>
+## Member entities
+
+${md.table(["Alias", "Entity", "Joined from", "Optional", "Key map"], entity.members.map((member) =>
+    [md.code(member.alias), md.link(member.entity, member.href), md.code(member.joinFrom), md.yes(member.optional), md.code(member.keyMap)]))}
+</#if>
+<#if entity.aliases.length>
+## Aliases
+
+${md.table(["Alias", "Member", "Field", "Function"], entity.aliases.map((alias) =>
+    [md.code(alias.name), md.code(alias.entityAlias), md.code(alias.field), md.plain(alias.function)]))}
+</#if>
+<#if entity.extensions.length>
+## Extensions
+
+${md.table(["Component", "File"], entity.extensions.map((extension) => [md.plain(extension.component), md.defined("", extension.location, extension.line)]))}
+</#if>
+<#if entity.ecaRules.length>
+## ECA rules
+
+${md.table(["Rule", "On"], entity.ecaRules.map((rule) => [md.link(rule.title, rule.href), md.plain(rule.summary)]))}
+</#if>
+## Used by and uses
+
+${md.mermaid(diagrams.usage)}
+
+### Used by
+
+${md.usage(usedBy)}
+
+### Uses
+
+${md.usage(uses)}

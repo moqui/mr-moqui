@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ADMIN permissions ended: the search store and OpenSearch Dashboards proxies
         (component://framework/data/MoquiSetupData.xml), another user's password without the old one, SFTP and git over
         SSH should SSH be turned back on, telemetry ingest, report files written on the server, and recovery actions and
-        their policies -->
+        their policies, and runtime log and telemetry settings -->
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SearchRemote" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DashboardRemote" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_PASSWORD" fromDate="0" thruDate="1265184000000"/>
@@ -58,4 +58,5 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_SAVE_LOCATION" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER" fromDate="0" thruDate="1265184000000"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER_ADMIN" fromDate="0" thruDate="1265184000000"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_SETTINGS" fromDate="0" thruDate="1265184000000"/>
 </entity-facade-xml>

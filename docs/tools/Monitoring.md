@@ -82,7 +82,7 @@ with an `artifact` override and the receiver limits written out:
 - **`telemetry_enabled=false`** turns it all off.
 - **`sample-ratio`** (`telemetry_sample_ratio`, default `0`) is the share of traces whose child spans are all kept.
   At `0` (roots mode) every request and job root is kept, and the child spans of a trace are kept only when the trace
-  has an error or a slow root (over 1 s) or slow frame; the rest are dropped. At `1` every span is kept. The decision
+  has an error or a slow root (over `slow-root-ms`, default 1000) or slow frame; the rest are dropped. At `1` every span is kept. The decision
   is made from the trace id, so services with the same ratio agree. The sampled flag of an incoming `traceparent` is
   not trusted.
 - **Cost.** With telemetry on, a small service call costs about half as much again as with it off (about 10 → 14 µs
@@ -219,6 +219,7 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Releases | With `MONITOR_INCIDENT`: each service's versions from its release markers, newest first, with the instances reporting each now, its open regressions and a link to Compare with the version before; ReleaseDetail lists the regressions (baseline and candidate values, change, confidence, severity, data quality, where) and the error groups first seen since the release |
 | Incidents | With `MONITOR_INCIDENT`: open incidents (or all, or of a status or service), New incident; IncidentDetail shows severity, status, onset and the cause's status, the ranked causes with what supports and contradicts each (Confirm, Reject), one timeline (releases and changes, regressions, new errors, failing traces, missing telemetry, alerts, decisions, actions, verifications and notes, with links to traces and error groups), the recovery panel (the next safe action, its blast radius, why automation stopped, Approve and Refuse; actions with Mark done, Mark failed, Cancel and Revert) and the regressions |
 | Recovery | The emergency stop, the recovery policies and adapters (changed with `MONITOR_RECOVER_ADMIN`), and the newest actions |
+| Settings | Logging and telemetry settings with their on-disk values, changed for a while with `MONITOR_SETTINGS` ([below](#changing-settings-for-a-while)) |
 | Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
@@ -453,6 +454,43 @@ The shipped `DEFAULT` policy is advisory and only escalates major and critical i
 `contactJson` takes a contact point as alert rules do). No action reverses committed business transactions. The
 public demo ends `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN`.
 
+## Changing settings for a while
+
+Monitor › Settings changes a fixed set of logging and telemetry settings on a running server, without editing the
+conf or restarting, for a while: to see full traces or DEBUG lines of one module while looking into a problem.
+
+- **In memory only.** Each change is for 15 minutes, 1 hour, 4 hours or 24 hours, needs a reason, and expires on its
+  own; Extend sets a new expiry, at most 24 hours from now. A restart forgets every change. Revert to on-disk ends one,
+  Revert all every one.
+- **On disk stays visible.** Each row shows its on-disk value and where it comes from: `conf` (the merged conf:
+  MoquiDefaultConf, the components' MoquiConf, the runtime conf), `default` (the conf leaves it out), `env
+  moqui_log_level`, or `as started` (the console). To keep a change, change it there and deploy (on production a git
+  commit and the normal test and deploy).
+- **Every running instance.** A change is published on the `runtime-settings` cluster topic and applied by every
+  member; each expires it at the same absolute time. An instance that starts later has the on-disk values only.
+- **What can change:**
+  - Logging: the global level (up to DEBUG), the console level, and target rules: a module path (`moqui_core::service`)
+    or dotted target (`moqui.monitor.audit`) and the targets below it at a level up to TRACE. rsipstack stays at WARN.
+    DEBUG and TRACE lines go to the console and the log files, never to `otel_logs`, so they are not in Monitor › Logs.
+  - Traces: `sample-ratio` and `slow-root-ms`.
+  - Artifact types: `spans`, `metrics` and `sample-ratio` of each `telemetry/artifact` type.
+  - Metrics: the `attributes` of each instrument.
+  - Operations: `record` and `max-names`; a change resolves each service's operation again.
+  - Browser: `enabled`, `sample-ratio`, `error-sample-ratio`, `replay-enabled` and `replay-sample-ratio` of
+    `telemetry/browser`; a tab picks a change up on its next page load.
+  - Receiver: `enabled`, `requests-per-minute` and `body-limit` of `telemetry/receiver`.
+- **Not here:** `telemetry enabled` (the worker starts only when it is on at startup), the queue capacity and
+  `concurrent-requests` (fixed at start), retention and the OTLP exporter.
+- **Audit.** Each set, extend, revert and expiry is a WARN line on the `moqui.monitor.audit` target with the user, the
+  key, the on-disk and new values, the expiry and the reason. The instance where it was made also writes a `config`
+  annotation tagged `runtime-override` and the key: a set is a band to its expiry, an extend or an early revert a
+  point. Incidents list them as changes, and dashboards draw them.
+
+Seeing the screen needs Monitor access; changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo
+ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting`,
+`revert#RuntimeSetting` and `revert#AllRuntimeSettings`; the code is `crates/moqui-core/src/live_settings/` and
+`crates/moqui-report/src/settings.rs`.
+
 ## Security
 
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
@@ -468,7 +506,8 @@ public demo ends `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN`.
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
   recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
-  all three. Their views and changes are logged on the `moqui.monitor.audit` target.
+  all three. Changing runtime settings needs `MONITOR_SETTINGS`. Their views and changes are logged on the
+  `moqui.monitor.audit` target.
 
 ## Capacity and loss
 

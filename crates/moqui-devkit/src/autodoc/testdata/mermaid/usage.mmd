@@ -1,0 +1,26 @@
+flowchart LR
+    center[["create#35;Order"]]
+    subgraph used_by_1["Screens (10)"]
+        direction TB
+        used_by_1_1["Screen1"]
+        used_by_1_2["Screen2"]
+        used_by_1_3["Screen3"]
+        used_by_1_4["Screen4"]
+        used_by_1_5["Screen5"]
+        used_by_1_6["Screen6"]
+        used_by_1_7["Screen7"]
+        used_by_1_8["Screen8"]
+        used_by_1_more["+ 2 more"]
+    end
+    used_by_1 --> center
+    subgraph used_by_2["Services (1)"]
+        direction TB
+        used_by_2_1["mantle.order.OrderServices.place#35;Order"]
+    end
+    used_by_2 -.-> center
+    subgraph uses_1["Entities (2)"]
+        direction TB
+        uses_1_1["OrderHeader"]
+        uses_1_2["Order #quot;Item#quot;"]
+    end
+    center --> uses_1

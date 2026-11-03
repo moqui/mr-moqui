@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Export docs (plans/Autodoc.md): the Markdown docs of all or some of the artifacts written into a directory of a root,
+    a site repository's autodoc/ by default, as moqui autodoc writes them. Only the files whose text changed are written;
+    the directory's .autodoc.json lists what was, so a later export can remove the docs of artifacts that are gone, and
+    never a file written by hand. The extend tier, with the checks of every save. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Export docs" default-menu-index="6">
+    <transition name="exportDocs">
+        <actions>
+            <service-call name="org.moqui.devaide.DocServices.export#ArtifactDocs" out-map="exported" in-map="{rootId: rootId,
+                path: path || 'autodoc', kinds: kinds || '', components: components || '', packages: packages || '',
+                includeSource: includeSource == 'true', removeStale: removeStale == 'true'}"/>
+            <if condition="exported &amp;&amp; !ec.message.hasError()">
+                <message type="success">Exported ${exported.docCount} docs to ${rootId}/${exported.path}: ${exported.written} written, ${exported.unchanged} unchanged, ${exported.removed} removed</message>
+                <iterate list="(exported.failures || []).slice(0, 20)" entry="failure">
+                    <message type="warning">${failure.path}: ${failure.message}</message></iterate>
+            </if>
+        </actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.devaide.WorkspaceServices.get#Roots" out-map="rootsInfo"/>
+        <script><![CDATA[
+            // the roots that may take the docs: the site's first, then the others, read-only ones left out
+            rootOptions = (rootsInfo.roots || []).filter((root) => !root.readOnly)
+                .sort((a, b) => (a.upstream === b.upstream ? String(a.label).localeCompare(String(b.label)) : a.upstream ? 1 : -1))
+                .map((root) => ({ id: root.id, label: root.label + (root.upstream ? ' (upstream)' : '') }))
+            componentOptions = ec.factory.getComponentInfoList().map((component) => ({ name: component.name }))
+                .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+            defaultRoot = rootOptions.length ? rootOptions[0].id : ''
+        ]]></script>
+    </actions>
+    <widgets>
+        <label type="p" text="Write the docs into a directory of a repository. Only the docs that changed are written; the directory's .autodoc.json lists them."/>
+        <form-single name="ExportDocs" transition="exportDocs">
+            <field name="rootId"><default-field title="Repository or directory">
+                <drop-down no-current-selected-key="${defaultRoot}"><list-options list="rootOptions" key="${id}" text="${label}"/></drop-down></default-field></field>
+            <field name="path"><default-field title="Directory in it" tooltip="Relative to the repository or directory">
+                <text-line size="40" default-value="autodoc"/></default-field></field>
+            <field name="kinds"><default-field title="Artifacts" tooltip="None checked: all">
+                <check><option key="entity" text="Entities"/><option key="service" text="Services"/><option key="screen" text="Screens"/>
+                    <option key="eca" text="ECA rules"/><option key="rest" text="REST APIs"/></check></default-field></field>
+            <field name="components"><default-field title="Components" tooltip="None chosen: all">
+                <drop-down allow-multiple="true"><list-options list="componentOptions" key="${name}" text="${name}"/></drop-down></default-field></field>
+            <field name="packages"><default-field title="Packages" tooltip="Comma list of prefixes, such as mantle.order, mantle/order or SimpleScreens/Order; empty: all">
+                <text-line size="60"/></default-field></field>
+            <field name="includeSource"><default-field title="Service definitions">
+                <check><option key="true" text="Put each service's definition in its doc"/></check></default-field></field>
+            <field name="removeStale"><default-field title="Stale docs">
+                <check><option key="true" text="Remove docs this tool wrote whose artifacts are gone"/></check></default-field></field>
+            <field name="submitButton"><default-field title="Export docs"><submit btn-type="primary"/></default-field></field>
+            <field-layout>
+                <field-row><field-ref name="rootId"/><field-ref name="path"/></field-row>
+                <field-ref name="kinds"/>
+                <field-row><field-ref name="components"/><field-ref name="packages"/></field-row>
+                <field-row><field-ref name="includeSource"/><field-ref name="removeStale"/></field-row>
+                <field-ref name="submitButton"/>
+            </field-layout>
+        </form-single>
+    </widgets>
+</screen>

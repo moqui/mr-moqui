@@ -1,6 +1,6 @@
 //! Authorized report queries and shared columnar results. No telemetry SDK types cross this API. Beside them, the report
 //! definitions ([`definitions`]), dashboard alerts ([`alert`]), annotations and releases ([`annotations`]), scheduled
-//! delivery ([`schedule`]) and the monitoring sources' keys ([`monitor`]).
+//! delivery ([`schedule`]), the monitoring sources' keys ([`monitor`]) and Monitor › Settings ([`settings`]).
 //!
 //! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
 //! below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
@@ -16,6 +16,7 @@ moqui_core::extension::submit! {
             regression::register(registry)?;
             incident::register(registry)?;
             recovery::register(registry)?;
+            settings::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -42,6 +43,7 @@ pub mod recovery;
 pub mod regression;
 pub mod repeat;
 pub mod schedule;
+pub mod settings;
 use moqui_core::search::time;
 
 use indexmap::IndexMap;
@@ -2985,6 +2987,7 @@ mod tests {
         crate::regression::register(&mut registry).unwrap();
         crate::incident::register(&mut registry).unwrap();
         crate::recovery::register(&mut registry).unwrap();
+        crate::settings::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");

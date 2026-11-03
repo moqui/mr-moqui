@@ -95,13 +95,19 @@
         if (body && body.classList) body.classList.toggle("m-density-handheld", density === "handheld");
         moqui.applyDensity(moqui.densityPreference);
     };
-    // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance has the color schemes of the theme, the fonts and the user's THEME_*
-    // values. A scheme is a style sheet (the apps colorSchemeCss transition) linked as m-color-scheme, none for one without colors;
-    // a font sets its --m-font-* token on the html element and links its style sheet; the sizes and line height set tokens there too;
-    // the accent color is --q-primary on the body (!important, over the scheme and the Quasar brand) when it is a CSS color; motion,
-    // links and corners are body classes. An empty or unknown value is the default.
+    // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance is what org.moqui.impl.ShellServices.get#Appearance built
+    // for the theme (after its STRT_APPEARANCE_SERVICE extensions): the color schemes, the fonts, the default scheme, the policy and the
+    // user's THEME_* values it allows. The scheme shown is the user's, else the theme's default: a style sheet (the apps colorSchemeCss
+    // transition) linked as m-color-scheme, none for one without colors. A font sets its --m-font-* token on the html element and links
+    // its style sheet; with no font of the user's the scheme's own (its fonts) counts. The sizes and line height set tokens there too.
+    // The accent colors (THEME_PRIMARY_COLOR, and THEME_PRIMARY_COLOR_DARK for dark mode, the light one when it is empty) are --q-primary
+    // in the m-accent style, over the scheme and the Quasar brand, when they are CSS colors. THEME_COLOR_OVERRIDES is JSON of
+    // {token: {light, dark}} (a value per mode, either may be missing): the user's own tokens over the scheme (m-scheme-colors), with
+    // the rules of a scheme's sheet.
+    // Motion, links and corners are body classes. An empty or unknown value is the default. A key the policy locks
+    // (moqui.appearanceAllowed) has no control in the page, and the server refuses it.
     moqui.appearanceKeys = ["THEME_COLOR_SCHEME", "THEME_FONT_BODY", "THEME_FONT_HEADING", "THEME_FONT_MONO", "THEME_SIZE_SMALL", "THEME_SIZE_LARGE",
-        "THEME_PRIMARY_COLOR", "THEME_MOTION", "THEME_LINE_HEIGHT", "THEME_LINKS_UNDERLINE", "THEME_RADIUS"];
+        "THEME_PRIMARY_COLOR", "THEME_PRIMARY_COLOR_DARK", "THEME_COLOR_OVERRIDES", "THEME_MOTION", "THEME_LINE_HEIGHT", "THEME_LINKS_UNDERLINE", "THEME_RADIUS"];
     moqui.appearanceSizes = ["0.9", "1", "1.1", "1.25", "1.4"];
     moqui.isCssColor = (value) => typeof value === "string" &&
         /^(#[0-9a-fA-F]{3,8}|(rgba?|hsla?|oklch|oklab|lab|lch)\([0-9a-zA-Z.,%\s/+-]{1,80}\))$/.test(value.trim());
@@ -111,8 +117,41 @@
         const appearance = config.appearance;
         ["colorSchemes", "fonts"].forEach((name) => { if (!Array.isArray(appearance[name])) appearance[name] = []; });
         if (!moqui.isPlainObject(appearance.values)) appearance.values = {};
+        if (!moqui.isPlainObject(appearance.policy)) appearance.policy = {};
         return appearance;
     };
+    // whether the theme's policy lets the user change the preference `key` (its policy.lockedKeys)
+    moqui.appearanceAllowed = (key) => {
+        const locked = appearanceConfig().policy.lockedKeys;
+        return !(Array.isArray(locked) && locked.includes(key));
+    };
+    // the scheme shown: the user's when it is one of the theme's, else the theme's default
+    moqui.appearanceScheme = () => {
+        const appearance = appearanceConfig();
+        const find = (id) => id ? appearance.colorSchemes.find((scheme) => scheme.id === id) : null;
+        return find(appearance.values.THEME_COLOR_SCHEME) || find(appearance.defaultSchemeId) || null;
+    };
+    // The declarations of one mode's tokens, as a scheme's sheet has them (crates/moqui-core/src/screen/sri/appearance.rs): a brand
+    // color as --q-* !important, another as --m-*, in dark mode the panel and page also as Quasar's dark and the link giving way to the
+    // dark accent. A name or value that could end its declaration is left out.
+    moqui.appearanceBrand = ["primary", "secondary", "accent", "positive", "negative", "info", "warning"];
+    moqui.schemeColorDecls = (colors, dark) => {
+        const decls = [];
+        if (!moqui.isPlainObject(colors)) return decls;
+        Object.keys(colors).sort().forEach((name) => {
+            const value = String(colors[name] === null || colors[name] === undefined ? "" : colors[name]).trim();
+            if (!/^[a-z][a-z0-9-]{0,40}$/.test(name) || !value || /[;{}<>\\"'!]/.test(value)) return;
+            if (moqui.appearanceBrand.includes(name)) decls.push("--q-" + name + ":" + value + " !important");
+            else if (dark && name === "link") decls.push("--m-link:var(--m-accent-dark-link, " + value + ")");
+            else decls.push("--m-" + name + ":" + value);
+            if (dark && name === "panel-bg") decls.push("--q-dark:" + value + " !important");
+            if (dark && name === "page-bg") decls.push("--q-dark-page:" + value + " !important");
+        });
+        return decls;
+    };
+    // html body: over the scheme's body selectors whatever the order of the sheets
+    const modeCss = (light, dark) => (light.length ? "html body:not(.body--dark) { " + light.join("; ") + "; }\n" : "") +
+        (dark.length ? "html body.body--dark { " + dark.join("; ") + "; }\n" : "");
     const setStyleLink = (id, href) => {
         const doc = root.document;
         if (!doc || !doc.getElementById) return;
@@ -125,6 +164,18 @@
             doc.head.appendChild(link);
         }
         if (link.getAttribute("href") !== href) link.setAttribute("href", href);
+    };
+    const setStyleText = (id, css) => {
+        const doc = root.document;
+        if (!doc || !doc.getElementById) return;
+        let style = doc.getElementById(id);
+        if (!css) { if (style) style.remove(); return; }
+        if (!style) {
+            style = doc.createElement("style");
+            style.id = id;
+            doc.head.appendChild(style);
+        }
+        if (style.textContent !== css) style.textContent = css;
     };
     const setToken = (element, name, value, important) => {
         if (!element || !element.style) return;
@@ -140,23 +191,46 @@
         const text = value === null || value === undefined ? "" : String(value);
         if (text) appearance.values[key] = text;
         else delete appearance.values[key];
-        const fontRole = { THEME_FONT_BODY: "body", THEME_FONT_HEADING: "heading", THEME_FONT_MONO: "mono" }[key];
+        const fontRoles = { THEME_FONT_BODY: "body", THEME_FONT_HEADING: "heading", THEME_FONT_MONO: "mono" };
+        const applyFont = (fontKey) => {
+            const role = fontRoles[fontKey];
+            const scheme = moqui.appearanceScheme();
+            const id = appearance.values[fontKey] || (scheme && scheme.fonts && scheme.fonts[role]) || "";
+            const font = id ? appearance.fonts.find((option) => option.id === id) : null;
+            setToken(html, "--m-font-" + role, font && font.family);
+            setStyleLink("m-font-" + role, font && font.stylesheet);
+        };
         if (key === "THEME_COLOR_SCHEME") {
-            setStyleLink("m-color-scheme", moqui.colorSchemeHref(appearance.colorSchemes.find((scheme) => scheme.id === text)));
-        } else if (fontRole) {
-            const font = appearance.fonts.find((option) => option.id === text);
-            setToken(html, "--m-font-" + fontRole, font && font.family);
-            setStyleLink("m-font-" + fontRole, font && font.stylesheet);
+            setStyleLink("m-color-scheme", moqui.colorSchemeHref(moqui.appearanceScheme()));
+            // the scheme's own fonts follow it
+            Object.keys(fontRoles).forEach(applyFont);
+        } else if (fontRoles[key]) {
+            applyFont(key);
         } else if (key === "THEME_SIZE_SMALL" || key === "THEME_SIZE_LARGE") {
             const scale = moqui.appearanceSizes.includes(text) && text !== "1" ? text : "";
             setToken(html, key === "THEME_SIZE_SMALL" ? "--m-fs-small-scale" : "--m-fs-large-scale", scale);
         } else if (key === "THEME_LINE_HEIGHT") {
             setToken(html, "--m-line-height", text === "relaxed" ? "1.75" : "");
-        } else if (key === "THEME_PRIMARY_COLOR") {
-            const color = moqui.isCssColor(text) ? text.trim() : "";
-            if (text && !color) console.info("The THEME_PRIMARY_COLOR preference is not a CSS color, ignored");
-            setToken(body, "--q-primary", color, true);
-            setToken(body, "--m-accent-dark-link", color && "color-mix(in srgb, " + color + " 60%, white)");
+        } else if (key === "THEME_PRIMARY_COLOR" || key === "THEME_PRIMARY_COLOR_DARK") {
+            const color = (name) => {
+                const value = appearance.values[name] || "";
+                if (value && !moqui.isCssColor(value)) console.info("The " + name + " preference is not a CSS color, ignored");
+                return moqui.isCssColor(value) ? value.trim() : "";
+            };
+            const light = color("THEME_PRIMARY_COLOR"), dark = color("THEME_PRIMARY_COLOR_DARK") || light;
+            setStyleText("m-accent", modeCss(light ? ["--q-primary:" + light + " !important"] : [],
+                dark ? ["--q-primary:" + dark + " !important", "--m-accent-dark-link:color-mix(in srgb, " + dark + " 60%, white)"] : []));
+        } else if (key === "THEME_COLOR_OVERRIDES") {
+            let overrides = null;
+            try { overrides = text ? JSON.parse(text) : null; } catch (e) { console.info("The THEME_COLOR_OVERRIDES preference is not JSON, ignored"); }
+            const light = {}, dark = {};
+            if (moqui.isPlainObject(overrides)) Object.keys(overrides).forEach((name) => {
+                const entry = overrides[name];
+                if (!moqui.isPlainObject(entry)) return;
+                if (entry.light) light[name] = entry.light;
+                if (entry.dark) dark[name] = entry.dark;
+            });
+            setStyleText("m-scheme-colors", modeCss(moqui.schemeColorDecls(light, false), moqui.schemeColorDecls(dark, true)));
         } else if (body && body.classList) {
             if (key === "THEME_MOTION") {
                 body.classList.toggle("m-motion-reduce", text === "reduce");
@@ -3246,6 +3320,20 @@
     });
 
     // The text of the element is the diagram. Mermaid 11 draws it with mermaid.run into an element that is not Vue's.
+    // Mermaid, loaded on first use: run(nodes, config) draws each node's text (a pre whose text is the diagram) in place, with
+    // strict security unless the config says otherwise; one call at a time, as initialize is global.
+    let mermaidQueue = Promise.resolve();
+    moqui.mermaid = {
+        load() { return moqui.loadScript("/libs/mermaid/mermaid.min.js", null, () => !!root.mermaid); },
+        run(nodes, config) {
+            const next = mermaidQueue.then(() => moqui.mermaid.load()).then(() => {
+                root.mermaid.initialize(Object.assign({ startOnLoad: false, securityLevel: "strict" }, config));
+                return root.mermaid.run({ nodes });
+            });
+            mermaidQueue = next.catch(() => {});
+            return next;
+        }
+    };
     component("m-mermaid", {
         name: "mMermaid",
         // The diagram comes in the text prop: the Vue compiler condenses the whitespace of slot content, and a diagram
@@ -3253,14 +3341,11 @@
         props: { text: String, config: { type: Object, default: () => ({ startOnLoad: false, securityLevel: "strict" }) }, height: { type: String, default: "400px" }, width: { type: String, default: "100%" } },
         template: '<div class="mermaid-container" :style="{height:height,width:width}"><pre ref="source" style="display:none;"><slot></slot></pre><div ref="target"></div></div>',
         mounted() {
-            moqui.loadScript("/libs/mermaid/mermaid.min.js", null, () => !!root.mermaid).then(() => {
-                const diagram = root.document.createElement("pre");
-                diagram.className = "mermaid";
-                diagram.textContent = (this.text || this.$refs.source.textContent).trim();
-                this.$refs.target.appendChild(diagram);
-                root.mermaid.initialize(Object.assign({ startOnLoad: false, securityLevel: "strict" }, this.config));
-                return root.mermaid.run({ nodes: [diagram] });
-            }).catch((err) => console.error("m-mermaid: " + err));
+            const diagram = root.document.createElement("pre");
+            diagram.className = "mermaid";
+            diagram.textContent = (this.text || this.$refs.source.textContent).trim();
+            this.$refs.target.appendChild(diagram);
+            moqui.mermaid.run([diagram], this.config).catch((err) => console.error("m-mermaid: " + err));
         }
     });
 
@@ -7012,6 +7097,11 @@
                         const link = md.resolve(token.href, opts, { image: true });
                         return '<img src="' + mdAttr(link.href) + '" alt="' + mdAttr(token.text) + '"' + (token.title ? ' title="' + mdAttr(token.title) + '"' : "") + ">";
                     },
+                    // a mermaid fence: its text in a pre that m-markdown draws after the render (mermaid false: a code block)
+                    code(token) {
+                        if (opts.mermaid === false || !/^mermaid(\s|$)/i.test(String(token.lang || ""))) return false;
+                        return '<pre class="m-md-mermaid">' + mdAttr(token.text) + "</pre>\n";
+                    },
                     // escapeHtml (a text that never needs raw HTML, such as an agent's answer): raw HTML is shown as text
                     html(token) {
                         return opts.escapeHtml ? mdAttr(token.text !== undefined ? token.text : token.raw) : false;
@@ -7044,17 +7134,24 @@
     ]).catch((err) => { markdownLoad = null; throw err; }));
     component("m-markdown", {
         name: "mMarkdown",
-        props: { id: String, text: String, basePath: String, resolveLink: Function, headingPrefix: { type: String, default: "md-" }, stripTitle: String, wikiLinks: Boolean },
+        // mermaid: draw mermaid fences as diagrams (false: code blocks); copyable: an icon button that copies the markdown
+        props: { id: String, text: String, basePath: String, resolveLink: Function, headingPrefix: { type: String, default: "md-" }, stripTitle: String, wikiLinks: Boolean,
+            mermaid: { type: Boolean, default: true }, copyable: Boolean },
         // outline: the headings [{id, level, text}] once rendered; rendered: the root element; link: {href, event, anchor, preventDefault()}
         // before an application link is followed through the shell (preventDefault: the host follows it)
         emits: ["outline", "rendered", "link"],
         data() { return { html: "", failed: false, loaded: false }; },
         template:
-            '<div class="m-markdown" :id="id" @click="onClick">' +
+            '<div class="m-markdown" :class="{\'m-markdown-copyable\': copyable}" :id="id" @click="onClick">' +
+                '<q-btn v-if="copyable" class="m-markdown-copy" flat round dense size="sm" icon="sym_o_content_copy" :aria-label="copyLabel" @click.stop="copy">' +
+                    '<q-tooltip>{{copyLabel}}</q-tooltip></q-btn>' +
                 '<div v-if="failed" class="m-markdown-plain">{{text}}</div>' +
                 '<div v-else class="m-markdown-body" v-html="html"></div>' +
             '</div>',
-        computed: { renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : ""].join("\u0000"); } },
+        computed: {
+            renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : "", this.mermaid ? "m" : ""].join("\u0000"); },
+            copyLabel() { return moqui.l10n ? moqui.l10n.localize("Copy Markdown") : "Copy Markdown"; }
+        },
         watch: { renderKey() { this.render(); } },
         mounted() { this.render(); },
         methods: {
@@ -7063,12 +7160,35 @@
                 loadMarkdown().then(() => {
                     if (text !== this.text) return;
                     const md = moqui.markdown;
-                    const out = md.render(root.marked, text, { basePath: this.basePath, resolveLink: this.resolveLink, headingPrefix: this.headingPrefix, stripTitle: this.stripTitle, wikiLinks: this.wikiLinks });
+                    const out = md.render(root.marked, text, { basePath: this.basePath, resolveLink: this.resolveLink, headingPrefix: this.headingPrefix, stripTitle: this.stripTitle, wikiLinks: this.wikiLinks, mermaid: this.mermaid });
                     this.failed = false;
                     this.html = md.sanitize(root.DOMPurify, out.html);
                     this.$emit("outline", out.outline);
-                    this.$nextTick(() => this.$emit("rendered", this.$el));
+                    this.$nextTick(() => { this.drawDiagrams(text); this.$emit("rendered", this.$el); });
                 }, (err) => { console.warn("m-markdown: Marked or DOMPurify did not load", err); this.failed = true; });
+            },
+            // each mermaid fence drawn on its own, so one that does not parse stays as its text (with a warning) and the rest are drawn
+            drawDiagrams(text) {
+                const nodes = this.$el && this.$el.querySelectorAll ? Array.from(this.$el.querySelectorAll("pre.m-md-mermaid")) : [];
+                if (!nodes.length) return Promise.resolve();
+                const config = { theme: this.$q && this.$q.dark && this.$q.dark.isActive ? "dark" : "default" };
+                return nodes.reduce((done, node) => done.then(() => {
+                    if (text !== this.text || !node.isConnected) return null;
+                    const source = node.textContent;
+                    return moqui.mermaid.run([node], config).then(() => node.classList.add("m-md-mermaid-drawn"), (err) => {
+                        console.warn("m-markdown: a mermaid diagram did not draw", err);
+                        node.removeAttribute("data-processed");
+                        node.textContent = source;
+                        node.classList.add("m-md-mermaid-failed");
+                    });
+                }), Promise.resolve());
+            },
+            copy() {
+                const clipboard = root.navigator && root.navigator.clipboard;
+                if (!clipboard) return;
+                clipboard.writeText(this.text || "").then(() => {
+                    if (this.$q && this.$q.notify) this.$q.notify({ message: moqui.l10n ? moqui.l10n.localize("Copied") : "Copied", type: "positive", timeout: 1200 });
+                }, (err) => console.warn("m-markdown: the markdown was not copied", err));
             },
             scrollTo(id) {
                 const el = this.$el && this.$el.querySelector ? this.$el.querySelector('[id="' + String(id).replace(/["\\]/g, "") + '"]') : null;
@@ -8467,7 +8587,7 @@
 
     // The Appearance dialog of the account menu (docs/ui/Qvt-Client.md, Appearance): each choice applies at once and is saved as the user's
     // preference (QUASAR_DARK, SHELL_DENSITY and the THEME_* keys); Reset to defaults clears the THEME_* keys. A scheme card shows its
-    // light and dark colors, the theme's own scheme (no colors) the style sheet's defaults.
+    // light and dark colors, the theme's own scheme (no colors) the style sheet's defaults. A choice the theme's policy locks is not shown.
     moqui.appearanceSwatchDefaults = { light: { primary: "#1976d2", "page-bg": "#f4f6f8", "panel-bg": "#ffffff", text: "#000000" },
         dark: { primary: "#1976d2", "page-bg": "#121212", "panel-bg": "#1d1d1d", text: "#ffffff" } };
     component("m-appearance-dialog", {
@@ -8476,10 +8596,10 @@
         template:
             '<m-dialog :model-value="$root.appearanceShow" @update:model-value="$root.appearanceShow = $event" id="m-appearance" :title="labels.appearance" width="560">' +
                 '<div class="q-gutter-y-md">' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.appearanceMode}}</div>' +
+                    '<div v-if="allowed(\'QUASAR_DARK\')"><div class="text-subtitle2 q-mb-xs">{{labels.appearanceMode}}</div>' +
                         '<q-btn-toggle :model-value="darkMode" @update:model-value="setDark" no-caps unelevated toggle-color="primary" class="m-appearance-toggle" ' +
                             ':options="[{label:labels.modeLight,value:false,icon:\'light_mode\'},{label:labels.modeDark,value:true,icon:\'dark_mode\'},{label:labels.modeAuto,value:\'auto\',icon:\'brightness_auto\'}]"></q-btn-toggle></div>' +
-                    '<div v-if="schemes.length"><div class="text-subtitle2 q-mb-xs">{{labels.colorScheme}}</div>' +
+                    '<div v-if="schemes.length && allowed(\'THEME_COLOR_SCHEME\')"><div class="text-subtitle2 q-mb-xs">{{labels.colorScheme}}</div>' +
                         '<div class="m-appearance-schemes">' +
                             '<button v-for="scheme in schemes" :key="scheme.id" type="button" class="m-appearance-scheme" :class="{\'m-appearance-scheme--on\': scheme.id === schemeId}" ' +
                                     ':aria-pressed="scheme.id === schemeId ? \'true\' : \'false\'" @click="set(\'THEME_COLOR_SCHEME\', scheme.id)">' +
@@ -8489,33 +8609,37 @@
                                 '<span class="m-appearance-scheme-label">{{scheme.description}}</span>' +
                             '</button>' +
                         '</div></div>' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.accentColor}}</div>' +
-                        '<div class="row items-center q-gutter-x-sm"><input type="color" class="m-appearance-color" :value="accentInput" @change="set(\'THEME_PRIMARY_COLOR\', $event.target.value)" :aria-label="labels.accentColor">' +
-                            '<q-btn v-if="value(\'THEME_PRIMARY_COLOR\')" flat dense no-caps :label="labels.schemeColor" @click="set(\'THEME_PRIMARY_COLOR\', \'\')"></q-btn></div></div>' +
-                    '<div v-if="fonts.length"><div class="text-subtitle2 q-mb-xs">{{labels.fonts}}</div>' +
+                    '<div v-if="accentRoles.length"><div class="text-subtitle2 q-mb-xs">{{labels.accentColor}}</div>' +
+                        '<div class="row items-center q-gutter-x-md">' +
+                            '<label v-for="accent in accentRoles" :key="accent.key" class="row items-center q-gutter-x-xs">' +
+                                '<input type="color" class="m-appearance-color" :value="accentInput(accent)" @change="set(accent.key, $event.target.value)" :aria-label="labels.accentColor + \' \' + accent.label">' +
+                                '<span class="text-caption">{{accent.label}}</span></label>' +
+                            '<q-btn v-if="accentRoles.some((accent) => value(accent.key))" flat dense no-caps :label="labels.schemeColor" ' +
+                                '@click="accentRoles.forEach((accent) => set(accent.key, \'\'))"></q-btn></div></div>' +
+                    '<div v-if="fonts.length && fontRoles.length"><div class="text-subtitle2 q-mb-xs">{{labels.fonts}}</div>' +
                         '<div class="row q-col-gutter-sm">' +
                             '<div v-for="role in fontRoles" :key="role.key" class="col-12 col-sm-4">' +
                                 '<q-select dense outlined emit-value map-options :label="role.label" :options="role.options" :model-value="value(role.key)" @update:model-value="set(role.key, $event)">' +
                                     '<template v-slot:option="scope"><q-item v-bind="scope.itemProps"><q-item-section :style="{fontFamily: scope.opt.family || null}">{{scope.opt.label}}</q-item-section></q-item></template>' +
                                 '</q-select></div>' +
                         '</div></div>' +
-                    '<div><div class="text-subtitle2 q-mb-xs">{{labels.textSize}}</div>' +
+                    '<div v-if="sizeRoles.length"><div class="text-subtitle2 q-mb-xs">{{labels.textSize}}</div>' +
                         '<div v-for="size in sizeRoles" :key="size.key" class="q-mb-xs"><div class="text-caption">{{size.label}}</div>' +
                             '<q-btn-toggle :model-value="value(size.key) || \'1\'" @update:model-value="set(size.key, $event === \'1\' ? \'\' : $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="sizeOptions"></q-btn-toggle></div></div>' +
                     '<div class="row q-col-gutter-md">' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.density}}</div>' +
+                        '<div v-if="allowed(\'SHELL_DENSITY\')" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.density}}</div>' +
                             '<q-btn-toggle :model-value="density" @update:model-value="setDensity" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.densityComfortable,value:\'comfortable\'},{label:labels.densityCompact,value:\'compact\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.corners}}</div>' +
+                        '<div v-if="allowed(\'THEME_RADIUS\')" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.corners}}</div>' +
                             '<q-btn-toggle :model-value="value(\'THEME_RADIUS\')" @update:model-value="set(\'THEME_RADIUS\', $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.cornersDefault,value:\'\'},{label:labels.cornersSquare,value:\'square\'},{label:labels.cornersRound,value:\'round\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.motion}}</div>' +
+                        '<div v-if="allowed(\'THEME_MOTION\')" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.motion}}</div>' +
                             '<q-btn-toggle :model-value="value(\'THEME_MOTION\')" @update:model-value="set(\'THEME_MOTION\', $event)" dense no-caps unelevated toggle-color="primary" ' +
                                 ':options="[{label:labels.motionAuto,value:\'\'},{label:labels.motionReduce,value:\'reduce\'},{label:labels.motionFull,value:\'full\'}]"></q-btn-toggle></div>' +
-                        '<div class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.readability}}</div>' +
-                            '<q-toggle dense :label="labels.lineRelaxed" :model-value="value(\'THEME_LINE_HEIGHT\') === \'relaxed\'" @update:model-value="set(\'THEME_LINE_HEIGHT\', $event ? \'relaxed\' : \'\')"></q-toggle><br>' +
-                            '<q-toggle dense :label="labels.linksUnderline" :model-value="value(\'THEME_LINKS_UNDERLINE\') === \'true\'" @update:model-value="set(\'THEME_LINKS_UNDERLINE\', $event ? \'true\' : \'\')"></q-toggle></div>' +
+                        '<div v-if="allowed(\'THEME_LINE_HEIGHT\') || allowed(\'THEME_LINKS_UNDERLINE\')" class="col-12 col-sm-6"><div class="text-subtitle2 q-mb-xs">{{labels.readability}}</div>' +
+                            '<template v-if="allowed(\'THEME_LINE_HEIGHT\')"><q-toggle dense :label="labels.lineRelaxed" :model-value="value(\'THEME_LINE_HEIGHT\') === \'relaxed\'" @update:model-value="set(\'THEME_LINE_HEIGHT\', $event ? \'relaxed\' : \'\')"></q-toggle><br></template>' +
+                            '<q-toggle v-if="allowed(\'THEME_LINKS_UNDERLINE\')" dense :label="labels.linksUnderline" :model-value="value(\'THEME_LINKS_UNDERLINE\') === \'true\'" @update:model-value="set(\'THEME_LINKS_UNDERLINE\', $event ? \'true\' : \'\')"></q-toggle></div>' +
                     '</div>' +
                     '<div class="row justify-between items-center"><q-btn flat dense no-caps color="negative" :label="labels.resetDefaults" @click="reset"></q-btn>' +
                         '<q-btn unelevated no-caps color="primary" :label="labels.done" v-close-popup></q-btn></div>' +
@@ -8526,28 +8650,37 @@
             appearance() { return appearanceConfig(); },
             schemes() { return this.appearance.colorSchemes; },
             fonts() { return this.appearance.fonts; },
-            schemeId() { this.version; return this.value("THEME_COLOR_SCHEME") || (this.schemes[0] && this.schemes[0].id) || ""; },
+            schemeId() { this.version; const scheme = moqui.appearanceScheme(); return (scheme && scheme.id) || (this.schemes[0] && this.schemes[0].id) || ""; },
             darkMode() { this.version; return this.$q.dark.mode; },
             density() { this.version; const config = qvt.config || moqui.config || {}; return config.density === "compact" ? "compact" : "comfortable"; },
-            accentInput() {
-                const color = this.value("THEME_PRIMARY_COLOR");
-                if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
-                const doc = root.document;
-                const current = doc && root.getComputedStyle ? root.getComputedStyle(doc.body).getPropertyValue("--q-primary").trim() : "";
-                return /^#[0-9a-fA-F]{6}$/.test(current) ? current : "#1976d2";
+            // the light and dark accent colors the policy allows
+            accentRoles() {
+                return [{ key: "THEME_PRIMARY_COLOR", mode: "light", label: this.labels.modeLight }, { key: "THEME_PRIMARY_COLOR_DARK", mode: "dark", label: this.labels.modeDark }]
+                    .filter((accent) => this.allowed(accent.key));
             },
             fontRoles() {
                 const options = (kinds) => [{ label: this.labels.themeDefault, value: "", family: "" }].concat(this.fonts.filter((font) => kinds.includes(font.kind))
                     .map((font) => ({ label: font.description, value: font.id, family: font.family })));
                 return [{ key: "THEME_FONT_BODY", label: this.labels.fontBody, options: options(["sans", "serif"]) },
                     { key: "THEME_FONT_HEADING", label: this.labels.fontHeading, options: options(["sans", "serif"]) },
-                    { key: "THEME_FONT_MONO", label: this.labels.fontMono, options: options(["mono"]) }];
+                    { key: "THEME_FONT_MONO", label: this.labels.fontMono, options: options(["mono"]) }].filter((role) => this.allowed(role.key));
             },
-            sizeRoles() { return [{ key: "THEME_SIZE_SMALL", label: this.labels.sizeSmall }, { key: "THEME_SIZE_LARGE", label: this.labels.sizeLarge }]; },
+            sizeRoles() {
+                return [{ key: "THEME_SIZE_SMALL", label: this.labels.sizeSmall }, { key: "THEME_SIZE_LARGE", label: this.labels.sizeLarge }]
+                    .filter((size) => this.allowed(size.key));
+            },
             sizeOptions() { return moqui.appearanceSizes.map((size) => ({ label: Math.round(Number(size) * 100) + "%", value: size })); }
         },
         methods: {
             value(key) { this.version; return this.appearance.values[key] || ""; },
+            allowed(key) { return moqui.appearanceAllowed(key); },
+            // the color input of an accent: the user's, else the light one for dark, else the scheme's primary of that mode
+            accentInput(accent) {
+                const hex = (color) => /^#[0-9a-fA-F]{6}$/.test(color || "") ? color : "";
+                const scheme = moqui.appearanceScheme();
+                return hex(this.value(accent.key)) || (accent.mode === "dark" && hex(this.value("THEME_PRIMARY_COLOR"))) ||
+                    hex(scheme && scheme[accent.mode] && scheme[accent.mode].primary) || moqui.appearanceSwatchDefaults[accent.mode].primary;
+            },
             swatch(scheme, mode, name) { return (scheme[mode] && scheme[mode][name]) || moqui.appearanceSwatchDefaults[mode][name]; },
             set(key, value) {
                 const text = value === null || value === undefined ? "" : String(value);
@@ -8561,7 +8694,7 @@
                 this.version++;
             },
             setDensity(value) { this.set("SHELL_DENSITY", value); },
-            reset() { moqui.appearanceKeys.forEach((key) => { if (this.appearance.values[key]) this.set(key, ""); }); }
+            reset() { moqui.appearanceKeys.forEach((key) => { if (this.appearance.values[key] && this.allowed(key)) this.set(key, ""); }); }
         }
     });
 
@@ -8702,13 +8835,14 @@
         "                </q-item>\n" +
         // notifications on this device: desktop notifications and Web Push (js/WebrootPush.js), turned on by this click only
         "                <m-push-item v-if=\"pushOn\"></m-push-item>\n" +
-        "                <q-item tag=\"label\" clickable>\n" +
+        "                <q-item v-if=\"appearanceAllowed('QUASAR_DARK')\" tag=\"label\" clickable>\n" +
         "                    <q-item-section avatar><q-icon name=\"dark_mode\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.switchDarkLight}}</q-item-section>\n" +
         "                    <q-item-section side><q-toggle dense :model-value=\"$q.dark.isActive\" @update:model-value=\"switchDarkLight()\"></q-toggle></q-item-section>\n" +
         "                </q-item>\n" +
         // the Appearance dialog: mode, color scheme, fonts, text sizes and the rest (m-appearance-dialog)
-        "                <q-item id=\"m-account-appearance\" clickable v-close-popup @click=\"appearanceShow = true\">\n" +
+        // shown when the theme's policy leaves the user something to change
+        "                <q-item v-if=\"appearanceMenuAllowed()\" id=\"m-account-appearance\" clickable v-close-popup @click=\"appearanceShow = true\">\n" +
         "                    <q-item-section avatar><q-icon name=\"palette\"></q-icon></q-item-section>\n" +
         "                    <q-item-section>{{labels.appearance}}…</q-item-section>\n" +
         "                </q-item>\n" +
@@ -9130,6 +9264,8 @@
                 const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
                 Promise.all([crypto, push]).then(() => { root.location.href = href; });
             },
+            appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
+            appearanceMenuAllowed() { return ["QUASAR_DARK", "SHELL_DENSITY"].concat(moqui.appearanceKeys).some((key) => moqui.appearanceAllowed(key)); },
             switchDarkLight() {
                 this.$q.dark.toggle();
                 this.setPreference("QUASAR_DARK", this.$q.dark.isActive ? "true" : "false");
@@ -9631,6 +9767,10 @@
         const config = given || JSON.parse(doc.getElementById("moqui-config").textContent);
         qvt.config = config;
         moqui.config = config;
+        // The dev/test instance marker (the webapp_dev_marker_color conf property): a small square in the corner of the window
+        // (the style sheet draws it for a dev or test body class); an empty or invalid color turns it off. It never overrides
+        // the theme's colors.
+        if (config.devMarker && moqui.isCssColor(config.devMarker)) doc.body.style.setProperty("--m-dev-marker", config.devMarker.trim());
         // The session token now, not at the mount: the mount waits for the language catalog, and a page script (or a test)
         // that posts once the document has loaded would otherwise send an empty token and get a 401.
         if (config.sessionToken) moqui.sessionToken = config.sessionToken;

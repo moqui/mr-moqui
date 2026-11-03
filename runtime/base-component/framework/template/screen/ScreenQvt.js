@@ -2068,14 +2068,15 @@
         };
 
         // markdown-view: an m-markdown with the markdown as an attribute value (never template text, so nothing in it is compiled), the
-        // base path and the heading options. Nothing for a false condition.
+        // base path, the heading options and the copy button. Nothing for a false condition.
         const markdownView = (n) => {
             if (at(n, "condition") && !cond(at(n, "condition"))) return;
             const value = (text) => (text && text !== "null" ? text : null);
             w("<m-markdown" + A({
                 id: nodeId(n) || null, text: value(xn(at(n, "text"))) || "", "base-path": value(xn(at(n, "base-path"))),
                 "heading-prefix": at(n, "heading-prefix") && at(n, "heading-prefix") !== "md-" ? xn(at(n, "heading-prefix")) : null,
-                "strip-title": value(x(at(n, "strip-title"))), ":wiki-links": at(n, "wiki-links") === "true" ? "true" : null, class: value(xn(at(n, "style")))
+                "strip-title": value(x(at(n, "strip-title"))), ":wiki-links": at(n, "wiki-links") === "true" ? "true" : null,
+                ":copyable": at(n, "copy") === "true" ? "true" : null, class: value(xn(at(n, "style")))
             }) + "></m-markdown>\n");
         };
 

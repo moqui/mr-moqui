@@ -61,6 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DAA_DDL" enumTypeId="DevAideAction" description="DDL on a dev database"/>
     <moqui.basic.Enumeration enumId="DAA_LOAD" enumTypeId="DevAideAction" description="Data file loaded"/>
     <moqui.basic.Enumeration enumId="DAA_TRY" enumTypeId="DevAideAction" description="Service run for real"/>
+    <moqui.basic.Enumeration enumId="DAA_EXPORT" enumTypeId="DevAideAction" description="Docs exported"/>
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>

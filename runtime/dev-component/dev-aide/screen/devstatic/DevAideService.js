@@ -485,6 +485,7 @@
       <q-tab name="parameters" :label="'Parameters ' + inParameters.length + ' in, ' + service.outParameters.length + ' out'"></q-tab>
       <q-tab name="try" label="Try" id="DevTryTab"></q-tab>
       <q-tab name="rules" :label="'SECA rules ' + view.secas.length"></q-tab>
+      <q-tab name="doc" label="Doc" id="DevServiceDocTab"></q-tab>
     </q-tabs>
     <q-separator class="q-mb-sm"></q-separator>
     <div v-show="section === 'implementation'">
@@ -553,6 +554,9 @@
           <div v-if="(snippet.result.rows || []).length" class="text-caption">{{snippet.result.rows.length}} rows it would write</div>
         </div>
       </q-expansion-item>
+    </div>
+    <div v-if="section === 'doc'" id="DevServiceDoc">
+      <m-dev-artifact-doc :base="ctx.base" :artifact-id="'service:' + name" :stamp="view"></m-dev-artifact-doc>
     </div>
     <div v-show="section === 'rules'" id="DevServiceRules">
       <q-list dense separator><q-item v-for="rule in view.secas" :key="rule.file + rule.line" clickable @click="ctx.openArtifact({ rootId: rule.open.rootId, relativePath: rule.open.path, line: rule.line, name: rule.file })">

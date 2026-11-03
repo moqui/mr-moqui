@@ -817,6 +817,13 @@ reads do: rebuilding the index and every tool that writes or runs code stay on d
   into the index, epoch ms; a removal does not move it) and `files`, so a caller can say what it read against. It is
   taken before the read, so a change during the read leaves it older than the answer.
 
+### 7.5 Docs
+
+Each artifact's Markdown doc, with Mermaid diagrams of what uses it and what it uses, an E-R diagram per entity package,
+and Export docs into a repository, is Autodoc: [Autodoc](Autodoc.md), guide [docs/dev/Autodoc.md](../docs/dev/Autodoc.md).
+Mermaid is used there for diagrams in Markdown that a repository shows as well; D9's "no Mermaid" is about the
+browser's canvas and still holds.
+
 ---
 
 ## 8. The entity modeler

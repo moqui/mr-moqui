@@ -1,0 +1,8 @@
+flowchart TD
+    Order[["Order"]]
+    OrderDetail["OrderDetail"]
+    seca_post_place_Order("seca post place#35;Order")
+    Elsewhere>"Elsewhere"]
+    Order -->|"Detail"| OrderDetail
+    OrderDetail -.-> Elsewhere
+    seca_post_place_Order --> Order

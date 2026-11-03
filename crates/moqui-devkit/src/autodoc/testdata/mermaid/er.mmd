@@ -1,0 +1,17 @@
+erDiagram
+    OrderHeader {
+        id orderId PK
+        id statusId FK
+        date-time placedDate
+    }
+    mantle_order_OrderItem {
+        id orderId PK, FK
+        id orderItemSeqId PK
+    }
+    StatusItem {
+    }
+    other_pkg_OrderItem {
+    }
+    mantle_order_OrderItem }o--|| OrderHeader : ""
+    OrderHeader }o..|| StatusItem : "Order Status"
+    OrderHeader ||--o{ other_pkg_OrderItem : "Other"
