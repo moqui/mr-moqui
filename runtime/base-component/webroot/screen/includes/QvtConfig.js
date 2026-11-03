@@ -44,7 +44,6 @@ function build(ec, sri, options) {
             if (sri.getShellProviders('notificationTopics').apps.some((app) => app.name === startPref)) startApp = startPref
         } catch (e) { ec.logger.warn('Start app ' + startPref + ' not checked: ' + e) }
     }
-    const density = (ec.user.userId && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'
     const logoList = sri.getThemeValues('STRT_HEADER_LOGO')
     const titleList = sri.getThemeValues('STRT_HEADER_TITLE')
     // STRT_AVATAR_URL is a template with the characters ${userId}. Do not expand it here: the browser replaces the user id.
@@ -54,49 +53,20 @@ function build(ec, sri, options) {
     for (const text of sri.getThemeValues('STRT_QUASAR_CONFIG')) {
         try { quasarConfig = Object.assign(quasarConfig || {}, JSON.parse(text)) } catch (e) { ec.logger.error('Theme STRT_QUASAR_CONFIG is not JSON: ' + e) }
     }
-    // Appearance (docs/ui/Qvt-Client.md, Appearance): the color schemes of the theme and the fonts a user may choose, the user's choices
-    // (the THEME_* preferences, through getPreference so a group's default counts), and the style sheets of the chosen scheme and
-    // fonts, which the page links before the client starts. A scheme's version is a hash of its colors, so a changed one is fetched again.
-    const appearanceKeys = ['THEME_COLOR_SCHEME', 'THEME_FONT_BODY', 'THEME_FONT_HEADING', 'THEME_FONT_MONO', 'THEME_SIZE_SMALL', 'THEME_SIZE_LARGE',
-        'THEME_PRIMARY_COLOR', 'THEME_MOTION', 'THEME_LINE_HEIGHT', 'THEME_LINKS_UNDERLINE', 'THEME_RADIUS']
-    const appearanceValues = {}
-    for (const key of appearanceKeys) { const value = ec.user.userId ? ec.user.getPreference(key) : null; if (value) appearanceValues[key] = String(value) }
-    const textHash = (text) => { let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0; return hash.toString(36) }
-    const colorSchemes = []
-    const schemeRows = ec.entity.find('moqui.screen.ScreenColorScheme').condition('screenThemeId', sri.getCurrentThemeId())
-            .orderBy('sequenceNum').disableAuthz().useCache(true).list()
-    for (let i = 0; i < schemeRows.length; i++) {
-        const row = schemeRows.get(i)
-        const scheme = { id: row.colorSchemeId, description: row.description || row.colorSchemeId, light: {}, dark: {} }
-        const colorRows = ec.entity.find('moqui.screen.ScreenColorSchemeColor').condition('colorSchemeId', row.colorSchemeId)
-                .disableAuthz().useCache(true).list()
-        for (let j = 0; j < colorRows.length; j++) {
-            const color = colorRows.get(j)
-            const mode = color.colorModeEnumId === 'SCM_DARK' ? scheme.dark : color.colorModeEnumId === 'SCM_LIGHT' ? scheme.light : null
-            if (mode) mode[color.colorName] = color.colorValue || ''
-        }
-        scheme.custom = !!(Object.keys(scheme.light).length || Object.keys(scheme.dark).length || row.extraCss)
-        scheme.version = textHash(JSON.stringify([scheme.light, scheme.dark, row.extraCss || '']))
-        colorSchemes.push(scheme)
-    }
-    const fontOptions = []
-    const fontRows = ec.entity.find('moqui.screen.ScreenFontOption').orderBy('sequenceNum').disableAuthz().useCache(true).list()
-    for (let i = 0; i < fontRows.length; i++) {
-        const row = fontRows.get(i)
-        fontOptions.push({ id: row.fontOptionId, description: row.description || row.fontOptionId,
-            kind: row.fontKindEnumId === 'SFK_MONO' ? 'mono' : row.fontKindEnumId === 'SFK_SERIF' ? 'serif' : 'sans',
-            family: row.fontFamily || '', stylesheet: row.stylesheetLocation || '' })
-    }
-    const appearanceLinks = []
-    const chosenScheme = colorSchemes.find((scheme) => scheme.id === appearanceValues.THEME_COLOR_SCHEME)
-    if (chosenScheme && chosenScheme.custom) appearanceLinks.push({ id: 'm-color-scheme',
-        href: '/apps/colorSchemeCss?colorSchemeId=' + encodeURIComponent(chosenScheme.id) + '&v=' + chosenScheme.version })
-    for (const [key, role] of [['THEME_FONT_BODY', 'body'], ['THEME_FONT_HEADING', 'heading'], ['THEME_FONT_MONO', 'mono']]) {
-        const font = fontOptions.find((option) => option.id === appearanceValues[key])
-        if (font && font.stylesheet && !appearanceLinks.some((link) => link.href === font.stylesheet))
-            appearanceLinks.push({ id: 'm-font-' + role, href: font.stylesheet })
-    }
-    const darkPref = ec.user.getPreference('QUASAR_DARK')
+    // Appearance (docs/ui/Qvt-Client.md, Appearance): the theme's color schemes and fonts, the user's choices the theme's policy
+    // allows, the effective scheme and the style sheets the page links before the client starts, after the theme's
+    // STRT_APPEARANCE_SERVICE extensions (org.moqui.impl.ShellServices.get#Appearance). A failure is logged and the shell keeps its own look.
+    let appearance = { colorSchemes: [], fonts: [], values: {}, links: [], policy: {}, keys: [], tokens: {} }
+    try {
+        appearance = ec.service.sync().name('org.moqui.impl.ShellServices.get#Appearance')
+                .parameter('screenThemeId', sri.getCurrentThemeId()).disableAuthz().call().appearance || appearance
+    } catch (e) { ec.logger.error('Appearance of theme ' + sri.getCurrentThemeId() + ' not built: ' + e) }
+    const lockedKeys = (appearance.policy && appearance.policy.lockedKeys) || []
+    // the theme's forced mode wins; a locked mode or density is the shell's default, not what the user chose before
+    const forcedMode = (appearance.policy && appearance.policy.mode) || ''
+    const darkPref = forcedMode ? (forcedMode === 'dark' ? 'true' : forcedMode === 'auto' ? 'auto' : 'false')
+            : lockedKeys.includes('QUASAR_DARK') ? null : ec.user.getPreference('QUASAR_DARK')
+    const density = (ec.user.userId && !lockedKeys.includes('SHELL_DENSITY') && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'
     return {
         pageTraceId: ec.context.sharedMap.telemetryPageTraceId || '', rum: rumSettings,
         appHost: ec.web.getHostName(true), appRootPath: '', basePath: '/apps', linkBasePath: '/qapps',
@@ -115,7 +85,9 @@ function build(ec, sri, options) {
         // Assist (js/WebrootAssist.js): the agents are built and on, and the user may use them (AgentUse); else the drawer makes no request
         assist: !!(ec.user.userId && ec.llm && ec.llm.isEnabled() && ec.user.hasPermission('AgentUse')),
         userAccount: { partyId: account.partyId || '', emailAddress: account.emailAddress || '', userFullName: account.userFullName || '' },
-        appearance: { colorSchemes: colorSchemes, fonts: fontOptions, values: appearanceValues, links: appearanceLinks },
+        appearance: appearance,
+        // the dev/test instance marker (the webapp_dev_marker_color conf property): the shell draws a small square in the corner
+        devMarker: System.getProperty('webapp_dev_marker_color') || '',
         preferences: preferences, moquiVersion: ec.factory.moquiVersion, quasar: quasarConfig,
         avatarUrl: avatarList.length ? String(avatarList[0]) : '',
         qvt: { build: staticOnly ? 'runtime' : 'compiler', handles: staticOnly ? ['static-template'] : ['merged-fragment', 'static-template'] },

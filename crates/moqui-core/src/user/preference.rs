@@ -125,13 +125,20 @@ pub fn get_preferences() -> Result<BTreeMap<String, String>, Error> {
 ///
 /// # Errors
 ///
-/// Returns an error when nobody is logged in.
+/// Returns an error when nobody is logged in, or when `key` is an appearance preference the user's Quasar theme does
+/// not let the user change (`STRT_APPEARANCE_POLICY`, docs/ui/Qvt-Client.md).
 pub fn set_preference(key: &str, value: Option<&str>) -> Result<(), Error> {
     let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
         return Err(Error::new(format!(
             "Cannot set preference with key {key}, no user logged in."
         )));
     };
+    if crate::screen::sri::appearance::is_appearance_key(key) {
+        let policy = crate::screen::sri::appearance::appearance_policy_for_user(Some(&user_id));
+        if let Some(reason) = policy.denial(key) {
+            return Err(Error::new(format!("Cannot set preference {key}: {reason}")));
+        }
+    }
     let _authz = without_authz();
     let facade = entity_facade()?;
     let mut row = facade.make_value(USER_PREFERENCE)?;
