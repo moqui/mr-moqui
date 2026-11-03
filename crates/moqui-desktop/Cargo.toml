@@ -60,6 +60,8 @@ tracing = "0.1"
 # SIGTERM for a sidecar node that did not stop when its stdin closed (src/node/sidecar.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# CEF's descriptors marked close-on-exec before the sidecar starts (src/node/sidecar.rs), as the workspace's.
+close_fds = "0.3"
 
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }

@@ -142,6 +142,7 @@ Versions are what `cargo` locked on 2026-10-11 for the feature set above. "Stati
 | `huskarl` | 0.11.6 | MIT OR Apache-2.0 | OIDC and OAuth 2 relying party (`moqui-sso` in the framework) | Static | OK. Default feature is the native JWS verifier. `rsa` 0.10.0-rc.18, shared with `russh`. `huskarl-crypto-webcrypto` is locked for wasm and is absent from the Linux tree. |
 | `chrono` | 0.4.45 | MIT OR Apache-2.0 | SFTP timestamps via `russh-sftp`, and IMAP `INTERNALDATE` via `imap` | Static | OK. Not a Moqui clock. Time stays `jiff`. |
 | `tokio-tungstenite` | 0.29.0 | MIT | DevTools socket for PDF | Static. Does not contain Chromium. | OK. Already linked under axum `ws`. |
+| `close_fds` | 0.3.2 | MIT | Marks inherited descriptors close-on-exec before the embedded Postgres starts (`moqui-drivers`, Unix), and the desktop app's sidecar | Static; `libc` and `cfg-if` only. | OK. |
 | `futures-util`, `http`, `bytes`, `form_urlencoded` | 0.3 / 1.x / 1.x / 1.x | MIT OR Apache-2.0 | Async streams (PDF, SSH cluster), `huskarl`'s request types, the SSO callback query | Static | OK. Already in the graph; named directly in `moqui-host`. |
 | `encoding_rs` | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause | SFTP charsets (`remoteCharset`) in `moqui-core` | Static | OK. Already in the graph under reqwest. The BSD part is the WHATWG index data. |
 | `rustls` | 0.23.45 | Apache-2.0 OR ISC OR MIT | TLS | Static | OK |

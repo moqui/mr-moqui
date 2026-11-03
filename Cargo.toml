@@ -132,6 +132,8 @@ sha2 = "0.11"
 memchr = "2.8"
 sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.23"
+# Inherited descriptors marked close-on-exec before the embedded Postgres starts (moqui-drivers), safely.
+close_fds = "0.3"
 # SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The rsa release candidate is the one russh and huskarl already
 # resolve, so the graph has one rsa. Its digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix).
 # plans/archive/License-Review.md records RUSTSEC-2023-0071.

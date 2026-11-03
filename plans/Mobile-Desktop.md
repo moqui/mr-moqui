@@ -400,9 +400,9 @@ Before mobile distribution, check the actual remote-application and local-code m
 - The sidecar's Comms app: the node's pages report `calls.appRoot` (`set_comms_root`), kept in `comms-root`.
 - PDF on the app's CEF for the node in process, where the node finds no Chromium; the bundle carries Chromium's notices.
 
-**Local node, open:**
+- The descriptors a program hosting the node opens without close-on-exec (CEF's, a development run's DevTools listening socket among them) are marked close-on-exec before the embedded Postgres and the sidecar start (`close_fds`), so a postmaster left by an app that was killed holds none of them.
 
-- The embedded Postgres, started by the app, inherits the app's open descriptors, among them a development run's DevTools listening socket: a postmaster left by an app that was killed keeps that port. The postmaster should start with only the descriptors it needs.
+**Local node, open:**
 - The all-in-one node's one open question ([Edge-Node §10](Edge-Node.md#10-all-in-one-node-e12)): a clustered server, which is Later. Its role is decided (`node_role=all-in-one`).
 - Windows: the `moqui` binary and its process handling there. A restart the sidecar node asks for replaces the process in place only on Unix; elsewhere `moqui` starts a new process and the old one ends, so the host sees its child end while the new node is not its child (`run_again` in `moqui-host`).
 - The upgrade path for a new Postgres major version in the app data directory.

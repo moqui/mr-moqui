@@ -86,6 +86,10 @@ impl Node {
         // with the app's group, the node would leave its Postgres for the next start to take over.
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        // CEF opens descriptors without close-on-exec (a development run's DevTools socket among them), which the node,
+        // and the Postgres it starts, would hold past the app's end
+        #[cfg(unix)]
+        close_fds::set_fds_cloexec_threadsafe(3, &[]);
         let mut child = command
             .spawn()
             .map_err(|err| std::io::Error::other(format!("could not start {}: {err}", binary.display())))?;

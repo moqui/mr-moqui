@@ -440,6 +440,11 @@ mod cluster {
             .setup()
             .map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
         if adopt_port.is_none() {
+            // The postmaster outlives a host that is killed, and keeps what it inherited: a program that hosts the node
+            // opens descriptors without close-on-exec (the desktop app's CEF, its DevTools listening socket among them),
+            // so they are marked before it starts. Rust's own are already.
+            #[cfg(unix)]
+            close_fds::set_fds_cloexec_threadsafe(3, &[]);
             server
                 .start()
                 .map_err(|err| embedded("start embedded postgres", data_dir, err))?;
