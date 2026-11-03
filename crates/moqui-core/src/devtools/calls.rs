@@ -125,28 +125,47 @@ pub fn merge_local() {
     }
 }
 
-/// Start counting, and write the counts each minute, once per process.
+/// Start counting, and write the counts each minute, once per process. The factory's shutdown writes the last counts
+/// and waits for that before the database stops.
 pub fn start(factory: &Arc<ExecutionContextFactory>) {
     if ENABLED.swap(true, Ordering::SeqCst) {
         return;
     }
     let weak = Arc::downgrade(factory);
-    let spawned = std::thread::Builder::new()
-        .name("artifact-calls".into())
-        .spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(60));
-            TICK.fetch_add(1, Ordering::Relaxed);
-            let Some(factory) = weak.upgrade() else {
-                ENABLED.store(false, Ordering::SeqCst);
-                return;
-            };
-            if let Err(err) = flush(&factory) {
-                tracing::error!("Artifact index: the observed calls were not written: {err}");
-            }
-        });
+    let spawned = factory.spawn_background("artifact-calls", move || {
+        run(&weak);
+        ENABLED.store(false, Ordering::SeqCst);
+    });
     if let Err(err) = spawned {
         ENABLED.store(false, Ordering::SeqCst);
         tracing::error!("Artifact index: could not start counting calls: {err}");
+    }
+}
+
+/// Flush each minute until the factory is gone, or once more when its shutdown begins. It looks each second so the
+/// shutdown does not wait out the minute.
+fn run(weak: &std::sync::Weak<ExecutionContextFactory>) {
+    loop {
+        for _ in 0..60 {
+            std::thread::sleep(Duration::from_secs(1));
+            match weak.upgrade() {
+                None => return,
+                Some(factory) if factory.is_shutting_down() => {
+                    if let Err(err) = flush(&factory) {
+                        tracing::error!("Artifact index: the observed calls were not written at shutdown: {err}");
+                    }
+                    return;
+                }
+                Some(_) => {}
+            }
+        }
+        TICK.fetch_add(1, Ordering::Relaxed);
+        let Some(factory) = weak.upgrade() else {
+            return;
+        };
+        if let Err(err) = flush(&factory) {
+            tracing::error!("Artifact index: the observed calls were not written: {err}");
+        }
     }
 }
 

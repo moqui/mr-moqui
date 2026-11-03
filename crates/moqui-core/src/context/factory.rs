@@ -168,6 +168,8 @@ pub struct ExecutionContextFactory {
     pub(crate) cluster_heartbeat: AtomicBool,
     /// True once [`Self::shutdown`] began: work that would reach the database later (the shell counts sender) stops.
     shutting_down: AtomicBool,
+    /// Threads outside the pools that reach the database; [`Self::shutdown`] waits for them.
+    background: super::background::BackgroundThreads,
     /// When the factory booted, in epoch milliseconds, for the status of the tools dashboard.
     started_millis: i64,
     native: crate::native::NativeRegistry,
@@ -369,6 +371,7 @@ impl ExecutionContextFactory {
             sessions: std::sync::Mutex::new(crate::user::session::SessionTable::new(flush_mode, max_sessions)),
             cluster_heartbeat: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
+            background: super::background::BackgroundThreads::default(),
             started_millis: jiff::Timestamp::now().as_millisecond(),
             native,
             native_tools: crate::native::ToolSet::default(),
@@ -526,8 +529,21 @@ impl ExecutionContextFactory {
         crate::service::chat_bridge::shutdown(self);
         self.requests.shutdown();
         self.pools.shutdown();
+        // before telemetry stops, so what they log on the way out is kept; before the host stops the database
+        self.background.wait(super::background::BACKGROUND_WAIT);
         crate::telemetry::for_factory(self).shutdown();
         self.shutdown_tools();
+    }
+
+    /// Run `work` on a thread named `name` that [`Self::shutdown`] waits for (up to a limit) before it returns, so the
+    /// host does not stop the database under it. `work` stops by checking [`Self::is_shutting_down`]. Use it for
+    /// background work that reaches the database outside the service pools.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the thread cannot start, or the shutdown already waited for the threads.
+    pub fn spawn_background(&self, name: &str, work: impl FnOnce() + Send + 'static) -> Result<(), Error> {
+        self.background.spawn(name, work)
     }
 
     /// True once [`Self::shutdown`] began.
@@ -1649,6 +1665,7 @@ impl ExecutionContextFactory {
             )),
             cluster_heartbeat: AtomicBool::new(false),
             shutting_down: AtomicBool::new(false),
+            background: super::background::BackgroundThreads::default(),
             started_millis: jiff::Timestamp::now().as_millisecond(),
             native: crate::native::NativeRegistry::default(),
             native_tools: crate::native::ToolSet::default(),

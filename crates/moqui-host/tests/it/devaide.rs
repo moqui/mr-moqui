@@ -967,6 +967,46 @@ fn the_index_rows_derive_entity_auto_services() {
     eprintln!("derived entity-auto rows: {} ms", started.elapsed().as_millis());
 }
 
+/// Once the factory's shutdown began, a build writes no more rows: the host stops the database right after the
+/// shutdown, and the next start reads the files left by their hashes.
+#[test]
+fn the_index_writes_nothing_once_the_shutdown_began() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let files = [
+        ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
+        ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+    ];
+    let gate = crate::common::start_with_files("dev-aide-shutdown", None, &[("instance_purpose", "dev")], &files);
+    let factory = Arc::clone(gate.server.factory());
+    let site = std::fs::canonicalize(gate.runtime.join("component/acme-site")).unwrap();
+    let late = site.join("service/acme/LateServices.xml");
+    std::fs::create_dir_all(late.parent().unwrap()).unwrap();
+    std::fs::write(&late, AUTO_CALLS).unwrap();
+    // waits for the build the boot started
+    factory.shutdown();
+    let entered = factory.new_context();
+    let _enter = entered.enter();
+    let _authz = entered.disable_authz();
+    use moqui_devkit::index;
+    let report = index::build_files(&factory, index::directory_files("acme-site", &site), false).unwrap();
+    assert_eq!(report.read, 0, "a build read files after the shutdown began");
+    let facade = factory.entity().unwrap();
+    let _lifted = moqui_core::entity::fence::lift();
+    let row = facade
+        .find("moqui.devtools.DevArtifactFile")
+        .unwrap()
+        .disable_authz()
+        .eq("filePath", Value::string(late.display().to_string()))
+        .one()
+        .unwrap();
+    assert!(
+        row.is_none(),
+        "the rows of a file were written after the shutdown began"
+    );
+}
+
 /// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (base-component and
 /// component) and a synthetic corpus ten times their size, each built into the rows, with a per-file update and a find
 /// timed. Run once by hand and the numbers recorded in the design:
