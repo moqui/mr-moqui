@@ -302,6 +302,26 @@ impl Store {
         )
     }
 
+    /// One message by its id (`email:<id>`), whatever its thread; none when it is not kept. Not a read of its thread:
+    /// the composer offline reads the message it answers.
+    pub fn mail_message(&self, message_id: &str) -> Option<MailMessage> {
+        self.rows(
+            "mail message",
+            "SELECT message_id, thread_id, sort_ms, row FROM mail_message WHERE message_id = ?1",
+            [message_id],
+            |row| {
+                Ok(MailMessage {
+                    message_id: row.get(0)?,
+                    thread_id: row.get(1)?,
+                    sort_ms: row.get(2)?,
+                    row: row.get(3)?,
+                })
+            },
+        )
+        .into_iter()
+        .next()
+    }
+
     /// The rows of a thread in each folder that keeps it (a state change made offline is applied to each).
     pub fn mail_threads_of(&self, thread_id: &str) -> Vec<MailThread> {
         self.rows(

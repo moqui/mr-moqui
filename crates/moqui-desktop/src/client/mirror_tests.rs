@@ -27,6 +27,7 @@ const NOW: i64 = 1_000 * 24 * 3600 * 1000;
 const DAY: i64 = 24 * 3600 * 1000;
 const CHAT: &str = "/apps/BasicComms/Chat";
 const MAIL: &str = "/apps/BasicComms/Inbox/Mail";
+const COMPOSE: &str = "/apps/BasicComms/Inbox/Compose/composeData";
 
 /// A server of fixed answers that notes what was asked; anything else is a 404.
 struct Server {
@@ -75,6 +76,11 @@ fn server() -> Server {
     answers.insert(
         format!("{MAIL}/inboxData"),
         json_of(json!({ "accountList": [{ "emailAccountId": "A", "folderList": [{ "emailFolderId": "F1" }] }] })),
+    );
+    answers.insert(
+        COMPOSE.to_string(),
+        json_of(json!({ "compose": { "identityList": [{ "value": "account:A", "emailAccountId": "A" }], "fromValue": "account:A",
+            "to": [], "subject": "", "kind": "new" } })),
     );
     answers.insert(
         threads("inbox", "", ""),
@@ -155,6 +161,8 @@ fn a_personal_device_mirrors_rooms_and_folders_back_to_its_days() {
             // a room that fails is passed over
             format!("{CHAT}/timeline?chatRoomId=R2&limit=50"),
             format!("{MAIL}/inboxData"),
+            // a new message's, so one is written offline
+            COMPOSE.to_string(),
             threads("inbox", "", ""),
             // a folder's pages stop at a thread older than 30 days
             threads("", "A", "F1"),
@@ -174,6 +182,10 @@ fn a_personal_device_mirrors_rooms_and_folders_back_to_its_days() {
     let page: Value = serde_json::from_slice(&page).unwrap();
     assert_eq!(page["eventList"].as_array().unwrap().len(), 4);
     assert_eq!(store.mail_messages("email:T2").len(), 1);
+    // the new message's answers offline as it was kept
+    let compose = answers::answer(&store, Kind::Compose, COMPOSE, "").unwrap();
+    let compose: Value = serde_json::from_slice(&compose).unwrap();
+    assert_eq!(compose["compose"]["fromValue"], "account:A");
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -189,6 +201,7 @@ fn a_shared_device_reads_ahead_only_the_latest() {
             format!("{CHAT}/chatData?limit=200"),
             format!("{CHAT}/timeline?chatRoomId=R1&limit=50"),
             format!("{MAIL}/inboxData"),
+            COMPOSE.to_string(),
             threads("inbox", "", ""),
             format!("{MAIL}/thread?store=email&threadId=T1"),
         ]
@@ -229,6 +242,14 @@ fn a_run_stops_when_offline_signed_out_or_cancelled() {
     no_chat.answers.remove(&format!("{CHAT}/chatData?limit=200"));
     assert_eq!(mirror(&no_chat, &store, DeviceMode::Shared, &|| false), Ended::Done);
     assert_eq!(no_chat.asked.borrow()[1], format!("{MAIL}/inboxData"));
+    // no inbox: the new message's is still read, and the mail ends there
+    let mut no_inbox = server();
+    no_inbox.answers.remove(&format!("{MAIL}/inboxData"));
+    assert_eq!(mirror(&no_inbox, &store, DeviceMode::Shared, &|| false), Ended::Done);
+    assert_eq!(
+        no_inbox.asked.borrow()[2..],
+        [format!("{MAIL}/inboxData"), COMPOSE.to_string()]
+    );
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }

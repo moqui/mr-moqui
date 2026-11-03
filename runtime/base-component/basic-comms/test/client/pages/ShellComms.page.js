@@ -30,7 +30,8 @@ const answers = {
     "/apps/BasicComms/Inbox/Compose/composeData": { compose: { identityList: [{ value: "acct1", label: "ann@example.com" }], fromValue: "acct1", to: [], kind: "new" } }
 };
 // what the host's store does not hold: another room, a search of the mail
-const notKept = (url) => /chatRoomId=R2/.test(url) || (/\/threads\b/.test(url) && /[?&]q=/.test(url));
+const notKept = (url) => /chatRoomId=R2/.test(url) || (/\/threads\b/.test(url) && /[?&]q=/.test(url))
+    || (host.composeNotKept && /\/composeData\b/.test(url));
 const unreachableHeaders = { get: (name) => (name === "X-Moqui-Offline" ? "unreachable" : null) };
 const requests = [];
 const serve = (desktop) => (url, options) => {
@@ -39,7 +40,9 @@ const serve = (desktop) => (url, options) => {
     requests.push(path + " " + ((options && options.method) || "GET"));
     if (desktop && answers[path] && !notKept(url + "?" + query)) {
         moqui.noteAnswer(200, offlineHeaders);
-        return Promise.resolve({ ok: true, status: 200, headers: offlineHeaders, json: JSON.parse(JSON.stringify(answers[path])), text: "" });
+        const json = JSON.parse(JSON.stringify(answers[path]));
+        if (host.composeOffline && /\/composeData$/.test(path)) json.offline = host.composeOffline;
+        return Promise.resolve({ ok: true, status: 200, headers: offlineHeaders, json, text: "" });
     }
     // the desktop client's host marks its own 502 (the server out of reach); a 502 of a server's (the web) is not
     const headers = desktop ? unreachableHeaders : { get: () => null };
@@ -177,6 +180,30 @@ test("the shell shows Chat, the Inbox and Compose itself, offline, with what wai
     assert.equal(root.view, "compose");
     assert.equal(root.currentParameters.subject, "Hello");
     assert.ok(banner.textContent.includes("this email waits in the outbox"));
+    // a forward built offline says the files it leaves out (only the server copies them)
+    host.composeOffline = { forwardFilesMissing: 2 };
+    host.pendingOpen = "/qapps/BasicComms/Inbox/Compose?forwardEmailMessageId=F1";
+    window.moquiShell.poke();
+    await until(() => text().includes("Its 2 files are not attached"), "the forward's files left out");
+    host.composeOffline = null;
+    // nothing kept to start a reply from (no composeData in the store): a new email answering it, not an error
+    host.composeNotKept = true;
+    host.pendingOpen = "/qapps/BasicComms/Inbox/Compose?replyToEmailMessageId=GONE&replyAll=false";
+    window.moquiShell.poke();
+    await until(() => text().includes("The message this answers is not kept on this computer"), "Compose's blank reply offline");
+    assert.ok(document.querySelector(".m-compose-offline"), "with its offline banner");
+    assert.ok(!text().includes("This message cannot be written here"));
+    assert.ok(document.querySelector(".m-compose").textContent.includes("Subject"), "a message to write");
+    // and no mail account known to send from: said, and Send is off
+    assert.ok(text().includes("No mail account is known on this computer yet"));
+    const sendButton = Array.from(document.querySelectorAll(".m-compose button")).find((button) => button.textContent.includes("Send"));
+    assert.ok(sendButton && (sendButton.disabled || sendButton.classList.contains("disabled")), "Send is off");
+    // a draft needs the server: said so, not that it cannot be written
+    host.pendingOpen = "/qapps/BasicComms/Inbox/Compose?emailMessageId=D1";
+    window.moquiShell.poke();
+    await until(() => text().includes("This needs a connection to the server; open it again"), "the draft needing a connection");
+    assert.ok(!text().includes("This message cannot be written here"));
+    host.composeNotKept = false;
 
     // signing out a shared account lists what waits unsent first; Sign out anyway signs out
     root.signOut();
@@ -246,9 +273,14 @@ test("with no host, as on the web, the same screens show no offline or outbox pr
     assert.equal(mail.el.querySelector(".m-inbox-outbox"), null);
     assert.equal(mail.el.querySelector(".m-inbox-offline"), null);
     assert.ok(!mail.el.textContent.includes("not kept on this device"), "a list that did not load is not an offline one");
+    // Compose with no answer: on the web it cannot be written, as before (no blank message offline)
+    const compose = mountScreen("BasicComms/Inbox/Compose", ["BasicComms", "Inbox", "Compose"], {});
+    await until(() => compose.el.textContent.includes("This message cannot be written here"), "Compose not reached, on the web");
+    assert.equal(compose.el.querySelector(".m-compose-offline"), null);
     assert.ok(warned.length > 0, "the web told of the failed requests");
     chatScreen.app.unmount();
     mail.app.unmount();
+    compose.app.unmount();
     } finally { console.warn = warn; }
 });
 

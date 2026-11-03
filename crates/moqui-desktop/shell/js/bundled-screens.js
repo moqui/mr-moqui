@@ -15932,7 +15932,7 @@ module.exports = {
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
-            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null,
+            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -15948,6 +15948,8 @@ module.exports = {
         minimized() { return !!(this.hostDock && this.hostDock.minimized); },
         // the desktop client's server out of reach (moqui.connection; never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
+        // the desktop client started offline with no mail account known here: nothing to send from until the server answers
+        noFrom() { return !!moqui.hostOutbox() && this.state === 'ready' && !this.identities.length; },
         mode() { return this.draft.fromValue === 'internal' ? 'internal' : 'email'; },
         draftId() { return this.draft.emailMessageId || null; },
         title() {
@@ -16034,22 +16036,50 @@ module.exports = {
             this.queued = [];
             this.offlineDraft = false;
             this.localEmailKey = null;
+            this.offlineNote = null;
             this.clientRef = moqui.hostOutbox() ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
             const q = this.query;
             const params = {};
             ['emailMessageId', 'replyToEmailMessageId', 'forwardEmailMessageId', 'replyAll', 'replyToCommEventId', 'replyToSender', 'contactListId', 'to', 'cc',
                 'bcc', 'subject', 'body', 'recordEntity', 'recordId'].forEach((name) => { if (q[name] != null && q[name] !== '') params[name] = q[name]; });
             moqui.request(this.url('composeData'), { params }).then((result) => {
-                const compose = (result.json || {}).compose;
-                if (!compose) { this.state = 'failed'; return; }
-                this.apply(compose);
-                this.restoreLocal();
-                this.loadedOnce = true;
-                this.$nextTick(() => { this.state = 'ready'; this.dirty = false; this.focusFirst(); });
+                const json = result.json || {};
+                if (!json.compose) { this.state = 'failed'; return; }
+                // the desktop client's answer from its store (offline.rs compose_json): the message answered is not kept there,
+                // or a forward's files, which only the server copies, are left out
+                const hint = json.offline || {};
+                if (hint.messageMissing) this.offlineNote = t('The message this answers is not kept on this computer: add its recipients.');
+                else if (hint.forwardFilesMissing) this.offlineNote = t('Its {count} files are not attached: forward it again when the server can be reached, or attach them.')
+                    .replace('{count}', String(hint.forwardFilesMissing));
+                this.startWith(json.compose);
             }, (err) => {
+                // the desktop client with its server out of reach and nothing kept to start from: a new email, which waits in
+                // the outbox; still a reply or forward of the message, so it threads. A draft, an internal reply and a mailbox
+                // post need the server. Never on the web.
+                if (moqui.hostOutbox() && this.unreachable(err)) {
+                    if (!q.emailMessageId && !q.replyToCommEventId && !q.contactListId) {
+                        const parent = q.replyToEmailMessageId || q.forwardEmailMessageId || null;
+                        const forward = !q.replyToEmailMessageId && !!parent;
+                        // no composeData was ever kept here, so no mail account is known to send from (noFrom)
+                        this.offlineNote = (parent ? t('The message this answers is not kept on this computer: add its recipients.') + ' ' : '') +
+                            t('No mail account is known on this computer yet: write it now and send it once the server can be reached.');
+                        this.startWith({ kind: parent ? (forward ? 'forward' : (String(q.replyAll) === 'true' ? 'replyAll' : 'reply')) : 'new',
+                            parentEmailMessageId: parent, isForward: forward });
+                        return;
+                    }
+                    this.state = 'failed';
+                    this.error = t('This needs a connection to the server; open it again when the server can be reached.');
+                    return;
+                }
                 this.state = 'failed';
                 this.error = (err && err.json && err.json.errors) || t('This message cannot be written here');
             });
+        },
+        startWith(compose) {
+            this.apply(compose);
+            this.restoreLocal();
+            this.loadedOnce = true;
+            this.$nextTick(() => { this.state = 'ready'; this.dirty = false; this.focusFirst(); });
         },
         apply(compose) {
             this.identities = compose.identityList || [];
@@ -16511,6 +16541,7 @@ module.exports = {
         send(options) {
             const opts = options || {};
             if (this.sending) return;
+            if (this.noFrom) { moqui.notifyMessages(null, t('No mail account is known on this computer yet: send it once the server can be reached')); return; }
             this.collectPending();
             const d = this.draft;
             if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient in To')); return; }
@@ -16750,7 +16781,10 @@ module.exports = {
                                         ]),
                                         default: _withCtx(() => [
                                           _createTextVNode(" " + _toDisplayString(_ctx.mode === 'internal' ? _ctx.t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.')
-                                        : _ctx.t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')), 1)
+                                        : _ctx.t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')) + " ", 1),
+                                          (_ctx.offlineNote)
+                                            ? (_openBlock(), _createElementBlock("div", { key: 0 }, _toDisplayString(_ctx.offlineNote), 1))
+                                            : _createCommentVNode("", true)
                                         ]),
                                         _: 1
                                       }))
@@ -17079,7 +17113,7 @@ module.exports = {
                                       icon: "sym_o_send",
                                       label: _ctx.t('Send'),
                                       loading: _ctx.sending,
-                                      disable: _ctx.sending || _ctx.uploading,
+                                      disable: _ctx.sending || _ctx.uploading || _ctx.noFrom,
                                       onClick: $event => (_ctx.send())
                                     }, {
                                       default: _withCtx(() => [

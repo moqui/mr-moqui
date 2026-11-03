@@ -35,6 +35,11 @@
 //!   cursor in the server's form, one store's or mr-mantle's several) and `thread` (its kept fields and messages). The
 //!   rest, and these when the rows do not cover the request, come from the kept answer. Nothing kept: none, and the
 //!   scheme answers 502 as before.
+//! - `composeData` ([`compose_answer`]): the kept answer of the same query, else built as `get#ComposeData` answers
+//!   (BasicComms' and BOSS's, the same for email) from the new message's (no parameters, which the mirror reads; else
+//!   the identities of any kept `composeData`) and the rows: a reply or forward from the kept message it answers, a
+//!   draft as its kept message says (with its kept answer or the draft Compose kept here, `moqui.drafts`), mailto-style
+//!   values on the new message's.
 
 use moqui_client::store::{ChatEvent, ChatRoom, EventPage, EventSlice, MailFolder, MailMessage, MailThread, Store};
 use serde_json::{json, Map, Value};
@@ -191,6 +196,9 @@ pub(crate) fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u
     if let Err(err) = store.put_answer(bare, &kept_query(kind, query), "application/json", body) {
         tracing::warn!("The answer of {bare} was not kept: {err}");
     }
+    if kind == Kind::Compose {
+        keep_compose_identities(store, bare, query, body);
+    }
     if kind == Kind::Shell || kind == Kind::Compose {
         return;
     }
@@ -233,6 +241,9 @@ pub(crate) fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u
 /// and later pages changed shows; else the kept answer; none when nothing is kept.
 pub(crate) fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<u8>> {
     let params = Params::of(query);
+    if kind == Kind::Compose {
+        return compose_answer(store, bare, query, &params);
+    }
     let built = match kind {
         Kind::Timeline => timeline_json(store, &params),
         Kind::RoomView => room_view_json(store, &params),
@@ -856,6 +867,637 @@ fn threads_json(store: &Store, params: &Params) -> Option<Value> {
         .filter_map(|row| serde_json::from_str(&row.row).ok())
         .collect();
     Some(shape(list, more, next))
+}
+
+// ---- compose ----
+
+/// The key of an email draft Compose keeps here by its message (its `emailLocalKey`), less the message's id.
+const COMPOSE_DRAFT: &str = "ironstone.compose.email.";
+/// Where the quoted part of a reply or forward starts, as `get#ComposeData` makes it and splits a draft's body.
+const QUOTE_START: &str = "<div class=\"ironstone-quote\">";
+
+/// `composeData` from the store (`{compose, offline}`), in `get#ComposeData`'s shape for an email. A draft is decided by
+/// its kept message ([`draft_answer`]). Else the kept answer of the same query comes first, but for a forward, which
+/// made a draft on the server then that may since be sent: that one is built anew. Built from the new message's
+/// ([`base_compose`]) and the rows ([`compose_json`]); none when neither answers, and the scheme answers 502.
+fn compose_answer(store: &Store, bare: &str, query: &str, params: &Params) -> Option<Vec<u8>> {
+    if let Some(id) = params.text("emailMessageId") {
+        return draft_answer(store, bare, query, id);
+    }
+    let kept = || {
+        store
+            .answer(bare, &kept_query(Kind::Compose, query))
+            .map(|kept| kept.body)
+    };
+    if params.text("forwardEmailMessageId").is_none() {
+        if let Some(body) = kept() {
+            return Some(body);
+        }
+    }
+    compose_json(store, bare, params)
+        .map(|json| json.to_string().into_bytes())
+        .or_else(kept)
+}
+
+/// What the composer starts with offline for a reply, forward or new message, from the new message's `compose`:
+///
+/// - a reply or forward (`replyToEmailMessageId` with `replyAll`, `forwardEmailMessageId`): the kept message's account
+///   identity, recipients, "Re:" or "Fwd:" and quote, with no draft made; a message not kept gives the new message
+///   answering it, `offline.messageMissing` naming it; a forward of a message with files, `offline.forwardFilesMissing`
+///   with how many (only `get#ComposeData` copies them into the forward's draft, not its later save);
+/// - an internal reply or a mailbox post: none, they need the server;
+/// - else a new message with the mailto-style `to`, `cc`, `bcc`, `subject` and `body` (no record chip: it is looked up
+///   on the server).
+fn compose_json(store: &Store, bare: &str, params: &Params) -> Option<Value> {
+    if params.text("replyToCommEventId").is_some() || params.text("contactListId").is_some() {
+        return None;
+    }
+    let mut compose = base_compose(store, bare)?;
+    let reply = params.text("replyToEmailMessageId");
+    let offline = match reply.or_else(|| params.text("forwardEmailMessageId")) {
+        Some(parent) => answer_message(store, &mut compose, parent, reply.is_none(), params.truthy("replyAll")),
+        None => {
+            new_message(&mut compose, params);
+            json!(true)
+        }
+    };
+    Some(json!({ "compose": compose, "offline": offline }))
+}
+
+/// Where the identities and preferences of the account's latest kept `composeData` are kept, by its path.
+const COMPOSE_META: &str = "~compose-identities";
+
+fn compose_meta_query(bare: &str) -> String {
+    format!("path={bare}")
+}
+
+/// Every kept `composeData` (a reply's or draft's too) keeps its identities, user and preferences, so a new message
+/// can be written offline when the new message's own answer was never read; the new message's also its default From.
+fn keep_compose_identities(store: &Store, bare: &str, query: &str, body: &[u8]) {
+    let Ok(answer) = serde_json::from_slice::<Value>(body) else {
+        return;
+    };
+    let compose = &answer["compose"];
+    if !compose["identityList"].is_array() {
+        return;
+    }
+    let meta_query = compose_meta_query(bare);
+    let mut meta = kept_object(store, COMPOSE_META, &meta_query).unwrap_or_default();
+    for field in ["identityList", "me", "undoSeconds", "signaturePlacement"] {
+        if !compose[field].is_null() {
+            meta.insert(field.to_string(), compose[field].clone());
+        }
+    }
+    if kept_query(Kind::Compose, query).is_empty() {
+        meta.insert("defaultFrom".to_string(), compose["fromValue"].clone());
+    }
+    if let Err(err) = put_object(store, COMPOSE_META, &meta_query, &Value::Object(meta)) {
+        tracing::warn!("The identities of {bare} were not kept: {err}");
+    }
+}
+
+/// The new message's `compose`: its kept answer, else one made of the identities and preferences of the latest kept
+/// `composeData` (From its default identity); none when no `composeData` was ever kept.
+fn base_compose(store: &Store, bare: &str) -> Option<Map<String, Value>> {
+    let kept = kept_object(store, bare, "").and_then(|mut answer| match answer.remove("compose") {
+        Some(Value::Object(compose)) => Some(compose),
+        _ => None,
+    });
+    if kept.is_some() {
+        return kept;
+    }
+    let meta = kept_object(store, COMPOSE_META, &compose_meta_query(bare))?;
+    let mut compose = empty_compose();
+    for field in ["identityList", "me", "undoSeconds", "signaturePlacement"] {
+        if let Some(value) = meta.get(field).filter(|value| !value.is_null()) {
+            compose.insert(field.to_string(), value.clone());
+        }
+    }
+    let identities = identity_list(&compose);
+    let sendable = |identity: &&Value| identity["isInternal"].as_bool() != Some(true);
+    let from = meta
+        .get("defaultFrom")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            identities
+                .iter()
+                .filter(sendable)
+                .find(|identity| identity["isDefault"].as_bool() == Some(true))
+                .or_else(|| identities.iter().find(sendable))
+                .or_else(|| identities.first())
+                .map(|identity| identity["value"].clone())
+        })
+        .unwrap_or(Value::Null);
+    compose.insert("fromValue".to_string(), from);
+    Some(compose)
+}
+
+/// `get#ComposeData`'s answer before it is filled, for one made of kept identities.
+fn empty_compose() -> Map<String, Value> {
+    let empty = json!({ "identityList": [], "fromValue": null, "me": null, "to": [], "cc": [], "bcc": [], "subject": "",
+        "body": "", "quoteHtml": null, "emailMessageId": null, "parentEmailMessageId": null, "isForward": false,
+        "parentCommEventId": null, "replyToSenderOnly": false, "contactListId": null, "contactListName": null,
+        "record": null, "attachmentList": [], "undoSeconds": 10, "signaturePlacement": "above", "threadStore": null,
+        "threadId": null, "kind": "new" });
+    match empty {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
+/// An address of a message, with its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Address {
+    address: String,
+    name: Option<String>,
+}
+
+impl Address {
+    /// `Name <address>`, or the address alone.
+    fn text(&self) -> String {
+        match &self.name {
+            Some(name) => format!("{name} <{}>", self.address),
+            None => self.address.clone(),
+        }
+    }
+
+    /// A recipient chip, as `get#ComposeData`'s `addressChip`.
+    fn chip(&self) -> Value {
+        let value = match &self.name {
+            Some(name) => format!("\"{}\" <{}>", name.replace('"', ""), self.address),
+            None => self.address.clone(),
+        };
+        json!({ "value": value, "label": self.text(), "kind": "address", "locked": false })
+    }
+}
+
+/// The people of a thread message's list (`toList`, `ccList`; `from` alone too), as `get#ThreadView` gives them.
+fn people(list: &Value) -> Vec<Address> {
+    let one = |person: &Value| {
+        let address = person["address"]
+            .as_str()
+            .map(str::trim)
+            .filter(|address| !address.is_empty())?;
+        Some(Address {
+            address: address.to_string(),
+            name: person["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+        })
+    };
+    match list {
+        Value::Array(list) => list.iter().filter_map(one).collect(),
+        person => one(person).into_iter().collect(),
+    }
+}
+
+/// Addresses of header text (`to`, `cc`, `bcc` of a mailto), split as `get#ComposeData`'s `splitAddresses`: at a comma
+/// or semicolon outside quotes and angle brackets, `Name <address>` or the address alone (less `mailto:`).
+fn split_addresses(text: &str) -> Vec<Address> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let (mut quote, mut angle) = (false, 0_u32);
+    for ch in text.chars() {
+        match ch {
+            '"' => quote = !quote,
+            '<' if !quote => angle += 1,
+            '>' if !quote && angle > 0 => angle -= 1,
+            ',' | ';' if !quote && angle == 0 => {
+                if !current.trim().is_empty() {
+                    entries.push(current.trim().to_string());
+                }
+                current.clear();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(ch);
+    }
+    if !current.trim().is_empty() {
+        entries.push(current.trim().to_string());
+    }
+    entries
+        .into_iter()
+        .map(|entry| {
+            let angled = entry
+                .trim_end()
+                .strip_suffix('>')
+                .and_then(|rest| rest.rfind('<').map(|at| (&rest[..at], &rest[at + 1..])))
+                .filter(|(_, address)| !address.is_empty() && !address.contains('>'));
+            if let Some((name, address)) = angled {
+                let name = name.trim();
+                let name = name
+                    .strip_prefix('"')
+                    .and_then(|inner| inner.strip_suffix('"'))
+                    .unwrap_or(name)
+                    .trim();
+                return Address {
+                    address: address.trim().to_string(),
+                    name: (!name.is_empty()).then(|| name.to_string()),
+                };
+            }
+            let bare = match (entry.get(..7), entry.get(7..)) {
+                (Some(scheme), Some(rest)) if scheme.eq_ignore_ascii_case("mailto:") => rest,
+                _ => entry.as_str(),
+            };
+            let bare = bare.strip_prefix('"').unwrap_or(bare);
+            let bare = bare.strip_suffix('"').unwrap_or(bare);
+            Address {
+                address: bare.trim().to_string(),
+                name: None,
+            }
+        })
+        .collect()
+}
+
+/// Text made safe in HTML, as `get#ComposeData`'s `escape`.
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Whether text has an HTML tag (`/<[a-z]/i`).
+fn has_tag(text: &str) -> bool {
+    text.as_bytes()
+        .windows(2)
+        .any(|pair| pair[0] == b'<' && pair[1].is_ascii_alphabetic())
+}
+
+/// Plain text as a paragraph, its lines kept.
+fn text_paragraph(text: &str) -> String {
+    format!("<p>{}</p>", escape_html(text).replace('\n', "<br>"))
+}
+
+/// A truthy value of the server's JSON: true, a non-empty string, a number but 0.
+fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Bool(flag) => *flag,
+        Value::String(text) => !text.is_empty(),
+        Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+        Value::Array(_) | Value::Object(_) => true,
+        Value::Null => false,
+    }
+}
+
+/// A message's date in the quote, here in this computer's zone, as `get#ComposeData`'s `EEE, MMM d, yyyy h:mm a`.
+fn date_text(millis: Option<i64>) -> String {
+    let Some(millis) = millis.filter(|millis| *millis != 0) else {
+        return String::new();
+    };
+    jiff::Timestamp::from_millisecond(millis).map_or_else(
+        |_| String::new(),
+        |at| {
+            at.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%a, %b %-d, %Y %-I:%M %p")
+                .to_string()
+        },
+    )
+}
+
+/// The identity of `account` to send from: the one of an address in `addresses`, else its default, else its first,
+/// as `get#ComposeData`'s `identityFor`.
+fn identity_for<'a>(identities: &'a [Value], account: &str, addresses: &[&str]) -> Option<&'a Value> {
+    let wanted: Vec<String> = addresses.iter().map(|address| address.to_lowercase()).collect();
+    let mine: Vec<&Value> = identities
+        .iter()
+        .filter(|identity| identity["emailAccountId"].as_str() == Some(account))
+        .collect();
+    mine.iter()
+        .find(|identity| {
+            identity["emailAddress"]
+                .as_str()
+                .is_some_and(|address| !address.is_empty() && wanted.contains(&address.to_lowercase()))
+        })
+        .or_else(|| {
+            mine.iter()
+                .find(|identity| identity["isDefault"].as_bool() == Some(true))
+        })
+        .or_else(|| mine.first())
+        .copied()
+}
+
+fn identity_list(compose: &Map<String, Value>) -> Vec<Value> {
+    compose
+        .get("identityList")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The thread of a kept message, as the thread answers name it: `email:<root>` gives `(email, root)`.
+fn thread_of(thread_id: &str) -> (String, String) {
+    match thread_id.split_once(':') {
+        Some((store, id)) => (store.to_string(), id.to_string()),
+        None => ("email".to_string(), thread_id.to_string()),
+    }
+}
+
+/// The quoted part of a reply or forward of `message` (a thread message's row), as `get#ComposeData`'s `quoteOf`: its
+/// HTML cleaned to the safe set, or its text as a paragraph.
+fn quote_of(message: &Value, forward: bool) -> String {
+    let from = people(&message["from"]).into_iter().next();
+    let from_text = from.as_ref().map(Address::text).unwrap_or_default();
+    let html = match message["html"].as_str().filter(|html| has_tag(html)) {
+        Some(html) => moqui_core::service::clean_safe_html(html),
+        None => text_paragraph(
+            message["text"]
+                .as_str()
+                .or_else(|| message["html"].as_str())
+                .unwrap_or(""),
+        ),
+    };
+    let date = date_text(number(&message["date"]));
+    if forward {
+        let to: Vec<String> = people(&message["toList"]).iter().map(Address::text).collect();
+        return format!(
+            "{QUOTE_START}<p>---------- Forwarded message ---------<br>From: {}<br>Date: {}<br>Subject: {}<br>To: {}</p>\
+             {html}</div>",
+            escape_html(&from_text),
+            escape_html(&date),
+            escape_html(message["subject"].as_str().unwrap_or("")),
+            escape_html(&to.join(", "))
+        );
+    }
+    format!(
+        "{QUOTE_START}<p>{}</p><blockquote>{html}</blockquote></div>",
+        escape_html(&format!("On {date}, {from_text} wrote:"))
+    )
+}
+
+/// A reply or forward of the message `parent_id`, from its kept row into `compose`; the `offline` hint: true, or
+/// `{messageMissing}` when the message is not kept, and the answer is a new message that answers it (no recipients,
+/// subject or quote), so the send still threads.
+fn answer_message(store: &Store, compose: &mut Map<String, Value>, parent_id: &str, forward: bool, all: bool) -> Value {
+    let kind = match (forward, all) {
+        (true, _) => "forward",
+        (false, true) => "replyAll",
+        (false, false) => "reply",
+    };
+    compose.insert("parentEmailMessageId".to_string(), json!(parent_id));
+    compose.insert("isForward".to_string(), json!(forward));
+    compose.insert("kind".to_string(), json!(kind));
+    let kept = store
+        .mail_message(&format!("email:{parent_id}"))
+        .and_then(|message| Some((message.thread_id, serde_json::from_str::<Value>(&message.row).ok()?)));
+    let Some((thread_id, parent)) = kept else {
+        return json!({ "messageMissing": parent_id });
+    };
+    let identities = identity_list(compose);
+    let to = people(&parent["toList"]);
+    let cc = people(&parent["ccList"]);
+    // from the account it came to when the user may send from it, else the new message's default; the server refuses a
+    // forward from no account the user may send from, which offline is left to the save, as the From offered then
+    let account = parent["emailAccountId"].as_str().unwrap_or("");
+    let sendable = identities.iter().any(|identity| {
+        identity["isInternal"].as_bool() != Some(true) && identity["emailAccountId"].as_str() == Some(account)
+    });
+    if sendable {
+        let recipients: Vec<&str> = to.iter().chain(&cc).map(|entry| entry.address.as_str()).collect();
+        if let Some(identity) = identity_for(&identities, account, &recipients) {
+            compose.insert("fromValue".to_string(), identity["value"].clone());
+        }
+    }
+    let subject = parent["subject"].as_str().unwrap_or("");
+    let lower = subject.to_ascii_lowercase();
+    let subject = if forward {
+        if lower.starts_with("fwd:") || lower.starts_with("fw:") {
+            subject.to_string()
+        } else {
+            format!("Fwd: {subject}")
+        }
+    } else if lower.starts_with("re:") {
+        subject.to_string()
+    } else {
+        format!("Re: {subject}")
+    };
+    compose.insert("subject".to_string(), json!(subject));
+    compose.insert("quoteHtml".to_string(), json!(quote_of(&parent, forward)));
+    let (thread_store, thread) = thread_of(&thread_id);
+    compose.insert("threadStore".to_string(), json!(thread_store));
+    compose.insert("threadId".to_string(), json!(thread));
+    if forward {
+        // the server makes the forward's draft with copies of the files (get#ComposeData only); offline its first save
+        // makes the draft, with none, so the composer says how many are left out
+        compose.insert("emailMessageId".to_string(), Value::Null);
+        compose.insert("attachmentList".to_string(), json!([]));
+        let files = parent["attachmentList"].as_array().map_or(0, Vec::len);
+        return if files > 0 {
+            json!({ "forwardFilesMissing": files })
+        } else {
+            json!(true)
+        };
+    }
+    // the user's addresses: the identities', and those the thread marks as the user's (no Reply-To is kept)
+    let mut mine: Vec<String> = identities
+        .iter()
+        .filter_map(|identity| identity["emailAddress"].as_str())
+        .map(str::to_lowercase)
+        .collect();
+    for list in ["from", "toList", "ccList", "bccList"] {
+        let marked = |person: &Value| {
+            (person["isMe"].as_bool() == Some(true))
+                .then(|| person["address"].as_str().map(str::to_lowercase))
+                .flatten()
+        };
+        match &parent[list] {
+            Value::Array(people) => mine.extend(people.iter().filter_map(marked)),
+            person => mine.extend(marked(person)),
+        }
+    }
+    let is_mine = |entry: &Address| mine.contains(&entry.address.to_lowercase());
+    let sender = people(&parent["from"]);
+    let from_me = sender.first().is_some_and(is_mine);
+    let mut to_list = if from_me { to.clone() } else { sender };
+    let mut cc_list = Vec::new();
+    if all {
+        if !from_me {
+            to_list.extend(to.iter().filter(|entry| !is_mine(entry)).cloned());
+        }
+        cc_list = cc.into_iter().filter(|entry| !is_mine(entry)).collect();
+    }
+    let mut seen: Vec<String> = Vec::new();
+    let mut unique = |list: Vec<Address>| -> Vec<Value> {
+        list.into_iter()
+            .filter(|entry| {
+                let key = entry.address.to_lowercase();
+                if key.is_empty() || seen.contains(&key) {
+                    return false;
+                }
+                seen.push(key);
+                true
+            })
+            .map(|entry| entry.chip())
+            .collect()
+    };
+    let to_chips = unique(to_list);
+    let cc_chips = unique(cc_list);
+    compose.insert("to".to_string(), Value::Array(to_chips));
+    compose.insert("cc".to_string(), Value::Array(cc_chips));
+    json!(true)
+}
+
+/// A new message's mailto-style values: the recipients, the subject and the body (HTML cleaned, or text as a
+/// paragraph).
+fn new_message(compose: &mut Map<String, Value>, params: &Params) {
+    for field in ["to", "cc", "bcc"] {
+        if let Some(text) = params.text(field) {
+            let chips: Vec<Value> = split_addresses(text)
+                .iter()
+                .filter(|entry| !entry.address.is_empty())
+                .map(Address::chip)
+                .collect();
+            compose.insert(field.to_string(), Value::Array(chips));
+        }
+    }
+    if let Some(subject) = params.text("subject") {
+        compose.insert("subject".to_string(), json!(subject));
+    }
+    if let Some(body) = params.text("body") {
+        let html = if has_tag(body) {
+            moqui_core::service::clean_safe_html(body)
+        } else {
+            text_paragraph(body)
+        };
+        compose.insert("body".to_string(), json!(html));
+    }
+}
+
+/// A draft of the user's (`emailMessageId`) offline. Its kept message decides: one that is not a draft the user may
+/// send (sent or deleted since) is none, so an older answer or a draft kept here does not bring it back. A kept draft
+/// message is read as `get#ComposeData` reads it on the new message's `compose`, with what its row does not carry (the
+/// message it answers, a forward, the record, the clientRef) from the draft's kept answer, else the draft Compose kept
+/// here. No message kept: the draft's kept answer, else the draft kept here on the new message's. None when no
+/// `composeData` was ever kept to give the identities: it needs the server.
+fn draft_answer(store: &Store, bare: &str, query: &str, id: &str) -> Option<Vec<u8>> {
+    let local = store
+        .draft(&format!("{COMPOSE_DRAFT}{id}"))
+        .and_then(|draft| serde_json::from_str::<Value>(&draft.value).ok())
+        .filter(|saved| saved["email"].as_bool() == Some(true) && saved["draft"].is_object());
+    let kept_query = kept_query(Kind::Compose, query);
+    let message = store
+        .mail_message(&format!("email:{id}"))
+        .and_then(|message| Some((message.thread_id, serde_json::from_str::<Value>(&message.row).ok()?)));
+    let Some((thread_id, row)) = message else {
+        if let Some(kept) = store.answer(bare, &kept_query) {
+            return Some(kept.body);
+        }
+        let saved = local?;
+        let mut compose = base_compose(store, bare)?;
+        draft_from_local(&mut compose, &saved, id);
+        return Some(json!({ "compose": compose, "offline": true }).to_string().into_bytes());
+    };
+    let status = row["statusId"].as_str();
+    let draft = row["isDraft"].as_bool() == Some(true)
+        || status == Some("ES_DRAFT")
+        || (status == Some("ES_READY") && truthy(&row["sendError"]));
+    if !draft || row["canSend"].as_bool() != Some(true) {
+        return None;
+    }
+    let mut compose = base_compose(store, bare)?;
+    draft_from_row(&mut compose, &thread_id, &row, id);
+    let answered = kept_object(store, bare, &kept_query).and_then(|mut answer| match answer.remove("compose") {
+        Some(Value::Object(compose)) => Some(compose),
+        _ => None,
+    });
+    let from_local = |field: &str| local.as_ref().map(|saved| saved["draft"][field].clone());
+    for field in ["parentEmailMessageId", "isForward", "record"] {
+        let known = answered
+            .as_ref()
+            .and_then(|answer| answer.get(field).cloned())
+            .filter(|value| !value.is_null())
+            .or_else(|| from_local(field).filter(|value| !value.is_null()));
+        if let Some(value) = known {
+            compose.insert(field.to_string(), value);
+        }
+    }
+    let client_ref = local
+        .as_ref()
+        .map(|saved| saved["clientRef"].clone())
+        .filter(|value| !value.is_null())
+        .or_else(|| answered.as_ref().and_then(|answer| answer.get("clientRef").cloned()))
+        .unwrap_or(Value::Null);
+    compose.insert("clientRef".to_string(), client_ref);
+    Some(json!({ "compose": compose, "offline": true }).to_string().into_bytes())
+}
+
+/// A draft Compose kept here (`{draft, clientRef}`), on the new message's `compose`.
+fn draft_from_local(compose: &mut Map<String, Value>, saved: &Value, id: &str) {
+    let draft = &saved["draft"];
+    for field in [
+        "fromValue",
+        "subject",
+        "body",
+        "quoteHtml",
+        "parentEmailMessageId",
+        "isForward",
+        "record",
+        "threadStore",
+        "threadId",
+    ] {
+        if !draft[field].is_null() {
+            compose.insert(field.to_string(), draft[field].clone());
+        }
+    }
+    for field in ["to", "cc", "bcc"] {
+        if draft[field].is_array() {
+            compose.insert(field.to_string(), draft[field].clone());
+        }
+    }
+    compose.insert("emailMessageId".to_string(), json!(id));
+    compose.insert("attachmentList".to_string(), json!([]));
+    compose.insert("kind".to_string(), json!("draft"));
+    compose.insert("clientRef".to_string(), saved["clientRef"].clone());
+}
+
+/// A draft from its kept thread message: its account's identity, recipients, subject, body with its quote apart and
+/// files, as `get#ComposeData` reads a draft (the message it answers is not in the row).
+fn draft_from_row(compose: &mut Map<String, Value>, thread_id: &str, row: &Value, id: &str) {
+    let identities = identity_list(compose);
+    let from = people(&row["from"]);
+    let from_address: Vec<&str> = from.iter().map(|entry| entry.address.as_str()).collect();
+    if let Some(identity) = identity_for(&identities, row["emailAccountId"].as_str().unwrap_or(""), &from_address) {
+        compose.insert("fromValue".to_string(), identity["value"].clone());
+    }
+    for (field, list) in [("to", "toList"), ("cc", "ccList"), ("bcc", "bccList")] {
+        let chips: Vec<Value> = people(&row[list]).iter().map(Address::chip).collect();
+        compose.insert(field.to_string(), Value::Array(chips));
+    }
+    compose.insert("subject".to_string(), json!(row["subject"].as_str().unwrap_or("")));
+    let body = match (row["html"].as_str(), row["text"].as_str()) {
+        (Some(html), _) if !html.is_empty() => html.to_string(),
+        (_, Some(text)) if !text.is_empty() => text_paragraph(text),
+        _ => String::new(),
+    };
+    let (body, quote) = match body.find(QUOTE_START) {
+        Some(at) => (body[..at].to_string(), json!(body[at..])),
+        None => (body, Value::Null),
+    };
+    compose.insert("body".to_string(), json!(body));
+    compose.insert("quoteHtml".to_string(), quote);
+    compose.insert("emailMessageId".to_string(), json!(id));
+    compose.insert("parentEmailMessageId".to_string(), Value::Null);
+    compose.insert("isForward".to_string(), json!(false));
+    compose.insert(
+        "attachmentList".to_string(),
+        row["attachmentList"]
+            .as_array()
+            .map_or_else(|| json!([]), |files| json!(files)),
+    );
+    compose.insert("kind".to_string(), json!("draft"));
+    let (thread_store, thread) = thread_of(thread_id);
+    compose.insert("threadStore".to_string(), json!(thread_store));
+    compose.insert("threadId".to_string(), json!(thread));
 }
 
 #[cfg(test)]

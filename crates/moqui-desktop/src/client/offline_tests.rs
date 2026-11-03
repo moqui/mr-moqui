@@ -636,3 +636,346 @@ fn a_room_view_and_the_room_list_answer_offline_from_the_rows() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+const COMPOSE: &str = "/apps/BasicComms/Inbox/Compose/composeData";
+
+/// The new message's `composeData`, kept as the mirror keeps it: two identities of account A, and the internal one.
+fn keep_compose_base(store: &Store) {
+    let base = json!({ "compose": { "identityList": [
+            { "value": "account:A", "emailAccountId": "A", "emailAddress": "me@ex.com", "isDefault": true },
+            { "value": "identity:A2", "emailAccountId": "A", "emailAddress": "sales@ex.com" },
+            { "value": "internal", "emailAccountId": null, "isInternal": true }],
+        "fromValue": "internal", "me": { "userId": "U1" }, "to": [], "cc": [], "bcc": [], "subject": "", "body": "",
+        "quoteHtml": null, "emailMessageId": null, "parentEmailMessageId": null, "isForward": false, "record": null,
+        "attachmentList": [], "undoSeconds": 10, "signaturePlacement": "above", "threadStore": null, "threadId": null,
+        "kind": "new" } });
+    keep(store, Kind::Compose, COMPOSE, "", base.to_string().as_bytes());
+}
+
+/// A thread of root R1: Pat's message M1 to me (on sales@), Lee and Kim, and my draft M2 replying to it.
+fn keep_mail_thread(store: &Store) {
+    let thread = json!({ "thread": { "store": "email", "threadId": "R1", "subject": "Lunch", "messageList": [
+        { "key": "email:M1", "emailMessageId": "M1", "emailAccountId": "A",
+            "from": { "address": "pat@ex.com", "name": "Pat", "isMe": false },
+            "toList": [{ "address": "sales@ex.com", "isMe": true }, { "address": "lee@ex.com", "name": "Lee" }],
+            "ccList": [{ "address": "kim@ex.com", "name": null }, { "address": "pat@ex.com" }],
+            "date": 1_700_000_000_000_i64, "subject": "Lunch", "html": "<p>Noon?</p><script>steal()</script>",
+            "text": null, "attachmentList": [{ "id": "F0", "name": "map.png" }] },
+        { "key": "email:M2", "emailMessageId": "M2", "emailAccountId": "A",
+            "from": { "address": "sales@ex.com", "isMe": true },
+            "toList": [{ "address": "pat@ex.com", "name": "Pat" }], "ccList": [], "bccList": [{ "address": "boss@ex.com" }],
+            "date": 1_700_000_100_000_i64, "subject": "Re: Lunch", "isDraft": true, "statusId": "ES_DRAFT", "canSend": true,
+            "html": "<p>Yes</p><div class=\"ironstone-quote\"><p>On …</p></div>", "text": null,
+            "attachmentList": [{ "id": "F1", "name": "menu.pdf", "size": 10, "contentType": "application/pdf" }] }] } });
+    keep(
+        store,
+        Kind::MailThread,
+        "/apps/BasicComms/Inbox/Mail/thread",
+        "store=email&threadId=R1",
+        thread.to_string().as_bytes(),
+    );
+}
+
+fn addresses(chips: &Value) -> Vec<String> {
+    chips
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|chip| chip["value"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_new_message_answers_offline_from_the_kept_new_messages_compose_data() {
+    let (store, dir) = store("compose-new");
+    // nothing kept: the scheme answers 502 and Compose starts a blank message
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, ""), None);
+    keep_compose_base(&store);
+    let base = offline(&store, Kind::Compose, COMPOSE, "_=1").unwrap();
+    assert_eq!(base["compose"]["kind"], "new");
+    assert_eq!(base["compose"]["identityList"].as_array().unwrap().len(), 3);
+    // mailto-style values on it, the body's HTML cleaned
+    let mailto = offline(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "to=%22Pat%20Q%22%20%3Cpat%40ex.com%3E%3B%20mailto%3Alee%40ex.com&subject=Hi&body=%3Cb%3Eyo%3C%2Fb%3E%3Cscript%3Ex()%3C%2Fscript%3E",
+    )
+    .unwrap();
+    let compose = &mailto["compose"];
+    assert_eq!(addresses(&compose["to"]), ["\"Pat Q\" <pat@ex.com>", "lee@ex.com"]);
+    assert_eq!(compose["to"][0]["label"], "Pat Q <pat@ex.com>");
+    assert_eq!(compose["subject"], "Hi");
+    assert_eq!(compose["body"], "<b>yo</b>");
+    assert_eq!(compose["fromValue"], "internal");
+    assert_eq!(mailto["offline"], true);
+    // an internal reply or a mailbox post needs the server
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "replyToCommEventId=CE1"), None);
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "contactListId=L1"), None);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_reply_or_forward_is_built_from_the_kept_message() {
+    let (store, dir) = store("compose-reply");
+    keep_compose_base(&store);
+    keep_mail_thread(&store);
+    let reply = offline(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "replyToEmailMessageId=M1&replyAll=false",
+    )
+    .unwrap();
+    let compose = &reply["compose"];
+    assert_eq!(reply["offline"], true);
+    assert_eq!(compose["kind"], "reply");
+    // from the identity it came to, to its sender
+    assert_eq!(compose["fromValue"], "identity:A2");
+    assert_eq!(addresses(&compose["to"]), ["\"Pat\" <pat@ex.com>"]);
+    assert_eq!(addresses(&compose["cc"]), Vec::<String>::new());
+    assert_eq!(compose["subject"], "Re: Lunch");
+    assert_eq!(compose["parentEmailMessageId"], "M1");
+    assert_eq!(compose["isForward"], false);
+    assert_eq!(
+        (&compose["threadStore"], &compose["threadId"]),
+        (&json!("email"), &json!("R1"))
+    );
+    let quote = compose["quoteHtml"].as_str().unwrap();
+    assert!(quote.starts_with("<div class=\"ironstone-quote\"><p>On "), "{quote}");
+    assert!(
+        quote.contains(", Pat &lt;pat@ex.com&gt; wrote:</p><blockquote><p>Noon?</p>"),
+        "{quote}"
+    );
+    assert!(!quote.contains("script"), "{quote}");
+
+    // reply all: the other recipients but me, each once
+    let all = offline(&store, Kind::Compose, COMPOSE, "replyToEmailMessageId=M1&replyAll=true").unwrap();
+    assert_eq!(all["compose"]["kind"], "replyAll");
+    assert_eq!(
+        addresses(&all["compose"]["to"]),
+        ["\"Pat\" <pat@ex.com>", "\"Lee\" <lee@ex.com>"]
+    );
+    assert_eq!(addresses(&all["compose"]["cc"]), ["kim@ex.com"]);
+
+    // a forward: no draft offline, its first save makes it, without the message's file, which is said
+    let forward = offline(&store, Kind::Compose, COMPOSE, "forwardEmailMessageId=M1").unwrap();
+    assert_eq!(forward["offline"], json!({ "forwardFilesMissing": 1 }));
+    let compose = &forward["compose"];
+    assert_eq!(compose["kind"], "forward");
+    assert_eq!(compose["subject"], "Fwd: Lunch");
+    assert_eq!(compose["isForward"], true);
+    assert_eq!(compose["emailMessageId"], Value::Null);
+    assert_eq!(compose["to"], json!([]));
+    let quote = compose["quoteHtml"].as_str().unwrap();
+    assert!(
+        quote.contains("---------- Forwarded message ---------<br>From: Pat &lt;pat@ex.com&gt;<br>"),
+        "{quote}"
+    );
+    assert!(
+        quote.contains("Subject: Lunch<br>To: sales@ex.com, Lee &lt;lee@ex.com&gt;</p><p>Noon?</p></div>"),
+        "{quote}"
+    );
+
+    // the server's own answer of the same reply comes first; a forward's (a draft made then) does not
+    let server_reply = json!({ "compose": { "kind": "reply", "subject": "Re: Lunch (server)" } }).to_string();
+    keep(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "replyToEmailMessageId=M1&replyAll=false",
+        server_reply.as_bytes(),
+    );
+    let kept = offline(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "replyToEmailMessageId=M1&replyAll=false",
+    )
+    .unwrap();
+    assert_eq!(kept["compose"]["subject"], "Re: Lunch (server)");
+    let server_forward = json!({ "compose": { "kind": "forward", "emailMessageId": "OLD" } }).to_string();
+    keep(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "forwardEmailMessageId=M1",
+        server_forward.as_bytes(),
+    );
+    let built = offline(&store, Kind::Compose, COMPOSE, "forwardEmailMessageId=M1").unwrap();
+    assert_eq!(built["compose"]["emailMessageId"], Value::Null);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_reply_to_a_message_not_kept_is_a_new_message_answering_it() {
+    let (store, dir) = store("compose-missing");
+    // no new message kept either: none, and Compose starts a blank one
+    assert_eq!(
+        offline(
+            &store,
+            Kind::Compose,
+            COMPOSE,
+            "replyToEmailMessageId=GONE&replyAll=false"
+        ),
+        None
+    );
+    keep_compose_base(&store);
+    let reply = offline(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "replyToEmailMessageId=GONE&replyAll=false",
+    )
+    .unwrap();
+    assert_eq!(reply["offline"], json!({ "messageMissing": "GONE" }));
+    let compose = &reply["compose"];
+    assert_eq!(compose["kind"], "reply");
+    assert_eq!(compose["parentEmailMessageId"], "GONE");
+    assert_eq!(compose["to"], json!([]));
+    assert_eq!(compose["subject"], "");
+    assert_eq!(compose["quoteHtml"], Value::Null);
+    assert_eq!(compose["identityList"].as_array().unwrap().len(), 3);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_draft_opens_offline_from_its_kept_message_or_the_draft_kept_here() {
+    let (store, dir) = store("compose-draft");
+    keep_compose_base(&store);
+    keep_mail_thread(&store);
+    store
+        .put_draft(
+            "ironstone.compose.email.M2",
+            &json!({ "email": true, "clientRef": "mREF", "draft": { "subject": "edited" } }).to_string(),
+            &[],
+        )
+        .unwrap();
+    let draft = offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M2").unwrap();
+    let compose = &draft["compose"];
+    assert_eq!(compose["kind"], "draft");
+    assert_eq!(compose["fromValue"], "identity:A2");
+    assert_eq!(addresses(&compose["to"]), ["\"Pat\" <pat@ex.com>"]);
+    assert_eq!(addresses(&compose["bcc"]), ["boss@ex.com"]);
+    assert_eq!(compose["subject"], "Re: Lunch");
+    assert_eq!(compose["body"], "<p>Yes</p>");
+    assert_eq!(compose["quoteHtml"], "<div class=\"ironstone-quote\"><p>On …</p></div>");
+    assert_eq!(compose["attachmentList"][0]["name"], "menu.pdf");
+    assert_eq!(compose["clientRef"], "mREF");
+    assert_eq!(compose["threadId"], "R1");
+
+    // a kept message that is not a draft (sent since): none, though a draft and an answer of it are kept here
+    store
+        .put_draft(
+            "ironstone.compose.email.M1",
+            &json!({ "email": true, "clientRef": "mSENT", "draft": { "subject": "Sent since" } }).to_string(),
+            &[],
+        )
+        .unwrap();
+    keep(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "emailMessageId=M1",
+        br#"{"compose":{"kind":"draft"}}"#,
+    );
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M1"), None);
+
+    // no message kept: the draft kept here
+    store
+        .put_draft(
+            "ironstone.compose.email.M5",
+            &json!({ "email": true, "clientRef": "mOTHER", "draft": { "fromValue": "account:A",
+                "to": [{ "value": "lee@ex.com", "label": "lee@ex.com", "kind": "address", "locked": false }],
+                "subject": "Kept", "body": "<p>here</p>", "quoteHtml": null } })
+            .to_string(),
+            &[],
+        )
+        .unwrap();
+    let local = offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M5").unwrap();
+    let compose = &local["compose"];
+    assert_eq!(compose["kind"], "draft");
+    assert_eq!(compose["emailMessageId"], "M5");
+    assert_eq!(compose["subject"], "Kept");
+    assert_eq!(addresses(&compose["to"]), ["lee@ex.com"]);
+    assert_eq!(compose["clientRef"], "mOTHER");
+    assert_eq!(compose["identityList"].as_array().unwrap().len(), 3);
+
+    // neither: it needs the server
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M9"), None);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_kept_drafts_answer_gives_what_its_row_does_not_carry() {
+    let (store, dir) = store("compose-draft-answer");
+    keep_compose_base(&store);
+    keep_mail_thread(&store);
+    let answer = json!({ "compose": { "kind": "draft", "emailMessageId": "M2", "parentEmailMessageId": "M1",
+        "isForward": false, "record": { "recordId": "O1" }, "clientRef": "mSERVER", "subject": "older" } });
+    keep(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "emailMessageId=M2",
+        answer.to_string().as_bytes(),
+    );
+    let draft = offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M2").unwrap();
+    let compose = &draft["compose"];
+    // the row's content, the answer's links
+    assert_eq!(compose["subject"], "Re: Lunch");
+    assert_eq!(compose["parentEmailMessageId"], "M1");
+    assert_eq!(compose["record"]["recordId"], "O1");
+    assert_eq!(compose["clientRef"], "mSERVER");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn with_no_new_message_kept_another_compose_answers_identities_serve() {
+    let (store, dir) = store("compose-identities");
+    store
+        .put_draft(
+            "ironstone.compose.email.M5",
+            &json!({ "email": true, "clientRef": "mX", "draft": { "subject": "Kept" } }).to_string(),
+            &[],
+        )
+        .unwrap();
+    // no composeData ever kept: a draft kept here has no identities to open with, and needs the server
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M5"), None);
+    assert_eq!(offline(&store, Kind::Compose, COMPOSE, "subject=Hi"), None);
+    // a reply's answer read online: its identities make the new message's, From the default account
+    let reply = json!({ "compose": { "identityList": [
+            { "value": "internal", "isInternal": true },
+            { "value": "account:A", "emailAccountId": "A", "emailAddress": "me@ex.com" },
+            { "value": "account:B", "emailAccountId": "B", "emailAddress": "b@ex.com", "isDefault": true }],
+        "fromValue": "account:A", "undoSeconds": 5, "kind": "reply", "subject": "Re: x" } });
+    keep(
+        &store,
+        Kind::Compose,
+        COMPOSE,
+        "replyToEmailMessageId=M1&replyAll=false",
+        reply.to_string().as_bytes(),
+    );
+    let new = offline(&store, Kind::Compose, COMPOSE, "subject=Hi").unwrap();
+    let compose = &new["compose"];
+    assert_eq!(compose["identityList"].as_array().unwrap().len(), 3);
+    assert_eq!(compose["fromValue"], "account:B");
+    assert_eq!(compose["undoSeconds"], 5);
+    assert_eq!(compose["subject"], "Hi");
+    assert_eq!(compose["kind"], "new");
+    let draft = offline(&store, Kind::Compose, COMPOSE, "emailMessageId=M5").unwrap();
+    assert_eq!(draft["compose"]["subject"], "Kept");
+    assert_eq!(draft["compose"]["identityList"].as_array().unwrap().len(), 3);
+    // the new message's own answer then gives its default From
+    keep_compose_base(&store);
+    store.remove_answer(COMPOSE, "").unwrap();
+    let new = offline(&store, Kind::Compose, COMPOSE, "subject=Hi").unwrap();
+    assert_eq!(new["compose"]["fromValue"], "internal");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}

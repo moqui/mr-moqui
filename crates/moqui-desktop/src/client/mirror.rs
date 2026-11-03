@@ -19,10 +19,10 @@
 //! timelines the drop marked stale up to date again.
 //!
 //! - **Personal:** the room list, then each room's latest page and its older pages back to `mirror-days`; the inbox's
-//!   folders, then the unified inbox's and each folder's thread pages back to `mirror-days`, and those threads'
-//!   messages.
-//! - **Shared:** the latest page of the `prefetch-rooms` most recent rooms, and the inbox's first `prefetch-mail` threads
-//!   with their messages.
+//!   folders and the new message's `composeData`, then the unified inbox's and each folder's thread pages back to
+//!   `mirror-days`, and those threads' messages.
+//! - **Shared:** the latest page of the `prefetch-rooms` most recent rooms, the new message's `composeData`, and the
+//!   inbox's first `prefetch-mail` threads with their messages.
 //!
 //! The requests go through the proxy with the account's key ([`Transport`]), one at a time with a short pause between
 //! them, and their answers are written as the scheme writes the pages' (`offline::keep`). A run is bounded (pages per
@@ -40,7 +40,7 @@ use moqui_client::proxy::{header, Request};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use super::offline::{self, chat_base, mail_base, number};
+use super::offline::{self, chat_base, compose_base, mail_base, number};
 use super::{Client, SHELL_ORIGIN};
 
 /// The pause between two requests of a run.
@@ -238,7 +238,11 @@ fn threads_query(view: &str, account: &str, folder: &str, cursor: Option<&str>) 
 fn mail(run: &mut Run<'_, '_>) -> Result<(), Ended> {
     let job = run.job;
     let base = mail_base(&job.comms_root);
-    let Some(data) = run.get(&format!("{base}/inboxData"))? else {
+    let data = run.get(&format!("{base}/inboxData"))?;
+    // what a new message starts with (the identities, their signatures, the preferences), so one is written offline and
+    // a reply or forward is built from it and the kept message (offline.rs compose_json)
+    run.get(&format!("{}/composeData", compose_base(&job.comms_root)))?;
+    let Some(data) = data else {
         return Ok(());
     };
     // the unified inbox first, then (personal) each account's folders

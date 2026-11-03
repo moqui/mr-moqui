@@ -400,6 +400,11 @@ fn mail_messages_are_kept_once_and_a_thread_read_again_replaces_them() {
         2
     );
     assert_eq!(message_ids(), ["M1", "M3"]);
+    assert_eq!(
+        store.mail_message("M3").map(|kept| kept.thread_id),
+        Some("T1".to_string())
+    );
+    assert_eq!(store.mail_message("M2"), None);
 
     // out of one folder the messages stay for the other; out of both they go
     store.remove_mail_thread("INBOX", "T1").unwrap();

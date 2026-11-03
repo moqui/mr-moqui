@@ -24,7 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
     the message for a file over 25 MB or a folder), Send (Ctrl+Enter) with the undo hold, Schedule send, Send and
     archive, Discard. Email drafts save on the server every few seconds; an internal message keeps its draft in this browser
     until it is sent. In the desktop client with its server out of reach a banner says that an email waits in the outbox and
-    an internal message as a draft. Brand color names and Quasar classes only (style-guide §4.8, §5). -->
+    an internal message as a draft; with nothing kept to start from, a new email (still answering the message of a reply or
+    forward). Brand color names and Quasar classes only (style-guide §4.8, §5). -->
 <template><div class="m-compose">
     <compose-shell :layout="layout" :title="title" :minimized="minimized" :phone="isPhone" @minimize="minimize" @popout="popOut" @popin="popIn" @close="close">
         <div class="column no-wrap" :class="layout === 'dock' ? 'col' : ''" style="min-height:0" @dragover.prevent="dragOver = true" @dragleave.self="dragOver = false"
@@ -41,7 +42,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-banner v-if="noConnection" dense rounded class="q-mx-md q-mt-sm m-tonal text-caption m-compose-offline">
                     <template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
                     {{mode === 'internal' ? t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.')
-                        : t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')}}</q-banner>
+                        : t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')}}
+                    <div v-if="offlineNote">{{offlineNote}}</div></q-banner>
                 <!-- the fields -->
                 <div class="q-px-md q-pt-sm">
                     <div class="row items-center no-wrap">
@@ -102,7 +104,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                 <!-- the send row -->
                 <div class="row items-center no-wrap q-px-sm q-py-xs q-gutter-x-xs">
-                    <q-btn-dropdown split unelevated no-caps color="primary" icon="sym_o_send" :label="t('Send')" :loading="sending" :disable="sending || uploading" @click="send()">
+                    <q-btn-dropdown split unelevated no-caps color="primary" icon="sym_o_send" :label="t('Send')" :loading="sending" :disable="sending || uploading || noFrom" @click="send()">
                         <q-list dense style="min-width:200px">
                             <q-item clickable v-close-popup @click="scheduleOpen = true"><q-item-section avatar><q-icon name="sym_o_schedule_send"></q-icon></q-item-section>
                                 <q-item-section>{{t('Schedule send…')}}</q-item-section></q-item>
@@ -236,7 +238,7 @@ module.exports = {
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
-            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null,
+            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -252,6 +254,8 @@ module.exports = {
         minimized() { return !!(this.hostDock && this.hostDock.minimized); },
         // the desktop client's server out of reach (moqui.connection; never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
+        // the desktop client started offline with no mail account known here: nothing to send from until the server answers
+        noFrom() { return !!moqui.hostOutbox() && this.state === 'ready' && !this.identities.length; },
         mode() { return this.draft.fromValue === 'internal' ? 'internal' : 'email'; },
         draftId() { return this.draft.emailMessageId || null; },
         title() {
@@ -338,22 +342,50 @@ module.exports = {
             this.queued = [];
             this.offlineDraft = false;
             this.localEmailKey = null;
+            this.offlineNote = null;
             this.clientRef = moqui.hostOutbox() ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
             const q = this.query;
             const params = {};
             ['emailMessageId', 'replyToEmailMessageId', 'forwardEmailMessageId', 'replyAll', 'replyToCommEventId', 'replyToSender', 'contactListId', 'to', 'cc',
                 'bcc', 'subject', 'body', 'recordEntity', 'recordId'].forEach((name) => { if (q[name] != null && q[name] !== '') params[name] = q[name]; });
             moqui.request(this.url('composeData'), { params }).then((result) => {
-                const compose = (result.json || {}).compose;
-                if (!compose) { this.state = 'failed'; return; }
-                this.apply(compose);
-                this.restoreLocal();
-                this.loadedOnce = true;
-                this.$nextTick(() => { this.state = 'ready'; this.dirty = false; this.focusFirst(); });
+                const json = result.json || {};
+                if (!json.compose) { this.state = 'failed'; return; }
+                // the desktop client's answer from its store (offline.rs compose_json): the message answered is not kept there,
+                // or a forward's files, which only the server copies, are left out
+                const hint = json.offline || {};
+                if (hint.messageMissing) this.offlineNote = t('The message this answers is not kept on this computer: add its recipients.');
+                else if (hint.forwardFilesMissing) this.offlineNote = t('Its {count} files are not attached: forward it again when the server can be reached, or attach them.')
+                    .replace('{count}', String(hint.forwardFilesMissing));
+                this.startWith(json.compose);
             }, (err) => {
+                // the desktop client with its server out of reach and nothing kept to start from: a new email, which waits in
+                // the outbox; still a reply or forward of the message, so it threads. A draft, an internal reply and a mailbox
+                // post need the server. Never on the web.
+                if (moqui.hostOutbox() && this.unreachable(err)) {
+                    if (!q.emailMessageId && !q.replyToCommEventId && !q.contactListId) {
+                        const parent = q.replyToEmailMessageId || q.forwardEmailMessageId || null;
+                        const forward = !q.replyToEmailMessageId && !!parent;
+                        // no composeData was ever kept here, so no mail account is known to send from (noFrom)
+                        this.offlineNote = (parent ? t('The message this answers is not kept on this computer: add its recipients.') + ' ' : '') +
+                            t('No mail account is known on this computer yet: write it now and send it once the server can be reached.');
+                        this.startWith({ kind: parent ? (forward ? 'forward' : (String(q.replyAll) === 'true' ? 'replyAll' : 'reply')) : 'new',
+                            parentEmailMessageId: parent, isForward: forward });
+                        return;
+                    }
+                    this.state = 'failed';
+                    this.error = t('This needs a connection to the server; open it again when the server can be reached.');
+                    return;
+                }
                 this.state = 'failed';
                 this.error = (err && err.json && err.json.errors) || t('This message cannot be written here');
             });
+        },
+        startWith(compose) {
+            this.apply(compose);
+            this.restoreLocal();
+            this.loadedOnce = true;
+            this.$nextTick(() => { this.state = 'ready'; this.dirty = false; this.focusFirst(); });
         },
         apply(compose) {
             this.identities = compose.identityList || [];
@@ -815,6 +847,7 @@ module.exports = {
         send(options) {
             const opts = options || {};
             if (this.sending) return;
+            if (this.noFrom) { moqui.notifyMessages(null, t('No mail account is known on this computer yet: send it once the server can be reached')); return; }
             this.collectPending();
             const d = this.draft;
             if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient in To')); return; }

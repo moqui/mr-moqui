@@ -120,6 +120,20 @@ protects it at rest, and the keys are in the key store, not in it.
   the rows in the server's shape, so a page never asked for whole still answers and the pushes show. A page in a gap
   (never fetched) needs the server (502); `offline.gapBefore` and `gapAfter` say where the held stretch ends, and
   `hasMoreBefore`/`hasMoreAfter` stay false there.
+- **Compose offline:** `composeData` answers from the store in `get#ComposeData`'s shape. The new message's answer (no
+  parameters, which the mirror reads) gives the identities, signatures and preferences; with none kept, those of any
+  other kept `composeData` do.
+  - A reply or forward is the kept answer of the same query (not a forward's: its draft was the server's then), else
+    built from the kept message: its identity, recipients, "Re:"/"Fwd:" and the quote, cleaned as the server cleans it.
+    There is no Reply-To. A forward's files are left out, as only the server copies them into its draft, and
+    `offline.forwardFilesMissing` says how many. A message not kept gives a new message answering it, with
+    `offline.messageMissing`.
+  - A draft follows its kept message: one not a draft any more (sent or deleted) needs the server. A kept draft is read
+    from its row, the rest from its kept answer or the draft Compose kept here; with no message kept, the kept answer,
+    else that draft.
+  - Mailto-style values fill the new message. An internal reply or a mailbox post needs the server.
+  - With nothing kept, Compose starts a blank email in the desktop client, with Send off until a mail account is known;
+    a draft says it needs a connection. The web shows its error as before.
 - **The chat store passphrase** (`/ChatKeys/storeKey`) is kept in the key store, not the store, and answered offline to
   the shell only; a revoked device's is dropped, and it goes with the account.
 
@@ -129,8 +143,9 @@ too, the same push from two sockets once. A drop marks the timelines' heads stal
 
 **The mirror.** When the shell's `/notws` opens, `client/mirror.rs` reads ahead on a thread of its own: a personal device
 all rooms and mail folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first
-`prefetch-mail` threads. It is bounded, cancelled on a switch or sign-out, and stops on a 401 or when offline. After a
-drop, each room's latest page is read again.
+`prefetch-mail` threads. Both read the new message's `composeData`, so mail can be written offline. A run is bounded,
+cancelled on a switch or sign-out, and stops on a 401 or when offline. After a drop, each room's latest page is read
+again.
 
 ## The outbox and drafts
 
@@ -226,6 +241,8 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
 - A kept link that arrives while signed out stays for the next sign-in, which may be another account's.
 - The store's cap keeps no running total of its size: each check measures the rows and files again, a cost that
   grows with the store.
+- A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and
+  zone as the server does.
 - MD5: a changes feed across rooms, a mail change cursor, tombstones beyond the store's ranges, resumable uploads,
   idempotent internal messages and other mutations, and conflicts ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
 
