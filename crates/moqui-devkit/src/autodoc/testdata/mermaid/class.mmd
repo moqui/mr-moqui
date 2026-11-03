@@ -1,0 +1,14 @@
+classDiagram
+    class OrderServices["OrderServices"] {
+        +place_Order()
+        +cancel_Order()
+        +get_OrderT()
+    }
+    class OrderInfoServices["OrderInfoServices"] {
+        +get_OrderDisplayInfo()
+    }
+    class define_OrderParams["define#35;OrderParams"] {
+        <<interface>>
+    }
+    OrderServices ..> OrderInfoServices
+    define_OrderParams <|.. OrderServices

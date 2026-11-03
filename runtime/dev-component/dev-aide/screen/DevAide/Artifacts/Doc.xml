@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Docs (plans/Autodoc.md): the Markdown doc of an artifact, a package or a tree, made now from the artifact as the
+    server has it, with its Mermaid diagrams and the button that copies its Markdown. The doc's path is the screen's
+    extra path (Doc/entity/mantle/order/OrderHeader.md), so the doc's relative links open the docs they name here, as in
+    an exported tree; artifactId (an id, or a name such as OrderHeader) opens an artifact's doc. A plain markdown-view,
+    so the terminal reads it too. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Docs" default-menu-index="5" allow-extra-path="true">
+    <parameter name="artifactId"/>
+    <parameter name="includeSource"/>
+    <transition name="doc"><default-response url="."/></transition>
+
+    <actions>
+        <set field="docPath" from="(sri.getScreenUrlInfo().extraPathNameList || []).join('/')"/>
+        <set field="doc" from="null"/>
+        <service-call name="org.moqui.devaide.DocServices.get#ArtifactDoc" out-map="doc" transaction="force-new" ignore-error="true"
+            in-map="{docPath: docPath, artifactId: docPath ? '' : (artifactId || ''), includeSource: includeSource == 'true'}"/>
+        <set field="docFound" from="!!(doc &amp;&amp; doc.markdown)"/>
+        <set field="crumbs" from="docFound ? (doc.crumbs || []) : []"/>
+        <set field="sourceUrl" from="docFound ? '/qapps/dev/Artifacts/Doc/' + doc.docPath + (includeSource == 'true' ? '' : '?includeSource=true') : ''"/>
+    </actions>
+    <widgets>
+        <form-single name="DocFind" transition="doc" focus-field="artifactId">
+            <field name="artifactId"><default-field title="Artifact (id or name)"><text-line size="50"/></default-field></field>
+            <field name="submitButton"><default-field title="Show doc"><submit/></default-field></field>
+        </form-single>
+        <section name="DocShown" condition="docFound"><widgets>
+            <container style="row items-center q-gutter-x-md q-mb-sm" id="DocBar">
+                <section-iterate name="DocCrumbs" list="crumbs" entry="crumb"><widgets>
+                    <link url="${crumb.url}" url-type="plain" text="${crumb.title}" link-type="anchor"/>
+                </widgets></section-iterate>
+                <label text="${doc.title}" type="strong"/>
+                <link url="${doc.workspaceUrl || ''}" url-type="plain" text="Open in Workspace" link-type="anchor" condition="doc.workspaceUrl"/>
+                <link url="${doc.browserUrl || ''}" url-type="plain" text="Open in the Browser" link-type="anchor" condition="doc.browserUrl"/>
+                <link url="${sourceUrl}" url-type="plain" text="${includeSource == 'true' ? 'Hide definitions' : 'Show definitions'}" link-type="anchor"
+                    condition="doc.kind == 'service'"/>
+            </container>
+            <markdown-view id="DocText" text="${doc.markdown}" base-path="${doc.basePath}" copy="true"/>
+        </widgets></section>
+        <section name="DocMissing" condition="!docFound"><widgets>
+            <label type="p" text="There is no doc of ${docPath || artifactId}. Find an artifact above, or start from all artifacts."/>
+            <link url="/qapps/dev/Artifacts/Doc/README.md" url-type="plain" text="All artifacts" link-type="anchor"/>
+        </widgets></section>
+    </widgets>
+</screen>

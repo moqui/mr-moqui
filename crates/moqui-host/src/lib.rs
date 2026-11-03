@@ -675,6 +675,10 @@ where
             devtools_cmd::dispatch_refs(rest)?;
             Ok(None)
         }
+        [command, rest @ ..] if command == "autodoc" => {
+            devtools_cmd::dispatch_autodoc(rest)?;
+            Ok(None)
+        }
         [command, rest @ ..] if command == "lsp" => {
             #[cfg(all(feature = "devtools", feature = "tui"))]
             {

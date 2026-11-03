@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eecas>
+    <eeca id="ShopOrderPlaced" entity="shop.order.ShopOrder" on-create="true">
+        <description>Look the order up again after it is created.</description>
+        <actions><service-call name="shop.OrderServices.get#Order" in-map="{orderId: orderId}"/></actions>
+    </eeca>
+</eecas>

@@ -1,0 +1,14 @@
+<#-- A service file's doc (plans/Autodoc.md): its services. The names: the doc's header and services; md is
+     AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+- **Service file:** ${md.defined(component, name, "")}
+
+${description}
+
+## Services
+
+${services.length ? md.table(["Service", "Summary"], services.map((service) => [md.codeLink(service.title, service.href), md.plain(service.summary)])) : "None.\n"}

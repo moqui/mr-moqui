@@ -446,7 +446,7 @@ fn get_file(
 }
 
 /// Write `bytes` over `path` through a temporary file beside it, keeping its permissions.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), LibError> {
     let dir = path.parent().ok_or_else(|| LibError::new("a path with no directory"))?;
     std::fs::create_dir_all(dir).map_err(|err| LibError::new(format!("{}: {err}", dir.display())))?;
     let name = path

@@ -39,6 +39,7 @@ Check
   types            [--out dir]                              TypeScript declarations from the loaded definitions
   check            [paths] [--extensions] [--json]          Check Moqui XML files: schema, references, expressions
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
+  autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
 
 Test
@@ -296,6 +297,31 @@ directory on the server's machine, read there into memory on first use and kept 
       ~/src/moqui/runtime/component/my-site/screen/MySite/Order.xml
 ";
 
+const AUTODOC: &str = "\
+moqui autodoc [--out DIR] [--kinds k,...] [--components c,...] [--packages p,...] [--include-source]
+              [--templates DIR] [--clean] [--project DIR | --java DIR]
+    Markdown docs of the loaded artifacts, like JavaDoc, with Mermaid diagrams.
+
+Writes a tree into DIR (default autodoc): README.md, then entity/ by package, service/ and screen/ by
+their path under the component's service/ and screen/, eca/ by the rules file's path and rest/ by the
+REST API file: a doc per entity, service, screen, ECA rules file and REST API file, a page per entity
+package and service and screen directory (an E-R diagram, a class diagram, a subscreen tree), and in
+each artifact's doc what uses it and what it uses. --kinds (entity, service, screen, eca, rest),
+--components and --packages (prefixes by whole segments: mantle.order, mantle/order,
+SimpleScreens/Order) choose what to write; the indexes list it with what the directory had before.
+--include-source puts each service's definition in its doc. --templates DIR takes the templates of
+DIR (Entity.fancy, Service.fancy ...) in place of the framework's of the same name
+(component://framework/template/autodoc). Only the files whose text changed are written, and
+DIR/.autodoc.json lists what was; --clean removes the files it lists whose artifacts are gone, never a
+file it does not list. A doc that does not build is reported and the rest are written (exit 1). This
+does not open a database. --project DIR (or --java DIR) reads another Moqui project, as moqui refs
+--project does.
+
+  moqui autodoc
+  moqui autodoc --out ../my-site-docs/autodoc --components my-site --clean
+  moqui autodoc --kinds entity --packages mantle.order --out /tmp/order-docs
+";
+
 const LSP: &str = "\
 moqui lsp [--server URL] [--project DIR | --java DIR]
     A language server for editors and coding agents, over stdio.
@@ -505,6 +531,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "types" => Some(TYPES),
         "check" => Some(CHECK),
         "refs" => Some(REFS),
+        "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
@@ -567,6 +594,7 @@ fn is_known_command(name: &str) -> bool {
             | "types"
             | "check"
             | "refs"
+            | "autodoc"
             | "lsp"
             | "test"
             | "test-client"
@@ -748,6 +776,7 @@ pub fn command_usage(command: &str) -> Error {
         "lint" => "moqui lint [file | --screens | --groovy <dir> ...]",
         "convert" => "moqui convert --groovy [--write] <dir> ...",
         "types" => "moqui types [--out dir]",
+        "autodoc" => "moqui autodoc [--out DIR] [--kinds k,...] [--components c,...] [--packages p,...] [--include-source] [--templates DIR] [--clean]",
         "serve" => "moqui serve [options]",
         "test" => "moqui test [component ...] [options]",
         "test-client" => "moqui test-client [component | path ...] [options]",

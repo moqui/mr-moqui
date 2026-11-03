@@ -5476,26 +5476,52 @@
               ], 10, ["id", "data-view"]))
             }
         } },
-        "m-markdown": { hash: "ca4e1146", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
+        "m-markdown": { hash: "b4ad8c5", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
+
               return (_openBlock(), _createElementBlock("div", {
-                class: "m-markdown",
+                class: _normalizeClass(["m-markdown", {'m-markdown-copyable': _ctx.copyable}]),
                 id: _ctx.id,
                 onClick: _ctx.onClick
               }, [
+                (_ctx.copyable)
+                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                      key: 0,
+                      class: "m-markdown-copy",
+                      flat: "",
+                      round: "",
+                      dense: "",
+                      size: "sm",
+                      icon: "sym_o_content_copy",
+                      "aria-label": _ctx.copyLabel,
+                      onClick: _withModifiers(_ctx.copy, ["stop"])
+                    }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_tooltip, null, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(_ctx.copyLabel), 1)
+                          ]),
+                          _: 1
+                        })
+                      ]),
+                      _: 1
+                    }, 8, ["aria-label", "onClick"]))
+                  : _createCommentVNode("", true),
                 (_ctx.failed)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 0,
+                      key: 1,
                       class: "m-markdown-plain"
                     }, _toDisplayString(_ctx.text), 1))
                   : (_openBlock(), _createElementBlock("div", {
-                      key: 1,
+                      key: 2,
                       class: "m-markdown-body",
                       innerHTML: _ctx.html
                     }, null, 8, ["innerHTML"]))
-              ], 8, ["id", "onClick"]))
+              ], 10, ["id", "onClick"]))
             }
         } },
         "m-menu-drawer": { hash: "34b4b165", make: function (Vue) {

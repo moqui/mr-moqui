@@ -186,3 +186,39 @@ fn a_java_checkout_is_read_directly() {
         .iter()
         .any(|found| found.from == "view-member:fp.picklist.BatchFact@F"));
 }
+
+#[test]
+fn autodoc_takes_its_lists_either_way_and_names_an_unknown_kind() {
+    let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let parsed = parse_autodoc_args(&args(&[
+        "--out=docs",
+        "--kinds",
+        "entity, service",
+        "--components=a,b",
+        "--packages",
+        "mantle.order",
+        "--include-source",
+        "--clean",
+        "--project",
+        "/src/mr",
+    ]))
+    .unwrap();
+    use moqui_devkit::autodoc::DocKind;
+    assert_eq!(parsed.out, Some(PathBuf::from("docs")));
+    assert_eq!(parsed.kinds, [DocKind::Entity, DocKind::Service]);
+    assert_eq!(parsed.components, ["a", "b"]);
+    assert_eq!(parsed.packages, ["mantle.order"]);
+    assert!(parsed.include_source && parsed.clean);
+    assert_eq!(
+        parsed.project.map(|project| project.dir),
+        Some(PathBuf::from("/src/mr"))
+    );
+    let unknown = parse_autodoc_args(&args(&["--kinds", "data"])).unwrap_err().to_string();
+    assert!(unknown.contains("no kind data"), "{unknown}");
+    assert!(parse_autodoc_args(&args(&["--out"]))
+        .unwrap_err()
+        .to_string()
+        .contains("moqui help autodoc"));
+    assert!(parse_autodoc_args(&args(&["--bogus"])).is_err());
+    assert_eq!(parse_autodoc_args(&[]).unwrap(), AutodocArgs::default());
+}

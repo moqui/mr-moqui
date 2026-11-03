@@ -1,0 +1,47 @@
+<#-- A screen's doc (plans/Autodoc.md). The names: the doc's header, screen, usedBy, uses and diagrams; md is
+     AutodocLib.js. A site component's template/autodoc/Screen.fancy takes the place of this one. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+- **Screen:** ${md.code(name)}
+<#if screen.title>
+- **Menu title:** ${md.plain(screen.title)}
+</#if>
+- **Render modes:** ${md.plain(screen.renderModes || "all")}<#if screen.serverStatic> · **Server static:** ${md.plain(screen.serverStatic)}</#if> · **Requires login:** ${md.plain(screen.authentication)}<#if screen.standalone> · standalone</#if><#if screen.allowExtraPath> · extra path</#if>
+
+${description}
+<#if screen.parameters.length>
+## Parameters
+
+${md.table(["Parameter", "Required", "From"], screen.parameters.map((parameter) => [md.code(parameter.name), md.yes(parameter.required), md.code(parameter.from)]))}
+</#if>
+<#if screen.subscreens.length>
+## Subscreens
+
+${md.table(["Item", "Menu title", "Index", "Screen"], screen.subscreens.map((item) =>
+    [md.code(item.name) + (item.default ? " *(default)*" : ""), md.plain(item.title), md.plain(item.index), md.codeLink(item.location, item.href)]))}
+</#if>
+<#if screen.transitions.length>
+## Transitions
+
+${md.table(["Transition", "Method", "Service", "Response"], screen.transitions.map((transition) =>
+    [md.code(transition.name), md.plain(transition.method), md.codeLink(transition.service, transition.serviceHref) || (transition.actions ? "actions" : ""), md.code(transition.response)]))}
+</#if>
+<#if screen.forms.length>
+## Forms
+
+${md.table(["Form", "Type", "Fields"], screen.forms.map((form) => [md.code(form.name), md.plain(form.type) + (form.extends ? " extends " + md.code(form.extends) : ""), md.plain(form.fields)]))}
+</#if>
+## Used by and uses
+
+${md.mermaid(diagrams.usage)}
+
+### Used by
+
+${md.usage(usedBy)}
+
+### Uses
+
+${md.usage(uses)}

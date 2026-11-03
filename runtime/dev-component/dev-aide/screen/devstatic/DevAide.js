@@ -256,6 +256,15 @@
         const found = node && (node.attrs || []).find((pair) => pair[0] === name);
         return found ? found[1] : undefined;
     };
+    // The doc path of a link in a doc (plans/Autodoc.md): the part after the Docs screen's path
+    // (/qapps/dev/Artifacts/Doc/entity/a/B.md -> entity/a/B.md, its anchor and query left off), else null.
+    pure.docPathOfLink = (href) => {
+        const text = String(href || "");
+        const at = text.indexOf("/Artifacts/Doc/");
+        if (at < 0) return null;
+        const path = text.slice(at + "/Artifacts/Doc/".length).split(/[?#]/)[0];
+        return /\.md$/.test(path) ? decodeURIComponent(path) : null;
+    };
     // The Workspace's transitions from the path of a Dev AIDE page (/qapps/dev/Entities/Edit -> /qapps/dev/Workspace).
     pure.workspaceBase = (path) => {
         const text = String(path || "");
@@ -1569,7 +1578,55 @@
 </div>`
     };
 
-    devAide.components = { "m-dev-workspace": workspace };
+    // An artifact's doc (plans/Autodoc.md), as the Docs screen shows it, in an editor's Doc tab: the Markdown with its
+    // diagrams and the button that copies it; a link to another doc opens it here, Back returns, and Open in Docs opens
+    // the Docs screen at it. stamp: a value that changes when the artifact was saved, to make the doc again.
+    const artifactDoc = {
+        name: "mDevArtifactDoc",
+        props: { base: { type: String, required: true }, artifactId: String, docPath: String, stamp: [Object, String, Number] },
+        data() { return { doc: null, error: "", loading: false, trail: [], current: null }; },
+        watch: {
+            artifactId() { this.trail = []; this.load(this.start()); },
+            docPath() { this.trail = []; this.load(this.start()); },
+            stamp() { this.load(this.current || this.start()); }
+        },
+        mounted() { this.load(this.start()); },
+        methods: {
+            start() { return this.docPath ? { docPath: this.docPath } : { artifactId: this.artifactId || "" }; },
+            load(params) {
+                this.current = params;
+                this.loading = true;
+                return moqui.request(this.base + "/artifactDoc", { params }).then((result) => {
+                    this.loading = false;
+                    const answer = result && result.json;
+                    if (answer && answer.markdown) { this.doc = answer; this.error = ""; }
+                    else this.error = (answer && (answer.errors || answer.errorMessage)) || "There is no doc of this artifact.";
+                }, (err) => { this.loading = false; this.error = String((err && err.message) || err); });
+            },
+            onLink(link) {
+                const path = pure.docPathOfLink(link.href);
+                if (!path) return;
+                link.preventDefault();
+                if (this.current) this.trail.push(this.current);
+                this.load({ docPath: path });
+            },
+            back() { const previous = this.trail.pop(); if (previous) this.load(previous); }
+        },
+        template: `
+<div class="m-dev-artifact-doc q-pa-sm" id="DevArtifactDoc">
+  <div class="row items-center q-gutter-x-sm q-mb-xs">
+    <q-btn v-if="trail.length" dense flat no-caps icon="arrow_back" label="Back" @click="back" id="DevDocBack"></q-btn>
+    <span v-if="doc" class="text-caption m-muted">{{doc.docPath}}</span>
+    <q-space></q-space>
+    <q-linear-progress v-if="loading" indeterminate style="width: 6rem"></q-linear-progress>
+    <a v-if="doc" :href="'/qapps/dev/Artifacts/Doc/' + doc.docPath" target="_blank" class="text-caption">Open in Docs</a>
+  </div>
+  <div v-if="error" class="text-negative" id="DevDocError">{{error}}</div>
+  <m-markdown v-else-if="doc" :text="doc.markdown" :base-path="doc.basePath" copyable @link="onLink"></m-markdown>
+</div>`
+    };
+
+    devAide.components = { "m-dev-workspace": workspace, "m-dev-artifact-doc": artifactDoc };
 
     // Load the code editor widgets, then register the workspace on the running application.
     devAide.start = () => moqui.loadScript("/js/WebrootCode.js", null, () => !!(moqui.codeEditor && moqui.codeEditor.components))

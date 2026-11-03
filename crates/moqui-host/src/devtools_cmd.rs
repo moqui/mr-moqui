@@ -407,6 +407,123 @@ fn model_only_in(dirs: ModelDirs) -> Result<Arc<ExecutionContextFactory>, Error>
     Ok(factory)
 }
 
+/// The flags of `moqui autodoc`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AutodocArgs {
+    out: Option<PathBuf>,
+    kinds: Vec<moqui_devkit::autodoc::DocKind>,
+    components: Vec<String>,
+    packages: Vec<String>,
+    templates: Vec<PathBuf>,
+    include_source: bool,
+    clean: bool,
+    project: Option<ProjectArg>,
+}
+
+/// A comma list's items, trimmed, the empty ones left out.
+fn comma_list(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn parse_autodoc_args(args: &[String]) -> Result<AutodocArgs, Error> {
+    let usage = || crate::usage::command_usage("autodoc");
+    let mut parsed = AutodocArgs::default();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+            _ => (arg.as_str(), None),
+        };
+        let mut value = || inline.clone().or_else(|| rest.next().cloned()).ok_or_else(usage);
+        match flag {
+            "--out" => parsed.out = Some(PathBuf::from(value()?)),
+            "--kinds" | "--kind" => {
+                for kind in comma_list(&value()?) {
+                    let found = moqui_devkit::autodoc::DocKind::parse(&kind).ok_or_else(|| {
+                        Error::new(format!("moqui autodoc: no kind {kind}; the kinds are entity, service, screen, eca and rest"))
+                    })?;
+                    parsed.kinds.push(found);
+                }
+            }
+            "--components" | "--component" => parsed.components.extend(comma_list(&value()?)),
+            "--packages" | "--package" => parsed.packages.extend(comma_list(&value()?)),
+            "--templates" => parsed.templates.push(PathBuf::from(value()?)),
+            "--include-source" => parsed.include_source = true,
+            "--clean" => parsed.clean = true,
+            _ => {
+                if let Some(found) = ProjectArg::parse(arg, &mut rest) {
+                    parsed.project = Some(found.ok_or_else(usage)?);
+                } else {
+                    return Err(usage());
+                }
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+/// `moqui autodoc [--out DIR] [--kinds k,...] [--components c,...] [--packages p,...] [--include-source]
+/// [--templates DIR] [--clean] [--project DIR | --java DIR]`: the Markdown docs of the loaded artifacts written into a
+/// directory (plans/Autodoc.md), from the artifact index read into memory and a model-only boot: no database. Only the
+/// files whose text changed are written, beside the manifest of what it wrote; `--clean` removes the files it wrote
+/// before whose artifacts are gone. A doc that does not build is reported and the others are written.
+pub(crate) fn dispatch_autodoc(args: &[String]) -> Result<(), Error> {
+    use moqui_devkit::autodoc::{self, write};
+    let parsed = parse_autodoc_args(args)?;
+    crate::logging::install_with_console(Some(tracing::Level::ERROR));
+    let started = std::time::Instant::now();
+    let factory = model_only(parsed.project.as_ref())?;
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    moqui_core::service::load_definitions()?;
+    let index = MemoryIndex::build(&factory);
+    let source = autodoc::MemorySource::new(&index);
+    let plan = autodoc::build_plan(&factory, &source)?;
+    let out = parsed.out.unwrap_or_else(|| PathBuf::from("autodoc"));
+    let previous = write::Manifest::read(&out);
+    let mut template_dirs = Vec::new();
+    for dir in &parsed.templates {
+        let absolute = std::fs::canonicalize(dir).map_err(|err| Error::new(format!("--templates {}: {err}", dir.display())))?;
+        template_dirs.push(format!("file:{}", absolute.display()));
+    }
+    let options = autodoc::Options {
+        kinds: parsed.kinds,
+        components: parsed.components,
+        packages: parsed.packages,
+        include_source: parsed.include_source,
+        template_dirs,
+        previous: previous.paths(),
+    };
+    let generated = autodoc::generate(&factory, &source, &plan, &options);
+    let writes = write::plan_writes(&out, &generated, &previous, &plan, parsed.clean);
+    let report = write::write_plan(&out, &writes);
+    println!(
+        "autodoc: {} docs in {} ({} written, {} unchanged, {} removed) in {} ms",
+        generated.files.len(),
+        out.display(),
+        report.written,
+        report.unchanged,
+        report.removed,
+        started.elapsed().as_millis()
+    );
+    for failure in &generated.failures {
+        eprintln!("autodoc: {} not made: {}", failure.path, failure.message);
+    }
+    for (path, message) in &report.failures {
+        eprintln!("autodoc: {path} not written: {message}");
+    }
+    let failed = generated.failures.len() + report.failures.len();
+    if failed > 0 {
+        return Err(Error::new(format!("moqui autodoc: {failed} docs were not made or written")));
+    }
+    Ok(())
+}
+
 /// `moqui refs <name> [--in | --out] [--kind k] [--json]`: what uses an artifact (`--in`, the default) or what it uses
 /// (`--out`), from the artifact index read into memory (plans/design-dev-aide.md 7.1, 13.6). The name is an index id
 /// (`entity:moqui.example.Example`), a full or short name (`OrderHeader`, `place#Order`), or a file; `--kind` keeps the

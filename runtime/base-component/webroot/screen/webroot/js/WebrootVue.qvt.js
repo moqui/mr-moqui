@@ -3246,6 +3246,20 @@
     });
 
     // The text of the element is the diagram. Mermaid 11 draws it with mermaid.run into an element that is not Vue's.
+    // Mermaid, loaded on first use: run(nodes, config) draws each node's text (a pre whose text is the diagram) in place, with
+    // strict security unless the config says otherwise; one call at a time, as initialize is global.
+    let mermaidQueue = Promise.resolve();
+    moqui.mermaid = {
+        load() { return moqui.loadScript("/libs/mermaid/mermaid.min.js", null, () => !!root.mermaid); },
+        run(nodes, config) {
+            const next = mermaidQueue.then(() => moqui.mermaid.load()).then(() => {
+                root.mermaid.initialize(Object.assign({ startOnLoad: false, securityLevel: "strict" }, config));
+                return root.mermaid.run({ nodes });
+            });
+            mermaidQueue = next.catch(() => {});
+            return next;
+        }
+    };
     component("m-mermaid", {
         name: "mMermaid",
         // The diagram comes in the text prop: the Vue compiler condenses the whitespace of slot content, and a diagram
@@ -3253,14 +3267,11 @@
         props: { text: String, config: { type: Object, default: () => ({ startOnLoad: false, securityLevel: "strict" }) }, height: { type: String, default: "400px" }, width: { type: String, default: "100%" } },
         template: '<div class="mermaid-container" :style="{height:height,width:width}"><pre ref="source" style="display:none;"><slot></slot></pre><div ref="target"></div></div>',
         mounted() {
-            moqui.loadScript("/libs/mermaid/mermaid.min.js", null, () => !!root.mermaid).then(() => {
-                const diagram = root.document.createElement("pre");
-                diagram.className = "mermaid";
-                diagram.textContent = (this.text || this.$refs.source.textContent).trim();
-                this.$refs.target.appendChild(diagram);
-                root.mermaid.initialize(Object.assign({ startOnLoad: false, securityLevel: "strict" }, this.config));
-                return root.mermaid.run({ nodes: [diagram] });
-            }).catch((err) => console.error("m-mermaid: " + err));
+            const diagram = root.document.createElement("pre");
+            diagram.className = "mermaid";
+            diagram.textContent = (this.text || this.$refs.source.textContent).trim();
+            this.$refs.target.appendChild(diagram);
+            moqui.mermaid.run([diagram], this.config).catch((err) => console.error("m-mermaid: " + err));
         }
     });
 
@@ -7012,6 +7023,11 @@
                         const link = md.resolve(token.href, opts, { image: true });
                         return '<img src="' + mdAttr(link.href) + '" alt="' + mdAttr(token.text) + '"' + (token.title ? ' title="' + mdAttr(token.title) + '"' : "") + ">";
                     },
+                    // a mermaid fence: its text in a pre that m-markdown draws after the render (mermaid false: a code block)
+                    code(token) {
+                        if (opts.mermaid === false || !/^mermaid(\s|$)/i.test(String(token.lang || ""))) return false;
+                        return '<pre class="m-md-mermaid">' + mdAttr(token.text) + "</pre>\n";
+                    },
                     // escapeHtml (a text that never needs raw HTML, such as an agent's answer): raw HTML is shown as text
                     html(token) {
                         return opts.escapeHtml ? mdAttr(token.text !== undefined ? token.text : token.raw) : false;
@@ -7044,17 +7060,24 @@
     ]).catch((err) => { markdownLoad = null; throw err; }));
     component("m-markdown", {
         name: "mMarkdown",
-        props: { id: String, text: String, basePath: String, resolveLink: Function, headingPrefix: { type: String, default: "md-" }, stripTitle: String, wikiLinks: Boolean },
+        // mermaid: draw mermaid fences as diagrams (false: code blocks); copyable: an icon button that copies the markdown
+        props: { id: String, text: String, basePath: String, resolveLink: Function, headingPrefix: { type: String, default: "md-" }, stripTitle: String, wikiLinks: Boolean,
+            mermaid: { type: Boolean, default: true }, copyable: Boolean },
         // outline: the headings [{id, level, text}] once rendered; rendered: the root element; link: {href, event, anchor, preventDefault()}
         // before an application link is followed through the shell (preventDefault: the host follows it)
         emits: ["outline", "rendered", "link"],
         data() { return { html: "", failed: false, loaded: false }; },
         template:
-            '<div class="m-markdown" :id="id" @click="onClick">' +
+            '<div class="m-markdown" :class="{\'m-markdown-copyable\': copyable}" :id="id" @click="onClick">' +
+                '<q-btn v-if="copyable" class="m-markdown-copy" flat round dense size="sm" icon="sym_o_content_copy" :aria-label="copyLabel" @click.stop="copy">' +
+                    '<q-tooltip>{{copyLabel}}</q-tooltip></q-btn>' +
                 '<div v-if="failed" class="m-markdown-plain">{{text}}</div>' +
                 '<div v-else class="m-markdown-body" v-html="html"></div>' +
             '</div>',
-        computed: { renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : ""].join("\u0000"); } },
+        computed: {
+            renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : "", this.mermaid ? "m" : ""].join("\u0000"); },
+            copyLabel() { return moqui.l10n ? moqui.l10n.localize("Copy Markdown") : "Copy Markdown"; }
+        },
         watch: { renderKey() { this.render(); } },
         mounted() { this.render(); },
         methods: {
@@ -7063,12 +7086,35 @@
                 loadMarkdown().then(() => {
                     if (text !== this.text) return;
                     const md = moqui.markdown;
-                    const out = md.render(root.marked, text, { basePath: this.basePath, resolveLink: this.resolveLink, headingPrefix: this.headingPrefix, stripTitle: this.stripTitle, wikiLinks: this.wikiLinks });
+                    const out = md.render(root.marked, text, { basePath: this.basePath, resolveLink: this.resolveLink, headingPrefix: this.headingPrefix, stripTitle: this.stripTitle, wikiLinks: this.wikiLinks, mermaid: this.mermaid });
                     this.failed = false;
                     this.html = md.sanitize(root.DOMPurify, out.html);
                     this.$emit("outline", out.outline);
-                    this.$nextTick(() => this.$emit("rendered", this.$el));
+                    this.$nextTick(() => { this.drawDiagrams(text); this.$emit("rendered", this.$el); });
                 }, (err) => { console.warn("m-markdown: Marked or DOMPurify did not load", err); this.failed = true; });
+            },
+            // each mermaid fence drawn on its own, so one that does not parse stays as its text (with a warning) and the rest are drawn
+            drawDiagrams(text) {
+                const nodes = this.$el && this.$el.querySelectorAll ? Array.from(this.$el.querySelectorAll("pre.m-md-mermaid")) : [];
+                if (!nodes.length) return Promise.resolve();
+                const config = { theme: this.$q && this.$q.dark && this.$q.dark.isActive ? "dark" : "default" };
+                return nodes.reduce((done, node) => done.then(() => {
+                    if (text !== this.text || !node.isConnected) return null;
+                    const source = node.textContent;
+                    return moqui.mermaid.run([node], config).then(() => node.classList.add("m-md-mermaid-drawn"), (err) => {
+                        console.warn("m-markdown: a mermaid diagram did not draw", err);
+                        node.removeAttribute("data-processed");
+                        node.textContent = source;
+                        node.classList.add("m-md-mermaid-failed");
+                    });
+                }), Promise.resolve());
+            },
+            copy() {
+                const clipboard = root.navigator && root.navigator.clipboard;
+                if (!clipboard) return;
+                clipboard.writeText(this.text || "").then(() => {
+                    if (this.$q && this.$q.notify) this.$q.notify({ message: moqui.l10n ? moqui.l10n.localize("Copied") : "Copied", type: "positive", timeout: 1200 });
+                }, (err) => console.warn("m-markdown: the markdown was not copied", err));
             },
             scrollTo(id) {
                 const el = this.$el && this.$el.querySelector ? this.$el.querySelector('[id="' + String(id).replace(/["\\]/g, "") + '"]') : null;

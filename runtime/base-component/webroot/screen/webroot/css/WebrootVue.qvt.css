@@ -707,6 +707,11 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 /* m-markdown: markdown text as the page's text, tables and code blocks tinted from the text color so they read in light and dark */
 .m-markdown { min-width:0; overflow-wrap:break-word; line-height:max(1.55, var(--m-line-height)); }
 .m-markdown-plain { white-space:pre-wrap; }
+/* copyable: the copy button in the top right corner, over the text's first line */
+.m-markdown-copyable { position:relative; }
+.m-markdown-copy { position:absolute; top:0; right:0; z-index:1; opacity:0.7; }
+.m-markdown-copy:hover, .m-markdown-copy:focus { opacity:1; }
+.m-markdown-copyable > .m-markdown-body { padding-right:32px; }
 .m-markdown-body > :first-child { margin-top:0; }
 .m-markdown-body h1 { font-family:var(--m-font-heading); font-size:calc(1.6rem * var(--m-fs-large-scale)); line-height:1.25; font-weight:500; margin:0.9em 0 0.4em; }
 .m-markdown-body h2 { font-family:var(--m-font-heading); font-size:calc(1.3rem * var(--m-fs-large-scale)); line-height:1.3; font-weight:500; margin:0.9em 0 0.4em; }
@@ -721,6 +726,9 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-markdown-body code { font-size:0.9em; padding:0.1em 0.35em; border-radius:4px; background:rgba(127,127,127,0.15); }
 .m-markdown-body pre { padding:10px 12px; border-radius:6px; overflow-x:auto; background:rgba(127,127,127,0.12); border:1px solid rgba(127,127,127,0.2); }
 .m-markdown-body pre code { padding:0; background:transparent; font-size:0.88em; }
+/* a mermaid fence: its source while it loads or when it does not parse, the diagram once drawn, centered and scrolled when wide */
+.m-markdown-body pre.m-md-mermaid { white-space:pre-wrap; font-family:var(--m-font-mono); font-size:0.85em; }
+.m-markdown-body pre.m-md-mermaid-drawn { white-space:normal; background:transparent; border:none; padding:0; text-align:center; }
 /* the container (and its border) as wide as its table, at most the text's width, where a wider table scrolls */
 .m-markdown-body .m-md-table { margin:0 0 0.75em; overflow-x:auto; border-radius:4px; background:transparent; width:-moz-fit-content; width:fit-content; max-width:100%; }
 .m-markdown-body .m-md-table table { width:auto; border-collapse:collapse; }

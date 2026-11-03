@@ -130,3 +130,33 @@ fn a_file_that_does_not_parse_is_in_the_stamp() {
     assert_ne!(index.stamp().hash, stamp.hash);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The reference table answers every artifact's lists as the memory index does, in the same order: over the example
+/// component's files, both ways.
+#[test]
+fn the_ref_table_answers_as_the_memory_index() {
+    let dir = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/dev-component/example")).unwrap();
+    let ctx = moqui_core::context::ExecutionContextFactory::test_context();
+    let index = MemoryIndex::of_files(ctx.factory(), &directory_files("example", &dir));
+    assert!(index.artifacts.len() > 100, "{}", index.artifacts.len());
+    let table = index.ref_table();
+    let key = |entries: Vec<RefEntry>| {
+        entries
+            .into_iter()
+            .map(|entry| (entry.path, entry.line, entry.from, entry.to_id, entry.other.map(|other| other.id)))
+            .collect::<Vec<_>>()
+    };
+    let mut compared = 0;
+    for artifact in &index.artifacts {
+        for direction in [Direction::In, Direction::Out] {
+            let expected = key(index.refs(&artifact.id, direction));
+            compared += expected.len();
+            assert_eq!(key(table.refs(&artifact.id, direction)), expected, "{} {direction:?}", artifact.id);
+        }
+        assert_eq!(
+            table.children(&artifact.id).iter().map(|row| &row.id).collect::<Vec<_>>(),
+            index.children(&artifact.id).iter().map(|row| &row.id).collect::<Vec<_>>()
+        );
+    }
+    assert!(compared > 100, "{compared}");
+}
