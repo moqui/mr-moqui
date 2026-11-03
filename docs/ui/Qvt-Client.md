@@ -45,7 +45,8 @@ inline script and no inline event handler, and the settings are a data block:
 | `userId`, `username`, `userFullName` | the signed-in user |
 | `locale`, `timeZone`, `quasarLang` | `en-US` style tag, zone name, and the key of the language pack in `Quasar.Lang` (`enUS`, `ptBR`, `zhCN`, `de`, ...) |
 | `darkMode`, `leftOpen`, `leftMini` | the preferences `QUASAR_DARK` (`true`, `false` or `"auto"`, which follows the system), `QUASAR_LEFT_OPEN` and `QUASAR_LEFT_MINI` (the drawer as a rail of app icons) |
-| `appearance` | `{colorSchemes, fonts, values, links}`: the theme's color schemes (`{id, description, light, dark, custom, version}`), the fonts (`{id, description, kind, family, stylesheet}`), the user's `THEME_*` values and the style sheets the page links for them (see Appearance) |
+| `appearance` | what `org.moqui.impl.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
+| `devMarker` | the `webapp_dev_marker_color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
 | `density`, `startApp` | `SHELL_DENSITY` (`comfortable` or `compact`) and `SHELL_START_APP`, the app the user may open that `/qapps` with no path opens (empty for the app list) |
 | `notificationEndpoint` | the path of the notification WebSocket, from `webapp_notification_endpoint`. Empty means no socket is opened. |
 | `navPlugins`, `accountPlugins` | theme values `STRT_HEADER_NAVBAR_COMP` and `STRT_HEADER_ACCOUNT_COMP`: URLs of components for the header |
@@ -432,15 +433,18 @@ without a reload; one that saves in the browser alone calls `moqui.applyPreferen
 
 The account menu's **Appearance…** opens `m-appearance-dialog`. Each choice applies at once (`moqui.applyPreference`) and is saved
 as the user's preference through `/apps/setPreference`; **Reset to defaults** clears the `THEME_*` keys. Browser zoom still scales
-the whole page; the sizes here are for the small and large text alone.
+the whole page; the sizes here are for the small and large text alone. The theme decides what the user may change (the policy,
+below): a locked choice has no control, and the dark mode toggle and the menu item go when nothing is left.
 
 | Preference | Values | Applied as |
 |---|---|---|
 | `QUASAR_DARK` | `true`, `false`, `auto` | `$q.dark.set` |
-| `THEME_COLOR_SCHEME` | a `ScreenColorScheme` id of the theme | the style sheet `/apps/colorSchemeCss?colorSchemeId=…&v=…` linked as `m-color-scheme`; none for a scheme without colors (the theme's own) |
-| `THEME_FONT_BODY`, `THEME_FONT_HEADING`, `THEME_FONT_MONO` | a `ScreenFontOption` id | `--m-font-body`, `--m-font-heading`, `--m-font-mono` on the html element, and the font's style sheet linked as `m-font-<role>` |
+| `THEME_COLOR_SCHEME` | a `ScreenColorScheme` id of the theme; empty for the theme's default scheme | the style sheet `/apps/colorSchemeCss?colorSchemeId=…&v=…` linked as `m-color-scheme`; none for a scheme without colors (the theme's own) |
+| `THEME_FONT_BODY`, `THEME_FONT_HEADING`, `THEME_FONT_MONO` | a `ScreenFontOption` id; empty for the scheme's own font of the role | `--m-font-body`, `--m-font-heading`, `--m-font-mono` on the html element, and the font's style sheet linked as `m-font-<role>` |
 | `THEME_SIZE_SMALL`, `THEME_SIZE_LARGE` | `0.9`, `1`, `1.1`, `1.25`, `1.4` | `--m-fs-small-scale` (table text, captions, chips, code) and `--m-fs-large-scale` (headings) |
-| `THEME_PRIMARY_COLOR` | a CSS color (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored) | `--q-primary` on the body, `!important`, over the scheme and the Quasar brand; the dark link color is mixed from it |
+| `THEME_PRIMARY_COLOR` | a CSS color (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored) | `--q-primary` of light mode in the `m-accent` style, `!important`, over the scheme and the Quasar brand; of dark mode too while `THEME_PRIMARY_COLOR_DARK` is empty |
+| `THEME_PRIMARY_COLOR_DARK` | a CSS color | `--q-primary` of dark mode in `m-accent`; the dark link color is mixed from it |
+| `THEME_COLOR_OVERRIDES` | JSON `{"light": {"token": "value"}, "dark": {...}}` | the user's own tokens over the scheme in the `m-scheme-colors` style (`moqui.schemeColorDecls`), with the rules of a scheme's sheet |
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
@@ -456,19 +460,45 @@ body for light (`body:not(.body--dark)`) and dark (`body.body--dark`):
 
 The other borders and tints are black or white at a low alpha, so they read on any surface.
 
+The **shape tokens** change what is not a color without reaching into the shell's markup. Unset, each is the style sheet's and
+Quasar's own look, and the user's corners (`THEME_RADIUS`) win over the radii:
+- `--m-header-bg-image`, `--m-header-border`, `--m-header-shadow`, `--m-page-bg-image`
+- `--m-btn-radius`, `--m-btn-border`, `--m-btn-primary-bg` (a `bg-primary` button, so a gradient)
+- `--m-card-radius`, `--m-card-border`, `--m-card-shadow`
+- `--m-drawer-current-bg`, `--m-drawer-current-fg` (the menu's current screen)
+
+A scheme sets them as it sets its colors (a `ScreenColorSchemeColor` per mode); the value may be any CSS value the color check
+lets through, such as a gradient or a shadow.
+
 **Color schemes** are `ScreenColorScheme` rows of a theme, with a `ScreenColorSchemeColor` for each mode (`SCM_LIGHT`, `SCM_DARK`)
 and token name without its prefix (`primary`, `page-bg`, ...).
-- The `colorSchemeCss` transition of `apps.xml` writes them under the same selectors as the defaults.
+- The `colorSchemeCss` transition of `apps.xml` (`get#ColorSchemeCss`) writes them under the same selectors as the defaults.
   - A brand color is `!important`, over the brand the Quasar config writes on the body.
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
 - `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm and High Contrast for `DEFAULT_QUASAR`.
 - The fonts are `ScreenFontOption` rows: a sans, serif or mono kind, a `font-family` stack and an optional style sheet.
+- A scheme names its own fonts in `defaultFontBodyId`, `defaultFontHeadingId` and `defaultFontMonoId`, used for a role the user
+  has chosen no font for. Set a scheme's font there, not as `--m-font-*` in its `extraCss`: there its style sheet is never linked.
+
+**The theme's appearance.** `org.moqui.impl.ShellServices.get#Appearance` (`crates/moqui-core/src/screen/sri/appearance.rs`) builds
+`config.appearance` for the page, the desktop client and the server's own checks, from three theme resources:
+
+| Resource | Value |
+|---|---|
+| `STRT_DEFAULT_COLOR_SCHEME` | the scheme of a user who has chosen none; ignored unless it is a scheme of the theme |
+| `STRT_APPEARANCE_POLICY` | JSON of what the user may change. `appearance: false` locks everything. A group set `false` locks its preferences: `mode` (`QUASAR_DARK`), `density` (`SHELL_DENSITY`), `scheme`, `accent` (both accent colors), `colors` (`THEME_COLOR_OVERRIDES`), `fonts`, `sizes`, `motion` (motion, line height, links, corners). `mode` `light`, `dark` or `auto` forces the mode. `lockedKeys` names more keys. No policy allows everything; one that is not a JSON object is logged and locks everything |
+| `STRT_APPEARANCE_SERVICE` | a service called, in sequence, with `userId`, `screenThemeId` and the `appearance` built so far, answering `appearance`: the next one gets its answer. It may add or remove schemes and fonts, set `defaultSchemeId` or change `policy`, so a component decides by station, tenant or host. Each runs in its own transaction with authorization disabled; one that fails or answers no map is logged and skipped |
+
+After the services, the policy is normalized (its `lockedKeys` is every key it locks), the locked values are left out, `schemeId`
+is the user's scheme or else the default, and `links` are the sheets of that scheme and of each role's font (the user's, else the
+scheme's). `ec.user.setPreference` refuses a key the same policy locks, so `/apps/setPreference` answers 403; a locked mode or
+density is the shell's default, and a forced mode is `config.darkMode`. `moqui.appearanceAllowed(key)` is the page's check.
 
 **At page load:**
-- The pre-actions of `qapps.xml` fill `config.appearance`.
-- `WebrootVue.qvt.html.fancy` links the chosen scheme's and fonts' style sheets before the client starts.
+- `includes/QvtConfig.js` (the pre-actions of `qapps.xml` and the `clientConfig` transition) fills `config.appearance` from `get#Appearance`.
+- `WebrootVue.qvt.html.fancy` links the scheme's and fonts' style sheets (`appearance.links`) before the client starts.
 - `moqui.applyAppearanceAll` sets the rest when the shell is created.
 
 ## Record panels, rich text, avatars and record cards

@@ -76,4 +76,32 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="unavailable" type="Boolean"/>
         </out-parameters>
     </service>
+    <!-- The appearance of the /qapps shell: crates/moqui-core/src/screen/sri/appearance.rs, docs/ui/Qvt-Client.md, Appearance -->
+    <service verb="get" noun="Appearance" type="rust" location="moqui_core::service::shell::get_appearance"
+            authenticate="false" transaction="ignore">
+        <description>The appearance of a Quasar theme for the current user, as the shell gets it in config.appearance:
+            colorSchemes (each id, description, light, dark, custom, version and the fonts it uses when the user has
+            chosen none), fonts, defaultSchemeId (STRT_DEFAULT_COLOR_SCHEME, when it is a scheme of the theme), schemeId (the
+            user's scheme, else the default), policy (STRT_APPEARANCE_POLICY: appearance, mode, a flag per group, lockedKeys),
+            values (the user's THEME_* preferences the policy allows), keys (each appearance preference and its group),
+            tokens (brand, surface, shape) and links (the style sheets of the scheme and fonts the page links).
+
+            Each STRT_APPEARANCE_SERVICE of the theme is called in sequence with userId, screenThemeId and the appearance so
+            far, and answers appearance, which the next one gets: it may add or remove schemes and fonts, set the default
+            scheme or tighten and loosen the policy. One that fails or answers no map is logged and skipped. The locked values,
+            the effective scheme and the links are worked out after the last one, and setPreference refuses a locked key with
+            the same policy.</description>
+        <in-parameters><parameter name="screenThemeId"><description>Default the current user's theme of type
+            STT_INTERNAL_QUASAR</description></parameter></in-parameters>
+        <out-parameters><parameter name="appearance" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="ColorSchemeCss" type="rust" location="moqui_core::service::shell::get_color_scheme_css"
+            authenticate="false" transaction="ignore">
+        <description>The style sheet of a color scheme: the brand colors as --q-* !important, the other tokens as --m-*, the dark
+            panel and page also as --q-dark and --q-dark-page, the dark link giving way to the user's dark accent, then the
+            scheme's extraCss. A name or value that could end its declaration is logged and left out; an unknown scheme is
+            empty.</description>
+        <in-parameters><parameter name="colorSchemeId" required="true"/></in-parameters>
+        <out-parameters><parameter name="css"/></out-parameters>
+    </service>
 </services>
