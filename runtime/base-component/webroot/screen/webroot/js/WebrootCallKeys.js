@@ -24,8 +24,9 @@
  *   the leader did not answer; prepare() says so.
  * - **No downgrade.** Nothing is sent before the first key, and a frame that does not decrypt is dropped, never played.
  *
- * The API: supported(), prepare() (Promise<{cryptoDeviceId, scriptTransform: true}>, or a rejection with reasonCode and
- * message), begin(callSessionId, legId), onView(view), attachSender(sender, kind), attachReceiver(receiver, kind, legId),
+ * The API: supported(), elsewhere() (an app window of the desktop client, whose shell holds the device and so takes the
+ * encrypted calls), prepare() (Promise<{cryptoDeviceId, scriptTransform: true}>, or a rejection with reasonCode and
+ * message: elsewhere, unsupportedClient, busy, noCryptoDevice), begin(callSessionId, legId), onView(view), attachSender(sender, kind), attachReceiver(receiver, kind, legId),
  * end(), and state (reactive): {active, callSessionId, legId, epoch, kid, rotations, error, keys: {legId: {kid, epoch,
  * verified, at}}, frames: {legId: {received, failed}}, sent, dropped, lastSend: {kid, devices}, unverified: [{userId, deviceId}]
  * (the roster's devices this browser has not verified, which the call page warns of)}.
@@ -57,8 +58,18 @@
             !!(root.crypto && root.crypto.subtle) && !!moqui.crypto;
     }
 
-    /** The device this browser takes part with; rejects with {reasonCode, message} when it cannot. */
+    /** Whether this page leaves the crypto device, and so encrypted calls, to the desktop client's shell (an app window). */
+    function elsewhere() {
+        return !!(moqui.crypto && moqui.crypto.elsewhere && moqui.crypto.elsewhere());
+    }
+
+    /** The device this browser takes part with; rejects with {reasonCode, message} when it cannot (elsewhere: an app window of
+     * the desktop client, whose shell holds the device and takes the call in its Calls). */
     function prepare() {
+        if (elsewhere()) {
+            return Promise.reject({ reasonCode: "elsewhere",
+                message: t("This call is end-to-end encrypted, and this app keeps its keys in the main window: open it in the app's Calls.") });
+        }
         if (!supported()) {
             return Promise.reject({ reasonCode: "unsupportedClient",
                 message: t("This call is end-to-end encrypted, and this browser cannot encrypt call media (it has no RTCRtpScriptTransform). Join it from a current Chrome, Edge, Firefox or Safari.") });
@@ -283,5 +294,5 @@
         return "keys";
     }
 
-    moqui.callKeys = { state, supported, prepare, begin, end, onView, attachSender, attachReceiver, legState, rotate };
+    moqui.callKeys = { state, supported, elsewhere, prepare, begin, end, onView, attachSender, attachReceiver, legState, rotate };
 })(globalThis);

@@ -19,7 +19,14 @@
  * sends and decrypts what it receives in an RTCRtpScriptTransform worker; a browser that cannot is refused, with a notice,
  * and never joins without encryption.
  *
- * Loaded after MoquiLib.js and before WebrootVue.qvt.js (qapps.xml): its components are in moqui.qvtComponents, and the shell
+ * The desktop client's main window (its shell, plans/Mobile-Desktop.md §4) shows the comms app's Call and Dialer screens
+ * with these components, precompiled (WebrootCall.render.js, loaded with this file), and owns the calls, with the crypto
+ * device of the encrypted ones: an app window rings silently and opens a call it answers, joins, returns to or starts in
+ * the main window (moquiDesktop.openInShell), and never ends the main window's call. While the server is out of reach
+ * (moqui.connection, never on the web) a call says it needs a connection.
+ *
+ * Loaded after MoquiLib.js and before WebrootVue.qvt.js (qapps.xml), with WebrootCall.render.js, the render functions of
+ * its components (precompiled; qvt.applyRenders uses them): its components are in moqui.qvtComponents, and the shell
  * root calls moqui.call.start(root) once mounted. Device choices are kept in this browser only (Settings, Calls).
  */
 (function (root) {
@@ -116,6 +123,53 @@
         callUrl(callSessionId) {
             return call.appRoot() + "/Calls/Call?callSessionId=" + encodeURIComponent(callSessionId);
         },
+
+        // ---- the desktop client: offline, and its app windows, whose main window (the shell) owns the calls ----
+        // the server out of reach (moqui.connection, the desktop client's host; never on the web): a call needs it
+        offline() {
+            return !!(moqui.connection && moqui.connection.offline);
+        },
+        offlineText() {
+            return t("Calls need a connection to the server: try again when it is back.");
+        },
+        needsConnection() {
+            if (!call.offline()) return false;
+            if (moqui.notifyMessages) moqui.notifyMessages([{ type: "info", message: call.offlineText() }]);
+            return true;
+        },
+        // an app window of the desktop client leaves encrypted calls to its main window, which holds the crypto device
+        // (WebrootCallKeys.js elsewhere) and shows the comms app's Calls (moquiDesktop.openInShell)
+        keysElsewhere() {
+            return !!(moqui.callKeys && moqui.callKeys.elsewhere && moqui.callKeys.elsewhere());
+        },
+        // An app window of the desktop client (its host gives openInShell): the main window owns every call, so one has a
+        // single owner of its media; here a call does not ring aloud or notify, and Answer, Join, Return and a call
+        // started here open the call's screen there.
+        canOpenInShell() {
+            const host = root.moquiDesktop;
+            return !!(host && typeof host.openInShell === "function");
+        },
+        inAppWindow() {
+            return call.canOpenInShell();
+        },
+        // the call's screen in the main window, with the camera off when audio only was asked for
+        toShell(callSessionId, video) {
+            return call.openInShell(call.callUrl(callSessionId) + (video === false ? "&video=false" : "")).then(() => ({ reasonCode: "elsewhere", callSessionId }));
+        },
+        // a call this page has a leg in (a dial, a call started): its media here, or in the main window from an app window
+        take(callSessionId, legId, options) {
+            if (call.inAppWindow()) return call.toShell(callSessionId, options && options.video);
+            call.open(callSessionId);
+            return call.join(callSessionId, legId, options || {});
+        },
+        openInShell(path) {
+            const host = root.moquiDesktop;
+            if (!host || typeof host.openInShell !== "function") return Promise.resolve(false);
+            return host.openInShell(path).then(() => true, (err) => {
+                if (moqui.notifyMessages) moqui.notifyMessages([], (err && err.message) || String(err));
+                return false;
+            });
+        },
         request(name, params, method, quiet) {
             return moqui.request(call.base() + "/" + name, { method: method || "POST", params: params || {} }).then((result) => {
                 const json = result.json || {};
@@ -152,7 +206,12 @@
                 client.registerListener("chatUser:" + call.me, call.receive);
                 if (client.onState) client.onState((open) => { if (open && state.current) call.rejoin(); });
             }
-            call.request("activeCalls", {}, "GET").then((json) => (json.callList || []).forEach(call.remember), () => null);
+            call.loadActive();
+            // the desktop client's connection back: the calls ringing and going on now
+            if (moqui.onConnection) moqui.onConnection((offline) => { if (!offline) call.loadActive(); });
+        },
+        loadActive() {
+            return call.request("activeCalls", {}, "GET").then((json) => (json.callList || []).forEach(call.remember), () => null);
         },
 
         // A push on chatUser:<me>: its message (JSON text, or already an object) when it is a call's
@@ -174,12 +233,17 @@
                 if (!still && state.lobbyNotice && state.lobbyNotice.callSessionId === data.callSessionId) state.lobbyNotice = null;
             }
             const host = root.moquiDesktop;
-            if (data.action === "ring" && root.document && root.document.hidden && ((host && host.notify) || (root.Notification && root.Notification.permission === "granted"))) {
+            // the user does not see this page: a tab in the background, or the desktop app's window unfocused or hidden to
+            // the tray (its host tells it, moquiDesktop.windowSeen)
+            const unseen = host && typeof host.windowSeen === "function" ? !host.windowSeen() : !!(root.document && root.document.hidden);
+            if (data.action === "ring" && unseen && !call.inAppWindow() && ((host && host.notify) || (root.Notification && root.Notification.permission === "granted"))) {
                 // a tab in the background shows the ring as a notification too (a closed one gets the Web Push); an app
-                // around the page (window.moquiDesktop) shows a native one
+                // around the page (window.moquiDesktop) shows a native one; the desktop client's app windows leave it to
+                // the main window
                 try {
                     const title = t("Call from") + " " + ((data.from && data.from.name) || "");
-                    if (host && host.notify) host.notify({ title, tag: "call-" + data.callSessionId });
+                    // its link, the call's screen: the desktop client shows it in its main window
+                    if (host && host.notify) host.notify({ title, tag: "call-" + data.callSessionId, link: call.callUrl(data.callSessionId) });
                     else new root.Notification(title, { tag: "call-" + data.callSessionId });
                 } catch (e) {
                     /* not allowed here */
@@ -189,7 +253,8 @@
 
         // ---- ringing ----
         ring(on) {
-            if (!on || !state.settings.ringtone) {
+            // the desktop client's app windows: the main window rings
+            if (!on || !state.settings.ringtone || call.inAppWindow()) {
                 if (call.ringtone) {
                     clearInterval(call.ringtone.timer);
                     try { call.ringtone.ctx.close(); } catch (e) { /* closed */ }
@@ -229,29 +294,43 @@
         requestWithDevice(name, params, encrypted, callSessionId) {
             const withDevice = () => moqui.callKeys ? moqui.callKeys.prepare().then((device) => call.request(name, Object.assign({}, params, device)))
                 : Promise.reject({ reasonCode: "unsupportedClient" });
-            if (encrypted) return withDevice().catch((err) => call.e2eeRefused(callSessionId, err));
+            // refused: why; in an app window of the desktop client (elsewhere), the call's screen in its main window
+            const refused = (err) => {
+                if (err && err.reasonCode === "elsewhere" && callSessionId && call.canOpenInShell()) {
+                    return call.toShell(callSessionId).then((json) => Object.assign(json, { errors: err.message || null }));
+                }
+                return call.e2eeRefused(callSessionId, err);
+            };
+            if (encrypted) return withDevice().catch(refused);
             return call.request(name, params, "POST", true).then((json) => {
                 if (json.reasonCode === "unsupportedClient" || json.reasonCode === "noCryptoDevice") {
-                    return withDevice().catch((err) => call.e2eeRefused(callSessionId, err));
+                    return withDevice().catch(refused);
                 }
                 if (json.errors && moqui.notifyMessages) moqui.notifyMessages([], json.errors);
                 return json;
             });
         },
         startCall(params) {
+            if (call.needsConnection()) return Promise.resolve({ reasonCode: "offline" });
             const encrypted = !!(params && params.requireE2ee);
             return call.requestWithDevice("startCall", Object.assign({ idempotencyKey: "c" + Date.now() + Math.random().toString(36).slice(2) }, params,
                 encrypted ? { requireE2ee: "true" } : {}), encrypted, null).then((json) => {
-                if (json.callSessionId && json.callLegId) {
-                    call.open(json.callSessionId);
-                    return call.join(json.callSessionId, json.callLegId, { video: params.video !== false }).then(() => json);
-                }
+                // its media here, or from an app window of the desktop client in the main window, which joins it with this leg
+                if (json.callSessionId && json.callLegId) return call.take(json.callSessionId, json.callLegId, { video: params.video !== false }).then(() => json);
                 if (json.reasonCode === "callActive" && json.callSessionId) call.open(json.callSessionId);
+                // a room whose calls are end-to-end encrypted, from an app window of the desktop client: the room in its main
+                // window, which holds the crypto device and makes the call
+                if (json.reasonCode === "elsewhere" && params && params.chatRoomId) {
+                    call.openInShell(call.appRoot() + "/Chat?chatRoomId=" + encodeURIComponent(params.chatRoomId));
+                }
                 return json;
             });
         },
         answer(callSessionId, video) {
+            if (call.needsConnection()) return Promise.resolve({ reasonCode: "offline" });
             const view = state.calls[callSessionId];
+            // an app window of the desktop client: the call is answered in its main window's Calls (no answer here)
+            if (call.inAppWindow()) return call.toShell(callSessionId, video);
             return call.requestWithDevice("answerCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
                 if (!json.callLegId) return json;
                 call.open(callSessionId);
@@ -259,9 +338,12 @@
             });
         },
         decline(callSessionId) {
+            if (call.needsConnection()) return Promise.resolve({ reasonCode: "offline" });
             return call.request("declineCall", { callSessionId });
         },
         joinCall(callSessionId, options) {
+            if (call.needsConnection()) return Promise.resolve({ reasonCode: "offline" });
+            if (call.inAppWindow()) return call.toShell(callSessionId, options && options.video);
             const view = state.calls[callSessionId];
             return call.requestWithDevice("joinCall", { callSessionId }, !!(view && view.e2ee), callSessionId).then((json) => {
                 if (json.callLegId) return call.join(callSessionId, json.callLegId, options || {}).then(() => json);
@@ -283,6 +365,7 @@
             return call.request("endCall", { callSessionId: id });
         },
         open(callSessionId) {
+            if (call.inAppWindow()) { call.toShell(callSessionId); return; }
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
         },
 
@@ -1015,6 +1098,14 @@
                 return (host && host.displayName) || view.startedByName || t("Someone");
             },
             answer(view, video) { moqui.call.answer(view.callSessionId, video); },
+            // the desktop client's app window answers in its main window (moqui.call.answer), which owns the calls
+            answerLabel(view, audioOnly) {
+                const shell = moqui.call.inAppWindow();
+                if (audioOnly) return shell ? t("Answer with audio only in the app's Calls") : t("Answer with audio only");
+                return shell ? t("Answer in the app's Calls") : t("Answer");
+            },
+            // the desktop client's app window does not end the main window's call (its Return opens it there)
+            canLeaveElsewhere() { return !moqui.call.inAppWindow(); },
             decline(view) { moqui.call.decline(view.callSessionId); },
             back() { if (this.call.current) moqui.call.open(this.call.current); },
             returnTo(view) { moqui.call.open(view.callSessionId); },
@@ -1031,15 +1122,15 @@
             '<q-icon :name="view.video ? \'sym_o_videocam\' : \'sym_o_call\'" size="28px" class="q-mr-sm"></q-icon>' +
             '<div class="col"><div class="text-subtitle2">{{fromName(view)}}</div><div class="text-caption m-muted">{{view.video ? t(\'Video call\') : t(\'Audio call\')}}<span v-if="view.e2ee"> · <q-icon name="sym_o_lock" size="14px"></q-icon> {{t(\'End-to-end encrypted\')}}</span></div>' +
             '<m-call-context :call-session-id="view.callSessionId" dense></m-call-context></div>' +
-            '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="t(\'Answer\')" @click="answer(view, view.video)"><q-tooltip>{{t(\'Answer\')}}</q-tooltip></q-btn>' +
-            '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="t(\'Answer with audio only\')" @click="answer(view, false)"><q-tooltip>{{t(\'Answer with audio only\')}}</q-tooltip></q-btn>' +
+            '<q-btn round unelevated color="positive" icon="sym_o_call" class="q-ml-sm" :aria-label="answerLabel(view)" @click="answer(view, view.video)"><q-tooltip>{{answerLabel(view)}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="view.video" round flat color="positive" icon="sym_o_mic" class="q-ml-xs" :aria-label="answerLabel(view, true)" @click="answer(view, false)"><q-tooltip>{{answerLabel(view, true)}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="negative" icon="sym_o_call_end" class="q-ml-xs" :aria-label="t(\'Decline\')" @click="decline(view)"><q-tooltip>{{t(\'Decline\')}}</q-tooltip></q-btn>' +
             "</q-card-section></q-card></q-page-sticky>" +
             '<q-page-sticky v-if="elsewhere.length && !ringingCalls.length && !onCallScreen" position="top" :offset="[0, 8]" style="z-index:2050">' +
             '<q-banner v-for="view in elsewhere" :key="\'e\' + view.callSessionId" dense rounded class="m-tonal q-mb-sm">' +
             '<template v-slot:avatar><q-icon name="sym_o_call"></q-icon></template>{{t(\'You are in a call\')}}: {{fromName(view)}}' +
             '<template v-slot:action><q-btn flat no-caps :label="t(\'Return to the call\')" @click="returnTo(view)"></q-btn>' +
-            '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="leaveElsewhere(view)"></q-btn></template></q-banner></q-page-sticky>' +
+            '<q-btn v-if="canLeaveElsewhere()" flat no-caps color="negative" :label="t(\'Leave\')" @click="leaveElsewhere(view)"></q-btn></template></q-banner></q-page-sticky>' +
             '<q-page-sticky v-if="call.lobbyNotice && !onCallScreen && !ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2060">' +
             '<q-banner dense rounded class="m-tonal"><template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>' +
             '{{call.lobbyNotice.guestName}} {{t(\'is waiting to join your call\')}}' +
@@ -1065,7 +1156,10 @@
         name: "mCall",
         props: { callSessionId: String },
         data() {
-            return { call: state, view: null, loading: false, preview: null, devices: [], level: 0, meter: null, video: true, now: Date.now(), timer: null };
+            // video off when the screen's query asks (video=false: an app window's Answer with audio only, moqui.call.toShell)
+            const query = (this.$root && this.$root.currentParameters) || {};
+            return { call: state, view: null, loading: false, preview: null, devices: [], level: 0, meter: null, video: String(query.video) !== "false",
+                now: Date.now(), timer: null };
         },
         computed: {
             inThis() { return this.call.current === this.callSessionId; },
@@ -1077,6 +1171,17 @@
                 return !!v && (v.participants || []).some((p) => p.userId === me && p.role === "host");
             },
             canJoin() { const v = this.known; return !!v && v.status !== "ended"; },
+            // the desktop client's server out of reach: a call needs it (never on the web)
+            offline() { return !!(moqui.connection && moqui.connection.offline); },
+            // an app window of the desktop client: its main window owns the calls (and holds the crypto device of an
+            // encrypted one), so the call is opened there
+            keysInShell() { return moqui.call.inAppWindow(); },
+            openInShellLabel() { return t("Open in the app's Calls"); },
+            inShellText() {
+                return this.e2ee ? t("This call is end-to-end encrypted, and this app keeps its keys in the main window.")
+                    : t("This app takes calls in its main window.");
+            },
+            offlineText() { return moqui.call.offlineText(); },
             stateText() {
                 const v = this.known;
                 if (!v) return "";
@@ -1146,7 +1251,9 @@
             callKeys() { return moqui.callKeys ? moqui.callKeys.state : null; }
         },
         watch: {
-            callSessionId() { this.load(); }
+            callSessionId() { this.load(); },
+            // the desktop client's connection back: the call as it is now
+            offline(off) { if (!off) this.load(); }
         },
         mounted() {
             this.load();
@@ -1166,7 +1273,7 @@
                     this.loading = false;
                     if (this.view && this.view.status !== "ended") moqui.call.loadRecording(this.callSessionId);
                     if (this.view && this.view.kind === "phone") this.video = false;
-                    if (this.view && !this.inThis && this.view.status !== "ended") this.startPreview();
+                    if (this.view && !this.inThis && this.view.status !== "ended" && !this.keysInShell) this.startPreview();
                     if (this.view && this.inThis) moqui.call.loadCaptions(this.callSessionId);
                 }, () => (this.loading = false));
             },
@@ -1219,6 +1326,7 @@
                 start.then(() => this.load());
             },
             leave() { moqui.call.leave().then(() => this.load()); },
+            openInShell() { moqui.call.openInShell(moqui.call.callUrl(this.callSessionId)); },
             recAction(name) { moqui.call.recordingAction(this.callSessionId, name); },
             dtmf(key) { moqui.call.request("sendDtmf", { callSessionId: this.callSessionId, digits: key }); },
             endForAll() { moqui.call.endForAll().then(() => this.load()); },
@@ -1260,7 +1368,13 @@
             '<span v-if="inThis" class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<span v-if="inThis && call.quality" class="text-caption m-muted">{{call.quality}} kbps</span></div>' +
             '<q-banner v-if="call.error && inThis" dense rounded class="m-tonal text-warning">{{call.error}}</q-banner>' +
-            '<q-banner v-if="e2eeNotice || (e2eeUnsupported && !inThis && canJoin)" dense rounded class="m-tonal text-negative m-call-e2ee-notice"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>' +
+            '<q-banner v-if="offline && !inThis" dense rounded class="m-tonal text-warning m-call-offline"><template v-slot:avatar><q-icon name="sym_o_cloud_off"></q-icon></template>' +
+            '{{offlineText}}</q-banner>' +
+            // the desktop client's app window: an encrypted call is its main window's, with the crypto device
+            '<q-banner v-if="keysInShell && !inThis && canJoin" dense rounded class="m-tonal m-call-in-shell"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>' +
+            '{{inShellText}}' +
+            '<template v-slot:action><q-btn flat no-caps color="primary" icon="sym_o_open_in_new" :label="openInShellLabel" @click="openInShell"></q-btn></template></q-banner>' +
+            '<q-banner v-if="!keysInShell && (e2eeNotice || (e2eeUnsupported && !inThis && canJoin))" dense rounded class="m-tonal text-negative m-call-e2ee-notice"><template v-slot:avatar><q-icon name="sym_o_lock"></q-icon></template>' +
             '{{e2eeNotice || t(\'This call is end-to-end encrypted, and this browser cannot encrypt call media (it has no RTCRtpScriptTransform). Join it from a current Chrome, Edge, Firefox or Safari.\')}}</q-banner>' +
             '<q-banner v-if="inThis && e2ee && callKeys && callKeys.error" dense rounded class="m-tonal text-warning">{{callKeys.error}}</q-banner>' +
             // C7 hardening: the roster has a device of a participant this browser has not verified (WebrootCallKeys.js unverified)
@@ -1276,9 +1390,9 @@
             '<template v-slot:avatar><q-icon name="sym_o_person_add"></q-icon></template>{{p.displayName}} {{t(\'is waiting to join\')}}' +
             '<template v-slot:action><q-btn flat no-caps color="positive" :label="t(\'Let in\')" @click="admit(p, true)"></q-btn>' +
             '<q-btn flat no-caps color="negative" :label="t(\'Turn away\')" @click="admit(p, false)"></q-btn></template></q-banner>' +
-            '<div v-if="!known && !loading" class="m-muted">{{t(\'Call not found\')}}</div>' +
+            '<div v-if="!known && !loading && !offline" class="m-muted">{{t(\'Call not found\')}}</div>' +
             // the lobby
-            '<div v-if="known && !inThis && canJoin" class="row q-col-gutter-md">' +
+            '<div v-if="known && !inThis && canJoin && !keysInShell" class="row q-col-gutter-md">' +
             '<div class="col-12 col-md-7"><div style="background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
             '<m-call-video v-if="preview && preview.getVideoTracks().length" :stream="preview" muted mirror style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white">{{preview ? t(\'Camera off\') : t(\'No camera or no permission for it\')}}</div></div>' +
@@ -1287,7 +1401,7 @@
             '<q-select dense outlined emit-value map-options :label="t(\'Microphone\')" :options="audioInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Microphone\')}))" :model-value="call.settings.audioIn" @update:model-value="v => pick({audioIn: v})"></q-select>' +
             '<q-select dense outlined emit-value map-options :label="t(\'Camera\')" :options="videoInputs.map(d => ({value: d.deviceId, label: d.label || t(\'Camera\')}))" :model-value="call.settings.videoIn" @update:model-value="v => pick({videoIn: v})"></q-select>' +
             '<q-toggle v-model="video" :label="t(\'Join with video\')" @update:model-value="pick({})"></q-toggle>' +
-            '<q-btn unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
+            '<q-btn unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported || offline" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
             // the call view: the grid, or the speaker (or a screen share) large over a strip of the rest
             '<div v-if="inThis && mainTile" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +

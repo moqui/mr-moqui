@@ -158,8 +158,8 @@ test("the shell shows Chat, the Inbox and Compose itself, offline, with what wai
     root.setUrl("/qapps/BasicComms/Inbox/Mail?q=report");
     await until(() => text().includes("This list is not kept on this device"), "the search not kept");
     // the screen that is not bundled opens in an app window, under /qapps
-    root.setUrl("/apps/BasicComms/Calls/Dialer?number=5");
-    assert.deepEqual(host.opened, ["/qapps/BasicComms/Calls/Dialer?number=5"]);
+    root.setUrl("/apps/BasicComms/Calls/History?direction=in");
+    assert.deepEqual(host.opened, ["/qapps/BasicComms/Calls/History?direction=in"]);
     assert.equal(root.view, "mail", "the shell stays where it was");
     // Back, through the search and the Inbox to the rooms, then home (the panel)
     root.goBack();

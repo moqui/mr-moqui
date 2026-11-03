@@ -121,12 +121,19 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.hide();
             }
+            bridge::tell_focus(app, false);
         }
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::Destroyed,
             ..
         } if label.starts_with("remote-") => client::window_closed(app, &label),
+        // the main window's page knows whether the user sees it (a call ringing notifies when not: WebrootCall.js)
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::Focused(focused),
+            ..
+        } if label == "main" => bridge::tell_focus(app, focused),
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show_main(app),
         RunEvent::Opened { urls } => os::opened(app, urls),
@@ -145,8 +152,13 @@ pub fn run() {
 /// The Chromium runtime. A development run with `MOQUI_DESKTOP_DEVTOOLS_PORT` set opens the DevTools protocol on that
 /// loopback port, so tools can drive and read the window (the repository's CDP clients, `chrome://inspect`). It is
 /// never open otherwise: anything that reaches it can read and change every page.
+///
+/// Media may play with no gesture (`--autoplay-policy=no-user-gesture-required`): a call's ringtone and the other
+/// people's audio start in a window hidden to the tray, or one the user has not clicked since it loaded. The app's
+/// windows show only its own pages (the node's, or a client's shell and server pages); the web opens in the system
+/// browser.
 fn cef() -> tauri_runtime_cef::Cef {
-    let cef = tauri_runtime_cef::Cef::default();
+    let cef = tauri_runtime_cef::Cef::default().autoplay(tauri_runtime_cef::AutoplayPolicy::NoUserGestureRequired);
     let port: Option<u16> = std::env::var("MOQUI_DESKTOP_DEVTOOLS_PORT")
         .ok()
         .and_then(|port| port.trim().parse().ok());

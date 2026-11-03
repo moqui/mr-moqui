@@ -175,6 +175,21 @@ fn capability(origin: &str) -> CapabilityBuilder {
         .fold(capability, |capability, permission| capability.permission(*permission))
 }
 
+/// What the host evaluates in the main window when it gains or loses the focus, or hides to the tray: the page's
+/// `moquiDesktop.windowSeen()` answers it.
+pub(crate) fn focus_script(focused: bool) -> String {
+    format!("window.__moquiWindowFocused = {focused};")
+}
+
+/// Tell the main window's page whether the user sees it (focused, not hidden to the tray).
+pub(crate) fn tell_focus(app: &AppHandle, focused: bool) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(err) = window.eval(focus_script(focused)) {
+            tracing::debug!("The window was not told of its focus: {err}");
+        }
+    }
+}
+
 /// Follow `link` in the main window, through the shell's `moqui.openLink` so the page stays loaded. Only a link on the
 /// node's origin; a client's, on its server, in the shell when it bundles the screen, else in an app window.
 fn open_in_page(app: &AppHandle, link: &str) {

@@ -214,6 +214,25 @@ fn the_camera_and_microphone_are_only_for_the_app_s_own_pages() {
         !media_allowed(&at("http://127.0.0.1:43210/"), None, None),
         "no node yet"
     );
+    // a client of a server: its node is the app windows' origin, and the shell's calls (Calls/Call, bundled) have them too
+    let app = crate::client::app_origin();
+    let client_shell = crate::client::shell_origin();
+    for page in [
+        "http://moqui-shell.localhost/",
+        "http://moqui-app.localhost/qapps/BasicComms/Calls/Call?callSessionId=C1",
+    ] {
+        assert!(media_allowed(&at(page), Some(&app), Some(&client_shell)), "{page}");
+    }
+    assert!(!media_allowed(
+        &at("http://moqui-other.localhost/"),
+        Some(&app),
+        Some(&client_shell)
+    ));
+    assert!(!media_allowed(
+        &at("https://moqui-shell.localhost/"),
+        Some(&app),
+        Some(&client_shell)
+    ));
 }
 
 #[test]
@@ -232,4 +251,11 @@ fn a_comms_root_is_an_app_path_only() {
     ] {
         assert!(!comms_root_valid(bad), "{bad}");
     }
+}
+
+#[test]
+fn the_main_window_is_told_whether_the_user_sees_it() {
+    assert_eq!(focus_script(true), "window.__moquiWindowFocused = true;");
+    assert_eq!(focus_script(false), "window.__moquiWindowFocused = false;");
+    assert!(SCRIPT.contains("windowSeen: () =>") && SCRIPT.contains("window.__moquiWindowFocused"));
 }

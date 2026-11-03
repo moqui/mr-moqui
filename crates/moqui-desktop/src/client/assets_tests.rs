@@ -111,7 +111,57 @@ fn the_shell_compiles_webassembly_and_evaluates_no_script_text() {
     assert!(SHELL_CSP.contains("'wasm-unsafe-eval'"));
     assert!(!SHELL_CSP.contains("'unsafe-eval'"));
     assert!(SHELL_CSP.contains("frame-src 'none'"));
-    assert!(SHELL_CSP.contains("worker-src 'none'"));
+    assert!(!WORKER_CSP.contains("unsafe"));
+}
+
+/// The directive `name` of a policy, as its sources.
+fn directive<'a>(policy: &'a str, name: &str) -> Vec<&'a str> {
+    policy
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix(name).filter(|rest| rest.starts_with(' ')))
+        .map(|rest| rest.split_whitespace().collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn the_shell_runs_one_worker_an_encrypted_call_s_staged_sframe_transform() {
+    // the worker by its exact path: no other script, no blob: or data: worker, no forwarded path of the server's
+    assert_eq!(
+        directive(SHELL_CSP, "worker-src"),
+        vec!["http://moqui-shell.localhost/js/WebrootSFrameWorker.js"]
+    );
+    assert_eq!(SFRAME_WORKER, "/js/WebrootSFrameWorker.js");
+    // the call's media and signaling need no other source: no WebSocket (the host holds /notws and /callws)
+    assert_eq!(
+        directive(SHELL_CSP, "connect-src"),
+        vec!["'self'", "http://ipc.localhost"]
+    );
+    assert_eq!(directive(SHELL_CSP, "media-src"), vec!["'self'", "blob:"]);
+    assert!(!SHELL_CSP.contains("ws:") && !SHELL_CSP.contains("wss:"));
+    // a staged file, answered with a policy of its own that lets it import the SFrame code only
+    let assets = Assets::choose(true, Path::new("/nowhere"));
+    let worker = assets.read(SFRAME_WORKER).expect("the worker is staged");
+    assert!(worker.worker && !worker.page);
+    assert!(String::from_utf8_lossy(&worker.body).contains("importScripts(\"/js/WebrootSFrame.js\")"));
+    assert!(assets.read("/js/WebrootSFrame.js").is_some_and(|code| !code.worker));
+    assert!(assets.read("/js/MoquiLib.js").is_some_and(|code| !code.worker));
+    assert_eq!(directive(WORKER_CSP, "default-src"), vec!["'none'"]);
+    assert_eq!(directive(WORKER_CSP, "worker-src"), vec!["'none'"]);
+    assert_eq!(
+        directive(WORKER_CSP, "script-src"),
+        vec!["http://moqui-shell.localhost/js/WebrootSFrame.js"]
+    );
+    // the calls' scripts load with the page
+    let page = String::from_utf8_lossy(&assets.read("/").unwrap().body).to_string();
+    for script in [
+        "/js/WebrootCall.js",
+        "/js/WebrootCall.render.js",
+        "/js/WebrootCallKeys.js",
+    ] {
+        assert!(page.contains(script), "{script}");
+        assert!(assets.read(script).is_some(), "{script}");
+    }
 }
 
 #[test]

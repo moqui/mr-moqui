@@ -21,14 +21,30 @@ use std::path::{Path, PathBuf};
 
 /// The content security policy of the shell's page: its own scripts only (from its own files' paths, not the server's
 /// forwarded ones), no eval (only WebAssembly's compile, for the crypto device's module, `libs/matrix-sdk-crypto`), no
-/// frames (a mail body's `srcdoc` frame, `m-html-view`, is not one, and takes this policy), no workers, its requests to
+/// frames (a mail body's `srcdoc` frame, `m-html-view`, is not one, and takes this policy), one worker, its requests to
 /// its own origin (which the host forwards) and to Tauri's IPC. Chromium adds the hashes of the app's initialization
 /// scripts.
+///
+/// The one worker is an encrypted call's SFrame transform ([`SFRAME_WORKER`], `RTCRtpScriptTransform`), by its exact
+/// path, a staged file (never a `blob:` or `data:` one, nor a path the host forwards). A call's media needs nothing more:
+/// a `<video>` or `<audio>` of a `MediaStream` (`srcObject`) is not a fetch `media-src` governs, `RTCPeerConnection`
+/// is not a fetch either, and its signaling goes over the account's `/notws`, which the host holds
+/// (`moquiDesktop.socket`), so `connect-src` has no WebSocket.
 pub(crate) const SHELL_CSP: &str = "default-src 'self'; \
      script-src http://moqui-shell.localhost/shell/ http://moqui-shell.localhost/js/ http://moqui-shell.localhost/libs/ 'wasm-unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
-     connect-src 'self' http://ipc.localhost; media-src 'self' blob:; frame-src 'none'; worker-src 'none'; \
+     connect-src 'self' http://ipc.localhost; media-src 'self' blob:; frame-src 'none'; \
+     worker-src http://moqui-shell.localhost/js/WebrootSFrameWorker.js; \
      object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
+/// The script of an encrypted call's SFrame worker (`WebrootCallKeys.js` starts it for `RTCRtpScriptTransform`), the
+/// one worker the shell's CSP allows.
+pub(crate) const SFRAME_WORKER: &str = "/js/WebrootSFrameWorker.js";
+
+/// The policy the SFrame worker's script is answered with, which a worker runs under: the SFrame code it imports
+/// (`WebrootSFrame.js`) and nothing else, no requests (its keys come from the page by message), no workers of its own.
+pub(crate) const WORKER_CSP: &str =
+    "default-src 'none'; script-src http://moqui-shell.localhost/js/WebrootSFrame.js; worker-src 'none'; base-uri 'none'";
 
 /// Where the shell's files are, and the libraries it may load (`shell/libs.txt`, which `./moq desktop build` stages).
 pub(crate) struct Assets {
@@ -43,6 +59,8 @@ pub(crate) struct Asset {
     pub(crate) content_type: &'static str,
     /// The page: it gets the CSP.
     pub(crate) page: bool,
+    /// The SFrame worker's script: it gets the worker's CSP.
+    pub(crate) worker: bool,
 }
 
 impl Assets {
@@ -114,6 +132,7 @@ impl Assets {
             body,
             content_type,
             page: content_type.starts_with("text/html"),
+            worker: path == SFRAME_WORKER,
         })
     }
 }

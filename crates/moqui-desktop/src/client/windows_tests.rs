@@ -98,6 +98,11 @@ fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_wi
         "/apps/BasicComms/Chat.qvue",
         "/apps/BasicComms/Inbox/Compose.qvt?mode=dock",
         "/qapps/BasicComms/Inbox/Mail.qjs",
+        // a call (the call store's link, a notification's) and the Dialer (a tel: or sip: link): the shell's, which holds
+        // the crypto device of an encrypted call
+        "/qapps/BasicComms/Calls/Call?callSessionId=C1",
+        "/apps/BasicComms/Calls/Call.qvue?callSessionId=C1",
+        "/qapps/BasicComms/Calls/Dialer?number=1",
     ] {
         assert!(shown_in_shell(path, "/qapps/BasicComms"), "{path}");
     }
@@ -105,9 +110,19 @@ fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_wi
     assert!(shown_in_shell("/qapps/Comms/Inbox/Compose?to=x", "/qapps/Comms"));
     assert!(shown_in_shell("/qapps/Comms/Chat", "/qapps/Comms/"));
     assert!(!shown_in_shell("/qapps/BasicComms/Chat", "/qapps/Comms"));
+    assert!(shown_in_shell(
+        "/qapps/Comms/Calls/Call?callSessionId=C1",
+        "/qapps/Comms"
+    ));
     for path in [
         "/qapps/BasicComms",
-        "/qapps/BasicComms/Calls/Dialer?number=1",
+        // Calls' other screens: the server's pages, in an app window
+        "/qapps/BasicComms/Calls",
+        "/qapps/BasicComms/Calls/History",
+        "/qapps/BasicComms/Calls/Voicemail",
+        "/qapps/BasicComms/Calls/Recordings",
+        "/qapps/BasicComms/Calls/Call/callState?callSessionId=C1",
+        "/qapps/BasicComms/Panel/Dialer",
         "/qapps/BasicComms/Inbox/MessageDetail?emailMessageId=1",
         "/qapps/BasicComms/Chat/attachment?chatAttachmentId=1",
         "/qapps/BasicComms/Settings",
@@ -134,12 +149,21 @@ fn a_comms_screen_is_kept_for_the_shell_also_signed_out_and_the_rest_opens_in_an
         page_goes(compose, "/qapps/BasicComms", false),
         PageGoes::Shell { poke: false }
     );
+    // a tel: link's Dialer and a ringing call's notification: the shell's too
     assert_eq!(
         page_goes("/qapps/BasicComms/Calls/Dialer?number=1", "/qapps/BasicComms", true),
-        PageGoes::AppWindow
+        PageGoes::Shell { poke: true }
     );
     assert_eq!(
-        page_goes("/qapps/BasicComms/Calls/Dialer?number=1", "/qapps/BasicComms", false),
+        page_goes(
+            "/qapps/BasicComms/Calls/Call?callSessionId=C1",
+            "/qapps/BasicComms",
+            false
+        ),
+        PageGoes::Shell { poke: false }
+    );
+    assert_eq!(
+        page_goes("/qapps/BasicComms/Calls/History", "/qapps/BasicComms", true),
         PageGoes::AppWindow
     );
     assert_eq!(page_goes(compose, "/qapps/Comms", true), PageGoes::AppWindow);
@@ -155,6 +179,16 @@ fn an_app_window_may_have_the_shell_show_a_comms_screen_of_its_own_current_accou
     let other = shell_path_for(room, "/qapps/Comms", Some("a2"), Some("a1")).unwrap_err();
     assert!(other.contains("switch to it"), "{other}");
     assert!(shell_path_for(room, "/qapps/Comms", Some("a1"), None).is_err());
+    // an encrypted call of the window's (m-call's Open in the app's Calls)
+    assert_eq!(
+        shell_path_for(
+            "/qapps/Comms/Calls/Call?callSessionId=C1",
+            "/qapps/Comms",
+            Some("a1"),
+            Some("a1")
+        ),
+        Ok(())
+    );
     // not a screen the shell shows, or under another comms app than the window's account's
     assert!(shell_path_for("/qapps/Comms/Settings", "/qapps/Comms", Some("a1"), Some("a1")).is_err());
     assert!(shell_path_for("/qapps/system/Users", "/qapps/Comms", Some("a1"), Some("a1")).is_err());

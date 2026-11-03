@@ -111,5 +111,17 @@ Switch to the client from the tray ("Use as a client of a server").
    `window.moquiDesktop` has only `socket` and `storageScope`, and that calling another command (`client_state`) is
    refused. In the shell, check that a server page or script cannot load on the shell's origin (it opens in an app
    window).
-9. **Camera and microphone.** Start a call from an app window: it is granted (and the OS asks once); a page of another
-   origin is never shown in the app, so there is nothing else to grant.
+9. **Camera and microphone.** Start a call from the main window (a room's Call, the Dialer): it is granted (and the OS
+   asks once); a page of another origin is never shown in the app, so there is nothing else to grant.
+10. **Calls in the main window.** The main window owns the account's calls.
+    - From a browser, call this user while the app is hidden to the tray, and again while it shows but another app has
+      the focus. Record: a native notification each time (a click shows the call's screen in the main window), and the
+      ringtone heard without first clicking in the window (CEF's `--autoplay-policy=no-user-gesture-required`).
+    - Answer an end-to-end encrypted call there, from a browser on another computer. Record: audio and video both ways,
+      the call's lock, and that the frames decrypt (no "frames do not decrypt" on the roster; the SFrame worker runs
+      under the shell's CSP with no CSP error in the DevTools console of a development run).
+    - In an app window, open that call's screen (Calls, History): it offers Open in the app's Calls and joins nothing;
+      a call started there (a plain one) is joined in the main window; its ring bar does not ring aloud.
+    - `tel:` link with the Dialer already shown: the second number fills it.
+    - Turn the network off: a call's screen and the Dialer say they need a connection; on again, they come back.
+    - Switch account or sign out in a call: it asks first, and the other people see this user leave.

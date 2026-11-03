@@ -16,8 +16,9 @@
 //! window, on the `moqui-shell` origin with the shell's commands; and an app window (`remote-<n>`) for each server page
 //! opened from it, on the `moqui-app` origin with the sockets, the outbox and the drafts only. Each stays on its origin: a link elsewhere on the web
 //! opens in the system browser. An app window is one account's, named in its storage scope, and closes when the
-//! account changes or signs out. The comms app's screens the shell bundles (Chat, the Inbox, Compose) are shown in the
-//! shell instead, from a link of the shell's, the OS (`mailto:`) or a notification ([`open_page`]).
+//! account changes or signs out. The comms app's screens the shell bundles (Chat, the Inbox, Compose, a call and the
+//! Dialer) are shown in the shell instead, from a link of the shell's, the OS (`mailto:`, `tel:`, `sip:`) or a notification
+//! ([`open_page`]).
 
 use std::sync::atomic::Ordering;
 
@@ -172,8 +173,17 @@ fn on_app_origin(url: &Url) -> Url {
 }
 
 /// The comms app's screens the shell shows itself (bundled from basic-comms, `shell/bundled-screens.txt`), by their path
-/// under the comms root, as `Shell/Root` routes them (`SHELL_ROUTES` in `shell/screens/Root.qvue`).
-const SHELL_SCREENS: [&str; 4] = ["Chat", "Inbox", "Inbox/Mail", "Inbox/Compose"];
+/// under the comms root, as `Shell/Root` routes them (`SHELL_ROUTES` in `shell/screens/Root.qvue`): a call's screen is
+/// the shell's, which holds the crypto device of its encrypted calls; Calls' other screens (History, Voicemail,
+/// Recordings) open in an app window.
+const SHELL_SCREENS: [&str; 6] = [
+    "Chat",
+    "Inbox",
+    "Inbox/Mail",
+    "Inbox/Compose",
+    "Calls/Call",
+    "Calls/Dialer",
+];
 
 /// Whether the server's `path` (`/qapps/...` or `/apps/...`, with its query, a `.qvt`, `.qvue` or `.qjs` ending as
 /// Root.qvue takes it) is a comms screen the shell shows, under the account's comms app at `comms_root`
@@ -220,9 +230,10 @@ fn page_goes(path: &str, comms_root: &str, signed_in: bool) -> PageGoes {
 /// What the host evaluates in the shell to have it take the screen kept for it (`shell/js/shell.js`).
 const SHELL_POKE: &str = "window.moquiShell && window.moquiShell.poke()";
 
-/// A server page opened from the OS (a `mailto:` routed to Compose), a notification or a link in the shell, `url` under
-/// the app origin: a comms screen the shell shows is kept for the shell and shown there (the main window, shown), also
-/// when it comes while the shell signs in or loads; another opens in an app window ([`super::open_link`]).
+/// A server page opened from the OS (a `mailto:` routed to Compose, a `tel:` or `sip:` to the Dialer), a notification (a
+/// call ringing: its screen) or a link in the shell, `url` under the app origin: a comms screen the shell shows is kept
+/// for the shell and shown there (the main window, shown), also when it comes while the shell signs in or loads; another
+/// opens in an app window ([`super::open_link`]).
 pub(crate) fn open_page(app: &AppHandle, url: &Url) {
     if url.origin().ascii_serialization() != APP_ORIGIN {
         return;
@@ -280,8 +291,9 @@ fn shell_path_for(
     Ok(())
 }
 
-/// An app window's "Open in Chat" (an encrypted room, whose crypto device is the shell's): `path`, a comms screen the shell
-/// shows under the window's account's comms app, shown in the main window, for that account only while it is current.
+/// An app window's "Open in Chat" or "Open in the app's Calls" (an encrypted room or call, whose crypto device is the
+/// shell's): `path`, a comms screen the shell shows under the window's account's comms app, shown in the main window, for
+/// that account only while it is current.
 #[tauri::command(async)]
 pub(crate) fn open_in_shell(app: AppHandle, webview: tauri::Webview, path: String) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;

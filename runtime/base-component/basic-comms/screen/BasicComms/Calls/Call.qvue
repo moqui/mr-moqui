@@ -13,7 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Call (plans/Comms-Framework.md §6.6), the component Call.xml serves in the qvue render mode: m-call, the shell's call
     component (webroot js/WebrootCall.js), for the callSessionId of the URL. Going to another screen keeps the call in the
-    LiveCall window; coming back here shows it again. -->
+    LiveCall window; coming back here shows it again. The desktop client's shell bundles it (precompiled), and takes the
+    encrypted calls there, as it holds the crypto device. -->
 <template><div class="m-call-screen q-pa-sm">
     <m-call v-if="callSessionId" :call-session-id="callSessionId"></m-call>
     <div v-else class="m-muted">{{t('Call not found')}}</div>

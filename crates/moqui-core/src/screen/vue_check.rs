@@ -203,14 +203,61 @@ pub fn component_templates(scripts: &[&str]) -> Result<Vec<(String, String, Stri
 ///
 /// Returns an error when a script does not run or the compiler rejects a template.
 pub fn precompiled_components(compiler_source: &str, scripts: &[&str]) -> Result<String, Error> {
-    let mut out = String::from(
-        "/* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */\n\n\
-         // Generated from the component templates of WebrootVue.qvt.js; do not edit. Make it again with\n\
-         //   UPDATE_GOLDEN=1 cargo test -p moqui-core --lib client_components_are_precompiled\n\
-         // qvt.applyRenders uses an entry only while its hash matches the template (plans/archive/QvtServerStatic.md, Page build).\n\
-         (function (moqui) {\n    \"use strict\";\n    moqui.qvtRenders = {\n",
-    );
     let templates = component_templates(scripts)?;
+    renders_file(
+        compiler_source,
+        &templates,
+        "WebrootVue.qvt.js",
+        "client_components_are_precompiled",
+    )
+}
+
+/// The render functions of the components a script registers that `base` (the scripts loaded before it) does not, as
+/// a file of their own that loads with that script (`WebrootCall.render.js`, loaded with `WebrootCall.js`): `base` and
+/// then `added` are run, and only the components `added` brought are compiled. `source_name` names the script in the
+/// file's header, `test_name` the test that makes it again.
+///
+/// # Errors
+///
+/// Returns an error when a script does not run or the compiler rejects a template.
+pub fn precompiled_added_components(
+    compiler_source: &str,
+    base: &[&str],
+    added: &str,
+    source_name: &str,
+    test_name: &str,
+) -> Result<String, Error> {
+    let before: std::collections::HashSet<String> = component_templates(base)?
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect();
+    let mut all: Vec<&str> = base.to_vec();
+    let at = all.len().saturating_sub(1);
+    // the added script runs before the last of base (WebrootVue.qvt.js, which registers moqui.qvtComponents)
+    all.insert(at, added);
+    let templates: Vec<_> = component_templates(&all)?
+        .into_iter()
+        .filter(|(name, _, _)| !before.contains(name))
+        .collect();
+    renders_file(compiler_source, &templates, source_name, test_name)
+}
+
+/// A file of render functions: each entry merged into `moqui.qvtRenders`, which `qvt.applyRenders` (and
+/// `qvt.registerLate`) use while an entry's hash matches its template, so the files may load in any order before the
+/// client starts.
+fn renders_file(
+    compiler_source: &str,
+    templates: &[(String, String, String)],
+    source_name: &str,
+    test_name: &str,
+) -> Result<String, Error> {
+    let mut out = format!(
+        "/* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */\n\n\
+         // Generated from the component templates of {source_name}; do not edit. Make it again with\n\
+         //   UPDATE_GOLDEN=1 cargo test -p moqui-core --lib {test_name}\n\
+         // qvt.applyRenders uses an entry only while its hash matches the template (plans/archive/QvtServerStatic.md, Page build).\n\
+         (function (moqui) {{\n    \"use strict\";\n    moqui.qvtRenders = Object.assign(moqui.qvtRenders || {{}}, {{\n",
+    );
     for (index, (name, template, hash)) in templates.iter().enumerate() {
         let code =
             compile_render(compiler_source, template).map_err(|err| Error::new(format!("component {name}: {err}")))?;
@@ -221,7 +268,7 @@ pub fn precompiled_components(compiler_source: &str, scripts: &[&str]) -> Result
             if index + 1 < templates.len() { "," } else { "" }
         ));
     }
-    out.push_str("    };\n})(globalThis.moqui);\n");
+    out.push_str("    });\n})(globalThis.moqui);\n");
     Ok(out)
 }
 

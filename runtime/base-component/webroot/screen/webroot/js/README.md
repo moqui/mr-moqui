@@ -99,7 +99,10 @@ the server. So `window.moquiDesktop` may also have:
 
 The client's shell also gives `deviceName`, the name of its chat crypto device, which `WebrootCrypto.js` uses; its app
 windows set `window.__moquiCryptoInShell`, so `moqui.crypto` makes no device there (`ensureDevice` refuses with
-`elsewhere`), and give `openInShell(path)`, which shows a comms screen (an encrypted room) in the shell.
+`elsewhere`, and `moqui.callKeys.prepare` too), and give `openInShell(path)`, which shows a comms screen (an encrypted
+room or call) in the shell, which owns the calls (`moqui.call` in an app window rings silently and opens a call there).
+`WebrootCall.render.js` is the render functions of `WebrootCall.js`'s components, loaded with it
+(`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled`).
 
 With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)`) says the server is out of reach: set
 by `moqui.request` from the host's `X-Moqui-Offline` answers (from the store, or its 502 when the server is not reached)

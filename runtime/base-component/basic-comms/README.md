@@ -18,9 +18,10 @@ An app adds to these screens without copying them: it mounts them under its own 
 `ext-action` and `ext-panel` items ([docs/ui/Qvt-Client.md](../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)).
 IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms_app_root` to `/qapps/Comms`.
 
-The desktop client bundles the chat panel, Chat, Inbox (Mail) and Compose in its shell, precompiled from these `.qvue`
-files, and shows them under the server's comms app root; their offline presentation (queued and failed sends, the Inbox's
-Outbox, "needs a connection", the gaps of what is kept) shows only there
+The desktop client bundles the chat panel, Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer in its shell,
+precompiled from these `.qvue` files, and shows them under the server's comms app root; it owns the calls (its app
+windows open them there). Their offline presentation (queued and failed sends, the Inbox's Outbox, "needs a
+connection", the gaps of what is kept) shows only there
 ([crates/moqui-desktop](../../../crates/moqui-desktop/README.md#client-of-a-server)). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 

@@ -5,7 +5,7 @@
 // qvt.applyRenders uses an entry only while its hash matches the template (plans/archive/QvtServerStatic.md, Page build).
 (function (moqui) {
     "use strict";
-    moqui.qvtRenders = {
+    moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
         "m-appearance-dialog": { hash: "81c961cb", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass, createCommentVNode: _createCommentVNode, createBlock: _createBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
@@ -9680,5 +9680,5 @@
               ]))
             }
         } }
-    };
+    });
 })(globalThis.moqui);

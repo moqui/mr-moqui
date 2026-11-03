@@ -15,9 +15,11 @@ along with this software (see the LICENSE.md file). If not, see
     server's apps from its shellData, each opening in a window of its own (the server's page through the host); the account
     menu (switch, add, the account's apps and devices to sign out, sign out, with what waits unsent listed first); the counts
     and notifications of the account's /notws, which the host holds; the bundled BasicComms ChatPanel (its room opens in
-    place); and the bundled BasicComms Chat, Inbox (Mail) and Compose, shown here as the comms app's screens under its root
-    (calls.appRoot), so their transitions go to the server, and to the account's store offline. Any other screen, and those
-    not bundled, open in an app window. The root of its Vue app, so it is the $root the client's components and those
+    place); and the bundled BasicComms Chat, Inbox (Mail), Compose, Calls/Call and Calls/Dialer, shown here as the comms app's
+    screens under its root (calls.appRoot), so their transitions go to the server, and to the account's store offline; and
+    the calls of the account (WebrootCall.js: the ring bar, the LiveCall window and the call's audio, m-call-dock), whose
+    encrypted ones this window takes, as it holds the crypto device. Any other screen, and those not bundled, open in an
+    app window. The root of its Vue app, so it is the $root the client's components and those
     screens ask for: basePath, linkBasePath, currentPathList, currentParameters, setUrl, setParameters, the containers,
     userId and the notification client, as m-qapps-root has them, with a history of its own (the shell's page stays /).
     Bundled, precompiled (bundled-screens.txt). -->
@@ -132,7 +134,8 @@ along with this software (see the LICENSE.md file). If not, see
                     </q-item>
                 </q-list>
             </template>
-            <q-card-section v-else-if="!signOutBox.checked" class="q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown" :class="signOutBox.shared ? 'text-negative' : ''">
+            <q-card-section v-if="signOutBox.inCall" class="q-pt-none text-body2 text-weight-medium text-negative m-shell-sign-out-call">{{t('You are in a call: signing out leaves it.')}}</q-card-section>
+            <q-card-section v-if="!signOutBox.items.length && !signOutBox.checked" class="q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown" :class="signOutBox.shared ? 'text-negative' : ''">
                 {{signOutBox.shared ? t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
                     : t('What is not sent yet could not be checked: it stays on this computer and goes after you sign in again.')}}</q-card-section>
             <q-card-actions align="right">
@@ -142,6 +145,8 @@ along with this software (see the LICENSE.md file). If not, see
             </q-card-actions>
         </q-card>
     </q-dialog>
+    <!-- calls: the ring bar, the LiveCall window off the call's screen and the call's audio (WebrootCall.js) -->
+    <m-call-dock v-if="callsOn"></m-call-dock>
     <q-page-container>
         <q-page v-if="view" class="m-shell-view">
             <component v-if="viewComponent" ref="view" :is="viewComponent" :key="view"></component>
@@ -167,10 +172,11 @@ const countOf = (counts, key) => {
 };
 // The comms app's screens the shell shows itself (bundled, js/shell.js names them under the account's comms root), by
 // their path under that root, and the screen path each is shown as; the host routes the same paths here
-// (src/client/mod.rs SHELL_SCREENS). Any other path is the server's page, in an app window.
-const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose' };
-const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message' };
+// (src/client/windows.rs SHELL_SCREENS). Any other path is the server's page, in an app window (Calls' History, its
+// voicemail and recordings among them).
+const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer' };
+const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'] };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer' };
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -219,13 +225,13 @@ module.exports = {
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true }
+            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false }
         };
     },
     computed: {
         accounts() { return (this.state && this.state.accounts) || []; },
         // the sign-out leaves something unsent, or could not tell
-        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared); },
+        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
         shared() {
             const current = this.accounts.find((account) => account.id === this.currentId);
@@ -243,12 +249,15 @@ module.exports = {
         currentLinkUrl() { const search = this.currentSearch; return this.currentLinkPath + (search ? '?' + search : ''); },
         viewComponent() { return this.view ? this.componentOf(this.view) : null; },
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
+        // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
+        callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
             return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
                 { key: 'mail', view: 'mail', icon: 'sym_o_mail', label: t('Mail'), link: this.commsLink + '/Inbox' },
-                { key: 'compose', view: 'compose', icon: 'sym_o_edit', label: t('New message'), link: this.commsLink + '/Inbox/Compose' }]
-                .filter((item) => this.componentOf(item.view));
+                { key: 'compose', view: 'compose', icon: 'sym_o_edit', label: t('New message'), link: this.commsLink + '/Inbox/Compose' },
+                this.callsOn ? { key: 'dialer', view: 'dialer', icon: 'sym_o_dialpad', label: t('Dialer'), link: this.commsLink + '/Calls/Dialer' } : null]
+                .filter((item) => item && this.componentOf(item.view));
         },
         // the + menu's kinds of the apps (m-qapps-root quickCreateItems, with no record of a screen here)
         quickCreateItems() {
@@ -371,8 +380,20 @@ module.exports = {
         hideContainer(id) { const comp = this.activeContainers[id]; if (comp && comp.hide) comp.hide(); },
         // the host's link to a comms screen (an OS mailto:, a notification): shown here (shell.js takeOpen)
         openPathFromHost(path) { this.setUrl(path); },
-        switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
-        addAccount() { host().addAccount().catch((err) => this.failed(err)); },
+        // the call this window is in (moqui.call): an account switch, an added account or a sign-out loads the shell again,
+        // which would drop it, so it is confirmed and left first
+        inCall() { return !!(moqui.call && moqui.call.state && moqui.call.state.current); },
+        leaveCallFirst(message, then) {
+            if (!this.inCall()) { then(); return; }
+            this.$q.dialog({ title: t('You are in a call'), message: t(message), cancel: { label: t('Stay in the call'), flat: true, noCaps: true },
+                ok: { label: t('Leave the call'), color: 'negative', noCaps: true }, persistent: true })
+                .onOk(() => moqui.call.leave().catch(() => null).then(then));
+        },
+        switchAccount(id) {
+            if (id === this.currentId) return;
+            this.leaveCallFirst('Switching accounts leaves the call.', () => host().switchAccount(id).catch((err) => this.failed(err)));
+        },
+        addAccount() { this.leaveCallFirst('Adding an account leaves the call.', () => host().addAccount().catch((err) => this.failed(err))); },
         // Sign out, after a confirm that lists what waits unsent (moquiDesktop.outbox.unsent): a shared device's account goes
         // with its data (client-conf device-mode), so its unsent items with it; a personal one keeps them for the next sign-in.
         signOut() {
@@ -380,11 +401,12 @@ module.exports = {
             const desktop = host();
             const unsent = desktop && desktop.outbox && typeof desktop.outbox.unsent === 'function'
                 ? desktop.outbox.unsent().catch((err) => { console.info('The unsent items were not read', err); return null; }) : Promise.resolve(null);
-            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found }; });
+            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
         },
         confirmSignOut() {
             this.signOutBox.open = false;
-            host().signOut().catch((err) => this.failed(err));
+            const left = this.inCall() ? moqui.call.leave().catch(() => null) : Promise.resolve();
+            left.then(() => host().signOut()).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
         openDevices() {
@@ -433,6 +455,8 @@ module.exports = {
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
+        // calls: the pushes of the user's calls and the calls going on (WebrootCall.js), as m-qapps-root starts them
+        if (this.callsOn) moqui.call.start(this);
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
         if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },

@@ -92,6 +92,8 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
                     .header("Cache-Control", "no-cache");
                 if asset.page {
                     response = response.header("Content-Security-Policy", assets::SHELL_CSP);
+                } else if asset.worker {
+                    response = response.header("Content-Security-Policy", assets::WORKER_CSP);
                 }
                 return response
                     .body(asset.body)

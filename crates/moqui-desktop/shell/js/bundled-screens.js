@@ -554,10 +554,11 @@ const countOf = (counts, key) => {
 };
 // The comms app's screens the shell shows itself (bundled, js/shell.js names them under the account's comms root), by
 // their path under that root, and the screen path each is shown as; the host routes the same paths here
-// (src/client/mod.rs SHELL_SCREENS). Any other path is the server's page, in an app window.
-const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose' };
-const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message' };
+// (src/client/windows.rs SHELL_SCREENS). Any other path is the server's page, in an app window (Calls' History, its
+// voicemail and recordings among them).
+const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose', 'Calls/Call': 'call', 'Calls/Dialer': 'dialer' };
+const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'] };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer' };
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -606,13 +607,13 @@ module.exports = {
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true }
+            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false }
         };
     },
     computed: {
         accounts() { return (this.state && this.state.accounts) || []; },
         // the sign-out leaves something unsent, or could not tell
-        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared); },
+        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
         shared() {
             const current = this.accounts.find((account) => account.id === this.currentId);
@@ -630,12 +631,15 @@ module.exports = {
         currentLinkUrl() { const search = this.currentSearch; return this.currentLinkPath + (search ? '?' + search : ''); },
         viewComponent() { return this.view ? this.componentOf(this.view) : null; },
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
+        // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
+        callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
             return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
                 { key: 'mail', view: 'mail', icon: 'sym_o_mail', label: t('Mail'), link: this.commsLink + '/Inbox' },
-                { key: 'compose', view: 'compose', icon: 'sym_o_edit', label: t('New message'), link: this.commsLink + '/Inbox/Compose' }]
-                .filter((item) => this.componentOf(item.view));
+                { key: 'compose', view: 'compose', icon: 'sym_o_edit', label: t('New message'), link: this.commsLink + '/Inbox/Compose' },
+                this.callsOn ? { key: 'dialer', view: 'dialer', icon: 'sym_o_dialpad', label: t('Dialer'), link: this.commsLink + '/Calls/Dialer' } : null]
+                .filter((item) => item && this.componentOf(item.view));
         },
         // the + menu's kinds of the apps (m-qapps-root quickCreateItems, with no record of a screen here)
         quickCreateItems() {
@@ -758,8 +762,20 @@ module.exports = {
         hideContainer(id) { const comp = this.activeContainers[id]; if (comp && comp.hide) comp.hide(); },
         // the host's link to a comms screen (an OS mailto:, a notification): shown here (shell.js takeOpen)
         openPathFromHost(path) { this.setUrl(path); },
-        switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
-        addAccount() { host().addAccount().catch((err) => this.failed(err)); },
+        // the call this window is in (moqui.call): an account switch, an added account or a sign-out loads the shell again,
+        // which would drop it, so it is confirmed and left first
+        inCall() { return !!(moqui.call && moqui.call.state && moqui.call.state.current); },
+        leaveCallFirst(message, then) {
+            if (!this.inCall()) { then(); return; }
+            this.$q.dialog({ title: t('You are in a call'), message: t(message), cancel: { label: t('Stay in the call'), flat: true, noCaps: true },
+                ok: { label: t('Leave the call'), color: 'negative', noCaps: true }, persistent: true })
+                .onOk(() => moqui.call.leave().catch(() => null).then(then));
+        },
+        switchAccount(id) {
+            if (id === this.currentId) return;
+            this.leaveCallFirst('Switching accounts leaves the call.', () => host().switchAccount(id).catch((err) => this.failed(err)));
+        },
+        addAccount() { this.leaveCallFirst('Adding an account leaves the call.', () => host().addAccount().catch((err) => this.failed(err))); },
         // Sign out, after a confirm that lists what waits unsent (moquiDesktop.outbox.unsent): a shared device's account goes
         // with its data (client-conf device-mode), so its unsent items with it; a personal one keeps them for the next sign-in.
         signOut() {
@@ -767,11 +783,12 @@ module.exports = {
             const desktop = host();
             const unsent = desktop && desktop.outbox && typeof desktop.outbox.unsent === 'function'
                 ? desktop.outbox.unsent().catch((err) => { console.info('The unsent items were not read', err); return null; }) : Promise.resolve(null);
-            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found }; });
+            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
         },
         confirmSignOut() {
             this.signOutBox.open = false;
-            host().signOut().catch((err) => this.failed(err));
+            const left = this.inCall() ? moqui.call.leave().catch(() => null) : Promise.resolve();
+            left.then(() => host().signOut()).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
         openDevices() {
@@ -820,6 +837,8 @@ module.exports = {
         // what the host had to tell after the sign-in (an account kept as a personal device's)
         if (this.state && this.state.notice) this.$q.notify({ type: 'info', message: t(this.state.notice), timeout: 12000 });
         if (moqui.chat) moqui.chat.start(this);
+        // calls: the pushes of the user's calls and the calls going on (WebrootCall.js), as m-qapps-root starts them
+        if (this.callsOn) moqui.call.start(this);
         // my presence on the tray, as m-qapps-root hands it
         const desktop = host();
         if (desktop && desktop.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) desktop.setPresence(status); },
@@ -863,6 +882,7 @@ module.exports = {
                   const _component_q_card_actions = _resolveComponent("q-card-actions")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_q_dialog = _resolveComponent("q-dialog")
+                  const _component_m_call_dock = _resolveComponent("m-call-dock")
                   const _component_q_page = _resolveComponent("q-page")
                   const _component_q_page_container = _resolveComponent("q-page-container")
                   const _component_q_layout = _resolveComponent("q-layout")
@@ -1496,18 +1516,30 @@ module.exports = {
                                       _: 1
                                     })
                                   ], 64))
-                                : (!_ctx.signOutBox.checked)
-                                  ? (_openBlock(), _createBlock(_component_q_card_section, {
-                                      key: 1,
-                                      class: _normalizeClass(["q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown", _ctx.signOutBox.shared ? 'text-negative' : ''])
-                                    }, {
-                                      default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(_ctx.signOutBox.shared ? _ctx.t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
+                                : _createCommentVNode("", true),
+                              (_ctx.signOutBox.inCall)
+                                ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                    key: 1,
+                                    class: "q-pt-none text-body2 text-weight-medium text-negative m-shell-sign-out-call"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('You are in a call: signing out leaves it.')), 1)
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true),
+                              (!_ctx.signOutBox.items.length && !_ctx.signOutBox.checked)
+                                ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                    key: 2,
+                                    class: _normalizeClass(["q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown", _ctx.signOutBox.shared ? 'text-negative' : ''])
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.signOutBox.shared ? _ctx.t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
                                     : _ctx.t('What is not sent yet could not be checked: it stays on this computer and goes after you sign in again.')), 1)
-                                      ]),
-                                      _: 1
-                                    }, 8, ["class"]))
-                                  : _createCommentVNode("", true),
+                                    ]),
+                                    _: 1
+                                  }, 8, ["class"]))
+                                : _createCommentVNode("", true),
                               _createVNode(_component_q_card_actions, { align: "right" }, {
                                 default: _withCtx(() => [
                                   _withDirectives(_createVNode(_component_q_btn, {
@@ -1533,6 +1565,9 @@ module.exports = {
                         ]),
                         _: 1
                       }, 8, ["modelValue", "onUpdate:modelValue"]),
+                      (_ctx.callsOn)
+                        ? (_openBlock(), _createBlock(_component_m_call_dock, { key: 0 }))
+                        : _createCommentVNode("", true),
                       _createVNode(_component_q_page_container, null, {
                         default: _withCtx(() => [
                           (_ctx.view)
@@ -3104,6 +3139,7 @@ const chatRoom = {
         },
         // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
         startCall() {
+            if (needsConnection()) return;
             if (moqui.call) moqui.call.startCall({ chatRoomId: this.roomId, video: true });
         },
         go(target) { if (target) this.$root.setUrl(target); },
@@ -17694,5 +17730,392 @@ module.exports = {
             delete target.template;
         }
         return { component: component, style: null, scoped: false };
+    } };
+    moqui.qvtBundled["BasicComms/Calls/Call"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+module.exports = {
+    name: 'Call',
+    computed: {
+        callSessionId() { return String((this.$root.currentParameters || {}).callSessionId || ''); }
+    },
+    methods: { t }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_m_call = _resolveComponent("m-call")
+
+                  return (_openBlock(), _createElementBlock("div", { class: "m-call-screen q-pa-sm" }, [
+                    (_ctx.callSessionId)
+                      ? (_openBlock(), _createBlock(_component_m_call, {
+                          key: 0,
+                          "call-session-id": _ctx.callSessionId
+                        }, null, 8, ["call-session-id"]))
+                      : (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "m-muted"
+                        }, _toDisplayString(_ctx.t('Call not found')), 1))
+                  ]))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
+    } };
+    moqui.qvtBundled["BasicComms/Calls/Dialer"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const KEYS = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'],
+    ['*', ''], ['0', '+'], ['#', '']].map(([key, letters]) => ({ key, letters }));
+module.exports = {
+    name: 'Dialer',
+    inject: { mScreen: { default: null } },
+    data() {
+        return { loaded: false, data: { callerIdList: [], recentList: [], phoneActive: false }, text: '', number: null, results: [],
+            fromNumber: null, hideCallerId: false, busy: false, keys: KEYS, timer: null, seq: 0 };
+    },
+    computed: {
+        base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
+        compact() { return /\/Panel\//.test(this.base); },
+        // the desktop client's server out of reach (never on the web)
+        noConnection() { return !!(moqui.connection && moqui.connection.offline); },
+        // the number parameter (a tel: or sip: link)
+        numberParam() { return ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number || ''; },
+        callerIdOptions() {
+            return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
+        }
+    },
+    watch: {
+        // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
+        numberParam(number) { this.fill(number); },
+        // the connection back: what the Dialer shows comes again
+        noConnection(off) { if (!off) this.load(); }
+    },
+    mounted() {
+        this.load();
+        this.fill(this.numberParam);
+    },
+    beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
+    methods: {
+        t,
+        url(name) { return this.base + '/' + name; },
+        fill(number) { if (number) { this.text = String(number); this.search(); } },
+        load() {
+            return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
+                const json = result.json || {};
+                this.data = Object.assign({ callerIdList: [], recentList: [] }, json);
+                this.fromNumber = this.data.callerIdList.length ? this.data.callerIdList[0].phoneNumber : null;
+                this.hideCallerId = !!json.hideCallerId;
+                this.loaded = true;
+            }, (err) => { this.loaded = true; if (!(moqui.unreachable && moqui.unreachable(err))) moqui.handleAjaxError(err); });
+        },
+        press(key) {
+            // 00 at the start is read as + by the server's rules; a live call's keys are m-call's keypad
+            this.text = (this.text || '') + key;
+            this.search();
+        },
+        back() { this.text = (this.text || '').slice(0, -1); this.search(); },
+        pick(number) { this.text = number; this.results = []; this.search(); },
+        search() {
+            if (this.timer) clearTimeout(this.timer);
+            const text = (this.text || '').trim();
+            if (!text) { this.results = []; this.number = null; return; }
+            this.timer = setTimeout(() => {
+                const seq = ++this.seq;
+                moqui.request(this.url('dialSearch'), { params: { text } }).then((result) => {
+                    if (seq !== this.seq) return;
+                    const json = result.json || {};
+                    this.number = json.number || null;
+                    this.results = /^[+0-9*#()\-. ]+$/.test(text) && json.number ? [] : (json.resultList || []);
+                }, () => null);
+            }, 250);
+        },
+        call() {
+            if (!this.text || this.busy || this.noConnection) return;
+            this.busy = true;
+            const params = { phoneNumber: this.number || this.text, fromNumber: this.fromNumber || '', hideCallerId: this.hideCallerId ? 'true' : 'false',
+                idempotencyKey: 'd' + Date.now() + Math.random().toString(36).slice(2) };
+            moqui.request(this.url('dialNumber'), { method: 'POST', params }).then((result) => {
+                this.busy = false;
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages([], json.errors); return; }
+                if (!json.callSessionId) return;
+                if (moqui.call && json.callLegId) {
+                    if (json.call && moqui.call.remember) moqui.call.remember(json.call);
+                    // the page's call, or the desktop client's main window's when this is an app window (moqui.call.take)
+                    if (moqui.call.take) moqui.call.take(json.callSessionId, json.callLegId, { video: false });
+                    else { moqui.call.open(json.callSessionId); moqui.call.join(json.callSessionId, json.callLegId, { video: false }); }
+                } else {
+                    this.$root.setUrl(this.base.replace(/\/(Calls\/Dialer|Panel\/Dialer)$/, '/Calls/Call') + '?callSessionId=' + encodeURIComponent(json.callSessionId));
+                }
+                this.text = '';
+                this.number = null;
+                this.load();
+            }, (err) => { this.busy = false; moqui.handleAjaxError(err); });
+        }
+    }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, withKeys: _withKeys, createVNode: _createVNode, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_banner = _resolveComponent("q-banner")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_select = _resolveComponent("q-select")
+                  const _component_q_toggle = _resolveComponent("q-toggle")
+                  const _component_q_chip = _resolveComponent("q-chip")
+
+                  return (_openBlock(), _createElementBlock("div", {
+                    class: _normalizeClass(["m-dialer column q-gutter-sm", _ctx.compact ? 'q-pa-sm' : 'q-pa-md']),
+                    style: _normalizeStyle(_ctx.compact ? '' : 'max-width:420px')
+                  }, [
+                    (!_ctx.compact)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "text-h6"
+                        }, _toDisplayString(_ctx.t('Dialer')), 1))
+                      : _createCommentVNode("", true),
+                    (_ctx.noConnection)
+                      ? (_openBlock(), _createBlock(_component_q_banner, {
+                          key: 1,
+                          dense: "",
+                          rounded: "",
+                          class: "m-tonal text-warning m-dialer-offline"
+                        }, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(_ctx.t('Calls need a connection to the server: try again when it is back.')), 1)
+                          ]),
+                          _: 1
+                        }))
+                      : (_ctx.loaded && !_ctx.data.phoneActive)
+                        ? (_openBlock(), _createBlock(_component_q_banner, {
+                            key: 2,
+                            dense: "",
+                            rounded: "",
+                            class: "bg-warning text-black"
+                          }, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.t('Phone calls are not available here.')), 1)
+                            ]),
+                            _: 1
+                          }))
+                        : (_ctx.loaded && !_ctx.data.callerIdList.length)
+                          ? (_openBlock(), _createBlock(_component_q_banner, {
+                              key: 3,
+                              dense: "",
+                              rounded: "",
+                              class: "bg-grey-3 text-black"
+                            }, {
+                              default: _withCtx(() => [
+                                _createTextVNode(_toDisplayString(_ctx.t('You have no number to call from; an administrator can give you one.')), 1)
+                              ]),
+                              _: 1
+                            }))
+                          : _createCommentVNode("", true),
+                    _createVNode(_component_q_input, {
+                      outlined: "",
+                      modelValue: _ctx.text,
+                      "onUpdate:modelValue": [$event => ((_ctx.text) = $event), _ctx.search],
+                      label: _ctx.t('Name or number'),
+                      autofocus: "",
+                      clearable: "",
+                      class: "text-h6",
+                      onKeyup: _withKeys(_ctx.call, ["enter"]),
+                      "input-class": "text-mono",
+                      "aria-label": "Name or number"
+                    }, {
+                      append: _withCtx(() => [
+                        (_ctx.text)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              flat: "",
+                              dense: "",
+                              round: "",
+                              icon: "sym_o_backspace",
+                              "aria-label": _ctx.t('Delete'),
+                              onClick: _ctx.back
+                            }, null, 8, ["aria-label", "onClick"]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      _: 1
+                    }, 8, ["modelValue", "onUpdate:modelValue", "label", "onKeyup"]),
+                    (_ctx.number)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 4,
+                          class: "text-caption m-muted"
+                        }, [
+                          _createTextVNode(_toDisplayString(_ctx.t('Calls')) + " ", 1),
+                          _createElementVNode("span", { class: "text-mono" }, _toDisplayString(_ctx.number), 1)
+                        ]))
+                      : _createCommentVNode("", true),
+                    (_ctx.results.length)
+                      ? (_openBlock(), _createBlock(_component_q_list, {
+                          key: 5,
+                          dense: "",
+                          bordered: "",
+                          separator: "",
+                          class: "rounded-borders"
+                        }, {
+                          default: _withCtx(() => [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.results, (r) => {
+                              return (_openBlock(), _createElementBlock(_Fragment, {
+                                key: r.sourceId + ':' + (r.itemId || r.name)
+                              }, [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(r.phoneList, (ph) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: ph.number,
+                                    clickable: "",
+                                    onClick: $event => (_ctx.pick(ph.number))
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, { name: "sym_o_person" })
+                                        ]),
+                                        _: 1
+                                      }),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(r.name), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_label, {
+                                            caption: "",
+                                            class: "text-mono"
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(ph.number), 1),
+                                              (ph.label)
+                                                ? (_openBlock(), _createElementBlock("span", { key: 0 }, " · " + _toDisplayString(ph.label), 1))
+                                                : _createCommentVNode("", true)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["onClick"]))
+                                }), 128))
+                              ], 64))
+                            }), 128))
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true),
+                    _createElementVNode("div", {
+                      class: "m-dialer-keys",
+                      role: "group",
+                      "aria-label": _ctx.t('Keypad')
+                    }, [
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.keys, (k) => {
+                        return (_openBlock(), _createBlock(_component_q_btn, {
+                          key: k.key,
+                          outline: "",
+                          "no-caps": "",
+                          class: "m-dialer-key",
+                          onClick: $event => (_ctx.press(k.key)),
+                          "aria-label": k.key
+                        }, {
+                          default: _withCtx(() => [
+                            _createElementVNode("div", { class: "column items-center" }, [
+                              _createElementVNode("span", { class: "text-h6" }, _toDisplayString(k.key), 1),
+                              _createElementVNode("span", {
+                                class: "text-caption m-muted",
+                                style: {"line-height":"1"}
+                              }, _toDisplayString(k.letters || '\u00a0'), 1)
+                            ])
+                          ]),
+                          _: 2
+                        }, 1032, ["onClick", "aria-label"]))
+                      }), 128))
+                    ], 8, ["aria-label"]),
+                    (_ctx.data.callerIdList.length > 1)
+                      ? (_openBlock(), _createBlock(_component_q_select, {
+                          key: 6,
+                          dense: "",
+                          outlined: "",
+                          "emit-value": "",
+                          "map-options": "",
+                          modelValue: _ctx.fromNumber,
+                          "onUpdate:modelValue": $event => ((_ctx.fromNumber) = $event),
+                          options: _ctx.callerIdOptions,
+                          label: _ctx.t('Call from')
+                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "label"]))
+                      : (_ctx.data.callerIdList.length === 1)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 7,
+                            class: "text-caption m-muted"
+                          }, _toDisplayString(_ctx.t('Calls from')) + " " + _toDisplayString(_ctx.callerIdOptions[0].label), 1))
+                        : _createCommentVNode("", true),
+                    _createVNode(_component_q_toggle, {
+                      modelValue: _ctx.hideCallerId,
+                      "onUpdate:modelValue": $event => ((_ctx.hideCallerId) = $event),
+                      label: _ctx.t('Hide my number'),
+                      dense: ""
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                    _createVNode(_component_q_btn, {
+                      unelevated: "",
+                      "no-caps": "",
+                      color: "positive",
+                      icon: "sym_o_call",
+                      label: _ctx.t('Call'),
+                      loading: _ctx.busy,
+                      disable: !_ctx.text || !_ctx.data.phoneActive || _ctx.noConnection,
+                      onClick: _ctx.call
+                    }, null, 8, ["label", "loading", "disable", "onClick"]),
+                    (_ctx.data.recentList.length)
+                      ? (_openBlock(), _createElementBlock("div", { key: 8 }, [
+                          _createElementVNode("div", { class: "text-caption m-muted q-mb-xs" }, _toDisplayString(_ctx.t('Recent')), 1),
+                          _createElementVNode("div", { class: "row q-gutter-xs" }, [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.data.recentList, (r) => {
+                              return (_openBlock(), _createBlock(_component_q_chip, {
+                                key: r.number,
+                                clickable: "",
+                                dense: "",
+                                icon: "sym_o_history",
+                                onClick: $event => (_ctx.pick(r.number))
+                              }, {
+                                default: _withCtx(() => [
+                                  _createElementVNode("span", { class: "text-mono" }, _toDisplayString(r.number), 1)
+                                ]),
+                                _: 2
+                              }, 1032, ["onClick"]))
+                            }), 128))
+                          ])
+                        ]))
+                      : _createCommentVNode("", true)
+                  ], 6))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: "\n.m-dialer-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }\n.m-dialer-key { min-height: 52px; }\n", scoped: false };
     } };
 })(globalThis.moqui);

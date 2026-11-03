@@ -829,6 +829,48 @@ fn client_components_are_precompiled() {
     }
 }
 
+/// `WebrootCall.render.js` is the render functions of the call components (`m-call`, the ring bar's `m-call-dock`, ...) as
+/// `WebrootCall.js` has them now, apart from the client's, so they load only with it (qapps.xml for a signed-in user, a call
+/// link's guest page, the desktop client's shell). `UPDATE_GOLDEN=1` writes it.
+#[test]
+fn call_components_are_precompiled() {
+    let js = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/base-component/webroot/screen/webroot");
+    let read = |path: &str| std::fs::read_to_string(js.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
+    let compiler = read("libs/vue/compiler-dom.cjs.js");
+    let made = crate::screen::vue_check::precompiled_added_components(
+        &compiler,
+        &[&read("js/MoquiLib.js"), &read("js/WebrootVue.qvt.js")],
+        &read("js/WebrootCall.js"),
+        "WebrootCall.js",
+        "call_components_are_precompiled",
+    )
+    .unwrap();
+    for name in ["\"m-call\"", "\"m-call-dock\"", "\"m-call-video\"", "\"m-call-guest\""] {
+        assert!(made.contains(name), "{name}");
+    }
+    let path = js.join("js/WebrootCall.render.js");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, &made).unwrap();
+        return;
+    }
+    let kept = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        kept == made,
+        "{} is not the render functions of the current templates: UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled",
+        path.display()
+    );
+    for banned in ["with (", "with(", "new Function", "eval("] {
+        assert!(!made.contains(banned), "{banned}");
+    }
+    // the client's own file has none of them: each loads only where its script does
+    let client = read("js/WebrootVue.qvt.render.js");
+    assert!(
+        !client.contains("\"m-call\": {"),
+        "the call components are in WebrootCall.render.js only"
+    );
+}
+
 /// A report-embed renders as the viewer: a visitor who is not signed in (as on a public site) gets nothing in any mode,
 /// not an error, and the widgets around it still render.
 #[test]

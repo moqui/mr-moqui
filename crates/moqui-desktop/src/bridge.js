@@ -136,7 +136,10 @@
         },
         // my own presence: online, away, dnd or offline
         setPresence: (status) => invoke("set_presence", { status: String(status || "") }),
-        openExternal: (url) => invoke("open_external", { url: String(url || "") })
+        openExternal: (url) => invoke("open_external", { url: String(url || "") }),
+        // whether the user sees this window: focused and shown, as the host tells it (bridge.rs tell_focus) and, before
+        // it has, as the page finds it; a call rings with a native notification when not (WebrootCall.js)
+        windowSeen: () => !document.hidden && (typeof window.__moquiWindowFocused === "boolean" ? window.__moquiWindowFocused : document.hasFocus())
     };
     if (node) {
         // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)

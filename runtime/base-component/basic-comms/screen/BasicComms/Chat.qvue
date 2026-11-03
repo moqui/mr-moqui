@@ -31,8 +31,9 @@ along with this software (see the LICENSE.md file). If not, see
     it has no forward, filing, app actions or polls; its header and settings say what it gives up. The desktop client's shell
     bundles it (crates/moqui-desktop/shell); with its server out of reach (moqui.connection, never on the web) a room shows
     where the stretch kept on the device ends, a room not kept says so, and what needs the server (edit, delete, react, pin,
-    polls, forward, filing, members and settings, search, threads, files, new rooms) says it needs a connection; in its app
-    windows, which hold no crypto device (the shell owns it), an encrypted room offers Open in Chat. Brand
+    polls, forward, filing, members and settings, search, threads, files, new rooms, calls) says it needs a connection; in
+    its app windows, which hold no crypto device (the shell owns it), an encrypted room offers Open in Chat, and a room's
+    encrypted call opens the room there (moqui.call). The room's call shows in the shell (Calls/Call, bundled). Brand
     color names and Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
 <template><div class="m-chat-root"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
     <!-- the rail -->
@@ -1298,6 +1299,7 @@ const chatRoom = {
         },
         // the room's call: a new one rings its members; one going on is joined (the page's call store, WebrootCall.js)
         startCall() {
+            if (needsConnection()) return;
             if (moqui.call) moqui.call.startCall({ chatRoomId: this.roomId, video: true });
         },
         go(target) { if (target) this.$root.setUrl(target); },

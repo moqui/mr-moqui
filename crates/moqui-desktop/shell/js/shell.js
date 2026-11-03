@@ -7,9 +7,9 @@
 // no CSRF token; the host answers the shell's own requests from its cache when the server cannot be reached.
 //
 // On the runtime build of Vue, under a CSP without unsafe-eval: the components are the precompiled ones of
-// WebrootVue.qvt.render.js and the bundled screens of bundled-screens.js (the shell's own, and BasicComms' chat panel, Chat,
-// Inbox and Compose, which Shell/Root shows); a screen that is not bundled opens in a window of its own, the server's page
-// through the host (moquiDesktop.openRemote).
+// WebrootVue.qvt.render.js (with the call components of WebrootCall.js) and the bundled screens of bundled-screens.js (the
+// shell's own, and BasicComms' chat panel, Chat, Inbox, Compose, Call and Dialer, which Shell/Root shows); a screen that is
+// not bundled opens in a window of its own, the server's page through the host (moquiDesktop.openRemote).
 (function () {
     "use strict";
     const host = window.moquiDesktop;
@@ -24,9 +24,10 @@
     // The comms app of the server (its clientConfig's calls.appRoot, under /qapps), and the bundled BasicComms screens named
     // under it, as the server's paths, so their requests go to its transitions (an app such as BOSS that mounts them under
     // its own root, with its transitions added by screen-extend, gets those): ChatPanel, which opens a room with Chat's room
-    // view; Chat; the Inbox (Mail), whose compose docks load Compose; and Compose.
+    // view; Chat; the Inbox (Mail), whose compose docks load Compose; Compose; a call's screen (Calls/Call, m-call), which
+    // the page's call store (moqui.call) opens; and the Dialer.
     const commsApp = (config) => String((config.calls && config.calls.appRoot) || "/qapps/BasicComms").replace(/^\/qapps/, "/apps");
-    const BUNDLED_COMMS = ["Panel/Chat", "Chat", "Inbox/Mail", "Inbox/Compose"];
+    const BUNDLED_COMMS = ["Panel/Chat", "Chat", "Inbox/Mail", "Inbox/Compose", "Calls/Call", "Calls/Dialer"];
     const nameBundled = (config) => {
         BUNDLED_COMMS.forEach((name) => {
             const screen = moqui.qvtBundled["BasicComms/" + name];

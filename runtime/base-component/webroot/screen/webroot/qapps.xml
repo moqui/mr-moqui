@@ -111,6 +111,8 @@ along with this software (see the LICENSE.md file). If not, see
         if (ec.user.userId) footer_scripts.add('/js/WebrootPush.js')
         // calls: the ring bar, the LiveCall window and m-call (moqui.call), for a signed-in user
         if (ec.user.userId) footer_scripts.add('/js/WebrootCall.js')
+        // and the render functions of its components, precompiled (applied when the client starts, as WebrootVue.qvt.render.js's)
+        if (ec.user.userId) footer_scripts.add('/js/WebrootCall.render.js')
         // the recent sign-in check of sensitive actions (moqui.reauth: confirm who you are again)
         if (ec.user.userId) footer_scripts.add('/js/WebrootReAuth.js')
         // the crypto device (moqui.crypto): small; its WebAssembly module loads only when a device is needed

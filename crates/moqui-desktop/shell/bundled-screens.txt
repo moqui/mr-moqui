@@ -7,3 +7,5 @@ Shell/SignIn crates/moqui-desktop/shell/screens/SignIn.qvue
 BasicComms/Chat runtime/base-component/basic-comms/screen/BasicComms/Chat.qvue
 BasicComms/Inbox/Mail runtime/base-component/basic-comms/screen/BasicComms/Inbox/Mail.qvue
 BasicComms/Inbox/Compose runtime/base-component/basic-comms/screen/BasicComms/Inbox/Compose.qvue
+BasicComms/Calls/Call runtime/base-component/basic-comms/screen/BasicComms/Calls/Call.qvue
+BasicComms/Calls/Dialer runtime/base-component/basic-comms/screen/BasicComms/Calls/Dialer.qvue

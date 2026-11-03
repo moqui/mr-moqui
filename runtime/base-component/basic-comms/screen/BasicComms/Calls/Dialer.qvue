@@ -18,10 +18,12 @@ along with this software (see the LICENSE.md file). If not, see
     places the call (VoiceServices place#PhoneCall) and opens it in the page's call (moqui.call, the LiveCall window). The
     number parameter fills the field (a tel: or sip: link the desktop app opens, plans/Mobile-Desktop.md §4); the user
     still presses Call. The transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and
-    app mounts it. -->
+    app mounts it. The desktop client's shell bundles it (precompiled); while its server is out of reach (moqui.connection,
+    never on the web) Call says it needs a connection. -->
 <template><div class="m-dialer column q-gutter-sm" :class="compact ? 'q-pa-sm' : 'q-pa-md'" :style="compact ? '' : 'max-width:420px'">
     <div v-if="!compact" class="text-h6">{{t('Dialer')}}</div>
-    <q-banner v-if="loaded && !data.phoneActive" dense rounded class="bg-warning text-black">{{t('Phone calls are not available here.')}}</q-banner>
+    <q-banner v-if="noConnection" dense rounded class="m-tonal text-warning m-dialer-offline">{{t('Calls need a connection to the server: try again when it is back.')}}</q-banner>
+    <q-banner v-else-if="loaded && !data.phoneActive" dense rounded class="bg-warning text-black">{{t('Phone calls are not available here.')}}</q-banner>
     <q-banner v-else-if="loaded && !data.callerIdList.length" dense rounded class="bg-grey-3 text-black">
         {{t('You have no number to call from; an administrator can give you one.')}}</q-banner>
     <q-input outlined v-model="text" :label="t('Name or number')" autofocus clearable class="text-h6" @keyup.enter="call"
@@ -46,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
     <q-select v-if="data.callerIdList.length > 1" dense outlined emit-value map-options v-model="fromNumber" :options="callerIdOptions" :label="t('Call from')"></q-select>
     <div v-else-if="data.callerIdList.length === 1" class="text-caption m-muted">{{t('Calls from')}} {{callerIdOptions[0].label}}</div>
     <q-toggle v-model="hideCallerId" :label="t('Hide my number')" dense></q-toggle>
-    <q-btn unelevated no-caps color="positive" icon="sym_o_call" :label="t('Call')" :loading="busy" :disable="!text || !data.phoneActive" @click="call"></q-btn>
+    <q-btn unelevated no-caps color="positive" icon="sym_o_call" :label="t('Call')" :loading="busy" :disable="!text || !data.phoneActive || noConnection" @click="call"></q-btn>
     <div v-if="data.recentList.length">
         <div class="text-caption m-muted q-mb-xs">{{t('Recent')}}</div>
         <div class="row q-gutter-xs"><q-chip v-for="r in data.recentList" :key="r.number" clickable dense icon="sym_o_history" @click="pick(r.number)">
@@ -68,19 +70,29 @@ module.exports = {
     computed: {
         base() { return (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Calls/Dialer'); },
         compact() { return /\/Panel\//.test(this.base); },
+        // the desktop client's server out of reach (never on the web)
+        noConnection() { return !!(moqui.connection && moqui.connection.offline); },
+        // the number parameter (a tel: or sip: link)
+        numberParam() { return ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number || ''; },
         callerIdOptions() {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
         }
     },
+    watch: {
+        // another tel: or sip: link while the Dialer is shown (the desktop client's shell keeps the screen): its number
+        numberParam(number) { this.fill(number); },
+        // the connection back: what the Dialer shows comes again
+        noConnection(off) { if (!off) this.load(); }
+    },
     mounted() {
         this.load();
-        const number = ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number;
-        if (number) { this.text = String(number); this.search(); }
+        this.fill(this.numberParam);
     },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,
         url(name) { return this.base + '/' + name; },
+        fill(number) { if (number) { this.text = String(number); this.search(); } },
         load() {
             return moqui.request(this.url('dialerData'), { params: {} }).then((result) => {
                 const json = result.json || {};
@@ -88,7 +100,7 @@ module.exports = {
                 this.fromNumber = this.data.callerIdList.length ? this.data.callerIdList[0].phoneNumber : null;
                 this.hideCallerId = !!json.hideCallerId;
                 this.loaded = true;
-            }, (err) => { this.loaded = true; moqui.handleAjaxError(err); });
+            }, (err) => { this.loaded = true; if (!(moqui.unreachable && moqui.unreachable(err))) moqui.handleAjaxError(err); });
         },
         press(key) {
             // 00 at the start is read as + by the server's rules; a live call's keys are m-call's keypad
@@ -112,7 +124,7 @@ module.exports = {
             }, 250);
         },
         call() {
-            if (!this.text || this.busy) return;
+            if (!this.text || this.busy || this.noConnection) return;
             this.busy = true;
             const params = { phoneNumber: this.number || this.text, fromNumber: this.fromNumber || '', hideCallerId: this.hideCallerId ? 'true' : 'false',
                 idempotencyKey: 'd' + Date.now() + Math.random().toString(36).slice(2) };
@@ -123,8 +135,9 @@ module.exports = {
                 if (!json.callSessionId) return;
                 if (moqui.call && json.callLegId) {
                     if (json.call && moqui.call.remember) moqui.call.remember(json.call);
-                    moqui.call.open(json.callSessionId);
-                    moqui.call.join(json.callSessionId, json.callLegId, { video: false });
+                    // the page's call, or the desktop client's main window's when this is an app window (moqui.call.take)
+                    if (moqui.call.take) moqui.call.take(json.callSessionId, json.callLegId, { video: false });
+                    else { moqui.call.open(json.callSessionId); moqui.call.join(json.callSessionId, json.callLegId, { video: false }); }
                 } else {
                     this.$root.setUrl(this.base.replace(/\/(Calls\/Dialer|Panel\/Dialer)$/, '/Calls/Call') + '?callSessionId=' + encodeURIComponent(json.callSessionId));
                 }
