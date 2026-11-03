@@ -218,6 +218,7 @@ fn a_sidecar_starts_at_its_listening_line_once_ready_and_stops_with_its_stdin() 
     match heard.recv_timeout(Duration::from_secs(10)).unwrap() {
         Event::Started(started) => assert_eq!(started, address),
         Event::Failed(err) => panic!("failed: {err}"),
+        Event::StartedInProcess(_) => panic!("a sidecar is not in process"),
         Event::Stopped { .. } => panic!("stopped"),
     }
     let started = Instant::now();

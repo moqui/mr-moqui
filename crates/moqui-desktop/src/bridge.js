@@ -11,8 +11,10 @@
 // which the host takes with a save dialog and a notification when done (bridge.rs on_download).
 (function () {
     "use strict";
-    // the node's loopback origin (configuration 1 and 2), or the client's shell and app windows (configuration 3, src/client/)
-    const node = location.protocol === "http:" && location.hostname === "127.0.0.1";
+    // the node's loopback origin (configuration 1, and 2 with its ports open), its app scheme in process (configuration 2,
+    // src/node/scheme.rs), or the client's shell and app windows (configuration 3, src/client/)
+    const inProcess = location.origin === "http://moqui-node.localhost";
+    const node = inProcess || (location.protocol === "http:" && location.hostname === "127.0.0.1");
     const shell = location.origin === "http://moqui-shell.localhost";
     const appWindow = location.origin === "http://moqui-app.localhost";
     if (window.moquiDesktop || !(node || shell || appWindow)) return;
@@ -124,9 +126,10 @@
     };
     if (node) {
         // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)
-        window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
-            setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") })
-        }));
+        // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket)
+        const own = { setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") }) };
+        if (inProcess) own.socket = (url) => new HostSocket(url);
+        window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, own));
         return;
     }
     const socket = (url) => new HostSocket(url);

@@ -13,8 +13,9 @@
  */
 
 //! The node in the app's process (plans/Mobile-Desktop.md, configuration 2): booted on a thread of its own with
-//! [`moqui_host::start_embedded`], listening on a loopback port only, and stopped when the app quits, which stops the
-//! embedded Postgres. A restart the node asks for (`moqui_core::devtools::restart`) restarts the app.
+//! [`moqui_host::start_embedded_with`], with no port (the window reaches it in process, [`super::scheme`]) or, when
+//! the user opens them, listening on a loopback HTTP port too; stopped when the app quits, which stops the embedded
+//! Postgres. A restart the node asks for (`moqui_core::devtools::restart`) restarts the app.
 //! This is the default mode; [`super::sidecar`] is the other.
 
 use std::path::PathBuf;
@@ -31,12 +32,13 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Boot the node on `runtime` on a thread of its own, listening on 127.0.0.1 at `port`, with `properties` set
-    /// beside the listen properties. `events` hears when it
-    /// starts, fails or stops by itself; it runs on the node thread.
+    /// Boot the node on `runtime` on a thread of its own, with `ports` listening on 127.0.0.1 at `port`, with
+    /// `properties` set beside the listen properties. `events` hears when it starts, fails or stops by itself; it runs
+    /// on the node thread.
     pub(super) fn start(
         runtime: PathBuf,
         port: u16,
+        ports: bool,
         properties: Vec<(&'static str, String)>,
         events: impl Fn(Event) + Send + 'static,
     ) -> std::io::Result<Self> {
@@ -47,7 +49,7 @@ impl Node {
                 for (name, value) in super::listen_properties(port).into_iter().chain(properties) {
                     moqui_lib::env::set_property(name, value);
                 }
-                let server = match moqui_host::start_embedded(&runtime) {
+                let server = match moqui_host::start_embedded_with(&runtime, ports) {
                     Ok(server) => server,
                     Err(err) => {
                         tracing::error!("The node did not start: {err}");
@@ -55,7 +57,10 @@ impl Node {
                         return;
                     }
                 };
-                events(Event::Started(server.address()));
+                match server.in_process() {
+                    Some(local) => events(Event::StartedInProcess(local.clone())),
+                    None => events(Event::Failed("the node has no app in process".to_string())),
+                }
                 loop {
                     match stopped.recv_timeout(Duration::from_millis(500)) {
                         // The app is quitting: dropping the server stops it, then Postgres.

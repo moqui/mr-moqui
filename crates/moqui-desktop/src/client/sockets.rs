@@ -21,15 +21,38 @@
 //! A socket is the page's: only its webview may send on it or close it, and a page that loads again loses its sockets.
 //! When the server closes one, the host lets it go and the page opens another, as it would a browser socket; a close
 //! for authentication has the host check the key.
+//!
+//! The node in process (`crate::node::scheme`, no port) has its pages' sockets here too: `/notws`, `/callws` and
+//! `/termws`, opened in process (`moqui_host::in_process`) with the window's cookies.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use moqui_client::socket::{Event, Socket};
+use moqui_host::in_process::{LocalSocket, SocketEvent};
 use tauri::{AppHandle, Manager, Webview};
 
 use super::Client;
+use crate::node::scheme::Local;
+
+/// The paths a page of the node in process may open a socket to.
+const LOCAL_PATHS: [&str; 3] = ["/notws", "/callws", "/termws"];
+
+/// A socket held for a page: on a client's server, or on the node in process.
+enum Held {
+    Remote(Socket),
+    Local(LocalSocket),
+}
+
+impl Held {
+    fn send(&self, text: String) {
+        match self {
+            Self::Remote(socket) => socket.send(text),
+            Self::Local(socket) => socket.send(text),
+        }
+    }
+}
 
 /// The longest text frame a page may send.
 const FRAME_MAX: usize = 1024 * 1024;
@@ -37,7 +60,7 @@ const FRAME_MAX: usize = 1024 * 1024;
 /// The sockets of the pages: by id, with the webview each is for.
 #[derive(Default)]
 pub(crate) struct Sockets {
-    open: Mutex<HashMap<u64, (String, Socket)>>,
+    open: Mutex<HashMap<u64, (String, Held)>>,
     next: AtomicU64,
 }
 
@@ -95,6 +118,9 @@ pub(crate) fn event_json(event: &Event) -> serde_json::Value {
 /// the main thread (`async`): it reads the key store.
 #[tauri::command(async)]
 pub(crate) fn socket_open(app: AppHandle, webview: Webview, path: String) -> Result<u64, String> {
+    if let Some(local) = app.try_state::<Local>() {
+        return open_local(&app, &local, &webview, &path);
+    }
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
     let label = webview.label().to_string();
     let (account, key) = client.account_of(&label).ok_or("No account is signed in")?;
@@ -131,8 +157,72 @@ pub(crate) fn socket_open(app: AppHandle, webview: Webview, path: String) -> Res
     // its thread), so none is left reconnecting with nothing to drop it
     let mut open = moqui_lib::sync::lock(&client.sockets.open);
     let socket = moqui_client::socket::open(&account.server, &key, &path, sink).map_err(|err| err.to_string())?;
-    open.insert(id, (label, socket));
+    open.insert(id, (label, Held::Remote(socket)));
     Ok(id)
+}
+
+/// Whether a page of the node may open a socket at `path` (with its query).
+pub(crate) fn local_path_allowed(path: &str) -> bool {
+    let bare = path.split_once('?').map_or(path, |(bare, _)| bare);
+    LOCAL_PATHS.contains(&bare) && !path.chars().any(|c| c.is_control() || c == '#')
+}
+
+/// [`socket_open`] for a page of the node in process: the socket in process, with the window's cookies.
+fn open_local(app: &AppHandle, local: &Local, webview: &Webview, path: &str) -> Result<u64, String> {
+    if webview.label() != "main" {
+        return Err("Not the node's window".to_string());
+    }
+    if !local_path_allowed(path) {
+        return Err(format!("Not a socket a page may open: {path}"));
+    }
+    let node = local.node().ok_or("The node is starting")?;
+    let sockets = app.try_state::<Sockets>().ok_or("No sockets")?;
+    let id = sockets.next.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut headers = vec![
+        (
+            "Host".to_string(),
+            crate::node::scheme::NODE_ORIGIN
+                .trim_start_matches("http://")
+                .to_string(),
+        ),
+        ("Origin".to_string(), crate::node::scheme::NODE_ORIGIN.to_string()),
+    ];
+    if let Some(cookie) = local.jar.header() {
+        headers.push(("Cookie".to_string(), cookie));
+    }
+    let sink_app = app.clone();
+    let sink = Box::new(move |event: SocketEvent| {
+        let event = match event {
+            SocketEvent::Open => Event::Open,
+            SocketEvent::Text(text) => Event::Text(text),
+            SocketEvent::Closed => Event::Closed,
+            SocketEvent::Unauthorized => Event::Revoked,
+        };
+        let script = format!(
+            "window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {})",
+            event_json(&event)
+        );
+        if let Some(window) = sink_app.get_webview_window("main") {
+            let _ = window.eval(script);
+        }
+        if matches!(event, Event::Closed | Event::Revoked) {
+            if let Some(sockets) = sink_app.try_state::<Sockets>() {
+                sockets.remove(id);
+            }
+        }
+    });
+    let mut open = moqui_lib::sync::lock(&sockets.open);
+    let socket = node.open_socket(path, &headers, sink).map_err(|err| err.to_string())?;
+    open.insert(id, ("main".to_string(), Held::Local(socket)));
+    Ok(id)
+}
+
+/// `work` on the sockets of this app's pages: a client's, or the node's in process (managed on the app).
+fn with_sockets<T>(app: &AppHandle, work: impl FnOnce(&Sockets) -> T) -> Option<T> {
+    if let Some(client) = app.try_state::<Client>() {
+        return Some(work(&client.sockets));
+    }
+    app.try_state::<Sockets>().map(|sockets| work(&sockets))
 }
 
 /// Send a text frame on one of the page's sockets.
@@ -141,24 +231,27 @@ pub(crate) fn socket_send(app: AppHandle, webview: Webview, id: u64, text: Strin
     if text.len() > FRAME_MAX {
         return Err("The frame is too long".to_string());
     }
-    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
-    let open = moqui_lib::sync::lock(&client.sockets.open);
-    match open.get(&id) {
-        Some((owner, socket)) if owner == webview.label() => {
-            socket.send(text);
-            Ok(())
+    with_sockets(&app, |sockets| {
+        let open = moqui_lib::sync::lock(&sockets.open);
+        match open.get(&id) {
+            Some((owner, socket)) if owner == webview.label() => {
+                socket.send(text);
+                Ok(())
+            }
+            _ => Err("No such socket".to_string()),
         }
-        _ => Err("No such socket".to_string()),
-    }
+    })
+    .unwrap_or_else(|| Err("No sockets in this app".to_string()))
 }
 
 /// Close one of the page's sockets.
 #[tauri::command]
 pub(crate) fn socket_close(app: AppHandle, webview: Webview, id: u64) -> Result<(), String> {
-    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
-    let mut open = moqui_lib::sync::lock(&client.sockets.open);
-    if open.get(&id).is_some_and(|(owner, _)| owner == webview.label()) {
-        open.remove(&id);
-    }
+    with_sockets(&app, |sockets| {
+        let mut open = moqui_lib::sync::lock(&sockets.open);
+        if open.get(&id).is_some_and(|(owner, _)| owner == webview.label()) {
+            open.remove(&id);
+        }
+    });
     Ok(())
 }

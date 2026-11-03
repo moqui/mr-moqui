@@ -23,55 +23,13 @@
 //! network. A 401 to a request with the key has the host check the key and, if it no longer signs in, forget it and
 //! show the sign-in.
 
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex, OnceLock};
-
 use moqui_client::account::Account;
 use moqui_client::proxy::{header, Request};
 use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
 use super::{assets, Client, APP_ORIGIN, SHELL_ORIGIN};
-
-/// The worker threads that answer the schemes' requests: a page loads a few dozen at once.
-const WORKERS: usize = 8;
-
-type Job = Box<dyn FnOnce() + Send>;
-
-/// Run `job` on a worker; on a thread of its own if the workers cannot be started.
-fn run(job: Job) {
-    static WORK: OnceLock<Option<mpsc::Sender<Job>>> = OnceLock::new();
-    let sender = WORK.get_or_init(|| {
-        let (sender, receiver) = mpsc::channel::<Job>();
-        let receiver = Arc::new(Mutex::new(receiver));
-        let mut started = false;
-        for index in 0..WORKERS {
-            let receiver = Arc::clone(&receiver);
-            let spawned = std::thread::Builder::new()
-                .name(format!("client-scheme-{index}"))
-                .spawn(move || loop {
-                    let next = moqui_lib::sync::lock(&receiver).recv();
-                    let Ok(job) = next else { return };
-                    // one request that panics does not end the worker (Practices-Rust §8)
-                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
-                        tracing::error!("A client scheme request panicked");
-                    }
-                });
-            started |= spawned.is_ok();
-        }
-        started.then_some(sender)
-    });
-    let job = match sender {
-        Some(sender) => match sender.send(job) {
-            Ok(()) => return,
-            Err(mpsc::SendError(job)) => job,
-        },
-        None => job,
-    };
-    if let Err(err) = std::thread::Builder::new().name("client-scheme".to_string()).spawn(job) {
-        tracing::error!("A client scheme request was not answered: {err}");
-    }
-}
+use crate::scheme::{document_request, has_script_policy, plain, run};
 
 /// `moqui-shell`: the shell's files, and the rest forwarded to the current account's server.
 pub(crate) fn shell(
@@ -179,6 +137,15 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
             );
         }
     };
+    // an event stream never ends, and a scheme answers whole bodies: 503, so the Assist drawer polls events.json
+    if header(&upstream.headers, "content-type")
+        .is_some_and(|kind| kind.to_ascii_lowercase().starts_with("text/event-stream"))
+    {
+        return plain(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "No event streams in the app; the page catches up instead",
+        );
+    }
     // an attachment or a large file the window opens: saved by the host, streamed, and the page left as it is
     if let Some(name) = crate::download::saved_by_host(document, upstream.status, &upstream.headers, &bare) {
         crate::download::save(app, name, move |out| {
@@ -274,108 +241,6 @@ pub(crate) fn forwarded_on_shell(headers: &tauri::http::HeaderMap) -> bool {
     }
 }
 
-/// Whether a request is for a document (a window's or a frame's page), not a page's fetch: `Sec-Fetch-Dest` when the
-/// browser sends it, else an `Accept` that names XHTML, as a navigation's does and `fetch` does not.
-pub(crate) fn document_request(headers: &tauri::http::HeaderMap) -> bool {
-    let text = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .to_ascii_lowercase()
-    };
-    match text("sec-fetch-dest").as_str() {
-        "document" | "iframe" | "frame" => true,
-        "" => text("accept").contains("application/xhtml+xml"),
-        _ => false,
-    }
-}
-
-/// Whether a server's CSP says what scripts may run (`script-src` or `default-src`). Chromium adds the hashes of the
-/// app's initialization scripts to a page's CSP, and to one with no script policy it adds `script-src 'self'` with them,
-/// which the server never set: its compiler build's eval and its pages' inline scripts would stop. So the host passes
-/// on a server's page's CSP only when it has a script policy; without one the page's scripts run as they do on the web
-/// (the rest of that policy, such as `frame-ancestors`, is about a browser's tabs, not an app window).
-pub(crate) fn has_script_policy(csp: &str) -> bool {
-    csp.split(';').any(|directive| {
-        let name = directive.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
-        name == "script-src" || name == "script-src-elem" || name == "default-src"
-    })
-}
-
-fn plain(status: StatusCode, text: &str) -> Response<Vec<u8>> {
-    let mut response = Response::new(text.as_bytes().to_vec());
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        tauri::http::header::CONTENT_TYPE,
-        tauri::http::HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    response
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{document_request, forwarded_on_shell, has_script_policy};
-    use tauri::http::{HeaderMap, HeaderValue};
-
-    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        for (name, value) in pairs {
-            map.insert(*name, HeaderValue::from_static(value));
-        }
-        map
-    }
-
-    #[test]
-    fn a_navigation_is_a_document_and_a_fetch_is_not() {
-        assert!(document_request(&headers(&[("sec-fetch-dest", "document")])));
-        assert!(document_request(&headers(&[("sec-fetch-dest", "iframe")])));
-        assert!(!document_request(&headers(&[
-            ("sec-fetch-dest", "empty"),
-            ("accept", "text/html,application/xhtml+xml")
-        ])));
-        assert!(document_request(&headers(&[(
-            "accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        )])));
-        // loadComponent's
-        assert!(!document_request(&headers(&[(
-            "accept",
-            "text/html,application/javascript,*/*"
-        )])));
-        assert!(!document_request(&headers(&[])));
-    }
-
-    #[test]
-    fn the_shell_takes_the_servers_data_not_its_pages_or_scripts() {
-        assert!(forwarded_on_shell(&headers(&[("sec-fetch-dest", "empty")])));
-        assert!(forwarded_on_shell(&headers(&[("sec-fetch-dest", "image")])));
-        assert!(forwarded_on_shell(&headers(&[("accept", "*/*")])));
-        for dest in [
-            "document",
-            "iframe",
-            "script",
-            "style",
-            "worker",
-            "sharedworker",
-            "serviceworker",
-            "object",
-        ] {
-            assert!(!forwarded_on_shell(&headers(&[("sec-fetch-dest", dest)])), "{dest}");
-        }
-        assert!(!forwarded_on_shell(&headers(&[(
-            "accept",
-            "text/html,application/xhtml+xml"
-        )])));
-    }
-
-    #[test]
-    fn only_a_servers_script_policy_is_kept() {
-        assert!(!has_script_policy("frame-ancestors 'none'; form-action 'self';"));
-        assert!(has_script_policy(
-            "frame-ancestors 'none'; script-src 'self' 'unsafe-eval'"
-        ));
-        assert!(has_script_policy("Default-Src 'self'"));
-        assert!(!has_script_policy(""));
-    }
-}
+#[path = "scheme_tests.rs"]
+mod tests;

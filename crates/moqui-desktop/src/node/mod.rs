@@ -14,11 +14,16 @@
 
 //! The app's node, in one of two modes compiled into the one app (plans/Mobile-Desktop.md, configurations 1 and 2): in
 //! the app's own process ([`in_process`], the default), or the `moqui` binary as a supervised child ([`sidecar`]).
-//! Both listen on a loopback port only, tell the app the same [`Event`]s, and stop the node and its Postgres when the
-//! app quits.
+//! Both tell the app the same [`Event`]s, and stop the node and its Postgres when the app quits. The sidecar listens on
+//! a loopback port; the node in process has no port unless the user opens them (the tray's ports item, [`PORTS_FILE`]),
+//! and the window reaches it through the app scheme ([`scheme`]) with the host keeping its cookies ([`cookies`]).
 
+mod cookies;
 mod in_process;
+pub(crate) mod scheme;
 mod sidecar;
+
+pub(crate) use cookies::Jar;
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -28,6 +33,8 @@ use std::time::Duration;
 pub(crate) enum Event {
     /// Listening at this address. A sidecar that restarted in place says it again.
     Started(SocketAddr),
+    /// The node in process booted: its app, which the window reaches through [`scheme`].
+    StartedInProcess(moqui_host::in_process::InProcess),
     /// Did not start, or a sidecar ended by itself, with the error.
     Failed(String),
     /// Stopped by itself: a termination signal, or a restart the node asked for (true).
@@ -47,6 +54,33 @@ pub(crate) enum Mode {
 
 /// The file in the app's config directory that keeps the mode chosen from the tray.
 pub(crate) const MODE_FILE: &str = "node-mode";
+
+/// The file in the app's config directory that says the node in process opens its ports (`on`), for a browser or
+/// other devices, as `moqui tui --serve` does; without it the node has none.
+pub(crate) const PORTS_FILE: &str = "node-ports";
+
+/// Whether the node in process opens its ports: the [`PORTS_FILE`] in `config_dir` says `on`.
+pub(crate) fn ports_open(config_dir: &Path) -> bool {
+    std::fs::read_to_string(config_dir.join(PORTS_FILE)).is_ok_and(|text| text.trim() == "on")
+}
+
+/// Keep whether the node in process opens its ports, for the next start.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be written or removed.
+pub(crate) fn set_ports_open(config_dir: &Path, open: bool) -> std::io::Result<()> {
+    let path = config_dir.join(PORTS_FILE);
+    if open {
+        std::fs::create_dir_all(config_dir)?;
+        std::fs::write(path, "on\n")
+    } else {
+        match std::fs::remove_file(path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+            _ => Ok(()),
+        }
+    }
+}
 
 impl Mode {
     /// `sidecar`, `in-process` or `client`, as in `MOQUI_DESKTOP_NODE` and the mode file.
@@ -150,7 +184,8 @@ pub(crate) enum Node {
 }
 
 impl Node {
-    /// Start the node on `runtime` in `mode`, listening on 127.0.0.1 at `port`, with `properties` beside the
+    /// Start the node on `runtime` in `mode`, listening on 127.0.0.1 at `port` (in process only with `ports`), with
+    /// `properties` beside the
     /// [`listen_properties`] (the backup's, `crate::backup::node_properties`). `events` hears when it starts, fails
     /// or stops by itself, on a thread of the node's.
     ///
@@ -161,11 +196,12 @@ impl Node {
         mode: Mode,
         runtime: PathBuf,
         port: u16,
+        ports: bool,
         properties: Vec<(&'static str, String)>,
         events: impl Fn(Event) + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         match mode {
-            Mode::InProcess => in_process::Node::start(runtime, port, properties, events).map(Self::InProcess),
+            Mode::InProcess => in_process::Node::start(runtime, port, ports, properties, events).map(Self::InProcess),
             Mode::Sidecar => sidecar::Node::start(&runtime, port, &properties, events).map(Self::Sidecar),
             Mode::Client => Err(std::io::Error::other("a client of a server runs no node")),
         }

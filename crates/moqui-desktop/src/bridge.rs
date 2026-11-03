@@ -48,6 +48,9 @@ const PERMISSIONS: [&str; 6] = [
     "notification:allow-is-permission-granted",
 ];
 
+/// The sockets of the node's pages in process (`client::sockets`).
+const SOCKET_PERMISSIONS: [&str; 3] = ["allow-socket-open", "allow-socket-send", "allow-socket-close"];
+
 /// The longest title and body of a notification, in characters; more is cut.
 const TITLE_MAX: usize = 200;
 const BODY_MAX: usize = 1000;
@@ -140,8 +143,17 @@ fn on_notification_click(app: &AppHandle) {
 }
 
 /// The capability of the node's pages: the bridge's permissions for `origin` (`http://127.0.0.1:<port>`, any path) on
-/// the main window, and not for the app's own pages.
+/// the main window, and not for the app's own pages. The node in process is on the app scheme
+/// (`node::scheme::NODE_ORIGIN`), whose pages Tauri counts as local: its capability names the main window, whose
+/// navigation stays on the node's origin and the app's own pages, and has the sockets too, which the host holds.
 fn capability(origin: &str) -> CapabilityBuilder {
+    if origin == crate::node::scheme::NODE_ORIGIN {
+        let capability = CapabilityBuilder::new("node-bridge").local(true).window("main");
+        return PERMISSIONS
+            .iter()
+            .chain(SOCKET_PERMISSIONS.iter())
+            .fold(capability, |capability, permission| capability.permission(*permission));
+    }
     let capability = CapabilityBuilder::new("node-bridge")
         .remote(origin.to_string())
         .local(false)

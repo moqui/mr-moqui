@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{base_for, url_on};
+use super::{base_for, is_splash, url_on};
 use tauri::Url;
 
 #[test]
@@ -69,4 +69,15 @@ fn the_apps_pages_and_the_node_stay_in_the_window() {
     );
     assert!(external("https://example.com/", Some(&node), &dev));
     assert!(external("mailto:a@example.com", Some(&node), &dev));
+}
+
+#[test]
+fn only_the_app_s_own_pages_are_the_splash() {
+    let base = Url::parse("http://127.0.0.1:1430/").unwrap();
+    let at = |text: &str| Url::parse(text).unwrap();
+    assert!(is_splash(&at("http://127.0.0.1:1430/index.html?failed=x"), &base));
+    assert!(is_splash(&at("http://tauri.localhost/index.html"), &base));
+    assert!(!is_splash(&at("http://moqui-node.localhost/qapps"), &base));
+    assert!(!is_splash(&at("http://moqui-shell.localhost/"), &base));
+    assert!(!is_splash(&at("http://127.0.0.1:8080/qapps"), &base));
 }

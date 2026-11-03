@@ -67,6 +67,26 @@ pub(crate) fn watch(app: &AppHandle) {
 
 /// Ask the node's `/health` until it answers ready or the tries run out, and log which.
 fn check_node(app: &AppHandle) {
+    // the node in process, with no port: its /health in process
+    if let Some(local) = app.try_state::<crate::node::scheme::Local>() {
+        if let Some(node) = local.node() {
+            for _ in 0..HEALTH_TRIES {
+                let ready = node
+                    .request("GET", "/health", &[], Vec::new())
+                    .ok()
+                    .filter(|answer| answer.status == 200)
+                    .and_then(|answer| answer.bytes().ok())
+                    .is_some_and(|body| String::from_utf8_lossy(&body).contains("\"ready\":true"));
+                if ready {
+                    tracing::info!("After the wake the node in process answers ready");
+                    return;
+                }
+                std::thread::sleep(HEALTH_WAIT);
+            }
+            tracing::warn!("After the wake the node in process does not answer /health ready");
+        }
+        return;
+    }
     let Some(address) = node_address(app) else {
         return;
     };

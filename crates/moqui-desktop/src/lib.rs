@@ -27,6 +27,7 @@ mod download;
 mod node;
 mod os;
 mod runtime_dir;
+mod scheme;
 mod splash;
 mod updates;
 mod wake;
@@ -58,6 +59,8 @@ struct NodeStart {
     mode: node::Mode,
     runtime: PathBuf,
     port: u16,
+    /// The node in process opens its ports ([`node::PORTS_FILE`]).
+    ports: bool,
     /// Beside the listen properties: the backup's (`backup::node_properties`).
     properties: Vec<(&'static str, String)>,
 }
@@ -69,7 +72,8 @@ pub fn run() {
     }
     let context = tauri::generate_context!();
     let builder = updates::setup(
-        client::register(bridge::setup(tauri::Builder::default().runtime(cef()))),
+        client::register(bridge::setup(tauri::Builder::default().runtime(cef())))
+            .register_asynchronous_uri_scheme_protocol(node::scheme::NODE_SCHEME, node::scheme::handle),
         context.config(),
     );
     let app = builder.manage(NodeState::default()).setup(|app| {
@@ -83,6 +87,12 @@ pub fn run() {
             os::setup(&handle);
             os::client_started();
             return Ok(());
+        }
+        if mode == node::Mode::InProcess {
+            // the window's cookies of the node, which the host keeps, and its pages' sockets
+            let jar = node::Jar::open(handle.path().app_config_dir()?.join("node-cookies"));
+            handle.manage(node::scheme::Local::new(jar));
+            handle.manage(client::sockets::Sockets::default());
         }
         let origin = Arc::clone(&handle.state::<NodeState>().origin);
         main_window(&handle, &origin)?;
@@ -167,7 +177,15 @@ fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<We
         .initialization_script(bridge::SCRIPT)
         .on_download(bridge::on_download)
         .on_permission_request(bridge::on_permission)
-        .on_page_load(|window, payload| os::page_loaded(&window, payload))
+        .on_page_load(|window, payload| {
+            // a page of the node in process loses its sockets when it loads again
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                if let Some(sockets) = window.app_handle().try_state::<client::sockets::Sockets>() {
+                    sockets.close_for(window.label());
+                }
+            }
+            os::page_loaded(&window, payload);
+        })
         .on_navigation(move |url| stays_in_app(url, navigation.get()))
         .on_new_window(move |url, _features| {
             if stays_in_app(&url, popup.get()) {
@@ -247,7 +265,20 @@ fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
     } else {
         let restart_node = MenuItem::with_id(app, "restart-node", "Restart node", true, None::<&str>)?;
         let node_mode = node_mode_item(app)?;
-        Menu::with_items(app, &[&show, &restart_node, &node_mode, &client_mode, &quit])?
+        let menu = Menu::with_items(app, &[&show, &restart_node, &node_mode, &client_mode, &quit])?;
+        if mode == node::Mode::InProcess {
+            let open = node::ports_open(&app.path().app_config_dir()?);
+            let ports = tauri::menu::CheckMenuItem::with_id(
+                app,
+                "node-ports",
+                "Open ports for other devices",
+                true,
+                open,
+                None::<&str>,
+            )?;
+            menu.insert(&ports, 3)?;
+        }
+        menu
     };
     os::add_tray_items(app, &menu)?;
     updates::add_tray_item(app, &menu)?;
@@ -261,6 +292,7 @@ fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
             "show" => show_main(app),
             "restart-node" => restart(app),
             "node-mode" => switch_node_mode(app),
+            "node-ports" => switch_ports(app),
             "client-mode" => switch_client_mode(app),
             updates::ITEM => updates::chosen(app),
             "quit" => app.exit(0),
@@ -294,6 +326,30 @@ fn switch_node_mode(app: &AppHandle) {
             app.request_restart();
         }
         Err(err) => tracing::error!("Could not switch the node mode: {err}"),
+    }
+}
+
+/// Open the node in process's ports, or close them, from the next start; restart into it.
+fn switch_ports(app: &AppHandle) {
+    let switched = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| err.to_string())
+        .and_then(|dir| {
+            let open = !node::ports_open(&dir);
+            node::set_ports_open(&dir, open)
+                .map(|()| open)
+                .map_err(|err| err.to_string())
+        });
+    match switched {
+        Ok(open) => {
+            tracing::info!(
+                "Restarting with the node's ports {}",
+                if open { "open" } else { "closed" }
+            );
+            app.request_restart();
+        }
+        Err(err) => tracing::error!("Could not change the node's ports: {err}"),
     }
 }
 
@@ -363,16 +419,26 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let port = node::choose_port(node::saved_port(&port_file))?;
     node::save_port(&port_file, port);
     let mode = node::mode_of_run(&paths.app_config_dir()?);
-    tracing::info!(
-        "Starting the node {} on {} at 127.0.0.1:{port}",
-        mode.as_str(),
-        runtime.display()
-    );
+    let ports = mode == node::Mode::Sidecar || node::ports_open(&paths.app_config_dir()?);
+    if ports {
+        tracing::info!(
+            "Starting the node {} on {} at 127.0.0.1:{port}",
+            mode.as_str(),
+            runtime.display()
+        );
+    } else {
+        tracing::info!(
+            "Starting the node {} on {}, with no port",
+            mode.as_str(),
+            runtime.display()
+        );
+    }
     let properties = backup::node_properties(app);
     let start = NodeStart {
         mode,
         runtime,
         port,
+        ports,
         properties,
     };
     *moqui_lib::sync::lock(&app.state::<NodeState>().started_with) = Some(start.clone());
@@ -386,26 +452,18 @@ fn launch_node(app: &AppHandle, start: NodeStart) {
         mode,
         runtime,
         port,
+        ports,
         properties,
     } = start;
     let origin = Arc::clone(&app.state::<NodeState>().origin);
     let events_app = app.clone();
-    let node = Node::start(mode, runtime, port, properties, move |event| match event {
-        Event::Started(address) => {
-            let url = format!("http://{address}/qapps");
-            match Url::parse(&url) {
-                Ok(url) => {
-                    let _ = origin.set(url.clone());
-                    bridge::node_started(&events_app, &url);
-                    let url = os::node_started(url);
-                    if let Some(window) = events_app.get_webview_window("main") {
-                        if let Err(err) = window.navigate(url) {
-                            start_failed(&events_app, &format!("could not open {address}: {err}"));
-                        }
-                    }
-                }
-                Err(err) => start_failed(&events_app, &format!("{url} is not a URL: {err}")),
+    let node = Node::start(mode, runtime, port, ports, properties, move |event| match event {
+        Event::Started(address) => node_listens(&events_app, &origin, &format!("http://{address}/qapps")),
+        Event::StartedInProcess(local) => {
+            if let Some(state) = events_app.try_state::<node::scheme::Local>() {
+                state.started(local);
             }
+            node_listens(&events_app, &origin, &format!("{}/qapps", node::scheme::NODE_ORIGIN));
         }
         Event::Failed(err) => start_failed(&events_app, &err),
         Event::Stopped { restart: true } => events_app.request_restart(),
@@ -420,6 +478,24 @@ fn launch_node(app: &AppHandle, start: NodeStart) {
         }
     };
     *moqui_lib::sync::lock(&app.state::<NodeState>().node) = Some(node);
+}
+
+/// The node answers at `qapps` (its `/qapps`, on its loopback port or the app scheme): its origin may call the bridge's
+/// commands, and the window goes there (or to a link opened before it started).
+fn node_listens(app: &AppHandle, origin: &OnceLock<Url>, qapps: &str) {
+    match Url::parse(qapps) {
+        Ok(url) => {
+            let _ = origin.set(url.clone());
+            bridge::node_started(app, &url);
+            let url = os::node_started(url);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(err) = window.navigate(url) {
+                    start_failed(app, &format!("could not open {qapps}: {err}"));
+                }
+            }
+        }
+        Err(err) => start_failed(app, &format!("{qapps} is not a URL: {err}")),
+    }
 }
 
 /// Restart the node: the tray's Restart node, and the splash page's Restart button. A sidecar is stopped and started

@@ -63,10 +63,21 @@ pub(crate) fn url_on(base: &Url, failed: Option<&str>) -> Url {
 }
 
 /// The splash page's Restart button: the tray's Restart node. Only the app's own pages may call it
-/// (`capabilities/splash.json`); the node's origin has the bridge's commands and not this one.
+/// (`capabilities/splash.json`); the node's origin has the bridge's commands and not this one. Tauri counts the pages
+/// of the app's schemes as local too (the node in process, a client's shell), so the page is checked to be the splash.
 #[tauri::command]
-pub(crate) fn restart_node(app: AppHandle) {
+pub(crate) fn restart_node(app: AppHandle, webview: tauri::Webview) -> Result<(), String> {
+    let on_splash = webview.url().is_ok_and(|url| is_splash(&url, &base()));
+    if !on_splash {
+        return Err("Only the splash page restarts the node".to_string());
+    }
     crate::restart(&app);
+    Ok(())
+}
+
+/// Whether `url` is one of the app's own pages at `base` (or the bundle's), where the splash page is.
+pub(crate) fn is_splash(url: &Url, base: &Url) -> bool {
+    url.origin() == base.origin() || url.host_str() == Some("tauri.localhost")
 }
 
 #[cfg(test)]
