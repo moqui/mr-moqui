@@ -81,6 +81,7 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::contacts::register(&mut map),
         super::system_sync::register(&mut map),
         super::sso::register(&mut map),
+        super::sso_app::register(&mut map),
         super::tools::register(&mut map),
         #[cfg(feature = "image")]
         super::images::register(&mut map),

@@ -45,5 +45,39 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <!-- An installed app's sign-in (RFC 8252; org.moqui.sso.AuthServices *#App*): the providers it may offer, the start
+        in the system browser, the page that asks the user to let the app in and its confirmation (with the session's
+        token), which hands the app its code, and the code taken for a device key. -->
+    <transition name="appProviders" read-only="true" require-session-token="false">
+        <service-call name="org.moqui.sso.AuthServices.get#AppProviders" web-send-json-response="true"/>
+        <default-response type="none"/>
+    </transition>
+    <transition name="appLogin" read-only="true" require-session-token="false">
+        <parameter name="authFlowId"/><parameter name="codeChallenge"/><parameter name="codeChallengeMethod"/>
+        <parameter name="state"/><parameter name="redirectUri"/><parameter name="deviceName"/>
+        <actions>
+            <service-call name="org.moqui.sso.AuthServices.start#AppLogin" in-map="context"/>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="appCode" read-only="true" require-session-token="false">
+        <actions>
+            <service-call name="org.moqui.sso.AuthServices.confirm#AppLogin"/>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="appCodeConfirm" method="post">
+        <parameter name="allow"/>
+        <actions>
+            <service-call name="org.moqui.sso.AuthServices.issue#AppCode" in-map="context"/>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="appToken" method="post" require-session-token="false">
+        <parameter name="code"/><parameter name="codeVerifier"/><parameter name="redirectUri"/><parameter name="deviceName"/>
+        <service-call name="org.moqui.sso.AuthServices.exchange#AppCode" in-map="context" web-send-json-response="true"/>
+        <default-response type="none"/>
+    </transition>
+
     <widgets/>
 </screen>

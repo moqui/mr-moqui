@@ -417,3 +417,177 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
     assert!(to.starts_with(&format!("http://{idp}/logout?id_token_hint=")), "{to}");
     assert!(to.contains("post_logout_redirect_uri="), "{to}");
 }
+
+/// An installed app's sign-in (RFC 8252, `crates/moqui-core/src/service/sso_app.rs`): the providers it may offer, a
+/// start refused for a redirect URI not registered, the browser through `/sso/appLogin`, the provider and the callback
+/// to `/sso/appCode`, which sends it to the app's redirect URI with a code and the app's state, and the code with its
+/// verifier at `/sso/appToken` for a device key that signs in.
+#[test]
+fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let (idp, _provider) = start_idp();
+    let gate = start_with_data("sso-app", &data(idp));
+    let server = gate.server.address();
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    let (status, _, providers) = exchange(server, &http_request("GET", "/sso/appProviders", &[], ""));
+    assert_eq!(status, 200, "{providers}");
+    assert!(
+        providers.contains("MOCK") && !providers.contains("Disabled flow"),
+        "{providers}"
+    );
+
+    let start = |redirect: &str| {
+        format!(
+            "/sso/appLogin?authFlowId=MOCK&codeChallenge={challenge}&codeChallengeMethod=S256&state=s-1&redirectUri={}&deviceName={}",
+            urlencode(redirect),
+            urlencode("Joe's laptop")
+        )
+    };
+    let (status, _, text) = exchange(
+        server,
+        &http_request("GET", &start("https://evil.example/sso"), &[], ""),
+    );
+    assert_eq!(status, 400, "{text}");
+
+    // a start with no provider round trip gives no code, even in a browser that is signed in already
+    let (status, headers, _) = exchange(server, &http_request("GET", &start("org.moqui.desktop:/sso"), &[], ""));
+    assert_eq!(status, 302, "{headers:?}");
+    let unfinished = merge_cookies("", &headers);
+    let (status, _, _) = exchange(
+        server,
+        &http_request("GET", "/sso/appCode", &[("Cookie", &unfinished)], ""),
+    );
+    assert_eq!(status, 400, "no callback, no confirmation");
+
+    // a callback that fails goes back to the app with the error and its state, not to the web's /Login
+    let (status, headers, _) = exchange(server, &http_request("GET", &start("org.moqui.desktop:/sso"), &[], ""));
+    assert_eq!(status, 302, "{headers:?}");
+    let failing = merge_cookies("", &headers);
+    let to_idp = location(&headers);
+    let (host, path) = to_idp.trim_start_matches("http://").split_once('/').unwrap();
+    let (_, headers, _) = exchange(
+        host.parse().unwrap(),
+        &http_request("GET", &format!("/{path}"), &[], ""),
+    );
+    let tampered = location(&headers).replace("state=", "state=x");
+    let tampered_path = tampered.split_once("://").unwrap().1.split_once('/').unwrap().1;
+    let (status, headers, _) = exchange(
+        server,
+        &http_request("GET", &format!("/{tampered_path}"), &[("Cookie", &failing)], ""),
+    );
+    assert_eq!(status, 302);
+    assert_eq!(
+        location(&headers),
+        "org.moqui.desktop:/sso?error=server_error&state=s-1"
+    );
+
+    let (status, headers, _) = exchange(server, &http_request("GET", &start("org.moqui.desktop:/sso"), &[], ""));
+    assert_eq!(status, 302, "{headers:?}");
+    let cookie = merge_cookies("", &headers);
+    let to_idp = location(&headers);
+    let (host, path) = to_idp.trim_start_matches("http://").split_once('/').unwrap();
+    let (status, headers, _) = exchange(
+        host.parse().unwrap(),
+        &http_request("GET", &format!("/{path}"), &[], ""),
+    );
+    assert_eq!(status, 303, "{headers:?}");
+    let callback = location(&headers);
+    let callback_path = callback.split_once("://").unwrap().1.split_once('/').unwrap().1;
+    let (status, headers, text) = exchange(
+        server,
+        &http_request("GET", &format!("/{callback_path}"), &[("Cookie", &cookie)], ""),
+    );
+    assert_eq!(status, 302, "{text}");
+    assert_eq!(location(&headers), "/sso/appCode");
+    let cookie = merge_cookies(&cookie, &headers);
+
+    // the user is asked to let the app in, by its name
+    let (status, _, page) = exchange(server, &http_request("GET", "/sso/appCode", &[("Cookie", &cookie)], ""));
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("Joe&#39;s laptop") && page.contains("sso.joe"), "{page}");
+    let token = page
+        .split("name=\"moquiSessionToken\" value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the session token in the form")
+        .to_string();
+    // a post without the session's token is refused
+    let (status, _, _) = exchange(
+        server,
+        &http_request(
+            "POST",
+            "/sso/appCodeConfirm",
+            &[
+                ("Cookie", &cookie),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            "allow=true",
+        ),
+    );
+    assert_ne!(status, 302, "no code without the session's token");
+    let (status, headers, text) = exchange(
+        server,
+        &http_request(
+            "POST",
+            "/sso/appCodeConfirm",
+            &[
+                ("Cookie", &cookie),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            &format!("allow=true&moquiSessionToken={token}"),
+        ),
+    );
+    assert_eq!(status, 302, "{text}");
+    let to_app = location(&headers);
+    let query = to_app
+        .strip_prefix("org.moqui.desktop:/sso?")
+        .unwrap_or_else(|| panic!("{to_app}"));
+    let pairs: HashMap<&str, &str> = query.split('&').filter_map(|pair| pair.split_once('=')).collect();
+    assert_eq!(pairs.get("state"), Some(&"s-1"), "{to_app}");
+    let code = pairs.get("code").expect("a code").to_string();
+    // the browser's sign-in is over: no second code from it
+    let (status, _, _) = exchange(server, &http_request("GET", "/sso/appCode", &[("Cookie", &cookie)], ""));
+    assert_eq!(status, 400);
+
+    let form = format!(
+        "code={code}&codeVerifier={verifier}&redirectUri=org.moqui.desktop%3A%2Fsso&deviceName=Joe%27s%20laptop"
+    );
+    let (status, _, answer) = exchange(
+        server,
+        &http_request(
+            "POST",
+            "/sso/appToken",
+            &[("Content-Type", "application/x-www-form-urlencoded")],
+            &form,
+        ),
+    );
+    assert_eq!(status, 200, "{answer}");
+    let answer: serde_json::Value = serde_json::from_str(&answer).unwrap();
+    let key = answer["loginKey"].as_str().expect("a device key");
+    let (status, _, config) = exchange(
+        server,
+        &http_request("GET", "/qapps/clientConfig", &[("login_key", key)], ""),
+    );
+    assert_eq!(status, 200, "{config}");
+    assert!(config.contains("sso.joe"), "{config}");
+    let (status, _, _) = exchange(
+        server,
+        &http_request(
+            "POST",
+            "/sso/appToken",
+            &[("Content-Type", "application/x-www-form-urlencoded")],
+            &form,
+        ),
+    );
+    assert_eq!(status, 400, "a code is taken once");
+    // the browser that signed in is still signed in: the app's key signed nobody out
+    let (status, _, apps) = exchange(
+        server,
+        &http_request("GET", "/qapps/AppList", &[("Cookie", &cookie)], ""),
+    );
+    assert_eq!(status, 200, "{apps}");
+}

@@ -43,4 +43,55 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="returnTo"/>
         </in-parameters>
     </service>
+
+    <!-- An installed app's sign-in through SSO (RFC 8252, plans/Mobile-Desktop.md "Remote applications and
+        authentication"; crates/moqui-core/src/service/sso_app.rs): the desktop or mobile client opens the system browser
+        at /sso/appLogin; after the provider signs the browser in, /sso/appCode asks the user to let the app in, and on
+        that a single-use code goes to the app by its redirect URI, which it takes to /sso/appToken for a device key.
+        The redirect URIs an app may give are the property webapp_app_redirect_uris (default org.moqui.desktop:/sso). -->
+    <service verb="get" noun="AppProviders" type="rust" location="moqui_core::service::sso_app::get_app_providers"
+            authenticate="anonymous-all">
+        <description>The identity providers an app can offer: the AuthFlows the login page shows.</description>
+        <out-parameters><parameter name="authFlowList" type="List"/></out-parameters>
+    </service>
+    <service verb="start" noun="AppLogin" type="rust" location="moqui_core::service::sso_app::start_app_login"
+            authenticate="anonymous-all">
+        <description>Checks the app's S256 code challenge, its state and its redirect URI (one of
+            webapp_app_redirect_uris), keeps them and the app's name in the session for 15 minutes, and starts the
+            provider's login as login#User does, coming back to /sso/appCode. A refusal answers 400; a failure later
+            goes back to the app with error=server_error.</description>
+        <in-parameters>
+            <parameter name="authFlowId" required="true"/>
+            <parameter name="codeChallenge" required="true"/>
+            <parameter name="codeChallengeMethod" required="true"><description>S256</description></parameter>
+            <parameter name="state" required="true"/>
+            <parameter name="redirectUri" required="true"/>
+            <parameter name="deviceName"><description>The app's name, shown when the user is asked to let it in</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="confirm" noun="AppLogin" type="rust" location="moqui_core::service::sso_app::confirm_app_login"
+            authenticate="anonymous-all">
+        <description>After the provider signed the browser in for an app (its callback done by the user signed in now):
+            a page that asks the user to let the app in, posting to /sso/appCodeConfirm with the session's token.</description>
+    </service>
+    <service verb="issue" noun="AppCode" type="rust" location="moqui_core::service::sso_app::issue_app_code"
+            authenticate="anonymous-all">
+        <description>On the user's confirmation (allow=true): a single-use code (a minute) for the app, bound to the
+            user, its challenge and its redirect URI, and the browser sent to that URI with the code and the app's state;
+            on Cancel, error=access_denied.</description>
+        <in-parameters><parameter name="allow"/></in-parameters>
+    </service>
+    <service verb="exchange" noun="AppCode" type="rust" location="moqui_core::service::sso_app::exchange_app_code"
+            authenticate="anonymous-all">
+        <description>The app's code, PKCE verifier and redirect URI for a device key (as the REST login with
+            createLoginKey and deviceName makes), with no session logged in or out. A code is taken once; one unknown,
+            used, expired, of another redirect URI or of another verifier answers 400.</description>
+        <in-parameters>
+            <parameter name="code" required="true"/>
+            <parameter name="codeVerifier" required="true"/>
+            <parameter name="redirectUri" required="true"/>
+            <parameter name="deviceName"/>
+        </in-parameters>
+        <out-parameters><parameter name="loginKey"/></out-parameters>
+    </service>
 </services>

@@ -717,6 +717,33 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
     Ok(updated > 0)
 }
 
+/// A device key for the user `user_id`, made with no session of theirs: an installed app's SSO hand-back
+/// (`service/sso_app.rs`), where the browser signed in and the app takes the code. The account must be able to log
+/// in now (not disabled or terminated), and the sign-in is in its login history, as a session's login is; no session
+/// is logged in or out, so the user's other sessions are left as they are.
+///
+/// # Errors
+///
+/// Returns [`INVALID_LOGIN`](Error) for an account that is not there or cannot log in, or an error when a write fails.
+pub fn issue_device_key(user_id: &str, device: &str) -> Result<String, Error> {
+    {
+        let _authz = without_authz();
+        let facade = entity_facade()?;
+        let Some(account) = find_user_id(&facade, user_id)? else {
+            return Err(Error::new(INVALID_LOGIN));
+        };
+        let gated = gate_account(&facade, &account, now_millis());
+        save_history(user_id, gated.is_ok());
+        gated?;
+    }
+    let device: String = device.trim().chars().take(255).collect();
+    make_login_key_for(
+        user_id,
+        policy::login_key_device_expire_hours(),
+        Some(device.as_str()).filter(|name| !name.is_empty()),
+    )
+}
+
 fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
     let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) else {
         return Err(Error::of_kind(
@@ -724,6 +751,10 @@ fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
             "No active user, cannot get login key",
         ));
     };
+    make_login_key_for(&user_id, hours, device)
+}
+
+fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result<String, Error> {
     let login_key = super::factor::random_string(40)?;
     let hashed = password::hash_login_key(&login_key)?;
     let from = now_millis();
@@ -733,7 +764,7 @@ fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
     let facade = entity_facade()?;
     let mut row = facade.make_value(USER_LOGIN_KEY)?;
     row.set("loginKey", Value::string(hashed));
-    row.set("userId", Value::string(&user_id));
+    row.set("userId", Value::string(user_id));
     row.set("fromDate", stamp_value(from));
     row.set("thruDate", stamp_value(thru));
     if let Some(device) = device {
@@ -746,7 +777,7 @@ fn make_login_key(hours: f64, device: Option<&str>) -> Result<String, Error> {
     })?;
     let expired = facade
         .find(USER_LOGIN_KEY)?
-        .eq("userId", Value::string(&user_id))
+        .eq("userId", Value::string(user_id))
         .condition(moqui_db::sql::Condition::less("thruDate", stamp_value(from)))
         .list()?;
     for old in expired.iter() {

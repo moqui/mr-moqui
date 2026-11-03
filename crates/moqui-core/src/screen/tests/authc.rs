@@ -507,3 +507,68 @@ fn a_device_signs_in_by_key_is_listed_and_signs_out_by_revoking_its_key() {
     assert!(devices().is_empty());
     flow.as_user(None, || assert!(crate::user::login_user_key(&phone).is_err()));
 }
+
+/// An installed app's SSO sign-in ends at `/sso/appToken` (crates/moqui-core/src/service/sso_app.rs): the single-use
+/// code `issue#AppCode` made, with the verifier of its challenge, is a device key once; a wrong verifier, a used code
+/// and an expired one are refused.
+#[test]
+fn an_app_code_with_its_verifier_is_a_device_key_once() {
+    let flow = Flow::open();
+    flow.user("ada", "ada@example.com");
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_row = |code: &str, expire_offset: i64| {
+        let context = flow.factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let mut row = flow.facade.make_value("moqui.security.UserAppCode").unwrap();
+        row.set("codeHash", Value::string(crate::user::single_use_hash(code).unwrap()));
+        row.set("userId", Value::string("ada"));
+        row.set(
+            "codeChallenge",
+            Value::string("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"),
+        );
+        row.set("redirectUri", Value::string("org.moqui.desktop:/sso"));
+        row.set(
+            "expireDate",
+            crate::user::stamp_value(crate::user::now_millis() + expire_offset),
+        );
+        row.create(&flow.facade).unwrap();
+    };
+    let exchange = |code: &str, verifier: &str| {
+        let body = format!(
+            "code={code}&codeVerifier={verifier}&redirectUri=org.moqui.desktop%3A%2Fsso&deviceName=Ada%27s%20laptop"
+        );
+        flow.post("/sso/appToken", &body, &mut Session::default())
+    };
+    code_row("good-code", 60_000);
+    let wrong = exchange("good-code", &"x".repeat(43));
+    assert_eq!(wrong.status, 400, "{}", wrong.body_text());
+    // the wrong verifier used the code: the right one is too late
+    assert_eq!(exchange("good-code", verifier).status, 400);
+
+    code_row("second-code", 60_000);
+    let answer = exchange("second-code", verifier);
+    assert_eq!(answer.status, 200, "{}", answer.body_text());
+    let key = json(&answer)["loginKey"].as_str().expect("a device key").to_string();
+    flow.as_user(None, || crate::user::login_user_key(&key).expect("the key signs in"));
+    let device = flow.row_text(
+        "moqui.security.UserLoginKey",
+        "loginKey",
+        &crate::user::hash_login_key(&key).unwrap(),
+        "deviceName",
+    );
+    assert_eq!(device, "Ada's laptop");
+    assert_eq!(exchange("second-code", verifier).status, 400, "once");
+
+    code_row("other-redirect", 60_000);
+    let body = format!("code=other-redirect&codeVerifier={verifier}&redirectUri=org.evil%3A%2Fsso");
+    assert_eq!(
+        flow.post("/sso/appToken", &body, &mut Session::default()).status,
+        400,
+        "another redirect URI"
+    );
+
+    code_row("old-code", -1_000);
+    assert_eq!(exchange("old-code", verifier).status, 400, "expired");
+    assert_eq!(exchange("no-such-code", verifier).status, 400);
+}

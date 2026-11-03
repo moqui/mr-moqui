@@ -58,7 +58,17 @@ fn login_user(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    // a browser's own login is no app's sign-in (sso_app.rs)
+    set_session_attribute(super::sso_app::PENDING_APP, None);
     finish("org.moqui.sso.AuthServices.login#User", login(parameters, facade))
+}
+
+/// `login#User` for an app's sign-in (`sso_app.rs`), which has checked and kept its own part first.
+pub(super) fn login_user_for_app(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    finish("org.moqui.sso.AuthServices.start#AppLogin", login(parameters, facade))
 }
 
 fn handle_callback(
@@ -75,11 +85,14 @@ fn logout_user(
     finish("org.moqui.sso.AuthServices.logout#User", logout(parameters, facade))
 }
 
-/// A failed login, callback, or logout is logged and the browser goes back to `/Login`. The call still returns.
+/// A failed login, callback, or logout is logged and the browser goes back to `/Login`, or for an app's sign-in to the
+/// app with the error (`sso_app.rs`). The call still returns.
 fn finish(name: &str, outcome: Result<(), LibError>) -> Result<BTreeMap<String, Value>, LibError> {
     if let Err(err) = outcome {
         tracing::error!("SSO {name} failed: {}", err.message());
-        crate::web::send_redirect(&format!("{}/Login", base()));
+        if !super::sso_app::failed_to_app("server_error") {
+            crate::web::send_redirect(&format!("{}/Login", base()));
+        }
     }
     Ok(BTreeMap::new())
 }
@@ -279,7 +292,15 @@ fn callback(facade: &EntityFacade) -> Result<(), LibError> {
     set_session_attribute(FLOW_ID, Some(&auth_flow_id));
     set_session_attribute(ID_TOKEN, profile.id_token.as_deref());
     match session_attribute(RETURN_TO).and_then(|url| safe_return_to(&url)) {
-        Some(url) => set_session_attribute(RETURN_TO, Some(&url)),
+        Some(url) => {
+            // an app's sign-in: done by this user, through this provider round trip (sso_app.rs)
+            if url == super::sso_app::APP_CODE_PATH {
+                if let Some(user_id) = crate::user::current_user_id()? {
+                    super::sso_app::callback_done(&user_id);
+                }
+            }
+            set_session_attribute(RETURN_TO, Some(&url));
+        }
         None => set_session_attribute(RETURN_TO, None),
     }
     tracing::info!("SSO login of {username} through AuthFlow {auth_flow_id}");

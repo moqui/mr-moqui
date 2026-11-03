@@ -66,6 +66,7 @@ pub mod shell;
 #[cfg(feature = "xlsx")]
 pub(crate) mod spreadsheet;
 mod sso;
+mod sso_app;
 mod system_sync;
 mod tools;
 mod user_keys;
