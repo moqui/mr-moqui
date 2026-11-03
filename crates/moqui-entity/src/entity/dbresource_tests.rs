@@ -521,6 +521,32 @@ fn a_directory_a_write_makes_is_kept_when_the_write_rolls_back() {
     assert_eq!(facade.find_nodes(None, "made").unwrap().len(), 1);
 }
 
+/// A directory made in its own transaction is there for a read in the caller's, which reads from before its commit:
+/// its stat is a directory and its parent lists it.
+#[test]
+fn a_directory_made_is_seen_by_the_transaction_that_made_it() {
+    let facade = facade();
+    facade.write_db_resource("dbresource://seen/old.txt", b"old").unwrap();
+    let tx = facade.transactions_for(super::DB_RESOURCE).unwrap();
+    tx.begin(None).unwrap();
+    assert!(facade.read_db_resource("dbresource://seen").unwrap().exists);
+    facade.make_db_directory("dbresource://seen/docs/deeper").unwrap();
+    for location in ["dbresource://seen/docs", "dbresource://seen/docs/deeper"] {
+        let stat = facade.stat_db_resource(location).unwrap();
+        assert!(stat.is_some_and(|stat| !stat.is_file), "{location}");
+    }
+    let names: Vec<_> = facade
+        .read_db_resource("dbresource://seen")
+        .unwrap()
+        .children
+        .into_iter()
+        .map(|child| (child.name, child.is_file))
+        .collect();
+    assert_eq!(names, vec![("docs".to_string(), false), ("old.txt".to_string(), true)]);
+    tx.commit().unwrap();
+    assert_eq!(facade.find_nodes(None, "seen").unwrap().len(), 1);
+}
+
 #[test]
 fn first_writes_at_once_make_each_directory_once() {
     let facade = facade();
