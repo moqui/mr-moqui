@@ -24,7 +24,12 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   Settings. Add an account in Settings, Mail accounts (Gmail and Microsoft sign in with the provider where the server
   is set up for it: [Mail-OAuth](../interfaces/Mail-OAuth.md)).
 - **Compose.** A new message, a reply or a forward from an account the user may send from, with undo send and
-  scheduled sending.
+  scheduled sending. Compose's `saveDraft`, `upload` and `send` take a `clientRef`, the client's own reference of the
+  draft, so a client that queued the mail offline retries them after a lost answer safely: one draft is saved, a file is
+  attached once, and a send that went through answers `duplicate` true (`EmailMessage.clientRef`, found only among the
+  user's own messages; `clientApi` 3). A send that failed is not sent again by its ref (it may have gone out); the user
+  sends it. A client runs its queued operations of one ref one after another; a late retry after the draft was deleted
+  makes a new one.
 - **Attach from Files and Save to Files.** Compose's Attach from Files opens the drive picker: the user's drives (My
   files first), the recent files, a folder or a search by name. A picked file is copied onto the message; a file over
   25 MB, or a folder, goes in as a view link instead. An attachment in the Inbox has Save to Files, which copies it into
@@ -250,7 +255,7 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 `./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
 Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
-user with no party, the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
+user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
 provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
 texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the

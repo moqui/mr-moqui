@@ -2591,6 +2591,65 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Drafts and sending ========== -->
 
+    <service verb="get" noun="MessageByClientRef" allow-remote="false">
+        <description>The current user's own message (fromUserId, as save#Draft sets it) with clientRef, the reference a
+            client gave the draft (^[A-Za-z0-9_.:-]{1,64}$; another is an error). emailMessageId is empty when there is
+            none. isDraft is true for a draft (ES_DRAFT) only: a send that failed (ES_READY with a sendError) may have gone
+            out (fail#StoppedSend), so a client's retry by its ref does not send it again; the user does.</description>
+        <in-parameters><parameter name="clientRef" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="rootEmailMessageId"/>
+            <parameter name="statusId"/>
+            <parameter name="isDraft" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            emailMessageId = null; rootEmailMessageId = null; statusId = null; isDraft = false
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(String(clientRef))) { ec.message.addError(`Not a valid clientRef: ${clientRef}`); return }
+            if (!ec.user.userId) return
+            const found = ec.entity.find('moqui.basic.email.EmailMessage').condition('fromUserId', ec.user.userId).condition('clientRef', clientRef)
+                    .orderBy('emailMessageId').limit(1).list()
+            if (!found.length) return
+            const message = found[0]
+            emailMessageId = message.emailMessageId
+            rootEmailMessageId = message.rootEmailMessageId ?? null
+            statusId = message.statusId
+            isDraft = message.statusId === 'ES_DRAFT'
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="SendState" allow-remote="false">
+        <description>Where the send of a message of an account the user reaches is now, as a composer answers a send:
+            statusId; sent (true once it went: Sent, Viewed); sendError (why a send failed, or that it bounced or was
+            cancelled); scheduledSendDate (millis, while it waits in the Outbox); message, the text to show. A composer's
+            send answers a retry of a send that went through (duplicate) with it.</description>
+        <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="sendError"/>
+            <parameter name="scheduledSendDate" type="Long"/>
+            <parameter name="message"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
+            if (ec.message.hasError()) return
+            const row = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).one()
+            if (row == null || !access.accessMap[row.emailAccountId]) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
+            statusId = row.statusId
+            sendError = row.sendError ?? null
+            scheduledSendDate = statusId === 'ES_SCHEDULED' && row.scheduledSendDate != null ? Number(row.scheduledSendDate) : null
+            sent = statusId === 'ES_SENT' || statusId === 'ES_VIEWED'
+            if (statusId === 'ES_SCHEDULED') message = L('Scheduled')
+            else if (statusId === 'ES_READY') message = sendError ? L('Not sent yet: it waits in the Outbox') + ' (' + sendError + ')' : L('Sending…')
+            else if (statusId === 'ES_BOUNCED') { sendError = sendError || L('Bounced'); message = L('Bounced') }
+            else if (statusId === 'ES_CANCELLED') { sendError = sendError || L('Cancelled'); message = L('Cancelled') }
+            else if (sent) message = L('Sent')
+            else message = L('Not sent')
+        ]]></script></actions>
+    </service>
+
     <service verb="save" noun="Draft">
         <description>
             Create or update a draft (ES_DRAFT) in the Drafts folder of an account the user may send from: emailMessageId
@@ -2602,6 +2661,15 @@ along with this software (see the LICENSE.md file). If not, see
             In-Reply-To (not for a forward) and References headers. For an IMAP account the draft is appended to the
             server's Drafts at the next push (replacing the copy of its last save there), so another client sees it; its
             send takes it out of Drafts there, and a discard deletes it there.
+
+            clientRef is the user's own reference of the draft (get#MessageByClientRef), so a client that queued it
+            offline and retries after a lost answer saves it once: a save with a clientRef updates the user's draft that
+            has it, or makes a new draft with it (or gives it to the draft of emailMessageId that has none). When the
+            message of the clientRef is no longer a draft (scheduled, held for undo, sending, sent, or a send that failed and
+            may have gone out) nothing is changed: its emailMessageId and statusId come back with duplicate true. A
+            clientRef only ever finds the user's own messages; the user's account row is locked first, so a retry that
+            overlaps a send still under way waits for it and answers duplicate. A clientRef with an emailMessageId whose
+            draft has another one is an error.
         </description>
         <in-parameters>
             <parameter name="emailMessageId"/>
@@ -2616,23 +2684,56 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="attachmentList" type="List"><parameter name="attachment" type="Map"/></parameter>
             <parameter name="parentEmailMessageId"/>
             <parameter name="isForward" type="Boolean" default="false"/>
+            <parameter name="clientRef"/>
         </in-parameters>
         <out-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="rootEmailMessageId"/>
+            <parameter name="statusId"/>
+            <parameter name="duplicate" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
             const MESSAGE = 'moqui.basic.email.EmailMessage'
+            duplicate = false
+            statusId = null
             const textOf = (html) => html ? String(html).replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ')
                     .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
                     .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim() : ''
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
+            if (clientRef) {
+                // one save by ref at a time per user, so an overlapping retry sees what the first made or sent
+                if (ec.user.userId) ec.entity.find('moqui.security.UserAccount').condition('userId', ec.user.userId).forUpdate(true).one()
+                const found = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#MessageByClientRef').parameter('clientRef', clientRef).call()
+                if (ec.message.hasError()) return
+                if (found.emailMessageId) {
+                    if (emailMessageId && emailMessageId !== found.emailMessageId) {
+                        ec.message.addError(`The clientRef ${clientRef} is of another message`); return }
+                    if (!found.isDraft) {
+                        // a retry of a save whose draft was sent (or is waiting to send) since: it stays as it is
+                        emailMessageId = found.emailMessageId
+                        rootEmailMessageId = found.rootEmailMessageId
+                        statusId = found.statusId
+                        duplicate = true
+                        return
+                    }
+                    emailMessageId = found.emailMessageId
+                }
+            }
             let draft = null
             if (emailMessageId) {
                 draft = ec.entity.find(MESSAGE).condition('emailMessageId', emailMessageId).forUpdate(true).one()
                 if (draft == null || !access.accessMap[draft.emailAccountId]) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
                 if (access.accessMap[draft.emailAccountId] < 2) { ec.message.addError(`You may not change the mail of email account ${draft.emailAccountId}`); return }
+                if (clientRef && draft.clientRef && draft.clientRef !== clientRef) {
+                    ec.message.addError(`Email message ${emailMessageId} has another clientRef`); return }
+                if (clientRef && draft.clientRef === clientRef && draft.statusId !== 'ES_DRAFT') {
+                    // sent (or failed) since it was looked up: the retry changes nothing
+                    rootEmailMessageId = draft.rootEmailMessageId ?? null
+                    statusId = draft.statusId
+                    duplicate = true
+                    return
+                }
                 if (!(draft.statusId === 'ES_DRAFT' || (draft.statusId === 'ES_READY' && draft.sendError))) {
                     ec.message.addError(`Email message ${emailMessageId} is not a draft`); return }
             }
@@ -2672,6 +2773,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (subject != null) fields.subject = subject
             if (body != null) fields.body = body
             if (bodyText != null) fields.bodyText = bodyText
+            // the ref goes on the user's own draft that has none (a draft keeps its first ref)
+            if (clientRef && (draft == null || (!draft.clientRef && draft.fromUserId === ec.user.userId))) fields.clientRef = clientRef
             if (parentEmailMessageId) {
                 const parent = ec.entity.find(MESSAGE).condition('emailMessageId', parentEmailMessageId).one()
                 if (parent == null || !access.accessMap[parent.emailAccountId]) { ec.message.addError(`Email message ${parentEmailMessageId} not found`); return }
@@ -2749,6 +2852,7 @@ along with this software (see the LICENSE.md file). If not, see
             draft.set('messageSize', String(html || '').length + String(text || '').length + attachmentBytes)
             draft.update()
             rootEmailMessageId = draft.rootEmailMessageId ?? null
+            statusId = draft.statusId
             // an IMAP account's Drafts on the server get it too, replacing the copy of the last save (push#RemoteChanges)
             if (account.emailServerId) ec.service.sync().name('org.moqui.impl.EmailClientServices.push#RemoteChanges').parameters({
                 emailAccountId: emailAccountId, changeType: 'draft', emailMessageIdList: [emailMessageId]}).disableAuthz().call()

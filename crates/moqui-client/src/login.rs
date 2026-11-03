@@ -181,9 +181,10 @@ pub fn client_config(base: &str, key: &str) -> Result<Option<serde_json::Value>,
         .map_err(|err| Error::new(format!("{url}: {err}")))
 }
 
-/// The newest `server.clientApi` of `/qapps/clientConfig` this client knows: 1 the first, 2 added `renewClientDevice`.
+/// The newest `server.clientApi` of `/qapps/clientConfig` this client knows: 1 the first, 2 added `renewClientDevice`,
+/// 3 the compose `clientRef` (Compose's `saveDraft`, `upload` and `send` retried safely from a queue).
 /// A server that sends a newer one may expect what this client does not do, so the shell asks for an update.
-pub const CLIENT_API: u64 = 2;
+pub const CLIENT_API: u64 = 3;
 
 /// The server's `clientApi` in its client config, 1 when it sends none.
 #[must_use]

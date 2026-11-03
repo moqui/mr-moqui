@@ -80,3 +80,11 @@ fn a_server_with_no_client_api_is_the_first() {
     assert_eq!(server_client_api(&json!({"server": {"name": "x"}})), 1);
     assert_eq!(server_client_api(&json!({"server": {"clientApi": 3}})), 3);
 }
+
+#[test]
+fn this_client_knows_the_compose_client_ref() {
+    // 3: Compose's saveDraft, upload and send take a clientRef, so a queued mail is retried safely
+    assert_eq!(CLIENT_API, 3);
+    assert!(server_client_api(&json!({"server": {"clientApi": 3}})) <= CLIENT_API);
+    assert!(server_client_api(&json!({"server": {"clientApi": 4}})) > CLIENT_API);
+}

@@ -59,7 +59,8 @@ inline script and no inline event handler, and the settings are a data block:
 The settings are built in `includes/QvtConfig.js`, which `qapps.xml` runs. `/qapps/clientConfig` answers the same as JSON
 for a client that signs in by key and has no `/qapps` page (the desktop app's bundled shell,
 [Mobile-Desktop](../../plans/Mobile-Desktop.md#configuration-3-offline-capable-client-of-a-remote-server)): for the runtime build, with no `sessionToken` and an empty `pageTraceId`, and with `server` `{name,
-moquiVersion, clientApi}` (`clientApi` 1 is the version of what that client reads and calls). `qvt.start(config)` takes
+moquiVersion, clientApi}` (`clientApi` is the version of what that client reads and calls: 2 added
+`renewClientDevice`, 3 Compose's `clientRef`). `qvt.start(config)` takes
 settings given to it in place of the data block.
 
 The catalog of messages for `localize` is fetched from `/apps/l10nCatalog?locale=` once the page starts: `{locale, messages: {original: localized}}`

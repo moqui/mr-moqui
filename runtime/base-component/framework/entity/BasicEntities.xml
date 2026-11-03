@@ -591,6 +591,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sendClaimDate" type="date-time"><description>When a mail client send claimed the message (ES_READY
             without a sendError, being sent); cleared with its result. A claim left long past this without one is a send
             that stopped, and send#DueDrafts gives it a sendError so it shows in the Outbox.</description></field>
+        <field name="clientRef" type="text-medium"><description>The composing user's (fromUserId) own reference of a draft,
+            ^[A-Za-z0-9_.:-]{1,64}$, so a client that queued it offline saves and sends it once however often it retries
+            (EmailClientServices.save#Draft)</description></field>
 
         <relationship type="one" title="EmailMessage" related="moqui.basic.StatusItem" short-alias="status"/>
         <relationship type="one" title="EmailType" related="moqui.basic.Enumeration" short-alias="type">
@@ -626,6 +629,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="EMAIL_MSG_SNOOZE"><index-field name="snoozedThruDate"/></index>
         <index name="EMAIL_MSG_REMOTE"><index-field name="remoteFolderId"/><index-field name="remoteUid"/></index>
         <index name="EMAIL_MSG_REPLY"><index-field name="inReplyTo"/></index>
+        <index name="EMAIL_MSG_CLIENT_REF"><index-field name="fromUserId"/><index-field name="clientRef"/></index>
 
         <seed-data>
             <!-- Email Message Status -->

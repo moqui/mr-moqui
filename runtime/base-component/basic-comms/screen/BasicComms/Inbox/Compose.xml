@@ -18,7 +18,9 @@ along with this software (see the LICENSE.md file). If not, see
     and body; a reply or forward), and the composer of quick create and of Chatter's "Email…" (recordEntity and recordId give
     the "File on" chip). Quick create's dialog loads it in its best client mode (qvue), and the component reads its query
     from mScreen wherever it is. The JSON transitions below call org.moqui.comms.InboxServices.run#Operation (ComposeServices, or an app's inbox-source): the sender is always the
-    user, from an account the user may send from, and a file is one these services stored. -->
+    user, from an account the user may send from, and a file is one these services stored. saveDraft, upload and send take
+    clientRef, the client's own reference of the draft, so a client that queued the mail offline retries them safely: the
+    same draft is saved, a file is attached once, and a send that went through answers duplicate true (ComposeServices). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Compose" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
@@ -60,8 +62,9 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'save#ComposeDraft', parameters: {emailMessageId: emailMessageId || null,
                 fromValue: fromValue || '', toJson: toJson || '[]', ccJson: ccJson || '[]', bccJson: bccJson || '[]', subject: subject ?? '', body: body ?? '',
                 bodyText: bodyText || null, quoteHtml: quoteHtml || null, parentEmailMessageId: parentEmailMessageId || null,
-                isForward: String(isForward) === 'true'}}).call()?.result || {}
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailMessageId: out.emailMessageId, rootEmailMessageId: out.rootEmailMessageId})
+                isForward: String(isForward) === 'true', clientRef: clientRef || null}}).call()?.result || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailMessageId: out.emailMessageId, rootEmailMessageId: out.rootEmailMessageId,
+                duplicate: out.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -69,7 +72,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // the same for every app: a draft's files, or the user's own uploads for an app's message (send#Compose takes them)
             const out = ec.service.sync().name('org.moqui.comms.ComposeServices.upload#ComposeAttachment').parameters({emailMessageId: emailMessageId || null,
-                contentFile: contentFile || null}).call() || {}
+                clientRef: clientRef || null, contentFile: contentFile || null}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {attachmentList: out.attachmentList, uploadList: out.uploadList})
         ]]></script></actions>
         <default-response type="none"/>
@@ -109,9 +112,11 @@ along with this software (see the LICENSE.md file). If not, see
                 parentCommEventId: parentCommEventId || null, replyToSenderOnly: String(replyToSenderOnly) === 'true', uploadsJson: uploadsJson || null,
                 recordEntity: recordEntity || null, recordId: recordId || null,
                 scheduledSendDate: scheduledSendDate ? new Date(Number(scheduledSendDate)) : null, holdSeconds: holdSeconds != null && holdSeconds !== '' ? Number(holdSeconds) : null,
-                archiveThread: String(archiveThread) === 'true', threadStore: threadStore || null, threadId: threadId || null}}).call()?.result || {}
+                archiveThread: String(archiveThread) === 'true', threadStore: threadStore || null, threadId: threadId || null,
+                clientRef: clientRef || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {mode: out.mode, emailMessageId: out.emailMessageId, statusId: out.statusId, sent: out.sent,
-                sendError: out.sendError, scheduledSendDate: out.scheduledSendDate, communicationEventIdList: out.communicationEventIdList, message: out.message})
+                sendError: out.sendError, scheduledSendDate: out.scheduledSendDate, communicationEventIdList: out.communicationEventIdList, message: out.message,
+                duplicate: out.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

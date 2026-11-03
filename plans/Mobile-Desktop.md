@@ -312,7 +312,8 @@ Chat already has the start of this: an idempotent send by `clientRef`, `eventSeq
 - a changes feed across rooms: new rooms, membership, and edits, redactions and deletions as tombstones;
 - a cursor for mail folders;
 - resumable attachment uploads;
-- the same idempotency for mutations other than a chat send.
+- the same idempotency for mutations other than a chat send and a mail send (Compose's `saveDraft`, `upload` and `send`
+  take a `clientRef` since MD4, `clientApi` 3).
 
 Design these contracts jointly with the client. Reconcile this work with [Messaging](proposals/Messaging.md), without making its entire proposal a prerequisite for the first client.
 
@@ -411,7 +412,7 @@ Before mobile distribution, check the actual remote-application and local-code m
 **Client (MD3), settled as built:**
 
 - The client is a mode of the same app (`client`), on the crate `moqui-client`.
-- Device keys: the REST login's `createLoginKey` with `deviceName` (90 days, `login-key/@device-expire-hours`), revoked by `logout` with `revokeLoginKey` or `revoke#UserDeviceKey`, renewed with less than a third of their life left (`renew#UserDeviceKey`, the old key ending ten minutes later); the shell's settings from `/qapps/clientConfig`, whose `server.clientApi` (2) the shell compares with the app's.
+- Device keys: the REST login's `createLoginKey` with `deviceName` (90 days, `login-key/@device-expire-hours`), revoked by `logout` with `revokeLoginKey` or `revoke#UserDeviceKey`, renewed with less than a third of their life left (`renew#UserDeviceKey`, the old key ending ten minutes later); the shell's settings from `/qapps/clientConfig`, whose `server.clientApi` (3 since MD4) the shell compares with the app's.
 - The key store on a Linux desktop with no Secret Service: a file only the user can read, which the shell says (and a development run's default).
 - Packaged assets: the webroot's scripts and the libraries of `shell/libs.txt` as they are; the bundled screens precompiled from their own `.qvue` files (`shell/bundled-screens.txt`), checked by a golden test, so web and installed clients keep one source.
 - App windows have the socket commands only.
@@ -422,7 +423,7 @@ Before mobile distribution, check the actual remote-application and local-code m
 - Which BasicComms views and mutations make up the first useful offline release?
 - How the chat outbox moves from `localStorage` to the host store without losing queued messages.
 - What is the durable client schema, crypto-device policy, and treatment of retained offline data?
-- What compatibility handshake covers shell assets, server APIs, remote compiled templates, and local schema migrations? It starts with `clientConfig`'s `server.clientApi` (2), which the shell compares with what it knows, asking for an update when the server is newer.
+- What compatibility handshake covers shell assets, server APIs, remote compiled templates, and local schema migrations? It starts with `clientConfig`'s `server.clientApi` (3), which the shell compares with what it knows, asking for an update when the server is newer.
 
 **Throughout:**
 
