@@ -44,6 +44,8 @@ jiff = "0.2"
 # and window.confirm on every page, the node's too. On Linux the portal, not GTK 3, which the GTK 4 app cannot load.
 rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "wayland", "tokio"] }
 serde_json = "1"
+# The PDF engine's timeout on the app's runtime (src/pdf.rs), the same Tokio as Tauri's.
+tokio = { version = "1", features = ["time"] }
 tauri = { version = "=3.0.0-alpha.5", features = ["unstable", "tray-icon"] }
 # Native notifications for the page bridge (src/bridge.rs), with clicks; notify-rust under it on desktop.
 tauri-plugin-notification = "=3.0.0-alpha.3"

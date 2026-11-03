@@ -1385,7 +1385,8 @@ task_desktop() {
         stage_desktop_runtime "$ROOT/target/desktop-runtime"
         stage_desktop_shell "$ROOT/target/desktop-shell"
         stage_desktop_sidecar "$ROOT/target/desktop-bin"
-        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/","../../target/desktop-shell/":"shell-assets/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
+        stage_desktop_notices "$app/Cargo.lock" "$ROOT/target/desktop-notices"
+        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/","../../target/desktop-shell/":"shell-assets/","../../target/desktop-notices/":"notices/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
         local updater
         updater=$(desktop_updater_config) || exit 1
         [ -z "$updater" ] || tauri_args+=(--config "$updater")
@@ -1541,6 +1542,28 @@ stage_desktop_cef() {
         run_cmd cc -shared -nostdlib -o "$dest/$name" -x c /dev/null || die "could not make the stand-in $name"
     done
     printf '%s\n' "$stage"
+}
+
+# The notices of what a bundled desktop app ships beside the framework, in $2 (plans/archive/License-Review.md, "Servo,
+# Chromium, OpenSearch"): Chromium's, as CEF's distribution has them (CREDITS.html), since the app's window and its PDF
+# engine are Chromium. The distribution is the cef crate's of the app's Cargo.lock ($1) in tauri-cef's cache, or
+# CEF_PATH.
+stage_desktop_notices() {
+    local lock=$1 stage=$2 version source credits
+    version=$(awk '$0 == "name = \"cef\"" { getline; sub(/.*\+/, ""); sub(/".*/, ""); print; exit }' "$lock")
+    [ -n "$version" ] || die "no cef crate in $(rel "$lock")"
+    if [ -n "${CEF_PATH:-}" ]; then
+        source=$CEF_PATH
+    elif [ "$(uname -s)" = Darwin ]; then
+        source=$HOME/Library/Caches/tauri-cef
+    else
+        source=${XDG_CACHE_HOME:-$HOME/.cache}/tauri-cef
+    fi
+    credits=$(find "$source" -maxdepth 3 -name CREDITS.html -path "*$version*" 2>/dev/null | head -n 1)
+    [ -n "$credits" ] || credits=$(find "$source" -maxdepth 1 -name CREDITS.html 2>/dev/null | head -n 1)
+    [ -n "$credits" ] || die "no CREDITS.html of CEF $version under $source"
+    run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
+    run_cmd cp "$credits" "$stage/chromium-credits.html" || die "could not stage $credits"
 }
 
 # The moqui binary a bundled desktop app runs as its sidecar node (crates/moqui-desktop/src/node/sidecar.rs), in $1 as

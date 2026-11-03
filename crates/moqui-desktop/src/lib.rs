@@ -26,6 +26,7 @@ mod client;
 mod download;
 mod node;
 mod os;
+mod pdf;
 mod runtime_dir;
 mod scheme;
 mod splash;
@@ -463,6 +464,7 @@ fn launch_node(app: &AppHandle, start: NodeStart) {
             if let Some(state) = events_app.try_state::<node::scheme::Local>() {
                 state.started(local);
             }
+            pdf::install_if_none(&events_app);
             node_listens(&events_app, &origin, &format!("{}/qapps", node::scheme::NODE_ORIGIN));
         }
         Event::Failed(err) => start_failed(&events_app, &err),

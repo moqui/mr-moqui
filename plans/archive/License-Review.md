@@ -104,6 +104,8 @@ These are the feature flags the resolve used. The unsafe defaults are called out
 
 Chromium is not vendored and not downloaded. No browser fetcher is linked. The operator installs Chromium. The browser project is BSD-3-Clause and carries a large third-party notice of its own, which belongs to whoever ships that binary. Moqui does not. Google Chrome remains a developer substitute and is not the deployment binary. A packager who later vendors Chromium picks up Chromium's notices, including LGPL pieces such as some media libraries, for that separate process. Those terms do not flow back into the Rust link.
 
+The desktop app (`crates/moqui-desktop`, [Mobile-Desktop](../Mobile-Desktop.md)) is that packager for its own package: its window is Chromium through CEF (BSD-3-Clause), which the app links and ships, and the node in its process prints PDF on that same Chromium when it finds no other (`src/pdf.rs`). `./moq desktop build` puts Chromium's notices, CEF's `CREDITS.html`, in the bundle as `notices/chromium-credits.html`. The server packages are unchanged: there the operator still installs Chromium.
+
 OpenSearch is a separate process, Apache-2.0, and it is not a crate in this graph. Elasticsearch is not a substitute. Current Elasticsearch server licenses (Elastic License 2.0, and SSPL on older lines) are not accepted, including as a child process we would download or embed.
 
 ## Later drivers and engines
@@ -295,7 +297,7 @@ jQuery, Moment, Bootstrap 3, Select2, and the rest of `CombinedBase` are removed
 | `ssh2`, `libssh2` | `libssh2` is BSD-3-Clause | A C client with no server. Not used. |
 | Elasticsearch server | Elastic License 2.0 or SSPL | OpenSearch is the HTTP backend, and it is not embedded. |
 | CKEditor 5 | GPL-2.0-or-later | Replaced by Quasar `QEditor`. |
-| `chromiumoxide_fetcher`, vendored Chromium, Google Chrome as a deployment binary | Chrome is proprietary. Chromium is BSD plus a large notice. | The operator installs Chromium. |
+| `chromiumoxide_fetcher`, vendored Chromium, Google Chrome as a deployment binary | Chrome is proprietary. Chromium is BSD plus a large notice. | The operator installs Chromium. The desktop app ships it as CEF, with its notices (above). |
 | `servo` in the default binary | MPL-2.0, and FreeType's GPL alternative | Feature off until a separate deny report. FreeType, if ever linked, is taken under the FreeType License. |
 | Bitronix source | Upstream LGPL. The `org.moqui:btm` fork is annotated Apache-2.0. | Behavior is reimplemented. The source is not translated. |
 | Shiro, FreeMarker, Groovy, Jetty, SnakeYAML, Jackson | Apache-2.0 | Not linked. Permissive, and still not carried. |

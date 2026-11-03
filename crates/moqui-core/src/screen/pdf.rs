@@ -127,6 +127,13 @@ pub fn install_pdf_unavailable(reason: impl Into<String>) {
     *write(slot()) = Some(Installed::Unavailable(reason.into()));
 }
 
+/// Whether an engine is installed (not none, nor a reason there is none): a host with an engine of its own (the
+/// desktop app's CEF) installs it only where the server found no Chromium.
+#[must_use]
+pub fn pdf_engine_installed() -> bool {
+    matches!(&*read(slot()), Some(Installed::Engine(_)))
+}
+
 /// Remove the installed engine or reason.
 pub fn clear_pdf_engine() {
     *write(slot()) = None;

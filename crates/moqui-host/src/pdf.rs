@@ -261,8 +261,10 @@ impl moqui_core::screen::PdfEngine for ChromiumPdf {
     }
 }
 
-/// The script a preview page evaluates: it resolves to `{png, width, height, pages, text}`, `png` base64.
-fn preview_expression(request: &moqui_core::screen::PdfPreviewRequest<'_>) -> String {
+/// The expression a preview page evaluates: [`PREVIEW_SCRIPT`] called with the vendored pdf.js, the PDF and the
+/// request's limits. It resolves to `{png, width, height, pages, text}`, `png` base64.
+#[must_use]
+pub fn preview_expression(request: &moqui_core::screen::PdfPreviewRequest<'_>) -> String {
     let engine = base64::engine::general_purpose::STANDARD;
     let module = |source: &str| format!("data:text/javascript;base64,{}", engine.encode(source));
     let quoted = |text: String| serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".to_string());
@@ -331,7 +333,7 @@ impl Inner {
             .map_err(|_| Error::new("the PDF engine is shutting down"))?;
         let connection = self.connection().await?;
         let page = Page::open(&connection, self.timeout).await?;
-        let printed = match tokio::time::timeout(self.timeout, page.print_output(&html, png)).await {
+        let printed = match tokio::time::timeout(self.timeout, print_page(&page, &html, png)).await {
             Ok(printed) => printed,
             Err(_) => Err(Error::new(format!(
                 "PDF render did not finish in {} seconds",
@@ -350,7 +352,7 @@ impl Inner {
             .map_err(|_| Error::new("the PDF engine is shutting down"))?;
         let connection = self.connection().await?;
         let page = Page::open(&connection, self.timeout).await?;
-        let previewed = match tokio::time::timeout(self.timeout, page.preview(&expression)).await {
+        let previewed = match tokio::time::timeout(self.timeout, preview_page(&page, &expression)).await {
             Ok(previewed) => previewed,
             Err(_) => Err(Error::new(format!(
                 "PDF preview did not finish in {} seconds",
@@ -450,130 +452,6 @@ impl Page {
             .await
     }
 
-    async fn print_output(&self, html: &str, png: bool) -> Result<Vec<u8>, Error> {
-        // With no patterns every request pauses; data: URLs never do.
-        self.call("Fetch.enable", json!({})).await?;
-        let tree = self.call("Page.getFrameTree", json!({})).await?;
-        let frame = tree
-            .pointer("/frameTree/frame/id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::new("the PDF page has no frame"))?
-            .to_string();
-        self.call("Page.setDocumentContent", json!({ "frameId": frame, "html": html }))
-            .await
-            .map_err(|err| Error::new(format!("could not load the html-print document: {err}")))?;
-        let loaded = self
-            .call(
-                "Runtime.evaluate",
-                json!({ "expression": LOADED, "awaitPromise": true, "returnByValue": true }),
-            )
-            .await?;
-        if let Some(thrown) = loaded.get("exceptionDetails") {
-            return Err(Error::new(format!(
-                "the html-print document did not finish loading: {thrown}"
-            )));
-        }
-        if html.contains("name=\"moqui-report\"") {
-            let ready = self.call("Runtime.evaluate", json!({"expression": "new Promise((resolve,reject)=>{const until=Date.now()+25000;const check=()=>{if(window.moquiReportError)reject(new Error(window.moquiReportError));else if(window.moquiReportRendered===true)resolve(true);else if(Date.now()>until)reject(new Error('report render timed out'));else setTimeout(check,20);};check();})", "awaitPromise":true,"returnByValue":true})).await?;
-            if ready.get("exceptionDetails").is_some() {
-                return Err(Error::new("dashboard charts did not finish rendering"));
-            }
-        }
-        if png {
-            let metrics = self.call("Page.getLayoutMetrics", json!({})).await?;
-            let size = metrics.get("cssContentSize").or_else(|| metrics.get("contentSize"));
-            let width = size
-                .and_then(|s| s.get("width"))
-                .and_then(Value::as_f64)
-                .unwrap_or(1200.0)
-                .clamp(1.0, 8192.0);
-            let height = size
-                .and_then(|s| s.get("height"))
-                .and_then(Value::as_f64)
-                .unwrap_or(800.0)
-                .clamp(1.0, 16384.0);
-            let captured = self.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":0,"width":width,"height":height,"scale":1}})).await?;
-            let data = captured
-                .get("data")
-                .and_then(Value::as_str)
-                .ok_or_else(|| Error::new("Chromium returned no PNG data"))?;
-            return base64::engine::general_purpose::STANDARD
-                .decode(data)
-                .map_err(|error| Error::new(format!("Chromium returned invalid PNG data: {error}")));
-        }
-        let printed = self
-            .call(
-                "Page.printToPDF",
-                json!({ "preferCSSPageSize": true, "printBackground": true, "transferMode": "ReturnAsBase64" }),
-            )
-            .await
-            .map_err(|err| Error::new(format!("Chromium could not print the document: {err}")))?;
-        let data = printed
-            .get("data")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::new("Chromium returned no PDF data"))?;
-        base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|err| Error::new(format!("Chromium returned PDF data that is not base64: {err}")))
-    }
-
-    /// Run [`PREVIEW_SCRIPT`] (inside `expression`) on a page whose content is a canvas.
-    async fn preview(&self, expression: &str) -> Result<moqui_core::screen::PdfPreview, Error> {
-        self.call("Fetch.enable", json!({})).await?;
-        let tree = self.call("Page.getFrameTree", json!({})).await?;
-        let frame = tree
-            .pointer("/frameTree/frame/id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::new("the PDF page has no frame"))?
-            .to_string();
-        self.call(
-            "Page.setDocumentContent",
-            json!({ "frameId": frame, "html": "<!DOCTYPE html><html><body><canvas></canvas></body></html>" }),
-        )
-        .await?;
-        let evaluated = self
-            .call(
-                "Runtime.evaluate",
-                json!({ "expression": expression, "awaitPromise": true, "returnByValue": true }),
-            )
-            .await?;
-        if let Some(thrown) = evaluated.get("exceptionDetails") {
-            let message = thrown
-                .pointer("/exception/description")
-                .or_else(|| thrown.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error");
-            return Err(Error::new(format!("pdf.js could not preview the PDF: {message}")));
-        }
-        let value = evaluated
-            .pointer("/result/value")
-            .ok_or_else(|| Error::new("the PDF preview returned nothing"))?;
-        let number = |name: &str| {
-            value
-                .get(name)
-                .and_then(|number| number.as_f64())
-                .filter(|number| number.is_finite() && *number >= 0.0)
-                .map_or(0, |number| {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let whole = number as u32;
-                    whole
-                })
-        };
-        let png = match value.get("png").and_then(Value::as_str) {
-            Some(data) if !data.is_empty() => base64::engine::general_purpose::STANDARD
-                .decode(data)
-                .map_err(|err| Error::new(format!("the PDF preview image is not base64: {err}")))?,
-            _ => Vec::new(),
-        };
-        Ok(moqui_core::screen::PdfPreview {
-            png,
-            width: number("width"),
-            height: number("height"),
-            pages: number("pages"),
-            text: value.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
-        })
-    }
-
     async fn close(self) {
         self.blocker.abort();
         self.connection.forget(&self.session);
@@ -587,6 +465,163 @@ impl Page {
             )
             .await;
     }
+}
+
+/// One page of a browser over the DevTools Protocol, which [`print_page`] and [`preview_page`] drive: a method and its
+/// parameters, answered with the result. Once `Fetch.enable` is called the page fails each request it pauses, so a
+/// document reaches no network.
+pub trait DevtoolsPage: Send + Sync {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, Error>> + Send + 'a>>;
+}
+
+impl DevtoolsPage for Page {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, Error>> + Send + 'a>> {
+        Box::pin(Page::call(self, method, params))
+    }
+}
+
+/// Print `html` (an `html-print` document) to PDF, or capture it as a PNG, on `page`: its content set, its requests
+/// failed (`Fetch.enable` with no patterns: the page fails each paused request), its fonts and a dashboard's charts
+/// waited for, then `Page.printToPDF` with the document's `@page` size. The headless Chromium's pages and, in the
+/// desktop app, a CEF page run it.
+///
+/// # Errors
+///
+/// Returns the browser's error, or one when the document does not load or the answer is not base64.
+pub async fn print_page(page: &dyn DevtoolsPage, html: &str, png: bool) -> Result<Vec<u8>, Error> {
+    // With no patterns every request pauses; data: URLs never do.
+    page.call("Fetch.enable", json!({})).await?;
+    let tree = page.call("Page.getFrameTree", json!({})).await?;
+    let frame = tree
+        .pointer("/frameTree/frame/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::new("the PDF page has no frame"))?
+        .to_string();
+    page.call("Page.setDocumentContent", json!({ "frameId": frame, "html": html }))
+        .await
+        .map_err(|err| Error::new(format!("could not load the html-print document: {err}")))?;
+    let loaded = page
+        .call(
+            "Runtime.evaluate",
+            json!({ "expression": LOADED, "awaitPromise": true, "returnByValue": true }),
+        )
+        .await?;
+    if let Some(thrown) = loaded.get("exceptionDetails") {
+        return Err(Error::new(format!(
+            "the html-print document did not finish loading: {thrown}"
+        )));
+    }
+    if html.contains("name=\"moqui-report\"") {
+        let ready = page.call("Runtime.evaluate", json!({"expression": "new Promise((resolve,reject)=>{const until=Date.now()+25000;const check=()=>{if(window.moquiReportError)reject(new Error(window.moquiReportError));else if(window.moquiReportRendered===true)resolve(true);else if(Date.now()>until)reject(new Error('report render timed out'));else setTimeout(check,20);};check();})", "awaitPromise":true,"returnByValue":true})).await?;
+        if ready.get("exceptionDetails").is_some() {
+            return Err(Error::new("dashboard charts did not finish rendering"));
+        }
+    }
+    if png {
+        let metrics = page.call("Page.getLayoutMetrics", json!({})).await?;
+        let size = metrics.get("cssContentSize").or_else(|| metrics.get("contentSize"));
+        let width = size
+            .and_then(|s| s.get("width"))
+            .and_then(Value::as_f64)
+            .unwrap_or(1200.0)
+            .clamp(1.0, 8192.0);
+        let height = size
+            .and_then(|s| s.get("height"))
+            .and_then(Value::as_f64)
+            .unwrap_or(800.0)
+            .clamp(1.0, 16384.0);
+        let captured = page.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":0,"width":width,"height":height,"scale":1}})).await?;
+        let data = captured
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::new("Chromium returned no PNG data"))?;
+        return base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|error| Error::new(format!("Chromium returned invalid PNG data: {error}")));
+    }
+    let printed = page
+        .call(
+            "Page.printToPDF",
+            json!({ "preferCSSPageSize": true, "printBackground": true, "transferMode": "ReturnAsBase64" }),
+        )
+        .await
+        .map_err(|err| Error::new(format!("Chromium could not print the document: {err}")))?;
+    let data = printed
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::new("Chromium returned no PDF data"))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|err| Error::new(format!("Chromium returned PDF data that is not base64: {err}")))
+}
+
+/// Run [`PREVIEW_SCRIPT`] (inside `expression`, [`preview_expression`]) on `page`, its content a canvas.
+///
+/// # Errors
+///
+/// Returns the browser's error, or pdf.js's when it cannot preview the PDF.
+pub async fn preview_page(page: &dyn DevtoolsPage, expression: &str) -> Result<moqui_core::screen::PdfPreview, Error> {
+    page.call("Fetch.enable", json!({})).await?;
+    let tree = page.call("Page.getFrameTree", json!({})).await?;
+    let frame = tree
+        .pointer("/frameTree/frame/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::new("the PDF page has no frame"))?
+        .to_string();
+    page.call(
+        "Page.setDocumentContent",
+        json!({ "frameId": frame, "html": "<!DOCTYPE html><html><body><canvas></canvas></body></html>" }),
+    )
+    .await?;
+    let evaluated = page
+        .call(
+            "Runtime.evaluate",
+            json!({ "expression": expression, "awaitPromise": true, "returnByValue": true }),
+        )
+        .await?;
+    if let Some(thrown) = evaluated.get("exceptionDetails") {
+        let message = thrown
+            .pointer("/exception/description")
+            .or_else(|| thrown.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error");
+        return Err(Error::new(format!("pdf.js could not preview the PDF: {message}")));
+    }
+    let value = evaluated
+        .pointer("/result/value")
+        .ok_or_else(|| Error::new("the PDF preview returned nothing"))?;
+    let number = |name: &str| {
+        value
+            .get(name)
+            .and_then(|number| number.as_f64())
+            .filter(|number| number.is_finite() && *number >= 0.0)
+            .map_or(0, |number| {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let whole = number as u32;
+                whole
+            })
+    };
+    let png = match value.get("png").and_then(Value::as_str) {
+        Some(data) if !data.is_empty() => base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|err| Error::new(format!("the PDF preview image is not base64: {err}")))?,
+        _ => Vec::new(),
+    };
+    Ok(moqui_core::screen::PdfPreview {
+        png,
+        width: number("width"),
+        height: number("height"),
+        pages: number("pages"),
+        text: value.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+    })
 }
 
 fn text_of(value: &Value, name: &str) -> Result<String, Error> {
@@ -679,5 +714,47 @@ mod tests {
         assert!(!gone.exists());
         assert!(other.is_dir());
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// A page that answers as Chromium does and keeps the methods it was sent.
+    struct FakePage(std::sync::Mutex<Vec<String>>);
+
+    impl super::DevtoolsPage for FakePage {
+        fn call<'a>(
+            &'a self,
+            method: &'a str,
+            _params: serde_json::Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, super::Error>> + Send + 'a>>
+        {
+            moqui_lib::sync::lock(&self.0).push(method.to_string());
+            let answer = match method {
+                "Page.getFrameTree" => serde_json::json!({ "frameTree": { "frame": { "id": "F1" } } }),
+                // "%PDF-1.7"
+                "Page.printToPDF" => serde_json::json!({ "data": "JVBERi0xLjc=" }),
+                _ => serde_json::json!({}),
+            };
+            Box::pin(async move { Ok(answer) })
+        }
+    }
+
+    #[test]
+    fn a_page_prints_with_its_requests_failed_and_its_content_set_first() {
+        let page = FakePage(std::sync::Mutex::new(Vec::new()));
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let pdf = runtime
+            .block_on(super::print_page(&page, "<html><body>x</body></html>", false))
+            .unwrap();
+        assert_eq!(pdf, b"%PDF-1.7");
+        let sent = moqui_lib::sync::lock(&page.0).clone();
+        assert_eq!(
+            sent,
+            [
+                "Fetch.enable",
+                "Page.getFrameTree",
+                "Page.setDocumentContent",
+                "Runtime.evaluate",
+                "Page.printToPDF"
+            ]
+        );
     }
 }
