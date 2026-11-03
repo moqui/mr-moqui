@@ -20,10 +20,12 @@
 use std::path::{Path, PathBuf};
 
 /// The content security policy of the shell's page: its own scripts only (from its own files' paths, not the server's
-/// forwarded ones), no eval, no frames or workers, its requests to its own origin (which the host forwards) and to
-/// Tauri's IPC. Chromium adds the hashes of the app's initialization scripts.
+/// forwarded ones), no eval (only WebAssembly's compile, for the crypto device's module, `libs/matrix-sdk-crypto`), no
+/// frames (a mail body's `srcdoc` frame, `m-html-view`, is not one, and takes this policy), no workers, its requests to
+/// its own origin (which the host forwards) and to Tauri's IPC. Chromium adds the hashes of the app's initialization
+/// scripts.
 pub(crate) const SHELL_CSP: &str = "default-src 'self'; \
-     script-src http://moqui-shell.localhost/shell/ http://moqui-shell.localhost/js/ http://moqui-shell.localhost/libs/; \
+     script-src http://moqui-shell.localhost/shell/ http://moqui-shell.localhost/js/ http://moqui-shell.localhost/libs/ 'wasm-unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
      connect-src 'self' http://ipc.localhost; media-src 'self' blob:; frame-src 'none'; worker-src 'none'; \
      object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
@@ -67,6 +69,18 @@ impl Assets {
             .map(str::to_string)
             .collect();
         Self { shell, webroot, libs }
+    }
+
+    /// Whether a path is one of the shell's own (its page, or under `/shell/`, `/js/`, `/libs/` or `/css/`): answered from
+    /// its staged files or not found, never forwarded to the server.
+    pub(crate) fn is_static(&self, path: &str) -> bool {
+        if matches!(path, "/" | "/index.html") {
+            return true;
+        }
+        let first = path
+            .strip_prefix('/')
+            .map_or("", |rest| rest.split('/').next().unwrap_or(""));
+        matches!(first, "shell" | "js" | "libs" | "css")
     }
 
     /// The file of a request's path, or none when the path is not one of the shell's (the scheme then forwards it).

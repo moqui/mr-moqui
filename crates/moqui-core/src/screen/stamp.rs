@@ -246,7 +246,7 @@ pub fn qvue_elements(text: &str) -> Vec<(usize, u32, u32)> {
 
 /// The offset of the first `tag` (`<template`, `<script`) at or after `from` that is a tag of that name, followed by
 /// white space, `>` or `/`, and not inside a comment.
-fn qvue_tag(text: &str, from: usize, tag: &str) -> Option<usize> {
+pub(crate) fn qvue_tag(text: &str, from: usize, tag: &str) -> Option<usize> {
     let mut at = from;
     while at < text.len() {
         let comment = text[at..].find("<!--").map(|found| at + found);

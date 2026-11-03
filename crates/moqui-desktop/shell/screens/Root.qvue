@@ -13,16 +13,22 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The desktop client's shell for a signed-in account (js/shell.js, plans/Mobile-Desktop.md §4 configuration 3): the
     server's apps from its shellData, each opening in a window of its own (the server's page through the host); the account
-    menu (switch, add, the account's apps and devices to sign out, sign out); the counts and notifications of the account's /notws, which the host holds; and the
-    bundled BasicComms ChatPanel, whose room opens in Chat in an app window. The root of its Vue app, so it is the $root the
-    client's components ask for: basePath, linkBasePath, setUrl, userId and the notification client, as m-qapps-root has
-    them. Bundled, precompiled (bundled-screens.txt). -->
+    menu (switch, add, the account's apps and devices to sign out, sign out, with what waits unsent listed first); the counts
+    and notifications of the account's /notws, which the host holds; the bundled BasicComms ChatPanel (its room opens in
+    place); and the bundled BasicComms Chat, Inbox (Mail) and Compose, shown here as the comms app's screens under its root
+    (calls.appRoot), so their transitions go to the server, and to the account's store offline. Any other screen, and those
+    not bundled, open in an app window. The root of its Vue app, so it is the $root the client's components and those
+    screens ask for: basePath, linkBasePath, currentPathList, currentParameters, setUrl, setParameters, the containers,
+    userId and the notification client, as m-qapps-root has them, with a history of its own (the shell's page stays /).
+    Bundled, precompiled (bundled-screens.txt). -->
 <template><q-layout view="hHh lpR fFf">
     <q-header elevated class="bg-primary text-white">
         <q-toolbar>
             <q-btn flat round dense icon="sym_o_menu" :aria-label="t('Menu')" @click="drawer = !drawer"></q-btn>
-            <q-toolbar-title class="ellipsis">{{serverName}}</q-toolbar-title>
-            <q-chip v-if="offline" dense square color="warning" text-color="black" icon="sym_o_cloud_off">{{t('Offline: showing what was last seen')}}</q-chip>
+            <q-btn v-if="view" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="goBack"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
+            <q-toolbar-title class="ellipsis">{{viewTitle ? viewTitle + ' · ' + serverName : serverName}}</q-toolbar-title>
+            <q-chip v-if="isOffline" dense square color="warning" text-color="black" icon="sym_o_cloud_off" class="m-shell-offline">{{t('Offline: showing what was last seen')}}
+                <q-tooltip>{{shared ? t('A shared device keeps only the recent rooms and mail for offline use.') : t('What you send waits here and goes when the server can be reached.')}}</q-tooltip></q-chip>
             <q-chip v-if="updateNeeded" dense square color="warning" text-color="black" icon="sym_o_system_update">{{t('The server is newer than this app: update the app')}}</q-chip>
             <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem">{{t('Reconnecting')}}</q-chip>
             <q-btn v-for="item in countItems" :key="item.key" flat dense no-caps :icon="item.icon" :aria-label="item.count ? item.label + ': ' + item.count : item.label" @click="setUrl(item.link)">
@@ -64,6 +70,17 @@ along with this software (see the LICENSE.md file). If not, see
     </q-header>
     <q-drawer v-model="drawer" show-if-above bordered :width="240">
         <q-list>
+            <template v-if="commsItems.length">
+                <q-item-label header>{{t('Comms')}}</q-item-label>
+                <q-item v-for="item in commsItems" :key="item.key" clickable :active="view === item.view" @click="setUrl(item.link)">
+                    <q-item-section avatar><q-icon :name="item.icon"></q-icon></q-item-section>
+                    <q-item-section>{{item.label}}</q-item-section>
+                </q-item>
+                <q-item v-if="shared" dense class="m-shell-shared-hint">
+                    <q-item-section><q-item-label caption>{{t('Shared device: only the recent rooms and mail are kept here for offline use, and they go when you sign out.')}}</q-item-label></q-item-section>
+                </q-item>
+                <q-separator spaced></q-separator>
+            </template>
             <q-item-label header>{{t('Applications')}}</q-item-label>
             <q-item v-for="app in apps" :key="app.name" clickable @click="setUrl(app.path)">
                 <q-item-section avatar>
@@ -98,8 +115,38 @@ along with this software (see the LICENSE.md file). If not, see
             <q-card-actions align="right"><q-btn flat no-caps :label="t('Close')" v-close-popup></q-btn></q-card-actions>
         </q-card>
     </q-dialog>
+    <q-dialog v-model="signOutBox.open">
+        <q-card class="m-shell-sign-out">
+            <q-card-section class="text-h6">{{t('Sign out')}}</q-card-section>
+            <q-card-section class="q-pt-none text-body2">{{signOutBox.shared
+                ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
+                : t('Sign out of this account on this computer? Its device key is revoked.')}}</q-card-section>
+            <template v-if="signOutBox.items.length">
+                <q-card-section class="q-pt-none text-body2 text-weight-medium" :class="signOutBox.shared ? 'text-negative' : ''">{{signOutBox.shared
+                    ? t('Not sent yet: signing out deletes these.') : t('Not sent yet: these stay on this computer and go after you sign in again.')}}</q-card-section>
+                <q-list dense separator class="m-shell-unsent">
+                    <q-item v-for="item in signOutBox.items" :key="item.key">
+                        <q-item-section avatar><q-icon :name="item.icon" size="20px"></q-icon></q-item-section>
+                        <q-item-section><q-item-label class="ellipsis">{{item.label}}</q-item-label>
+                            <q-item-label v-if="item.caption" caption class="ellipsis">{{item.caption}}</q-item-label></q-item-section>
+                    </q-item>
+                </q-list>
+            </template>
+            <q-card-section v-else-if="!signOutBox.checked" class="q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown" :class="signOutBox.shared ? 'text-negative' : ''">
+                {{signOutBox.shared ? t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
+                    : t('What is not sent yet could not be checked: it stays on this computer and goes after you sign in again.')}}</q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps :label="t('Stay signed in')" v-close-popup></q-btn>
+                <q-btn unelevated no-caps :color="signOutRisky ? 'negative' : 'primary'" :label="signOutRisky ? t('Sign out anyway') : t('Sign out')"
+                        @click="confirmSignOut"></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
     <q-page-container>
-        <q-page padding>
+        <q-page v-if="view" class="m-shell-view">
+            <component v-if="viewComponent" ref="view" :is="viewComponent" :key="view"></component>
+        </q-page>
+        <q-page v-else padding>
             <q-card flat bordered class="m-shell-chat q-pa-sm">
                 <component v-if="chatPanel" :is="chatPanel"></component>
                 <div v-else class="q-pa-md m-muted">{{t('Chat is not available on this server.')}}</div>
@@ -118,13 +165,42 @@ const countOf = (counts, key) => {
     if (moqui.isPlainObject(value)) return Number(value.total !== undefined ? value.total : value.count) || 0;
     return Number(value) || 0;
 };
+// The comms app's screens the shell shows itself (bundled, js/shell.js names them under the account's comms root), by
+// their path under that root, and the screen path each is shown as; the host routes the same paths here
+// (src/client/mod.rs SHELL_SCREENS). Any other path is the server's page, in an app window.
+const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'Inbox/Compose': 'compose' };
+const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'] };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message' };
+// what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
+const unsentItems = (found) => {
+    const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
+    const items = ops.map((op) => {
+        const payload = op.payload || {};
+        const fields = payload.fields || {};
+        if (op.kind === 'chat-send') return { key: op.id, icon: 'sym_o_chat', label: payload.sealed ? t('An encrypted chat message') : (payload.text || t('A chat message')),
+            caption: op.state === 'failed' ? t('Not sent') : '' };
+        if (op.kind === 'mail-send') return { key: op.id, icon: 'sym_o_mail', label: fields.subject || t('(no subject)'), caption: t('Mail') };
+        if (op.kind === 'chat-read') return { key: op.id, icon: 'sym_o_done_all', label: t('A room marked read'), caption: '' };
+        if (op.kind === 'mail-state') return { key: op.id, icon: 'sym_o_inbox', label: t('A change to mail threads'), caption: String(payload.action || '') };
+        return { key: op.id, icon: 'sym_o_outbox', label: String(op.kind || ''), caption: '' };
+    });
+    const drafts = (found && Array.isArray(found.drafts)) ? found.drafts.length : 0;
+    if (drafts) items.push({ key: 'drafts', icon: 'sym_o_draft', label: drafts === 1 ? t('1 draft') : fill(t('{count} drafts'), { count: drafts }), caption: '' });
+    return items;
+};
 
 module.exports = {
     name: 'DesktopShell',
-    props: { state: Object, config: Object, shellData: Object, offline: Boolean, chatPath: String },
+    props: { state: Object, config: Object, shellData: Object, offline: Boolean, chatPath: String, commsPath: String },
     provide() {
-        // the bundled ChatPanel's screen: its path is the server's, so its requests go to the comms app's Chat transitions
-        return { mScreen: { path: this.chatPath } };
+        // the screen shown, as m-qapps-root provides it: the comms screen's path and query, else the bundled ChatPanel's (its
+        // path is the server's, so its requests go to the comms app's Chat transitions)
+        const vm = this;
+        return { mScreen: {
+            get url() { const search = vm.currentSearch; return vm.view ? vm.currentPath + (search ? '?' + search : '') : vm.chatPath; },
+            get path() { return vm.view ? vm.currentPath : vm.chatPath; },
+            get parameters() { return vm.view ? vm.currentParameters : {}; },
+            containerId: null } };
     },
     data() {
         const data = this.shellData || {};
@@ -137,11 +213,54 @@ module.exports = {
             apps: Array.isArray(data.apps) ? data.apps : [],
             shellCounts: moqui.isPlainObject(data.counts) ? data.counts : {},
             chatPanel: moqui.bundledComponent(this.chatPath),
-            devicesOpen: false, devices: [], devicesLoaded: false
+            devicesOpen: false, devices: [], devicesLoaded: false,
+            // the comms screen shown (chat, mail, compose; null for the panel), its path under basePath and its query, and the
+            // shell's own history of them
+            view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
+            // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
+            quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
+            signOutBox: { open: false, shared: false, items: [], checked: true }
         };
     },
     computed: {
         accounts() { return (this.state && this.state.accounts) || []; },
+        // the sign-out leaves something unsent, or could not tell
+        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared); },
+        // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
+        shared() {
+            const current = this.accounts.find((account) => account.id === this.currentId);
+            const mode = (current && current.deviceMode) || (this.state && this.state.deviceMode);
+            return mode === 'shared';
+        },
+        // the server out of reach: the start's answers came from the store, or one since (moqui.connection)
+        isOffline() { return !!(moqui.connection && moqui.connection.offline) || (this.offline && this.socketState !== 'open'); },
+        // the comms app's path under basePath (BasicComms, or an app's own Comms)
+        commsRel() { return String(this.commsPath || '/apps/BasicComms').replace(/^\/apps\/?/, ''); },
+        commsLink() { return this.linkBasePath + '/' + this.commsRel; },
+        currentPath() { return this.basePath + (this.currentPathList.length ? '/' + this.currentPathList.join('/') : ''); },
+        currentLinkPath() { return this.linkBasePath + (this.currentPathList.length ? '/' + this.currentPathList.join('/') : ''); },
+        currentSearch() { return moqui.objToSearch(this.currentParameters || {}); },
+        currentLinkUrl() { const search = this.currentSearch; return this.currentLinkPath + (search ? '?' + search : ''); },
+        viewComponent() { return this.view ? this.componentOf(this.view) : null; },
+        viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
+        // the comms screens this shell shows itself, in the drawer
+        commsItems() {
+            return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
+                { key: 'mail', view: 'mail', icon: 'sym_o_mail', label: t('Mail'), link: this.commsLink + '/Inbox' },
+                { key: 'compose', view: 'compose', icon: 'sym_o_edit', label: t('New message'), link: this.commsLink + '/Inbox/Compose' }]
+                .filter((item) => this.componentOf(item.view));
+        },
+        // the + menu's kinds of the apps (m-qapps-root quickCreateItems, with no record of a screen here)
+        quickCreateItems() {
+            const seen = {};
+            const out = [];
+            this.apps.forEach((app) => ((app.providers && app.providers.quickCreate) || []).forEach((item) => {
+                if (!item.url || seen[item.url] || item.requiresRecord) return;
+                seen[item.url] = true;
+                out.push(Object.assign({ key: app.name + ':' + (item.kind || item.url), app: app.name }, item));
+            }));
+            return out;
+        },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
         // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
@@ -152,7 +271,7 @@ module.exports = {
         serverName() { return (this.config.server && this.config.server.name) || (this.config.shell && this.config.shell.title) || 'MR Moqui'; },
         userName() { return this.config.userFullName || this.config.username || ''; },
         // the shell's counts as m-qapps-root shows them (its keys chat, email, messages, notifications), each opening its
-        // screen in an app window
+        // screen: here when the shell shows it (setUrl), else in an app window
         countItems() {
             const shell = (this.shellData && this.shellData.shell) || {};
             const commsRoot = String((this.config.calls && this.config.calls.appRoot) || '/qapps/BasicComms');
@@ -177,26 +296,95 @@ module.exports = {
             },
             immediate: true
         },
-        // the socket back after an offline start: the shell opens again, with what the server has now
-        socketState(state) { if (state === 'open' && this.offline) location.reload(); }
+        // the socket back after an offline start: the shell opens again, with what the server has now (the panel; a comms
+        // screen shown reads again itself)
+        socketState(state) { if (state === 'open' && this.offline && !this.view) location.reload(); },
+        // a screen's quick create (a task from a chat message, a contact from mail): its screen in an app window
+        quickCreateShow(shown) {
+            if (!shown) return;
+            const url = this.quickCreateUrl;
+            this.$nextTick(() => { this.quickCreateShow = false; });
+            if (url) host().openRemote(this.getLinkPath(url)).catch((err) => this.failed(err));
+        }
     },
     methods: {
         t,
         // what a host command that failed says, in a toast
         failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
-        // a link of the client's components (ChatPanel's Open in Comms, a room it cannot open here, a toast's link): the
-        // server's page in an app window
-        setUrl(url) { if (url) host().openRemote(String(url)).catch((err) => this.failed(err)); },
+        // ---- the screens shown here, and the rest in app windows ----
+        // the bundled comms screen of a view, under the paths shell.js named it
+        componentOf(view) { return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null; },
+        // where a link goes: {view, pathList, parameters} for a comms screen this shell shows, else null (an app window)
+        route(url) {
+            const text = String(url || '');
+            const quest = text.indexOf('?');
+            const path = (quest >= 0 ? text.slice(0, quest) : text).replace(/\.(qvt|qvue|qjs)$/, '').replace(/\/+$/, '');
+            const match = /^\/(?:qapps|apps)\/(.+)$/.exec(path);
+            const comms = this.commsRel;
+            if (!match || match[1].indexOf(comms + '/') !== 0) return null;
+            const view = SHELL_ROUTES[match[1].slice(comms.length + 1)];
+            if (!view || !this.componentOf(view)) return null;
+            return { view, pathList: comms.split('/').concat(VIEW_PATHS[view]), parameters: moqui.searchToObj(quest >= 0 ? text.slice(quest + 1) : '') };
+        },
+        // A link of the client's components and screens (a room, a mail view, Open in Chat, a toast's link): a comms screen
+        // this shell shows is shown here (pushState false replaces the entry), any other is the server's page in an app window.
+        setUrl(url, bodyParameters, onComplete, pushState = true) {
+            if (!url) return;
+            const target = this.route(url);
+            if (!target) { host().openRemote(this.getLinkPath(String(url))).catch((err) => this.failed(err)); return; }
+            if (pushState !== false && this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+            // another screen: its containers register again (the same screen keeps them, a compose dock stays)
+            if (target.view !== this.view) this.activeContainers = {};
+            this.view = target.view;
+            this.currentPathList = target.pathList;
+            this.currentParameters = target.parameters;
+            this.bodyParameters = bodyParameters || null;
+            this.drawer = this.drawer && this.$q.screen.gt.sm;
+            if (onComplete) onComplete({ name: this.currentPathList[this.currentPathList.length - 1], path: this.currentPath, query: this.currentParameters,
+                params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
+        },
+        // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
+        replaceUrl(url) { this.setUrl(url, null, null, false); },
+        setParameters(parameters) {
+            if (parameters) {
+                if (this.view) this.backStack = this.backStack.concat([this.currentLinkUrl]).slice(-30);
+                this.currentParameters = Object.assign({}, this.currentParameters, parameters);
+            }
+        },
+        goBack() {
+            const stack = this.backStack.slice();
+            const previous = stack.pop();
+            this.backStack = stack;
+            if (previous && this.route(previous)) this.setUrl(previous, null, null, false);
+            else this.goHome();
+        },
+        goHome() { this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {}; },
+        goPreviousScreen() { this.goBack(); },
+        // a path of the screens (/apps/...) as the server's page (/qapps/...)
+        getLinkPath(path) { return String(path || '').replace(/^\/apps(\/|$)/, this.linkBasePath + '$1'); },
+        shellLoadPath(url) { return String(url || '').replace(/^\/qapps(\/|$)/, this.basePath + '$1'); },
+        // a container component has reload(), load(url) and hide(), as on m-qapps-root
+        addContainer(id, comp) { this.activeContainers[id] = comp; },
+        removeContainer(id, comp) { if (this.activeContainers[id] === comp) delete this.activeContainers[id]; },
+        reloadContainer(id) { const comp = this.activeContainers[id]; if (comp) comp.reload(); },
+        loadContainer(id, url) { const comp = this.activeContainers[id]; if (comp) comp.load(url); },
+        hideContainer(id) { const comp = this.activeContainers[id]; if (comp && comp.hide) comp.hide(); },
+        // the host's link to a comms screen (an OS mailto:, a notification): shown here (shell.js takeOpen)
+        openPathFromHost(path) { this.setUrl(path); },
         switchAccount(id) { if (id !== this.currentId) host().switchAccount(id).catch((err) => this.failed(err)); },
         addAccount() { host().addAccount().catch((err) => this.failed(err)); },
+        // Sign out, after a confirm that lists what waits unsent (moquiDesktop.outbox.unsent): a shared device's account goes
+        // with its data (client-conf device-mode), so its unsent items with it; a personal one keeps them for the next sign-in.
         signOut() {
-            // a shared device's account goes with its data (client-conf device-mode; a personal one keeps it)
-            const current = this.accounts.find((account) => account.id === this.currentId);
-            const shared = !!(current && current.deviceMode === 'shared');
-            this.$q.dialog({ title: t('Sign out'), cancel: true, message: shared
-                ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
-                : t('Sign out of this account on this computer? Its device key is revoked.') })
-                .onOk(() => host().signOut().catch((err) => this.failed(err)));
+            const shared = this.shared;
+            const desktop = host();
+            const unsent = desktop && desktop.outbox && typeof desktop.outbox.unsent === 'function'
+                ? desktop.outbox.unsent().catch((err) => { console.info('The unsent items were not read', err); return null; }) : Promise.resolve(null);
+            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found }; });
+        },
+        confirmSignOut() {
+            this.signOutBox.open = false;
+            host().signOut().catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
         openDevices() {

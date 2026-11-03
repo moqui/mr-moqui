@@ -221,8 +221,10 @@
             }
             if (first) clearScopes(scopes);
         }
-        // a server's page: its sockets, and the storage scope of its account (MoquiLib scopedKey); no other command
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, storageScope: String(window.__moquiStorageScope || "") });
+        // a server's page: its sockets, the storage scope of its account (MoquiLib scopedKey), and a comms screen of the
+        // main window shown there (an encrypted room: the shell owns the chat crypto device, window.__moquiCryptoInShell)
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, storageScope: String(window.__moquiStorageScope || ""),
+            openInShell: (path) => ask("open_in_shell", { path: String(path || "") }) });
         return;
     }
     window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
@@ -231,6 +233,8 @@
         drafts,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key
         state: () => ask("client_state"),
+        // the name of the shell's chat crypto device (WebrootCrypto deviceName): "MR Moqui desktop on <host>"
+        deviceName: String(window.__moquiDeviceName || ""),
         // the storage of the accounts state's clearScopes names, as the shell loads
         clearScopes,
         // deviceMode: personal or shared, when the build asks (state's deviceMode is choose)
@@ -244,6 +248,8 @@
         addAccount: () => ask("client_add_account"),
         removeAccount: (id) => ask("client_remove_account", { id: String(id) }),
         openRemote: (path) => ask("client_open_remote", { path: String(path || "") }),
+        // the comms screen the host keeps for the shell to show (an OS mailto:, a notification), once
+        takeOpen: () => ask("client_take_open"),
         // SSO in the system browser: the server's providers, and a sign-in through one (the server hands it back)
         ssoProviders: (server) => ask("client_sso_providers", { server: String(server || "") }),
         ssoStart: (server, authFlowId, deviceMode) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),

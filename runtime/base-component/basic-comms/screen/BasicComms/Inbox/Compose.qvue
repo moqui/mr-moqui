@@ -23,7 +23,8 @@ along with this software (see the LICENSE.md file). If not, see
     or / at the start of a word), files (drop or pick, or Attach from Files: the drive picker, copies attached, a link put in
     the message for a file over 25 MB or a folder), Send (Ctrl+Enter) with the undo hold, Schedule send, Send and
     archive, Discard. Email drafts save on the server every few seconds; an internal message keeps its draft in this browser
-    until it is sent. Brand color names and Quasar classes only (style-guide §4.8, §5). -->
+    until it is sent. In the desktop client with its server out of reach a banner says that an email waits in the outbox and
+    an internal message as a draft. Brand color names and Quasar classes only (style-guide §4.8, §5). -->
 <template><div class="m-compose">
     <compose-shell :layout="layout" :title="title" :minimized="minimized" :phone="isPhone" @minimize="minimize" @popout="popOut" @popin="popIn" @close="close">
         <div class="column no-wrap" :class="layout === 'dock' ? 'col' : ''" style="min-height:0" @dragover.prevent="dragOver = true" @dragleave.self="dragOver = false"
@@ -36,6 +37,11 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-btn flat dense no-caps color="primary" class="q-mt-sm" :label="t('Close')" @click="close"></q-btn>
             </div>
             <template v-else>
+                <!-- the desktop client with its server out of reach (never on the web) -->
+                <q-banner v-if="noConnection" dense rounded class="q-mx-md q-mt-sm m-tonal text-caption m-compose-offline">
+                    <template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
+                    {{mode === 'internal' ? t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.')
+                        : t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')}}</q-banner>
                 <!-- the fields -->
                 <div class="q-px-md q-pt-sm">
                     <div class="row items-center no-wrap">
@@ -244,6 +250,8 @@ module.exports = {
             return 'page';
         },
         minimized() { return !!(this.hostDock && this.hostDock.minimized); },
+        // the desktop client's server out of reach (moqui.connection; never on the web)
+        noConnection() { return !!(moqui.connection && moqui.connection.offline); },
         mode() { return this.draft.fromValue === 'internal' ? 'internal' : 'email'; },
         draftId() { return this.draft.emailMessageId || null; },
         title() {
@@ -591,10 +599,7 @@ module.exports = {
             try { if (this.query.restoreKey) sessionStorage.removeItem(this.query.restoreKey); } catch (err) { /* no storage */ }
         },
         // an answer that says the server cannot be reached in the desktop client, whose outbox and drafts keep the message
-        unreachable(err) {
-            const status = err && err.status != null ? Number(err.status) : 0;
-            return !!moqui.hostOutbox() && (status === 0 || status === 502 || status === 504);
-        },
+        unreachable(err) { return !!(moqui.unreachable && moqui.unreachable(err)); },
         // files kept by the app for a send from its outbox (offline): each a {file, name, size, contentType}
         keepFiles(files) {
             return Promise.all(files.map((file) => moqui.drafts.saveFile(file).then((name) => (name ? { file: name, name: file.name, size: file.size,
@@ -686,6 +691,8 @@ module.exports = {
             driveChecks[url].then((has) => { this.hasDrive = has; });
         },
         openPicker() {
+            // the drive needs the server (the desktop client offline; never on the web)
+            if (this.noConnection) { moqui.notifyMessages([{ type: 'info', message: t('Attach from Files needs a connection to the server') }]); return; }
             this.picker = { open: true, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: true, text: '', searching: true, chosen: {}, saving: false };
             moqui.request(this.url('pickerData')).then((result) => {
                 const json = result.json || {};

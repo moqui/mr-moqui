@@ -61,6 +61,57 @@ fn the_shell_serves_its_page_scripts_and_libraries_and_nothing_else() {
     // a library the bundle does not stage is not served in development either
     assert!(assets.read("/libs/dompurify/purify.min.js").is_some() || assets.file_of("/libs/dompurify/x").is_some());
     assert!(assets.file_of("/libs/mermaid/mermaid.min.js").is_none());
+    // the bundled Comms screens' libraries: the rich-text editor, and the crypto device's module as WebAssembly
+    for path in [
+        "/libs/tiptap/tiptap.min.js",
+        "/libs/matrix-sdk-crypto/index.mjs",
+        "/js/WebrootCrypto.js",
+    ] {
+        assert!(assets.read(path).is_some(), "{path}");
+    }
+    let wasm = assets
+        .file_of("/libs/matrix-sdk-crypto/pkg/matrix_sdk_crypto_wasm_bg.wasm")
+        .unwrap();
+    assert_eq!(content_type(&wasm), "application/wasm");
+    assert!(String::from_utf8_lossy(&page.body).contains("/js/WebrootCrypto.js"));
+}
+
+#[test]
+fn the_shells_own_paths_are_never_forwarded() {
+    let assets = Assets::choose(true, Path::new("/nowhere"));
+    // a library not staged, a script not there, any path under the shell's directories: its own (404), not the server's
+    for path in [
+        "/",
+        "/index.html",
+        "/libs/mermaid/mermaid.min.js",
+        "/libs/x.js",
+        "/js/NoSuchFile.js",
+        "/js/../x",
+        "/shell/x",
+        "/css/x.css",
+        "/libs",
+    ] {
+        assert!(assets.is_static(path), "{path}");
+    }
+    assert!(assets.read("/libs/mermaid/mermaid.min.js").is_none());
+    for path in [
+        "/qapps/clientConfig",
+        "/apps/Comms/Chat/chatData",
+        "/shellData",
+        "/notws",
+        "/jsx/a",
+        "/rest/s1",
+    ] {
+        assert!(!assets.is_static(path), "{path}");
+    }
+}
+
+#[test]
+fn the_shell_compiles_webassembly_and_evaluates_no_script_text() {
+    assert!(SHELL_CSP.contains("'wasm-unsafe-eval'"));
+    assert!(!SHELL_CSP.contains("'unsafe-eval'"));
+    assert!(SHELL_CSP.contains("frame-src 'none'"));
+    assert!(SHELL_CSP.contains("worker-src 'none'"));
 }
 
 #[test]

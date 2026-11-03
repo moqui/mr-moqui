@@ -241,7 +241,9 @@ struct QvueParts<'a> {
 }
 
 /// As `parseVue`: the first `<tag` followed by a space or `>`, to its `</tag>` (lower case matched), the template to
-/// the last `</template>`, as a template may hold templates.
+/// the last `</template>` before the `<script` or `<style` tag, as a template may hold templates and a script's
+/// strings may too (as the stamp scan, `qvue_elements`, finds it; `parseVue` goes on to the last one, into the script,
+/// which the runtime compiler drops with its unclosed `<script>`).
 fn qvue_parts(text: &str) -> QvueParts<'_> {
     let lower = text.to_ascii_lowercase();
     let part = |tag: &str| -> Option<(&str, &str)> {
@@ -258,7 +260,12 @@ fn qvue_parts(text: &str) -> QvueParts<'_> {
         let start = open_at + lower.get(open_at..)?.find('>')? + 1;
         let attrs = text.get(open_at + opening.len()..start - 1).unwrap_or("");
         let close = if tag == "template" {
-            text.rfind("</template>")?
+            let tail = ["<script", "<style"]
+                .iter()
+                .filter_map(|tag| crate::screen::stamp::qvue_tag(text, start, tag))
+                .min()
+                .unwrap_or(text.len());
+            text[..tail].rfind("</template>")?
         } else {
             start + lower.get(start..)?.find(&format!("</{tag}>"))?
         };
@@ -439,7 +446,21 @@ pub fn precompiled_qvue(compiler_source: &str, screens: &[BundledQvue<'_>]) -> R
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{compile_errors_within, compile_render_within, script_templates};
+    use super::{compile_errors_within, compile_render_within, qvue_parts, script_templates};
+
+    #[test]
+    fn a_qvue_template_ends_before_its_script_whose_strings_may_hold_templates() {
+        let text = "<!-- the screen -->\n<template><div><template v-if=\"a\"><b>x</b></template></div></template>\n\
+            <script>\nconst inner = `<p><template v-if=\"b\">y</template></p>`;\nmodule.exports = { components: {} };\n</script>\n\
+            <style>.a { color: red; }</style>\n";
+        let parts = qvue_parts(text);
+        assert_eq!(
+            parts.template,
+            Some(r#"<div><template v-if="a"><b>x</b></template></div>"#)
+        );
+        assert!(parts.script.is_some_and(|(_, body)| body.contains("const inner")));
+        assert_eq!(parts.style, Some((".a { color: red; }", false)));
+    }
 
     #[test]
     fn a_bundled_script_that_loops_stops_at_the_deadline() {

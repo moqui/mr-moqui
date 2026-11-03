@@ -28,8 +28,12 @@ along with this software (see the LICENSE.md file). If not, see
     its links (no pictures; its sender removes them). An encrypted room (C7, New room's Encrypted; docs/interfaces/Chat-Keys.md
     "Encrypted rooms") is encrypted and decrypted in this browser (moqui.chat.sealMessage, openEvents, openEvent over
     moqui.crypto): its outbox items and drafts keep no text, its files go up encrypted and show from decrypted blobs, and
-    it has no forward, filing, app actions or polls; its header and settings say what it gives up. Brand color names and
-    Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
+    it has no forward, filing, app actions or polls; its header and settings say what it gives up. The desktop client's shell
+    bundles it (crates/moqui-desktop/shell); with its server out of reach (moqui.connection, never on the web) a room shows
+    where the stretch kept on the device ends, a room not kept says so, and what needs the server (edit, delete, react, pin,
+    polls, forward, filing, members and settings, search, threads, files, new rooms) says it needs a connection; in its app
+    windows, which hold no crypto device (the shell owns it), an encrypted room offers Open in Chat. Brand
+    color names and Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
 <template><div class="m-chat-root"><div class="m-chat row no-wrap" :style="{height: height + 'px'}">
     <!-- the rail -->
     <div v-show="!stacked || !roomId" class="column no-wrap" :style="stacked ? 'width:100%' : 'width:300px;min-width:300px'">
@@ -227,6 +231,14 @@ const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notificat
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
 // the drafts' keys (moqui.drafts puts them under the storage scope, or in the desktop client's store)
 const draftPrefix = () => 'boss.chat.draft.';
+// the desktop client's server out of reach (moqui.connection, from its answers; never on the web): an action that needs the
+// server says so instead of failing, and is not taken
+const noConnection = () => !!(moqui.connection && moqui.connection.offline);
+const needsConnection = () => {
+    if (!noConnection()) return false;
+    moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]);
+    return true;
+};
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -812,16 +824,29 @@ const roomTemplate = `
                     <div class="col"><q-skeleton type="text" width="30%"></q-skeleton><q-skeleton type="text"></q-skeleton></div>
                 </div>
             </div>
+            <div v-else-if="state === 'unreachable'" class="col column items-center justify-center q-pa-lg text-center m-muted m-chat-unreachable">
+                <q-icon name="sym_o_cloud_off" size="48px"></q-icon>
+                <div class="text-subtitle2 q-mt-sm">{{t('This conversation is not kept on this device')}}</div>
+                <div class="text-caption">{{t('It opens when the server can be reached.')}}</div>
+            </div>
             <div v-else-if="state === 'missing'" class="col column items-center justify-center q-pa-lg text-center m-muted">
                 <q-icon name="sym_o_lock" size="48px"></q-icon>
                 <div class="text-subtitle2 q-mt-sm">{{t('This conversation is not available')}}</div>
                 <div class="text-caption">{{t('It does not exist, or you are not in it.')}}</div>
+            </div>
+            <div v-else-if="cryptoElsewhere" class="col column items-center justify-center q-pa-lg text-center m-muted m-chat-crypto-elsewhere">
+                <q-icon name="sym_o_lock" size="48px"></q-icon>
+                <div class="text-subtitle2 q-mt-sm">{{t('Encrypted messages open in Chat')}}</div>
+                <div class="text-caption">{{t('This app keeps the keys of encrypted rooms in its main window.')}}</div>
+                <q-btn unelevated no-caps color="primary" icon="sym_o_open_in_new" class="q-mt-md" :label="t('Open in Chat')" @click="openInShell"></q-btn>
             </div>
             <template v-else>
                 <div class="col relative-position" style="min-height:0">
                     <div ref="scroller" class="absolute-full scroll q-pb-xs" @scroll="onScroll" @wheel.passive="anchor = null" @touchstart.passive="anchor = null">
                         <div v-if="hasMoreBefore" class="text-center q-py-sm">
                             <q-btn flat dense no-caps size="sm" color="primary" :loading="loadingOlder" :label="t('Earlier messages')" @click="loadOlder"></q-btn></div>
+                        <div v-else-if="gapBefore" class="text-center text-caption m-muted q-py-sm m-chat-gap" data-gap="before">
+                            <q-icon name="sym_o_cloud_off" size="14px" class="q-mr-xs"></q-icon>{{t('Older messages load when the server can be reached')}}</div>
                         <div v-else class="q-px-md q-pt-lg q-pb-sm">
                             <m-avatar v-if="isDirect && room.otherUserId" :name="displayName" :user-id="room.otherUserId" size="48px"></m-avatar>
                             <q-avatar v-else size="48px" rounded class="m-tonal text-primary" :icon="roomIcon"></q-avatar>
@@ -838,6 +863,8 @@ const roomTemplate = `
                                 <q-icon :name="item.icon" size="14px" class="q-mr-xs"></q-icon>{{item.text}} · {{item.time}}</div>
                             <chat-message v-else :item="item" :room="self"></chat-message>
                         </template>
+                        <div v-if="gapAfter && !hasMoreAfter" class="text-center text-caption m-muted q-py-sm m-chat-gap" data-gap="after">
+                            <q-icon name="sym_o_cloud_off" size="14px" class="q-mr-xs"></q-icon>{{t('Newer messages load when the server can be reached')}}</div>
                         <chat-pending v-for="pending in pendingMain" :key="pending.clientRef" :item="pending" :room="self"></chat-pending>
                     </div>
                     <q-btn v-if="!atBottom || hasMoreAfter" round unelevated size="sm" color="primary" icon="sym_o_arrow_downward" class="absolute"
@@ -1104,7 +1131,7 @@ const chatRoom = {
         roomCount += 1;
         return {
             uid: roomCount, state: 'loading', room: null, member: null, access: {}, members: [], names: {},
-            events: [], hasMoreBefore: false, hasMoreAfter: false, loadingOlder: false, loadingNewer: false,
+            events: [], hasMoreBefore: false, hasMoreAfter: false, gapBefore: false, gapAfter: false, loadingOlder: false, loadingNewer: false,
             myLastRead: 0, dividerSeq: null, highlightSeq: null, atBottom: true, newBelow: 0, holdRead: false,
             hoverKey: null, tapKey: null, editing: null, replyTo: null, side: null,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
@@ -1162,6 +1189,10 @@ const chatRoom = {
         },
         // the browser is offline: sends wait in the outbox, files and polls wait for the connection
         offline() { return !!moqui.chat && moqui.chat.state.online === false; },
+        // the desktop client's server out of reach: what needs it says so (never on the web)
+        noConnection() { return noConnection(); },
+        // an encrypted room in a desktop client's app window, whose shell owns the crypto device: it opens in Chat there
+        cryptoElsewhere() { return this.sealed && !!(moqui.crypto && moqui.crypto.elsewhere && moqui.crypto.elsewhere()); },
         // the outbox's messages of this room and of the open thread (the chat store's state, so they follow other tabs)
         pendingMain() { void (moqui.chat && moqui.chat.state.outbox && moqui.chat.state.sending); return moqui.chat && moqui.chat.pendingIn ? moqui.chat.pendingIn(this.roomId, null) : []; },
         pendingThread() {
@@ -1225,7 +1256,17 @@ const chatRoom = {
         fileIcon,
         url(name) { return this.base + '/' + name; },
         get(name, params) {
-            return moqui.request(this.url(name), { params: params || {} }).then((result) => this.openPage(result.json || {}), (err) => { moqui.handleAjaxError(err); throw err; });
+            return moqui.request(this.url(name), { params: params || {} }).then((result) => this.openPage(result.json || {}), (err) => {
+                // the desktop client offline, for what it does not keep: said where it shows (the gap, the room), not as an error
+                if (!(moqui.unreachable && moqui.unreachable(err))) moqui.handleAjaxError(err);
+                throw err;
+            });
+        },
+        // a timeline page of the desktop client's store (offline): where the stretch it holds ends, the server may have more
+        gapsOf(page, before, after) {
+            const offline = page && moqui.isPlainObject(page.offline) ? page.offline : null;
+            if (before) this.gapBefore = !!(offline && offline.gapBefore) && !page.hasMoreBefore;
+            if (after) this.gapAfter = !!(offline && offline.gapAfter) && !page.hasMoreAfter;
         },
         // the encrypted events of an answer (a timeline page, a room view) decrypted in place before they are shown (C7)
         openPage(json) {
@@ -1235,12 +1276,18 @@ const chatRoom = {
             return Promise.all(lists.map((list) => moqui.chat.openEvents(roomId, list, (file) => this.sealedUrl(file)))).then(() => json);
         },
         post(name, params) {
+            if (needsConnection()) return Promise.reject({ status: 0, offline: true });
             return moqui.request(this.url(name), { method: 'POST', params: params || {} }).then((result) => {
                 const json = result.json || {};
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
-            }, (err) => { moqui.handleAjaxError(err); throw err; });
+            }, (err) => {
+                if (moqui.unreachable && moqui.unreachable(err)) needsConnection(); else moqui.handleAjaxError(err);
+                throw err;
+            });
         },
+        // an action that needs the server, while the desktop client cannot reach it: said, and not taken
+        needsConnection() { return needsConnection(); },
         // the members' userIds, who get an encrypted room's keys
         memberIds() { return this.members.filter((person) => person.userId).map((person) => person.userId); },
         // new room keys came (from a member, or the key backup): the messages that could not be read are tried again
@@ -1336,6 +1383,7 @@ const chatRoom = {
                 this.events = page.eventList || [];
                 this.hasMoreBefore = !!page.hasMoreBefore;
                 this.hasMoreAfter = !!page.hasMoreAfter;
+                this.gapsOf(page, true, true);
                 this.myLastRead = Number((json.member && json.member.lastReadEventSeq) || 0);
                 const last = Number(json.room.lastEventSeq || 0);
                 this.dividerSeq = this.isMember && this.myLastRead < last && this.events.some((event) => Number(event.eventSeq) > this.myLastRead
@@ -1352,7 +1400,7 @@ const chatRoom = {
                     if (this.thread) this.openThread(Number(this.thread), true);
                     else if (!this.compact) this.focusComposer();
                 });
-            }, () => { this.state = 'missing'; });
+            }, (err) => { this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
         },
         applyMeta(json) {
             this.room = json.room;
@@ -1375,6 +1423,7 @@ const chatRoom = {
                 const have = new Set(this.events.map((event) => Number(event.eventSeq)));
                 this.events = (page.eventList || []).filter((event) => !have.has(Number(event.eventSeq))).concat(this.events);
                 this.hasMoreBefore = !!page.hasMoreBefore;
+                this.gapsOf(page, true, false);
                 this.loadingOlder = false;
                 this.$nextTick(() => { if (el) el.scrollTop = el.scrollHeight - fromEnd; });
             }, () => { this.loadingOlder = false; });
@@ -1387,6 +1436,7 @@ const chatRoom = {
                 const have = new Set(this.events.map((event) => Number(event.eventSeq)));
                 this.events = this.events.concat((page.eventList || []).filter((event) => !have.has(Number(event.eventSeq))));
                 this.hasMoreAfter = !!page.hasMoreAfter;
+                this.gapsOf(page, false, true);
                 this.loadingNewer = false;
                 if (!this.hasMoreAfter) this.maybeMarkRead();
             }, () => { this.loadingNewer = false; });
@@ -1401,6 +1451,7 @@ const chatRoom = {
                 this.events = page.eventList || [];
                 this.hasMoreBefore = !!page.hasMoreBefore;
                 this.hasMoreAfter = !!page.hasMoreAfter;
+                this.gapsOf(page, true, true);
                 this.$nextTick(() => this.scrollToSeq(Number(seq), true));
             }, () => {});
         },
@@ -1412,6 +1463,7 @@ const chatRoom = {
                 this.events = page.eventList || [];
                 this.hasMoreBefore = !!page.hasMoreBefore;
                 this.hasMoreAfter = false;
+                this.gapsOf(page, true, true);
                 this.$nextTick(() => { this.scrollToBottom(); this.maybeMarkRead(); });
             }, () => {});
         },
@@ -1482,6 +1534,7 @@ const chatRoom = {
             }, () => {});
         },
         markUnreadFrom(item) {
+            if (needsConnection()) return;
             this.post('markRead', { chatRoomId: this.roomId, eventSeq: item.eventSeq, markUnread: 'true' }).then((json) => {
                 this.holdRead = true;
                 this.myLastRead = Number(json.lastReadEventSeq || 0);
@@ -1693,6 +1746,7 @@ const chatRoom = {
                 const added = (page.eventList || []).filter((event) => !have.has(Number(event.eventSeq)));
                 if (added.length) this.events = this.events.concat(added).sort((left, right) => Number(left.eventSeq) - Number(right.eventSeq));
                 this.hasMoreAfter = !!page.hasMoreAfter;
+                this.gapsOf(page, false, true);
                 if (wasAtBottom) this.$nextTick(() => { this.scrollToBottom(); this.maybeMarkRead(); });
                 else this.newBelow += added.filter((event) => event.type === 'message' && event.senderUserId !== this.me.userId).length;
             }, () => {});
@@ -1775,7 +1829,7 @@ const chatRoom = {
             }, () => {});
         },
         isEditing(item) { return !!this.editing && this.editing.seq === item.eventSeq; },
-        startEdit(item) { this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
+        startEdit(item) { if (needsConnection()) return; this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
         cancelEdit() { this.editing = null; this.$nextTick(() => this.focusComposer()); },
         editLast() {
             const me = this.me.userId;
@@ -1783,6 +1837,7 @@ const chatRoom = {
                 const event = this.events[i];
                 if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
+                if (needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
                 this.$nextTick(() => this.scrollToSeq(Number(event.eventSeq), false));
                 return true;
@@ -1804,7 +1859,7 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost) return;
+            if (!this.canPost || needsConnection()) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
@@ -1832,6 +1887,7 @@ const chatRoom = {
             this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
         },
         pin(item, pinned) {
+            if (needsConnection()) return;
             this.tapKey = null;
             if (item.event) item.event.pinned = pinned;
             this.post('pin', { chatRoomId: this.roomId, eventSeq: item.eventSeq, pinned: pinned ? 'true' : 'false' }).then(() => {
@@ -1840,6 +1896,7 @@ const chatRoom = {
             }, () => {});
         },
         redact(item) {
+            if (needsConnection()) return;
             this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.'), t('Delete'), true).then(() => {
                 this.post('redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => {
                     const event = { type: 'redaction', eventSeq: -1, relatesToEventSeq: item.eventSeq, content: { target: 'message' }, sentDate: Date.now(), threadRootEventSeq: null };
@@ -1857,7 +1914,7 @@ const chatRoom = {
             if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => moqui.notifyMessages([{ type: 'success', message: t('Link copied') }]), () => {});
         },
         // the record is made at once and the message filed on it (create#RecordFromChatMessage); the toast opens it
-        openFileOn(item) { this.tapKey = null; this.fileOn = { open: true, item, value: null, busy: false }; },
+        openFileOn(item) { if (needsConnection()) return; this.tapKey = null; this.fileOn = { open: true, item, value: null, busy: false }; },
         fileOnRecord() {
             const value = String(this.fileOn.value || '');
             const at = value.indexOf('|');
@@ -1923,6 +1980,8 @@ const chatRoom = {
         // ---- the side pane ----
         openSide(name) {
             if (name === 'thread') return;
+            // the panes the desktop client does not keep offline
+            if (['search', 'threads', 'files', 'pinned'].includes(name) && needsConnection()) return;
             this.side = name;
             if (name === 'pinned') this.loadPinned();
             if (name === 'threads') this.loadThreads(false);
@@ -1960,7 +2019,7 @@ const chatRoom = {
         },
         runSearch() {
             const text = String(this.searchPane.text || '').trim();
-            if (!text) return;
+            if (!text || needsConnection()) return;
             this.searchPane.loading = true;
             this.get('search', { searchText: text, chatRoomId: this.roomId }).then((json) => {
                 this.searchPane = { text, results: json.eventList || [], loading: false, searched: true };
@@ -2002,7 +2061,7 @@ const chatRoom = {
         forwardedText(forwardOf) {
             return fill(t('Forwarded from {name} · {when}'), { name: this.nameOf(forwardOf.senderUserId, forwardOf.senderName), when: shortWhen(forwardOf.sentDate) });
         },
-        openForward(item) { this.tapKey = null; this.forward = { open: true, item, roomId: null, comment: '', busy: false }; },
+        openForward(item) { if (needsConnection()) return; this.tapKey = null; this.forward = { open: true, item, roomId: null, comment: '', busy: false }; },
         sendForward() {
             const target = this.forward.roomId;
             if (!target || !this.forward.item) return;
@@ -2020,6 +2079,7 @@ const chatRoom = {
 
         // ---- polls ----
         openPoll(threadRoot, question) {
+            if (needsConnection()) return;
             this.pollBox = { open: true, threadRoot: threadRoot || null, question: question || '', options: ['', ''], multiple: 'N', anonymous: 'N', closes: '', busy: false };
         },
         optionLabel(index) { return fill(t('Option {n}'), { n: index + 1 }); },
@@ -2067,6 +2127,7 @@ const chatRoom = {
             }, () => {});
         },
         closePoll(item) {
+            if (needsConnection()) return;
             this.confirm(t('Close the poll?'), t('It takes no more votes; the votes stay.'), t('Close'), false).then(() => {
                 this.post('closePoll', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
                     if (json.poll) this.applyFields(item.eventSeq, { poll: json.poll });
@@ -2087,6 +2148,7 @@ const chatRoom = {
         },
         setRole(person, roleEnumId) { this.post('setRole', { chatRoomId: this.roomId, userId: person.userId, roleEnumId }).then(() => this.reloadMeta(), () => {}); },
         removeMember(person) {
+            if (needsConnection()) return;
             this.confirm(t('Take out of the room?'), fill(t('{name} no longer sees the room or hears of it.'), { name: person.name }), t('Take out'), true).then(() => {
                 const who = person.userId ? { userId: person.userId } : { chatActorId: person.chatActorId };
                 this.post('removeMember', Object.assign({ chatRoomId: this.roomId }, who)).then(() => this.reloadMeta(), () => {});
@@ -2116,6 +2178,7 @@ const chatRoom = {
         },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         leave() {
+            if (needsConnection()) return;
             const direct = this.isDirect;
             this.confirm(direct ? t('Hide this conversation?') : t('Leave the room?'),
                 direct ? t('It comes back with the next message.') : t('You no longer hear of its messages; a public room you can join again.'),
@@ -2124,6 +2187,7 @@ const chatRoom = {
             });
         },
         openSettings() {
+            if (needsConnection()) return;
             this.settings = { open: true, roomName: this.room.roomName || '', topic: this.room.topic || '', visibility: this.room.visibilityEnumId || '',
                 callE2ee: !!this.room.callE2eeRequired, verifiedOnly: !!this.room.verifiedDevicesOnly, busy: false };
         },
@@ -2149,6 +2213,7 @@ const chatRoom = {
             }, () => { this.settings.busy = false; });
         },
         setArchived(archived) {
+            if (needsConnection()) return;
             this.confirm(archived ? t('Archive the room?') : t('Take the room out of the archive?'),
                 archived ? t('An archived room is read only and leaves the members\' room lists.') : t('Its members can post again.'),
                 archived ? t('Archive') : t('Take out'), archived).then(() => {
@@ -2158,6 +2223,13 @@ const chatRoom = {
                     this.$emit('changed');
                 }, () => {});
             });
+        },
+        // the room in Chat in the desktop client's main window (moquiDesktop.openInShell), which holds the crypto device
+        openInShell() {
+            const desktop = window.moquiDesktop;
+            const path = this.linkBase + '?chatRoomId=' + encodeURIComponent(this.roomId);
+            if (desktop && typeof desktop.openInShell === 'function') desktop.openInShell(path).catch((err) => moqui.notifyMessages(null, (err && err.message) || String(err)));
+            else this.openInChat();
         },
         openInChat() { this.$root.setUrl(this.linkBase + '?chatRoomId=' + encodeURIComponent(this.roomId)); },
         // Esc: the edit, then the side pane, then mark the room read
@@ -2288,14 +2360,21 @@ module.exports = {
         url(name) { return this.base + '/' + name; },
         go(target) { if (target) this.$root.setUrl(target); },
         get(name, params) {
-            return moqui.request(this.url(name), { params: params || {} }).then((result) => result.json || {}, (err) => { moqui.handleAjaxError(err); throw err; });
+            return moqui.request(this.url(name), { params: params || {} }).then((result) => result.json || {}, (err) => {
+                if (moqui.unreachable && moqui.unreachable(err)) needsConnection(); else moqui.handleAjaxError(err);
+                throw err;
+            });
         },
         post(name, params) {
+            if (needsConnection()) return Promise.reject({ status: 0, offline: true });
             return moqui.request(this.url(name), { method: 'POST', params: params || {} }).then((result) => {
                 const json = result.json || {};
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
-            }, (err) => { moqui.handleAjaxError(err); throw err; });
+            }, (err) => {
+                if (moqui.unreachable && moqui.unreachable(err)) needsConnection(); else moqui.handleAjaxError(err);
+                throw err;
+            });
         },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
         bridgeText(room) {
@@ -2335,6 +2414,8 @@ module.exports = {
         // the room a dm or record link found, in place of that link in the history
         replaceRoom(id) {
             const target = this.linkBase + (id ? '?chatRoomId=' + encodeURIComponent(id) : '');
+            // a root with a history of its own (the desktop client's shell) replaces its entry itself
+            if (this.$root.replaceUrl) { this.$root.replaceUrl(target); return; }
             this.$root.setUrl(target, null, null, false);
             try { window.history.replaceState(null, document.title, target); } catch (err) { /* the history stays */ }
         },
@@ -2442,8 +2523,8 @@ module.exports = {
         clearStatus() { if (moqui.chat) moqui.chat.setStatus({ clearStatus: true }); },
 
         // ---- new conversations ----
-        openNewDirect() { this.newDirect = { open: true, userIds: [], busy: false }; },
-        openNewRoom() { this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
+        openNewDirect() { if (needsConnection()) return; this.newDirect = { open: true, userIds: [], busy: false }; },
+        openNewRoom() { if (needsConnection()) return; this.newRoom = { open: true, type: 'private', name: '', topic: '', userIds: [], busy: false, encrypted: false }; },
         startDirect(userIds, fromLink) {
             const ids = (userIds || this.newDirect.userIds || []).map((id) => String(id).trim()).filter((id) => id);
             if (!ids.length) return;
@@ -2469,7 +2550,7 @@ module.exports = {
                 this.replaceRoom(json.chatRoomId);
             }, () => this.replaceRoom(null));
         },
-        openBrowse() { this.browse = { open: true, search: '', list: [], loading: false }; this.loadBrowse(); },
+        openBrowse() { if (needsConnection()) return; this.browse = { open: true, search: '', list: [], loading: false }; this.loadBrowse(); },
         loadBrowse() {
             this.browse.loading = true;
             this.get('rooms', { joinableOnly: 'true', searchText: this.browse.search || '' }).then((json) => {

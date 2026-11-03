@@ -97,6 +97,16 @@ the server. So `window.moquiDesktop` may also have:
   `saveFile`) is the drafts of Chat and Compose: the host's where there is one (this browser's moved in once), else
   `localStorage` under `scopedKey`.
 
+The client's shell also gives `deviceName`, the name of its chat crypto device, which `WebrootCrypto.js` uses; its app
+windows set `window.__moquiCryptoInShell`, so `moqui.crypto` makes no device there (`ensureDevice` refuses with
+`elsewhere`), and give `openInShell(path)`, which shows a comms screen (an encrypted room) in the shell.
+
+With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)`) says the server is out of reach: set
+by `moqui.request` from the host's `X-Moqui-Offline` answers (from the store, or its 502 when the server is not reached)
+and from no answer at all, cleared by the server's own answer and by the host's socket opening or bringing a message;
+`moqui.unreachable(err)` tells such a failure. The web never goes offline, so the screens'
+offline presentation is inert there.
+
 Its bundled shell runs on the runtime build of Vue: `moqui.bundledComponent(name)` answers a screen it bundled
 precompiled (`moqui.qvtBundled`), `loadComponent` answers one without fetching it, and on the runtime build a `.qvue` or
 `.qjs` that is not bundled is none.

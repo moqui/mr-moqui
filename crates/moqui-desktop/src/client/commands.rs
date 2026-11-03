@@ -90,7 +90,18 @@ pub(crate) fn client_state(app: AppHandle) -> Result<Value, String> {
     }
     let cleared = std::mem::take(&mut moqui_lib::sync::lock(&client.cleared).shell);
     state["clearScopes"] = json!(cleared);
+    // the token of the host's load of the shell with a query, once: the shell takes the query only with it
+    state["loadToken"] = json!(moqui_lib::sync::lock(&client.load_token).take());
     Ok(state)
+}
+
+/// The comms screen the host has for the shell to show (a link of the OS or a notification), taken once: the shell of a
+/// signed-in account asks as it mounts and when the host pokes it (`windows::open_page`).
+#[tauri::command(async)]
+pub(crate) fn client_take_open(app: AppHandle) -> Result<Option<String>, String> {
+    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    let open = moqui_lib::sync::lock(&client.open_pending).take();
+    Ok(open)
 }
 
 /// Sign in to `server` as `username`, with `code` once the server asks for one: `{status: "code", text, sendable}`,
@@ -405,6 +416,7 @@ pub(crate) async fn client_remove_account(app: AppHandle, id: String) -> Result<
     if was_current {
         client.mirror.cancel();
         client.sockets.close_all();
+        *moqui_lib::sync::lock(&client.open_pending) = None;
     }
     let removed = remove_account(&client, &id);
     if was_current {
@@ -463,6 +475,8 @@ pub(crate) fn signed_out(app: &AppHandle, id: &str) {
     if current {
         client.mirror.cancel();
         client.sockets.close_all();
+        // a link kept for that account's shell is not the next one's
+        *moqui_lib::sync::lock(&client.open_pending) = None;
     }
     if modes::forgets_on_sign_out(mode, client.conf().device_mode) {
         tracing::info!("{id} is a shared device's account: its data on this computer is deleted");
@@ -479,6 +493,8 @@ pub(crate) fn signed_out(app: &AppHandle, id: &str) {
 /// is given up, and the shell loads it.
 fn switched(app: &AppHandle, client: &Client) {
     *moqui_lib::sync::lock(&client.sso) = None;
+    // a link kept for the other account's shell
+    *moqui_lib::sync::lock(&client.open_pending) = None;
     client.mirror.cancel();
     client.sockets.close_all();
     windows::close_remotes(app, None);

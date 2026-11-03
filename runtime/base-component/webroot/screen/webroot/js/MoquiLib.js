@@ -321,6 +321,41 @@
         // Whether the host refused something for a reason that may pass (its outbox full, the account's data not open, no
         // account): kept to try again; another reason (too large, not valid) will not pass.
         hostBusy(err) { return /full|not open|signed in|client of a server/i.test(String((err && err.message) || err || "")); },
+        // Whether the desktop client's server can be reached, as its answers say (moqui.request notes each): offline while the
+        // host answers from the account's store (X-Moqui-Offline: 1) or says it cannot reach the server (its 502 marked
+        // X-Moqui-Offline: unreachable), or no answer comes; online again at the server's own answer (a 502 of the server's
+        // too), and when its socket opens or brings a message. Never offline on the web, which has no host outbox.
+        // Reactive (the screens show it: the offline chip, "needs a connection"); onConnection(fn) hears each change, fn(offline).
+        connection: root.Vue && root.Vue.reactive ? root.Vue.reactive({ offline: false }) : { offline: false },
+        connectionListeners: [],
+        onConnection(fn) {
+            if (typeof fn !== "function") return () => {};
+            moqui.connectionListeners.push(fn);
+            return () => { const at = moqui.connectionListeners.indexOf(fn); if (at >= 0) moqui.connectionListeners.splice(at, 1); };
+        },
+        setOffline(offline) {
+            const value = !!offline && !!moqui.hostOutbox();
+            if (moqui.connection.offline === value) return;
+            moqui.connection.offline = value;
+            moqui.connectionListeners.slice().forEach((fn) => {
+                try { fn(value); } catch (err) { console.error("connection listener failed", err); }
+            });
+        },
+        // an answer of the host's, not the server's (X-Moqui-Offline: from the store, or the server out of reach)
+        hostAnswered(headers) { return !!(headers && typeof headers.get === "function" && headers.get("X-Moqui-Offline")); },
+        // what an answer says of the connection (status 0 for none), in the desktop client only
+        noteAnswer(status, headers) {
+            if (!moqui.hostOutbox()) return;
+            if (status === 0 || moqui.hostAnswered(headers)) moqui.setOffline(true);
+            else if (status > 0) moqui.setOffline(false);
+        },
+        // an error of moqui.request that says the desktop client's server cannot be reached: the host's marked answer or
+        // none at all (never on the web)
+        unreachable(err) {
+            if (!moqui.hostOutbox() || !err || err.aborted) return false;
+            const status = err.status != null ? Number(err.status) : 0;
+            return status === 0 || moqui.hostAnswered(err.headers);
+        },
         // Drafts by key (Chat's composers, Compose's internal and offline messages): the host's store in the desktop client
         // (window.moquiDesktop.drafts, kept with the account's data and its files), else localStorage under scopedKey. get and
         // keys answer at once from what is read (in the desktop client nothing until ready() resolves: callers wait for it);
@@ -498,6 +533,7 @@
                     try { json = JSON.parse(text); } catch (err) { json = undefined; }
                 }
                 const result = { ok: response.ok, status: response.status, statusText: response.statusText, headers: response.headers, text, json, response };
+                moqui.noteAnswer(response.status, response.headers);
                 const token = response.headers.get("X-CSRF-Token");
                 if (token && moqui.onSessionToken) moqui.onSessionToken(token);
                 // the user preferences the request set (percent-encoded JSON), which the page applies (moqui.applyPreference)
@@ -509,6 +545,7 @@
                 return result;
             }), (error) => {
                 if (error && error.name === "AbortError") throw { aborted: true, status: 0, error };
+                moqui.noteAnswer(0, null);
                 throw { ok: false, status: 0, error, text: "" };
             });
         },

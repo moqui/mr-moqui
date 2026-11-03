@@ -7,8 +7,9 @@
 // no CSRF token; the host answers the shell's own requests from its cache when the server cannot be reached.
 //
 // On the runtime build of Vue, under a CSP without unsafe-eval: the components are the precompiled ones of
-// WebrootVue.qvt.render.js and the bundled screens of bundled-screens.js; a screen that is not bundled opens in a window of
-// its own, the server's page through the host (moquiDesktop.openRemote).
+// WebrootVue.qvt.render.js and the bundled screens of bundled-screens.js (the shell's own, and BasicComms' chat panel, Chat,
+// Inbox and Compose, which Shell/Root shows); a screen that is not bundled opens in a window of its own, the server's page
+// through the host (moquiDesktop.openRemote).
 (function () {
     "use strict";
     const host = window.moquiDesktop;
@@ -16,14 +17,31 @@
 
     // the config until the server's: the runtime build, so loadComponent asks for nothing it cannot make
     moqui.config = { qvt: { build: "runtime", handles: ["static-template"] } };
+    // the page's CSP keeps images to its own origin (src/client/assets.rs SHELL_CSP): a mail's images from other sites
+    // cannot show here, so the Inbox offers no Show images
+    moqui.remoteImages = false;
 
-    // The comms app of the server (its clientConfig's calls.appRoot, under /qapps), and the paths the bundled ChatPanel asks
-    // for under it: ChatPanel loads as its server path, and opens a room with the Chat screen beside it (not bundled).
+    // The comms app of the server (its clientConfig's calls.appRoot, under /qapps), and the bundled BasicComms screens named
+    // under it, as the server's paths, so their requests go to its transitions (an app such as BOSS that mounts them under
+    // its own root, with its transitions added by screen-extend, gets those): ChatPanel, which opens a room with Chat's room
+    // view; Chat; the Inbox (Mail), whose compose docks load Compose; and Compose.
     const commsApp = (config) => String((config.calls && config.calls.appRoot) || "/qapps/BasicComms").replace(/^\/qapps/, "/apps");
+    const BUNDLED_COMMS = ["Panel/Chat", "Chat", "Inbox/Mail", "Inbox/Compose"];
     const nameBundled = (config) => {
-        const panel = moqui.qvtBundled["BasicComms/Panel/Chat"];
-        if (panel) moqui.qvtBundled[commsApp(config) + "/Panel/Chat"] = panel;
+        BUNDLED_COMMS.forEach((name) => {
+            const screen = moqui.qvtBundled["BasicComms/" + name];
+            if (screen) moqui.qvtBundled[commsApp(config) + "/" + name] = screen;
+        });
     };
+
+    // A comms screen the host keeps for the shell (an OS mailto: link, a notification's link: src/client/windows.rs
+    // open_page), taken by Shell/Root as it mounts and when the host pokes it; until then (a sign-in, a load) the host keeps it.
+    let rootVm = null;
+    const takeOpen = () => {
+        if (!rootVm || !host || typeof host.takeOpen !== "function") return;
+        host.takeOpen().then((path) => { if (path && rootVm) rootVm.openPathFromHost(String(path)); }, (err) => console.info("No link taken from the app", err));
+    };
+    window.moquiShell = Object.freeze({ poke: takeOpen });
 
     // A Vue app of a bundled screen, with Quasar and the client's components, mounted on #shell (the one mounted before
     // is unmounted first).
@@ -31,7 +49,7 @@
     const mount = (name, props, config) => {
         const root = moqui.bundledComponent(name);
         if (!root) throw new Error("The shell screen " + name + " is not bundled");
-        if (mounted) { mounted.unmount(); mounted = null; }
+        if (mounted) { mounted.unmount(); mounted = null; rootVm = null; }
         const app = window.Vue.createApp(root, props);
         const quasarOptions = {
             config: Object.assign({ brand: { info: "#1e7b8e" }, notify: { progress: true, closeBtn: "X", position: "top-right" } },
@@ -73,14 +91,21 @@
         }
         qvt.applyRenders();
         const params = new URL(location.href).searchParams;
-        const asked = params.get("signIn");
-        // why the host showed the sign-in (an SSO sign-in that did not finish), and its server
-        const failedBefore = params.get("failed") || "";
-        const retryServer = params.get("server") || "";
+        let asked = null;
+        let failedBefore = "";
+        let retryServer = "";
         let state = { accounts: [] };
         // the browser storage of accounts the host deleted goes first (a shared device's account signed out)
         host.state().then((given) => (host.clearScopes ? host.clearScopes(given && given.clearScopes) : Promise.resolve()).then(() => given)).then((given) => {
             state = given || state;
+            // the page's query only from the host's own load of it (its token, answered once by its state): the sign-in it
+            // asks for, why the last one failed (an SSO sign-in that did not finish), and its server
+            const token = params.get("load");
+            if (token && token === state.loadToken) {
+                asked = params.get("signIn");
+                failedBefore = params.get("failed") || "";
+                retryServer = params.get("server") || "";
+            }
             // what this page keeps in the browser's storage is the account's (MoquiLib scopedKey)
             moqui.storageScope = state.current || "";
             if (!state.current || !state.signedIn || asked) {
@@ -112,13 +137,18 @@
                         new Promise((resolve) => setTimeout(resolve, 3000))
                     ])
                     : Promise.resolve();
-                return ready.then(() => mount("Shell/Root", {
-                    state,
-                    config,
-                    shellData,
-                    offline: configAnswer.offline || shellAnswer.offline,
-                    chatPath: commsApp(config) + "/Panel/Chat"
-                }, config));
+                return ready.then(() => {
+                    rootVm = mount("Shell/Root", {
+                        state,
+                        config,
+                        shellData,
+                        offline: configAnswer.offline || shellAnswer.offline,
+                        chatPath: commsApp(config) + "/Panel/Chat",
+                        commsPath: commsApp(config)
+                    }, config);
+                    // a link the host kept for the shell (opened while it signed in or loaded)
+                    takeOpen();
+                });
             });
         }).catch((err) => {
             console.error("The shell did not start", err);

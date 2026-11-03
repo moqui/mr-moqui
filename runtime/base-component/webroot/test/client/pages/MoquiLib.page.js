@@ -761,3 +761,64 @@ test("drafts: the desktop client's store, with this browser's drafts moved in on
             "acct1:ironstone.compose.n"].forEach((key) => localStorage.removeItem(key));
     }
 });
+
+test("the desktop client's connection follows its host's answers, and the web never goes offline", async () => {
+    const headers = (mark) => ({ get: (name) => (mark && name === "X-Moqui-Offline" ? mark : null) });
+    const heard = [];
+    const off = moqui.onConnection((offline) => heard.push(offline));
+    const realFetch = globalThis.fetch;
+    try {
+        // the web: no host outbox, so no answer or failure makes it offline
+        delete globalThis.moquiDesktop;
+        moqui.noteAnswer(502, headers("unreachable"));
+        moqui.noteAnswer(200, headers("1"));
+        moqui.noteAnswer(0, null);
+        assert.equal(moqui.connection.offline, false);
+        assert.equal(moqui.unreachable({ status: 502, headers: headers("unreachable") }), false);
+        assert.equal(moqui.unreachable({ status: 0 }), false);
+        assert.deepEqual(heard, []);
+        // the desktop client: the host's answer from the store, its own marked 502, or none is offline; the server's own
+        // answer, a 502 or 504 of the server's too, is online
+        globalThis.moquiDesktop = { outbox: { add() {} } };
+        moqui.noteAnswer(200, headers("1"));
+        assert.equal(moqui.connection.offline, true);
+        moqui.noteAnswer(502, headers("unreachable"));
+        assert.equal(moqui.connection.offline, true);
+        moqui.noteAnswer(502, headers(null));
+        assert.equal(moqui.connection.offline, false, "a 502 of the server's (a proxy, a transition) is the server there");
+        moqui.noteAnswer(0, null);
+        moqui.noteAnswer(504, headers(null));
+        assert.deepEqual(heard, [true, false, true, false], "each change heard once");
+        assert.equal(moqui.unreachable({ status: 502, headers: headers("unreachable") }), true);
+        assert.equal(moqui.unreachable({ status: 502, headers: headers(null) }), false);
+        assert.equal(moqui.unreachable({ status: 504 }), false);
+        assert.equal(moqui.unreachable({ status: 0 }), true);
+        assert.equal(moqui.unreachable({ status: 0, aborted: true }), false);
+        // through moqui.request: the host's offline answer, the server's, the host's marked 502 (kept on the error), none
+        globalThis.fetch = () => Promise.resolve(new Response("{\"a\":1}", { status: 200, headers: { "X-Moqui-Offline": "1" } }));
+        const answer = await moqui.request("/apps/x/chatData");
+        assert.equal(answer.json.a, 1);
+        assert.equal(moqui.connection.offline, true);
+        globalThis.fetch = () => Promise.resolve(new Response("{}", { status: 200 }));
+        await moqui.request("/apps/x/chatData");
+        assert.equal(moqui.connection.offline, false);
+        globalThis.fetch = () => Promise.resolve(new Response("The server could not be reached", { status: 502, headers: { "X-Moqui-Offline": "unreachable" } }));
+        await assert.rejects(moqui.request("/apps/x/send"), (err) => moqui.unreachable(err));
+        assert.equal(moqui.connection.offline, true);
+        globalThis.fetch = () => Promise.resolve(new Response("Bad gateway", { status: 502 }));
+        await assert.rejects(moqui.request("/apps/x/send"), (err) => !moqui.unreachable(err));
+        assert.equal(moqui.connection.offline, false);
+        globalThis.fetch = () => Promise.reject(new TypeError("Failed to fetch"));
+        await assert.rejects(moqui.request("/apps/x/chatData"), (err) => err.status === 0);
+        assert.equal(moqui.connection.offline, true);
+        // the host gone (another page of the web): not offline
+        delete globalThis.moquiDesktop;
+        moqui.setOffline(true);
+        assert.equal(moqui.connection.offline, false);
+    } finally {
+        off();
+        globalThis.fetch = realFetch;
+        delete globalThis.moquiDesktop;
+        moqui.connection.offline = false;
+    }
+});

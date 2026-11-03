@@ -400,19 +400,25 @@
             chat.watchUsers([]);
             // the outbox: what waited goes now, when the browser and the socket are back, and when an item is due; other
             // tabs' changes are read (the server answers a message sent twice with the first)
-            chat.state.online = !(root.navigator && root.navigator.onLine === false);
+            // (the desktop client's server out of reach is offline too: moqui.connection, from its answers)
+            const browserOnline = () => !(root.navigator && root.navigator.onLine === false);
+            const reachable = () => !(moqui.connection && moqui.connection.offline);
+            chat.state.online = browserOnline() && reachable();
             // the desktop client's host keeps and sends the outbox: the page shows it and stops its own sending
             const host = chat.host();
             if (host) chat.startHost(host);
             else chat.readOutbox();
+            if (host && moqui.onConnection) moqui.onConnection((offline) => { chat.state.online = !offline && browserOnline(); chat.touchOutbox(); });
             if (root.addEventListener) {
-                root.addEventListener("online", () => { chat.state.online = true; chat.flush(true); });
+                root.addEventListener("online", () => { chat.state.online = reachable(); chat.flush(true); });
                 root.addEventListener("offline", () => { chat.state.online = false; chat.touchOutbox(); });
                 if (!host) root.addEventListener("storage", (event) => { if (event && event.key === chat.outboxKey()) { chat.readOutbox(); chat.emit("outbox", {}); } });
             }
             if (client && client.onState) client.onState((socketState) => {
                 const reconnected = socketState === "open" && chat.state.connected === false;
                 chat.state.connected = socketState === "open";
+                // the host's socket to the server is open: the server can be reached
+                if (socketState === "open" && host && moqui.setOffline) moqui.setOffline(false);
                 if (socketState === "open") chat.flush(true);
                 chat.emit("connection", { state: socketState, reconnected });
             });
@@ -484,6 +490,8 @@
                 (err) => { console.info("chat " + path + " failed", err && err.status); return null; });
         },
         receive(jsonObj) {
+            // a message over the host's socket: the server is there
+            if (jsonObj && moqui.connection && moqui.connection.offline && chat.host() && moqui.setOffline) moqui.setOffline(false);
             const done = chat.reduce(chat.state, jsonObj, chat.me, Date.now());
             if (!done) return;
             // my message arrived: it waits no more (it was sent from another tab, or its answer was lost)

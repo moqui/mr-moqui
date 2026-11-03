@@ -92,6 +92,8 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             crate::client::commands::client_add_account,
             crate::client::commands::client_remove_account,
             crate::client::commands::client_open_remote,
+            crate::client::commands::client_take_open,
+            crate::client::windows::open_in_shell,
             crate::client::commands::client_sso_providers,
             crate::client::commands::client_sso_start,
             crate::client::commands::client_sso_cancel,
@@ -174,13 +176,13 @@ fn capability(origin: &str) -> CapabilityBuilder {
 }
 
 /// Follow `link` in the main window, through the shell's `moqui.openLink` so the page stays loaded. Only a link on the
-/// node's origin; a client's, on its server, in an app window.
+/// node's origin; a client's, on its server, in the shell when it bundles the screen, else in an app window.
 fn open_in_page(app: &AppHandle, link: &str) {
     let Some(url) = node_link(link, app.state::<Bridge>().node.get()) else {
         return;
     };
     if crate::client::active(app) {
-        crate::client::open_link(app, &url);
+        crate::client::open_page(app, &url);
         return;
     }
     if let Some(window) = app.get_webview_window("main") {

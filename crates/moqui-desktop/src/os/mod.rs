@@ -154,9 +154,9 @@ pub(crate) fn opened(app: &AppHandle, links: Vec<Url>) {
         state.node.clone()
     };
     if let Some(page) = node.and_then(|node| links::route(&link, &node, &comms_root())) {
-        // a client's: the server's Compose or Dialer in an app window
+        // a client's: the server's Compose in the shell (bundled), its Dialer in an app window
         if crate::client::active(app) {
-            crate::client::open_link(app, &page);
+            crate::client::open_page(app, &page);
             return;
         }
         if let Some(window) = app.get_webview_window("main") {

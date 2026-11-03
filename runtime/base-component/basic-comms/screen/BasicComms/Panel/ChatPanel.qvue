@@ -138,12 +138,15 @@ module.exports = {
         url(name) { return this.base + '/' + name; },
         go(target) { if (target) this.$root.setUrl(target); },
         post(name, params) {
+            // the desktop client with its server out of reach (moqui.connection; never on the web): said, and not asked
+            if (moqui.connection && moqui.connection.offline) { this.needsConnection(); return Promise.reject({ status: 0, offline: true }); }
             return moqui.request(this.url(name), { method: 'POST', params: params || {} }).then((result) => {
                 const json = result.json || {};
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
-            }, (err) => { moqui.handleAjaxError(err); throw err; });
+            }, (err) => { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(); else moqui.handleAjaxError(err); throw err; });
         },
+        needsConnection() { moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]); },
         roomIcon(room) { return (room.record && room.record.icon) || ROOM_ICONS[room.roomTypeEnumId] || 'sym_o_chat'; },
         countsOf(room) {
             if (!room.isMember) return { unread: 0, mentions: 0 };

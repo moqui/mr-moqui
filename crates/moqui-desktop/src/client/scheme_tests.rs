@@ -66,3 +66,11 @@ fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation(
     assert_eq!(store_key_change(br#"{"reasonCode":"failed"}"#), None);
     assert_eq!(store_key_change(br#"{"storeKey":null,"legacyStoreKey":"old"}"#), None);
 }
+
+#[test]
+fn the_hosts_own_unreachable_answer_is_marked_offline() {
+    let answer = super::unreachable("connection refused");
+    assert_eq!(answer.status(), 502);
+    assert_eq!(answer.headers().get("X-Moqui-Offline").unwrap(), "unreachable");
+    assert!(String::from_utf8_lossy(answer.body()).contains("connection refused"));
+}

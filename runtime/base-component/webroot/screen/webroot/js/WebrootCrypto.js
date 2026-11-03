@@ -41,7 +41,9 @@
  * syncs then, and when its notification socket comes back. The push carries nothing of the message.
  *
  * The API (for encrypted calls, W8):
- * - ensureDevice(): Promise<{userId, deviceId, matrixUserId}>: loads the module and the store, uploads the keys.
+ * - ensureDevice(): Promise<{userId, deviceId, matrixUserId}>: loads the module and the store, uploads the keys; in a
+ *   desktop client's app window (elsewhere()), whose shell owns the device, it refuses with reasonCode elsewhere.
+ * - elsewhere(): whether this page leaves the device to the desktop client's shell (no device here).
  * - sendToDevices(targets, eventType, content): Promise<{sent, devices, skipped}>: Olm-encrypts content as an event of
  *   eventType for each device of the targets, a list of userIds (every device of each) or {userId, deviceIds} (those
  *   devices only), and sends it; not to this device. sent is how many the server queued (a revoked device, or a user
@@ -80,6 +82,12 @@
     const listeners = new Set();
 
     const currentUser = () => (moqui.webrootVue && moqui.webrootVue.userId) || null;
+    // The desktop client's app windows (window.__moquiCryptoInShell, set by the host): the app's shell owns the chat crypto
+    // device, so this page makes and opens none (ensureDevice, and each call that needs the device, refuse with reasonCode
+    // elsewhere) and an encrypted room says it opens in Chat. Never on the web.
+    const elsewhere = () => !!root.__moquiCryptoInShell;
+    const elsewhereError = () => Object.assign(new Error("Encrypted messages open in Chat, in the app's main window"),
+        { reasonCode: "elsewhere", errors: "Encrypted messages open in Chat, in the app's main window" });
     // under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey); the
     // store's databases and lock follow its prefix
     const pointerKey = (userId) => moqui.scopedKey("moqui.crypto.device." + userId);
@@ -187,6 +195,9 @@
     }
 
     function deviceName() {
+        // the desktop client's shell names its device for the app and the computer ("MR Moqui desktop on <host>")
+        const named = root.moquiDesktop && root.moquiDesktop.deviceName;
+        if (named) return String(named);
         const ua = (root.navigator && root.navigator.userAgent) || "";
         const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
         const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Mac OS X/.test(ua) ? "macOS" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
@@ -542,6 +553,7 @@
     }
 
     function ensureDevice() {
+        if (elsewhere()) return Promise.reject(elsewhereError());
         const user = currentUser();
         if (!user) return Promise.reject(new Error("Sign in first"));
         if (machine && me === user && state.status === "ready") return Promise.resolve(identity());
@@ -1350,7 +1362,7 @@
     // a page that goes away closes its store (logout closes it before the logout request, WebrootVue.qvt.js logoutClick)
     if (root.addEventListener) root.addEventListener("pagehide", () => { if (machine) closeNow(); });
 
-    moqui.crypto = { state, ensureDevice, onToDevice, close, thisDeviceId, matrixId, userIdOf, onRoomKeys, encryptFile, decryptFile,
+    moqui.crypto = { state, ensureDevice, elsewhere, onToDevice, close, thisDeviceId, matrixId, userIdOf, onRoomKeys, encryptFile, decryptFile,
         sendToDevices: api("sendToDevices", sendToDevicesNow), devicesOf: api("devicesOf", devicesOfNow), sync: relayOnly("sync", sync),
         forget: relayOnly("forget", forgetNow), startOver: startOverNow, settingsChanged: relayOnly("settingsChanged", settingsChanged),
         encryptRoom: api("encryptRoom", encryptRoomNow), decryptRoom: api("decryptRoom", decryptRoomNow), rotateRoom: api("rotateRoom", rotateRoomNow),

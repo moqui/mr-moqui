@@ -81,22 +81,24 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
         .path_and_query()
         .map_or_else(|| "/".to_string(), |path| path.as_str().to_string());
     let bare = path.split_once('?').map_or(path.as_str(), |(bare, _)| bare).to_string();
-    if origin == SHELL_ORIGIN && request.method() == tauri::http::Method::GET {
-        if let Some(asset) = client.assets.read(&bare) {
-            let mut response = Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", asset.content_type)
-                .header("Cache-Control", "no-cache");
-            if asset.page {
-                response = response.header("Content-Security-Policy", assets::SHELL_CSP);
+    // The shell's own paths (its page, `/shell/`, `/js/`, `/libs/`, `/css/`) are its staged files or nothing: never
+    // forwarded, so no script of the server's comes to the shell's origin by a path its CSP allows (a library not staged).
+    if origin == SHELL_ORIGIN && client.assets.is_static(&bare) {
+        if request.method() == tauri::http::Method::GET {
+            if let Some(asset) = client.assets.read(&bare) {
+                let mut response = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", asset.content_type)
+                    .header("Cache-Control", "no-cache");
+                if asset.page {
+                    response = response.header("Content-Security-Policy", assets::SHELL_CSP);
+                }
+                return response
+                    .body(asset.body)
+                    .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
             }
-            return response
-                .body(asset.body)
-                .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
         }
-        if client.assets.file_of(&bare).is_some() {
-            return plain(StatusCode::NOT_FOUND, "Not found");
-        }
+        return plain(StatusCode::NOT_FOUND, "Not found");
     }
     // The shell's origin has the shell's commands: the server's documents, frames, scripts and workers are never on it
     // (a link in the shell to the server's page opens in an app window), only its data.
@@ -158,10 +160,7 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
                     .body(body)
                     .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
             }
-            return plain(
-                StatusCode::BAD_GATEWAY,
-                &format!("The server could not be reached: {err}"),
-            );
+            return unreachable(&err.to_string());
         }
     };
     // an event stream never ends, and a scheme answers whole bodies: 503, so the Assist drawer polls events.json
@@ -288,6 +287,19 @@ fn store_key_answered(client: &Client, account: &str, device: &str, body: &[u8])
     if let Err(err) = changed {
         tracing::warn!("The chat store key of {account} was not kept: {err}");
     }
+}
+
+/// The host's answer when the server cannot be reached and nothing is kept for the request: 502, marked
+/// `X-Moqui-Offline: unreachable`, which the pages take as offline (MoquiLib `noteAnswer`), unlike a 502 of the server's.
+pub(crate) fn unreachable(err: &str) -> Response<Vec<u8>> {
+    let mut response = plain(
+        StatusCode::BAD_GATEWAY,
+        &format!("The server could not be reached: {err}"),
+    );
+    response
+        .headers_mut()
+        .insert("X-Moqui-Offline", tauri::http::HeaderValue::from_static("unreachable"));
+    response
 }
 
 /// Whether the shell may have the server's answer to a request: its fetches and images, not a document, frame, script,

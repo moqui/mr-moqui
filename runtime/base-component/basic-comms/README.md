@@ -18,7 +18,13 @@ An app adds to these screens without copying them: it mounts them under its own 
 `ext-action` and `ext-panel` items ([docs/ui/Qvt-Client.md](../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)).
 IronStone BOSS does this for its Comms; it hides BasicComms from the launcher and sets `comms_app_root` to `/qapps/Comms`.
 
-Test: `./moq test basic-comms`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
+The desktop client bundles the chat panel, Chat, Inbox (Mail) and Compose in its shell, precompiled from these `.qvue`
+files, and shows them under the server's comms app root; their offline presentation (queued and failed sends, the Inbox's
+Outbox, "needs a connection", the gaps of what is kept) shows only there
+([crates/moqui-desktop](../../../crates/moqui-desktop/README.md#client-of-a-server)). After a change to one of them:
+`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
+
+Test: `./moq test basic-comms`; the bundled screens in the page (no server) `./moq test-client basic-comms --offline`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
 `rtc` feature (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
 [docs/interfaces/SIP.md](../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:

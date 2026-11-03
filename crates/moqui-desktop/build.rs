@@ -38,6 +38,8 @@ fn main() {
         "client_add_account",
         "client_remove_account",
         "client_open_remote",
+        "client_take_open",
+        "open_in_shell",
         "client_sso_providers",
         "client_sso_start",
         "client_sso_cancel",

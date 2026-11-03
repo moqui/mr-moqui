@@ -16,8 +16,11 @@ along with this software (see the LICENSE.md file). If not, see
     the thread list in date groups with selection and hover actions; the reading pane right, bottom or off; the composer
     docks at the bottom right (Compose.qvue in an m-dynamic-container each); the Inbox key scope. The view is in the URL
     (view, account, folder, label, mailbox, q, thread), read from $root.currentParameters, so a view is a link and the
-    browser's Back works. Data and actions are the JSON transitions of Mail.xml. Brand color names and Quasar classes only
-    (style-guide §4.8, §5); the m-* inputs for what is typed. -->
+    browser's Back works. Data and actions are the JSON transitions of Mail.xml. In the desktop client (its shell bundles
+    this screen): the Outbox card lists the mail waiting to send (Retry, Discard) and the thread changes waiting
+    (moqui.hostOutbox()); with the server out of reach, read, unread, flag, archive, move and trash wait there and the rest
+    says it needs a connection; none of it on the web. Brand color names and Quasar classes only (style-guide §4.8, §5);
+    the m-* inputs for what is typed. -->
 <template><div class="m-inbox-root"><div class="m-inbox column no-wrap" :style="{height: height + 'px'}">
     <!-- the search line and the view's tools -->
     <div class="row items-center no-wrap q-px-sm q-py-xs q-gutter-x-xs">
@@ -195,6 +198,36 @@ along with this software (see the LICENSE.md file). If not, see
                             {{failedStores.includes('email') ? t('Your mail could not be read just now; internal messages are shown.') : t('Internal messages could not be read just now; mail is shown.')}}
                         </q-banner>
                         <div v-if="listError" class="q-pa-md text-negative">{{listError}}</div>
+                        <!-- the desktop client: offline, and what waits in its outbox (never on the web) -->
+                        <q-banner v-if="noConnection" dense rounded class="q-ma-sm m-tonal text-caption m-inbox-offline">
+                            <template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
+                            {{t('Offline: the mail kept on this device. Mail you send and read, flag, archive and move wait and go when the server can be reached; the rest needs a connection.')}}
+                        </q-banner>
+                        <q-card v-if="outboxSends.length || outboxChanges" flat bordered class="q-ma-sm m-inbox-outbox">
+                            <q-item dense>
+                                <q-item-section avatar style="min-width:30px"><q-icon name="sym_o_outbox" color="primary"></q-icon></q-item-section>
+                                <q-item-section>
+                                    <q-item-label class="text-weight-medium">{{t('Outbox')}}</q-item-label>
+                                    <q-item-label v-if="outboxChanges" caption>{{fill(outboxChanges === 1 ? t('1 change waits to be made') : t('{count} changes wait to be made'), {count: outboxChanges})}}</q-item-label>
+                                </q-item-section>
+                            </q-item>
+                            <q-list dense separator>
+                                <q-item v-for="op in outboxSends" :key="op.id" class="m-inbox-outbox-item" :data-outbox="op.state">
+                                    <q-item-section>
+                                        <q-item-label class="ellipsis">{{outboxSubject(op)}}</q-item-label>
+                                        <q-item-label caption class="ellipsis">{{outboxTo(op)}}</q-item-label>
+                                        <q-item-label caption :class="op.state === 'failed' ? 'text-negative' : ''">
+                                            <q-icon :name="outboxIcon(op)" size="14px" class="q-mr-xs"></q-icon>{{outboxStateText(op)}}</q-item-label>
+                                    </q-item-section>
+                                    <q-item-section side>
+                                        <div class="row no-wrap">
+                                            <q-btn v-if="op.state !== 'sending' && op.state !== 'acked'" flat dense no-caps size="sm" color="primary" :label="t('Retry')" @click="outboxRetry(op)"></q-btn>
+                                            <q-btn v-if="op.state !== 'sending' && op.state !== 'acked'" flat dense no-caps size="sm" :label="t('Discard')" @click="outboxDiscard(op)"></q-btn>
+                                        </div>
+                                    </q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-card>
 
                         <!-- skeleton rows while the first page loads -->
                         <div v-if="loadingList && !threads.length" class="q-pa-sm">
@@ -413,9 +446,9 @@ along with this software (see the LICENSE.md file). If not, see
                                     <q-banner v-if="item.message.statusId === 'ES_SCHEDULED' && item.message.scheduledSendDate" dense rounded class="m-tonal text-info q-mb-sm">
                                         {{t('Sends')}} {{longDate(item.message.scheduledSendDate)}}
                                         <template v-slot:action><q-btn flat dense no-caps color="primary" :label="t('Cancel send')" @click="cancelScheduled(item.message)"></q-btn></template></q-banner>
-                                    <m-html-view :html="item.message.html || undefined" :text="item.message.html ? undefined : (item.message.text || '')" :allow-remote="isTrusted(item.message)"
-                                            :cid-map="cidMap(item.message)" :title="item.message.subject || t('Message')" @show-images="onShowImages(item.message)"></m-html-view>
-                                    <div v-if="trustOffer === item.message.key && item.message.from && item.message.from.address" class="row items-center q-gutter-x-sm q-mt-xs text-caption">
+                                    <m-html-view :html="item.message.html || undefined" :text="item.message.html ? undefined : (item.message.text || '')" :allow-remote="remoteImages && isTrusted(item.message)"
+                                            :images-bar="remoteImages" :cid-map="cidMap(item.message)" :title="item.message.subject || t('Message')" @show-images="onShowImages(item.message)"></m-html-view>
+                                    <div v-if="remoteImages && trustOffer === item.message.key && item.message.from && item.message.from.address" class="row items-center q-gutter-x-sm q-mt-xs text-caption">
                                         <span class="m-muted">{{t('Always show images from')}} {{item.message.from.address}}?</span>
                                         <q-btn flat dense no-caps size="sm" color="primary" :label="t('Always show')" @click="trustSender(item.message)"></q-btn>
                                         <q-btn flat dense no-caps size="sm" :label="t('Not now')" @click="trustOffer = null"></q-btn>
@@ -748,6 +781,9 @@ along with this software (see the LICENSE.md file). If not, see
 <script>
 const DAY = 86400000;
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+// the thread changes the desktop client's outbox keeps while the server is out of reach (src/client/outbox.rs MAIL_ACTIONS)
+const QUEUED_ACTIONS = ['read', 'unread', 'flag', 'unflag', 'archive', 'unarchive', 'move', 'trash'];
 const pad = (n) => String(n).padStart(2, '0');
 // the rail: views, the mail accounts with their folders and labels, the Internal account with its mailboxes, saved searches
 const railTemplate = '' +
@@ -886,11 +922,20 @@ module.exports = {
             saveSearch: { open: false, name: '' }, goto: { open: false, filter: '' }, browse: { open: false, search: '', list: [], loading: false },
             saveTo: { open: false, file: null, message: null, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, saving: false }, hasDrive: false,
             swipe: null, swipeSuppress: null,
-            newMailbox: { open: false, key: 0 }, mailboxDialog: { open: false, tab: 'members', key: 0, addPartyId: null }, pendingCreateFrom: false, markReadTimer: null
+            newMailbox: { open: false, key: 0 }, mailboxDialog: { open: false, tab: 'members', key: 0, addPartyId: null }, pendingCreateFrom: false, markReadTimer: null,
+            // the desktop client's outbox (moqui.hostOutbox()): its mail sends and thread changes waiting; empty on the web
+            outbox: []
         };
     },
     computed: {
         self() { return this; },
+        // the desktop client's server out of reach (moqui.connection; never on the web): what needs it says so
+        noConnection() { return !!(moqui.connection && moqui.connection.offline); },
+        // images from other sites in a message: not where the page may not load them (the desktop client's shell, whose
+        // policy keeps its images to its own origin; moqui.remoteImages false), so no Show images there
+        remoteImages() { return moqui.remoteImages !== false; },
+        outboxSends() { return this.outbox.filter((op) => op.kind === 'mail-send'); },
+        outboxChanges() { return this.outbox.filter((op) => op.kind === 'mail-state').length; },
         isPhone() { return this.$q.screen.lt.sm; },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         params() { return this.$root.currentParameters || {}; },
@@ -1097,6 +1142,7 @@ module.exports = {
     },
     methods: {
         t,
+        fill,
         // ---- paths ----
         inboxPath() {
             const list = this.$root.currentPathList || [];
@@ -1121,13 +1167,84 @@ module.exports = {
             return this.appLink() + 'Settings/MailAccounts/Account?emailAccountId=' + encodeURIComponent(account.emailAccountId) + (account.warning === 'authFailed' ? '&fix=Y' : '');
         },
         request(name, params, method) {
+            if (method === 'POST' && this.needsConnection()) return Promise.reject({ status: 0, offline: true });
             return moqui.request(this.url(name), { method: method || 'GET', params: params || {} }).then((result) => {
                 const json = result.json || {};
                 if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
                 return json;
-            }, (err) => { moqui.handleAjaxError(err); throw err; });
+            }, (err) => { this.failed(err); throw err; });
         },
-        post(name, params) { return this.request(name, params, 'POST'); },
+        // a thread change the desktop client may keep while the server is out of reach goes through its outbox (stateOrQueue)
+        post(name, params) { return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST'); },
+        // an error of a request: the desktop client's server out of reach says it needs a connection, else as the page shows errors
+        failed(err) { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(true); else moqui.handleAjaxError(err); },
+        // the desktop client offline (never the web): an action that needs the server says so and is not taken
+        needsConnection(always) {
+            if (!always && !this.noConnection) return false;
+            moqui.notifyMessages([{ type: 'info', message: t('This needs a connection to the server: try again when it is back') }]);
+            return true;
+        },
+
+        // ---- the desktop client's outbox: thread changes kept while offline, mail sends waiting ----
+        queueable(params) { return !!moqui.hostOutbox() && QUEUED_ACTIONS.includes(params && params.action); },
+        // the change through the app's outbox when the server is out of reach or changes wait there (as absolute values,
+        // applied to the kept rows at once and sent in order), else now; answers as the server would, with nothing failed
+        stateOrQueue(params) {
+            const queue = () => {
+                let targets = [];
+                try { targets = JSON.parse(params.targetsJson || '[]'); } catch (err) { targets = []; }
+                const payload = { targets, action: params.action };
+                if (params.emailFolderId) payload.emailFolderId = params.emailFolderId;
+                return moqui.hostOutbox().add('mail-state', payload).then(() => ({ failedList: [], queued: true }), (err) => {
+                    moqui.notifyMessages(null, (err && err.message) || t('This change cannot wait for the connection'));
+                    throw err;
+                });
+            };
+            // offline, or behind changes still waiting (they reach the server in the order they were made)
+            if (this.noConnection || this.outboxChanges) return queue();
+            return moqui.request(this.url('state'), { method: 'POST', params }).then((result) => {
+                const json = result.json || {};
+                if (json.messageInfos && json.messageInfos.length) moqui.notifyMessages(json.messageInfos, json.errors);
+                return json;
+            }, (err) => {
+                if (moqui.unreachable && moqui.unreachable(err)) return queue();
+                moqui.handleAjaxError(err);
+                throw err;
+            });
+        },
+        readOutbox() {
+            const host = moqui.hostOutbox();
+            if (!host) return Promise.resolve();
+            return host.list().then((ops) => {
+                this.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op && (op.kind === 'mail-send' || op.kind === 'mail-state'));
+            }, (err) => console.info('Inbox: the outbox was not read from the app', err));
+        },
+        outboxSubject(op) { const fields = (op.payload && op.payload.fields) || {}; return fields.subject || t('(no subject)'); },
+        outboxTo(op) {
+            const fields = (op.payload && op.payload.fields) || {};
+            const names = [];
+            ['toJson', 'ccJson', 'bccJson'].forEach((key) => {
+                let list = [];
+                try { list = JSON.parse(fields[key] || '[]'); } catch (err) { list = []; }
+                (Array.isArray(list) ? list : []).forEach((chip) => { const name = chip && (chip.label || chip.value || chip.address || chip); if (name) names.push(String(name)); });
+            });
+            return names.length ? t('To') + ' ' + names.join(', ') : '';
+        },
+        outboxStateText(op) {
+            if (op.state === 'sending') return t('Sending…');
+            if (op.state === 'failed') return op.error ? t('Not sent:') + ' ' + op.error : t('Not sent');
+            if (op.state === 'held') return t('Waiting: sign in again to send it');
+            return this.noConnection ? t('Waiting for the connection') : t('Waiting to send');
+        },
+        outboxIcon(op) { return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule'); },
+        outboxRetry(op) { const host = moqui.hostOutbox(); if (host) host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))); },
+        outboxDiscard(op) {
+            const host = moqui.hostOutbox();
+            if (!host) return;
+            this.$q.dialog({ title: t('Discard this message?'), message: t('It was not sent; it is removed from this device, with its files.'), cancel: true,
+                ok: { label: t('Discard'), color: 'negative', unelevated: true, noCaps: true } })
+                .onOk(() => host.discard(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))));
+        },
 
         // ---- the view in the URL ----
         openView(params) {
@@ -1213,6 +1330,8 @@ module.exports = {
                 if (seq !== this.listSeq) return;
                 this.loadingList = false;
                 const json = err && err.json;
+                // the desktop client offline, for a list it did not keep
+                if (moqui.unreachable && moqui.unreachable(err)) { this.listError = t('This list is not kept on this device: it loads when the server can be reached'); return; }
                 this.listError = (json && json.errors) || t('The list did not load');
                 if (!json || !json.errors) moqui.handleAjaxError(err);
             });
@@ -1519,7 +1638,7 @@ module.exports = {
             }, (err) => {
                 if (seq !== this.threadSeq) return;
                 this.loadingThread = false;
-                moqui.handleAjaxError(err);
+                this.failed(err);
             });
         },
         reloadThread() {
@@ -2288,8 +2407,15 @@ module.exports = {
         moqui.request(this.url('pickerData'), { params: { checkOnly: 'true' } }).then((result) => { this.hasDrive = !!(result.json || {}).hasDrive; }, () => {});
         this.applyParams();
         setTimeout(() => this.measure(), 300);
+        // the desktop client's outbox: what waits, as it changes
+        const host = moqui.hostOutbox();
+        if (host && typeof host.on === 'function') {
+            this.outboxOff = host.on((event) => { this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
+            this.readOutbox();
+        }
     },
     beforeUnmount() {
+        if (this.outboxOff) this.outboxOff();
         window.removeEventListener('resize', this.onResize);
         document.removeEventListener('keydown', this.onShift, true);
         document.removeEventListener('keyup', this.onShift, true);

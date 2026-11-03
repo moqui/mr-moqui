@@ -48,7 +48,7 @@ mod renewal;
 mod scheme;
 pub(crate) mod sockets;
 mod stores;
-mod windows;
+pub(crate) mod windows;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -97,6 +97,12 @@ pub(crate) struct Client {
     checking: AtomicBool,
     /// An SSO sign-in waiting for the browser to come back, with the device mode chosen for it.
     sso: Mutex<Option<(moqui_client::sso::Pending, Option<DeviceMode>)>>,
+    /// A comms screen to show in the shell (a link of the OS or a notification), until the shell of a signed-in account
+    /// takes it (`client_take_open`), so one opened while the shell signs in or loads is shown after.
+    open_pending: Mutex<Option<String>>,
+    /// The token of the shell's last load by the host with a query (`windows::load_shell`), which the shell's
+    /// `client_state` answers once: the shell takes its query (signIn, failed, server) only from such a load.
+    load_token: Mutex<Option<String>>,
 }
 
 impl Client {
@@ -119,6 +125,8 @@ impl Client {
             next_window: AtomicU64::new(1),
             checking: AtomicBool::new(false),
             sso: Mutex::new(None),
+            open_pending: Mutex::new(None),
+            load_token: Mutex::new(None),
         })
     }
 
@@ -272,8 +280,13 @@ pub(crate) fn active(app: &AppHandle) -> bool {
     app.try_state::<Client>().is_some()
 }
 
-/// A link of a notification or of the OS (a `mailto:` routed to Compose) on the server, `url` under the app origin:
-/// it opens in an app window of the current account.
+/// A link of a notification, of the OS (a `mailto:` routed to Compose) or of the shell on the server, `url` under the
+/// app origin: a comms screen the shell bundles opens in the shell, any other in an app window of the current account.
+pub(crate) fn open_page(app: &AppHandle, url: &Url) {
+    windows::open_page(app, url);
+}
+
+/// A link on the server, `url` under the app origin: it opens in an app window of the current account.
 pub(crate) fn open_link(app: &AppHandle, url: &Url) {
     if url.origin().ascii_serialization() != APP_ORIGIN {
         return;

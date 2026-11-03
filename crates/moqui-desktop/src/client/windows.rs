@@ -16,7 +16,8 @@
 //! window, on the `moqui-shell` origin with the shell's commands; and an app window (`remote-<n>`) for each server page
 //! opened from it, on the `moqui-app` origin with the sockets, the outbox and the drafts only. Each stays on its origin: a link elsewhere on the web
 //! opens in the system browser. An app window is one account's, named in its storage scope, and closes when the
-//! account changes or signs out.
+//! account changes or signs out. The comms app's screens the shell bundles (Chat, the Inbox, Compose) are shown in the
+//! shell instead, from a link of the shell's, the OS (`mailto:`) or a notification ([`open_page`]).
 
 use std::sync::atomic::Ordering;
 
@@ -28,7 +29,7 @@ use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
 /// plugin's check its `window.Notification` makes.
-const SHELL_PERMISSIONS: [&str; 29] = [
+const SHELL_PERMISSIONS: [&str; 30] = [
     "allow-client-state",
     "allow-client-sign-in",
     "allow-client-send-code",
@@ -37,6 +38,7 @@ const SHELL_PERMISSIONS: [&str; 29] = [
     "allow-client-add-account",
     "allow-client-remove-account",
     "allow-client-open-remote",
+    "allow-client-take-open",
     "allow-client-sso-providers",
     "allow-client-sso-start",
     "allow-client-sso-cancel",
@@ -62,7 +64,7 @@ const SHELL_PERMISSIONS: [&str; 29] = [
 
 /// An app window's: the sockets of its page, the outbox and drafts of its account (which reach nothing its requests do
 /// not), and the notification plugin's check its `window.Notification` makes.
-const APP_PERMISSIONS: [&str; 13] = [
+const APP_PERMISSIONS: [&str; 14] = [
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",
@@ -75,6 +77,7 @@ const APP_PERMISSIONS: [&str; 13] = [
     "allow-draft-put",
     "allow-draft-remove",
     "allow-file-save",
+    "allow-open-in-shell",
     "notification:allow-is-permission-granted",
 ];
 
@@ -97,11 +100,12 @@ pub(crate) fn add_capabilities(app: &AppHandle) {
     }
 }
 
-/// The shell's page, with `query` (`signIn=1` for the sign-in).
-fn shell_url(query: Option<&str>) -> Url {
-    let text = match query {
-        Some(query) => format!("{SHELL_ORIGIN}/?{query}"),
-        None => format!("{SHELL_ORIGIN}/"),
+/// The shell's page, with `query` (`signIn=1` for the sign-in) and the token that says the host loaded it.
+fn shell_url(query: Option<&str>, token: Option<&str>) -> Url {
+    let text = match (query, token) {
+        (Some(query), Some(token)) => format!("{SHELL_ORIGIN}/?{query}&load={token}"),
+        (Some(query), None) => format!("{SHELL_ORIGIN}/?{query}"),
+        _ => format!("{SHELL_ORIGIN}/"),
     };
     Url::parse(&text).unwrap_or_else(|_| unreachable!("the shell's url parses"))
 }
@@ -144,7 +148,7 @@ fn stays_on(url: &Url, origin: &str) -> bool {
         Goes::Here => true,
         Goes::AppWindow => {
             if let Some(app) = APP.get() {
-                super::open_link(app, &on_app_origin(url));
+                open_page(app, &on_app_origin(url));
             }
             false
         }
@@ -167,16 +171,164 @@ fn on_app_origin(url: &Url) -> Url {
     moved
 }
 
+/// The comms app's screens the shell shows itself (bundled from basic-comms, `shell/bundled-screens.txt`), by their path
+/// under the comms root, as `Shell/Root` routes them (`SHELL_ROUTES` in `shell/screens/Root.qvue`).
+const SHELL_SCREENS: [&str; 4] = ["Chat", "Inbox", "Inbox/Mail", "Inbox/Compose"];
+
+/// Whether the server's `path` (`/qapps/...` or `/apps/...`, with its query, a `.qvt`, `.qvue` or `.qjs` ending as
+/// Root.qvue takes it) is a comms screen the shell shows, under the account's comms app at `comms_root`
+/// (`calls.appRoot`, `/qapps/BasicComms` or an app's own such as `/qapps/Comms`).
+pub(crate) fn shown_in_shell(path: &str, comms_root: &str) -> bool {
+    let under_apps = |text: &str| {
+        text.strip_prefix("/qapps/")
+            .or_else(|| text.strip_prefix("/apps/"))
+            .map(str::to_string)
+    };
+    let bare = path.split_once('?').map_or(path, |(bare, _)| bare);
+    let bare = [".qvt", ".qvue", ".qjs"]
+        .iter()
+        .find_map(|ext| bare.strip_suffix(ext))
+        .unwrap_or(bare)
+        .trim_end_matches('/');
+    let (Some(screen), Some(root)) = (under_apps(bare), under_apps(comms_root.trim().trim_end_matches('/'))) else {
+        return false;
+    };
+    screen
+        .strip_prefix(root.as_str())
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|rest| SHELL_SCREENS.contains(&rest))
+}
+
+/// Where a server page opened from the OS, a notification or the shell goes.
+#[derive(Debug, PartialEq, Eq)]
+enum PageGoes {
+    /// A comms screen the shell shows: kept for the shell (`client_take_open`); `poke` when an account is signed in, so
+    /// a shell already showing it takes it now (else it does as it mounts, after the sign-in).
+    Shell { poke: bool },
+    /// Another page: an app window.
+    AppWindow,
+}
+
+fn page_goes(path: &str, comms_root: &str, signed_in: bool) -> PageGoes {
+    if shown_in_shell(path, comms_root) {
+        PageGoes::Shell { poke: signed_in }
+    } else {
+        PageGoes::AppWindow
+    }
+}
+
+/// What the host evaluates in the shell to have it take the screen kept for it (`shell/js/shell.js`).
+const SHELL_POKE: &str = "window.moquiShell && window.moquiShell.poke()";
+
+/// A server page opened from the OS (a `mailto:` routed to Compose), a notification or a link in the shell, `url` under
+/// the app origin: a comms screen the shell shows is kept for the shell and shown there (the main window, shown), also
+/// when it comes while the shell signs in or loads; another opens in an app window ([`super::open_link`]).
+pub(crate) fn open_page(app: &AppHandle, url: &Url) {
+    if url.origin().ascii_serialization() != APP_ORIGIN {
+        return;
+    }
+    let path = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
+    let Some(client) = app.try_state::<Client>() else {
+        return;
+    };
+    let current = client.current();
+    let signed_in = current.as_ref().is_some_and(|(_, key)| key.is_some());
+    let root = current.map_or_else(
+        || super::offline::DEFAULT_COMMS_ROOT.to_string(),
+        |(account, _)| client.comms_root_of(&account.id),
+    );
+    match page_goes(&path, &root, signed_in) {
+        PageGoes::Shell { poke } => keep_for_shell(app, &client, path, poke),
+        PageGoes::AppWindow => super::open_link(app, url),
+    }
+}
+
+/// Keep `path` for the shell to take (`client_take_open`), poke a shell that shows a signed-in account to take it now, and
+/// show the main window.
+fn keep_for_shell(app: &AppHandle, client: &Client, path: String, poke: bool) {
+    *moqui_lib::sync::lock(&client.open_pending) = Some(path);
+    if poke {
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(err) = window.eval(SHELL_POKE) {
+                tracing::warn!("The shell was not told of a link: {err}");
+            }
+        }
+    }
+    crate::show_main(app);
+}
+
+/// Whether an app window of `window_account` may have the shell show `path`: a comms screen the shell shows, under that
+/// account's comms app at `comms_root`, while that account is the one the shell shows (`current`).
+fn shell_path_for(
+    path: &str,
+    comms_root: &str,
+    window_account: Option<&str>,
+    current: Option<&str>,
+) -> Result<(), String> {
+    let Some(account) = window_account else {
+        return Err("Only an app window shows a screen in the main window".to_string());
+    };
+    if current != Some(account) {
+        return Err("This window's account is not the one the main window shows: switch to it there first".to_string());
+    }
+    if !shown_in_shell(path, comms_root) {
+        return Err(format!("The main window does not show {path}"));
+    }
+    Ok(())
+}
+
+/// An app window's "Open in Chat" (an encrypted room, whose crypto device is the shell's): `path`, a comms screen the shell
+/// shows under the window's account's comms app, shown in the main window, for that account only while it is current.
+#[tauri::command(async)]
+pub(crate) fn open_in_shell(app: AppHandle, webview: tauri::Webview, path: String) -> Result<(), String> {
+    let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
+    let label = webview.label().to_string();
+    let window_account = moqui_lib::sync::lock(&client.windows)
+        .iter()
+        .find(|(window, _)| *window == label)
+        .map(|(_, account)| account.clone());
+    let current = client.current();
+    let signed_in = current.as_ref().is_some_and(|(_, key)| key.is_some());
+    let current_id = current.map(|(account, _)| account.id);
+    let root = window_account.as_deref().map_or_else(
+        || super::offline::DEFAULT_COMMS_ROOT.to_string(),
+        |id| client.comms_root_of(id),
+    );
+    shell_path_for(&path, &root, window_account.as_deref(), current_id.as_deref())?;
+    keep_for_shell(&app, &client, path, signed_in);
+    Ok(())
+}
+
+/// The script an app window starts with: its account's storage scope, the scopes it is to clear once, that the shell owns
+/// the chat crypto device (WebrootCrypto makes or opens none here), then the bridge.
+fn app_window_script(scope: &str, cleared: &[String]) -> Result<String, String> {
+    let scope = serde_json::to_string(scope).map_err(|err| err.to_string())?;
+    let cleared = serde_json::to_string(cleared).map_err(|err| err.to_string())?;
+    Ok(format!(
+        "window.__moquiStorageScope = {scope};\nwindow.__moquiClearScopes = {cleared};\nwindow.__moquiCryptoInShell = true;\n{}",
+        crate::bridge::SCRIPT
+    ))
+}
+
+/// The script the shell starts with: its crypto device's name ("MR Moqui desktop on <host>"), then the bridge.
+fn shell_script(device_name: &str) -> String {
+    let name = serde_json::to_string(device_name).unwrap_or_else(|_| "\"\"".to_string());
+    format!("window.__moquiDeviceName = {name};\n{}", crate::bridge::SCRIPT)
+}
+
 static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 
 /// The main window, on the shell.
 pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
     let _ = APP.set(app.clone());
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(shell_url(None)))
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(shell_url(None, None)))
         .title("MR Moqui")
         .inner_size(1280.0, 860.0)
         .min_inner_size(400.0, 300.0)
-        .initialization_script(crate::bridge::SCRIPT)
+        .initialization_script(shell_script(&super::device_name()))
         .on_download(crate::bridge::on_download)
         .on_permission_request(crate::bridge::on_permission)
         .on_page_load(|window, payload| {
@@ -198,8 +350,13 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
 
 /// Load the shell again (another account, signed out), with `query`.
 pub(crate) fn load_shell(app: &AppHandle, query: Option<&str>) {
+    // a query comes with a token the shell's state answers once, so only the host's load sets what the shell does
+    let token = query.and_then(|_| moqui_client::store::new_client_ref().ok());
+    if let Some(client) = app.try_state::<Client>() {
+        moqui_lib::sync::lock(&client.load_token).clone_from(&token);
+    }
     if let Some(window) = app.get_webview_window("main") {
-        if let Err(err) = window.navigate(shell_url(query)) {
+        if let Err(err) = window.navigate(shell_url(query, token.as_deref())) {
             tracing::error!("The shell did not load: {err}");
         }
         crate::show_main(app);
@@ -224,15 +381,10 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
     }
     let url = Url::parse(&format!("{APP_ORIGIN}{trimmed}")).map_err(|err| err.to_string())?;
     let label = format!("remote-{}", client.next_window.fetch_add(1, Ordering::Relaxed));
-    // the account's storage scope for the server's own scripts (MoquiLib scopedKey), then the bridge
-    let scope = serde_json::to_string(&account.id).map_err(|err| err.to_string())?;
-    // and the storage of accounts deleted since an app window last opened, which this one clears once (bridge.js)
+    // the account's storage scope for the server's own scripts (MoquiLib scopedKey), and the storage of accounts deleted
+    // since an app window last opened, which this one clears once (bridge.js)
     let cleared = std::mem::take(&mut moqui_lib::sync::lock(&client.cleared).app);
-    let cleared = serde_json::to_string(&cleared).map_err(|err| err.to_string())?;
-    let script = format!(
-        "window.__moquiStorageScope = {scope};\nwindow.__moquiClearScopes = {cleared};\n{}",
-        crate::bridge::SCRIPT
-    );
+    let script = app_window_script(&account.id, &cleared)?;
     let title = if account.server_name.is_empty() {
         account.server.clone()
     } else {

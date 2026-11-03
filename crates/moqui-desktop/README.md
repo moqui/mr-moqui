@@ -100,8 +100,10 @@ or the tray's "Use as a client of a server", which writes `client` in `node-mode
 bundled shell, which opens with no network; each account is a server and a user, with a device key the host keeps.
 
 - **Schemes:** `moqui-shell` (`http://moqui-shell.localhost`) serves the shell's files (`shell/`, and the webroot's `js/`,
-  `libs/` and `css/` of `shell/libs.txt`; a bundle's staged copy in `shell-assets/`) under a CSP without `unsafe-eval`,
-  and forwards the server's data (never its pages or scripts) to the current account's server; `moqui-app`
+  `libs/` and `css/` of `shell/libs.txt`; a bundle's staged copy in `shell-assets/`) under a CSP without `unsafe-eval`
+  (only `wasm-unsafe-eval`, for the crypto device's module), and forwards the server's data (its JSON, images, media and
+  downloads; never its pages, frames or scripts, and nothing under its own paths, which are its files or a 404) to the
+  current account's server; the host's own 502, the server not reached, is marked `X-Moqui-Offline: unreachable`; `moqui-app`
   (`http://moqui-app.localhost`) forwards everything, for the app windows (`remote-<n>`), which show the server's own
   `/qapps`. Each request carries the key in the `login_key` header; the pages hold no credential and send no cookie.
   How the schemes work around Chromium's handling of their HTML is in [Mobile-Desktop](../../plans/Mobile-Desktop.md#one-transport-seam).
@@ -168,9 +170,19 @@ bundled shell, which opens with no network; each account is a server and a user,
   navigation stays on its origin (the web opens in the system browser, a server page from the shell in an app window).
 - **Downloads:** an attachment or a large file is saved by the host, streamed, as for the node in process (above); a
   small one is Chromium's. An event stream is answered 503, as on the node's scheme.
-- **Bundled screens:** `shell/bundled-screens.txt` lists them (the shell's own and BasicComms' chat panel); they are
-  precompiled into `shell/js/bundled-screens.js`, checked by `cargo test -p moqui-core --lib
-  bundled_screens_are_precompiled` (`UPDATE_GOLDEN=1` writes it again). A screen not bundled opens in an app window.
+- **Bundled screens:** `shell/bundled-screens.txt` lists them (the shell's own, and BasicComms' chat panel, Chat, Inbox
+  and Compose from their `.qvue` files, the web's own source); they are precompiled into `shell/js/bundled-screens.js`,
+  checked by `cargo test -p moqui-core --lib bundled_screens_are_precompiled` (`UPDATE_GOLDEN=1` writes it again), with
+  the libraries they load in `libs.txt`. The shell shows those Comms screens itself, under the account's comms app
+  (`calls.appRoot`), and a link to them from the OS or a notification is kept until the shell takes it
+  (`client/windows.rs` `open_page`); any other screen opens in an app window. An app that extends them (BOSS) keeps its
+  transitions and `ext-action` items there.
+- **Chat crypto:** the shell owns the account's crypto device ("MR Moqui desktop on <host>"); an app window makes and
+  opens none (`window.__moquiCryptoInShell`), and an encrypted room there offers Open in Chat, which shows it in the
+  shell for the window's account while it is current (`open_in_shell`).
+- **Offline in the screens:** from `moqui.connection` (the host's `X-Moqui-Offline` answers), inert on the web: queued and
+  failed sends, the Inbox's Outbox, "needs a connection", and the sign-out's list of what is unsent. Specs:
+  `moqui test-client basic-comms --offline` (`ShellComms`).
 
 ## OS integration
 
@@ -182,8 +194,8 @@ bundled shell, which opens with no network; each account is a server and a user,
   on Linux.
 - **`mailto:`, `tel:`, `sip:`:** the package registers the app as a handler (`plugins.deep-link` in `tauri.conf.json`,
   `linux/main.desktop`). A mail link opens the Comms app's Compose filled in, a call link its Dialer, under
-  `comms_app_root` (default `/qapps/BasicComms`); a client's open in an app window, under its server's
-  (`calls.appRoot` of the client config). "Make default for email and calls" makes the app the default:
+  `comms_app_root` (default `/qapps/BasicComms`); a client's under its server's (`calls.appRoot` of the client
+  config): Compose in the shell, the Dialer in an app window. "Make default for email and calls" makes the app the default:
   LaunchServices on macOS (the installed app only), `xdg-mime default` on Linux.
 - **First run:** once the initial admin is signed in on a node that is not paired and not an edge or all-in-one node,
   the window opens the attach wizard (`/qapps/system/EdgeNode/Pair`) once, kept by a marker file; the wizard can be
