@@ -188,3 +188,66 @@ fn an_internal_signature_passes_only_with_this_nodes_key() {
         None
     );
 }
+
+#[test]
+fn the_dkim_domains_are_by_role_and_an_all_in_one_nodes_are_both_sides() {
+    use moqui_core::edge::replica::ReplicaValue;
+    use moqui_core::edge::NodeRole;
+    let copy = |id: &str, address: &str, kind: &str| ReplicaValue {
+        paired_node_id: "node-a".to_string(),
+        set_name: super::super::edge_mail::RECIPIENT_SET.to_string(),
+        entity_name: super::super::sync::ACCOUNT.to_string(),
+        pk: serde_json::json!({"emailAccountId": id}),
+        fields: serde_json::json!({"emailAddress": address, "accountKindEnumId": kind}),
+    };
+    let copies = vec![
+        copy("1", "ann@Desk.Example.", "EakHosted"),
+        copy("2", "team@shared.example", "EakShared"),
+        copy("3", "me@gmail.example", "EakExternal"),
+    ];
+    let own = || Ok(vec!["sales@server.example".to_string(), "x@shared.example".to_string()]);
+    let replicated = || Ok(replicated_addresses(&copies));
+    let domains = |role| {
+        role_domains(role, own, replicated)
+            .unwrap()
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(domains(NodeRole::Normal), ["server.example", "shared.example"]);
+    assert_eq!(
+        domains(NodeRole::Edge),
+        ["desk.example", "shared.example"],
+        "an external account is not signed for"
+    );
+    assert_eq!(
+        domains(NodeRole::AllInOne),
+        ["desk.example", "server.example", "shared.example"]
+    );
+    // a normal node does not read the copies, nor an edge node its own accounts
+    let fails = || Err(moqui_lib::error::Error::new("not read"));
+    assert!(role_domains(NodeRole::Normal, own, fails).is_ok());
+    assert!(role_domains(NodeRole::Edge, fails, replicated).is_ok());
+    assert!(role_domains(NodeRole::AllInOne, own, fails).is_err());
+}
+
+#[test]
+fn an_all_in_one_nodes_own_sends_are_signed_for_the_servers_domains_only() {
+    use moqui_core::edge::NodeRole;
+    assert_eq!(sending_role(NodeRole::AllInOne), NodeRole::Normal);
+    assert_eq!(sending_role(NodeRole::Normal), NodeRole::Normal);
+    assert_eq!(sending_role(NodeRole::Edge), NodeRole::Edge);
+}
+
+#[test]
+fn the_from_address_is_the_first_address_of_the_from_field() {
+    assert_eq!(
+        from_address(b"From: Ann <Ann@Desk.Example>\r\nTo: x@y\r\n\r\nbody").as_deref(),
+        Some("Ann@Desk.Example")
+    );
+    assert_eq!(
+        from_address(b"From: ann@desk.example\r\n\r\nbody").as_deref(),
+        Some("ann@desk.example")
+    );
+    assert_eq!(from_address(b"From: nobody\r\n\r\nbody"), None);
+    assert_eq!(from_domain(b"From: Ann <ann@Desk.Example.>\r\n\r\nx").as_deref(), Some("desk.example"));
+}

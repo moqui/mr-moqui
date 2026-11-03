@@ -61,6 +61,9 @@ with a messaging bridge and no trunk texts.
 - MMS. Each file of a text that goes out is put on the edge node before the send, and the provider fetches it from
   there (`/channels/<chatBridgeId>/media/<token>`, for `channels_media_minutes`). While the link is down the text waits.
   Files of texts that come in are fetched by the local node from the provider, as without an edge node.
+- On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own bridges and numbers and
+  the local node's share the webhook route; each id and number belongs to one side, and the server refuses one the
+  other side has.
 
 ## The number pair's room
 

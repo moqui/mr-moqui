@@ -33,6 +33,7 @@ pub mod define;
 mod eca;
 mod eca_rules;
 mod edge;
+mod edge_claims;
 mod external_agent;
 pub use eca_rules::{reload as reload_eca_rules, EcaRuleCounts};
 mod email_eca;

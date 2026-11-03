@@ -400,7 +400,8 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
     let address = listener
         .local_addr()
         .map_err(|err| Error::new("the SMTP listener has no address").with_source(err))?;
-    let edge_mode = moqui_core::edge::settings(factory).edge_node;
+    let edge_mode = moqui_core::edge::settings(factory).edge_node();
+    let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     if config.authserv_id.is_empty() && !edge_mode {
         tracing::warn!(
             "smtp_authserv_id is empty: Authentication-Results fields are kept as they came, the gateway's not told \
@@ -417,6 +418,8 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
         },
         if edge_mode {
             "the local node's hosted and shared accounts, queued for it"
+        } else if all_in_one {
+            "hosted and shared accounts, and the paired node's queued for it"
         } else {
             "hosted and shared accounts"
         },
@@ -437,24 +440,22 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
             _ => "",
         }
     );
+    let options = Options {
+        spam_headers: config.spam_headers.clone(),
+        authserv_id: config.authserv_id.clone(),
+    };
     if edge_mode {
-        let backend = queue::QueueBackend::new(
-            Arc::downgrade(factory),
-            config.plus_separator.clone(),
-            Options {
-                spam_headers: config.spam_headers.clone(),
-                authserv_id: config.authserv_id.clone(),
-            },
-        );
+        let backend = queue::QueueBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
+        crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
+    } else if all_in_one {
+        // by owner (plans/Edge-Node.md §10): the server's own accounts here, the paired node's queued for it
+        let backend = queue::SplitBackend::new(Arc::downgrade(factory), config.plus_separator.clone(), options);
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     } else {
         let backend = FactoryBackend {
             factory: Arc::downgrade(factory),
             delimiters: config.plus_separator.clone(),
-            options: Options {
-                spam_headers: config.spam_headers.clone(),
-                authserv_id: config.authserv_id.clone(),
-            },
+            options,
         };
         crate::edge::handle().spawn(serve(listener, config, tls, backend, watch));
     }
@@ -465,6 +466,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<Option<SmtpServer
 }
 
 /// The answer to `RCPT TO`.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum RcptAnswer {
     /// The account it goes to.
     Local(String),
@@ -482,6 +484,9 @@ pub(crate) enum AccountResult {
     /// The store failed: 451, and the gateway tries again.
     Failed,
 }
+
+/// Each account's result of a message.
+pub(crate) type AccountResults = Vec<(String, AccountResult)>;
 
 /// The answer after `DATA` or the last `BDAT`.
 pub(crate) enum DataAnswer {
@@ -537,7 +542,7 @@ impl Backend for FactoryBackend {
             let facade = factory
                 .entity()
                 .ok_or_else(|| CoreError::new("the entity facade is not ready"))?;
-            Ok(inbound::deliver(
+            Ok(deliver_own(
                 &facade,
                 &message.raw,
                 &message.envelope,
@@ -549,47 +554,58 @@ impl Backend for FactoryBackend {
         match delivered {
             Err(err) => DataAnswer::TempFail(err.message().to_string()),
             Ok(Err(text)) => DataAnswer::Rejected(text),
-            Ok(Ok(report)) => {
-                let accounts: Vec<String> = report
-                    .deliveries
-                    .iter()
-                    .map(|delivery| match &delivery.result {
-                        Ok(Outcome::Stored { email_message_id, junk }) => format!(
-                            "account {} stored it as {email_message_id}{}",
-                            delivery.email_account_id,
-                            if *junk { " in Junk" } else { "" }
-                        ),
-                        Ok(Outcome::Duplicate) => format!("account {} had it", delivery.email_account_id),
-                        Ok(Outcome::Gone) => format!("account {} is gone", delivery.email_account_id),
-                        Err(_) => format!("account {} failed", delivery.email_account_id),
-                    })
-                    .collect();
-                let summary = format!(
-                    "{}; spam {}; {}",
-                    accounts.join(", "),
-                    if report.spam { "yes" } else { "no" },
-                    if report.authentication.is_empty() {
-                        "no Authentication-Results"
-                    } else {
-                        report.authentication.as_str()
-                    }
-                );
-                let accounts = report
-                    .deliveries
-                    .iter()
-                    .map(|delivery| {
-                        let result = match &delivery.result {
-                            Ok(Outcome::Stored { .. } | Outcome::Duplicate) => AccountResult::Stored,
-                            Ok(Outcome::Gone) => AccountResult::Gone,
-                            Err(_) => AccountResult::Failed,
-                        };
-                        (delivery.email_account_id.clone(), result)
-                    })
-                    .collect();
-                DataAnswer::Stored { accounts, summary }
-            }
+            Ok(Ok((accounts, summary))) => DataAnswer::Stored { accounts, summary },
         }
     }
+}
+
+/// Deliver `raw` to the server's own accounts of `groups` (`moqui_mail::delivery::deliver`): each account's result and
+/// the summary for the session log; `Err` when the message is refused (not a message), answered 554.
+fn deliver_own(
+    facade: &moqui_core::entity::EntityFacade,
+    raw: &[u8],
+    envelope: &Envelope,
+    groups: &[Recipients],
+    options: &Options,
+) -> Result<(AccountResults, String), String> {
+    let report = inbound::deliver(facade, raw, envelope, groups, options)?;
+    let described: Vec<String> = report
+        .deliveries
+        .iter()
+        .map(|delivery| match &delivery.result {
+            Ok(Outcome::Stored { email_message_id, junk }) => format!(
+                "account {} stored it as {email_message_id}{}",
+                delivery.email_account_id,
+                if *junk { " in Junk" } else { "" }
+            ),
+            Ok(Outcome::Duplicate) => format!("account {} had it", delivery.email_account_id),
+            Ok(Outcome::Gone) => format!("account {} is gone", delivery.email_account_id),
+            Err(_) => format!("account {} failed", delivery.email_account_id),
+        })
+        .collect();
+    let summary = format!(
+        "{}; spam {}; {}",
+        described.join(", "),
+        if report.spam { "yes" } else { "no" },
+        if report.authentication.is_empty() {
+            "no Authentication-Results"
+        } else {
+            report.authentication.as_str()
+        }
+    );
+    let accounts = report
+        .deliveries
+        .iter()
+        .map(|delivery| {
+            let result = match &delivery.result {
+                Ok(Outcome::Stored { .. } | Outcome::Duplicate) => AccountResult::Stored,
+                Ok(Outcome::Gone) => AccountResult::Gone,
+                Err(_) => AccountResult::Failed,
+            };
+            (delivery.email_account_id.clone(), result)
+        })
+        .collect();
+    Ok((accounts, summary))
 }
 
 struct Shared<B> {

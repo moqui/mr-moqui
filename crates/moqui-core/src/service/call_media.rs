@@ -265,7 +265,7 @@ fn store_edge_call_audio(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
         .ok_or_else(|| LibError::new("storing call audio needs an execution context"))?;
-    if !crate::edge::settings(&factory).edge_node {
+    if !crate::edge::settings(&factory).takes_links() {
         return Err(LibError::new(
             "store#EdgeCallAudio runs on an edge node, not on a local node",
         ));
@@ -298,11 +298,15 @@ fn store_edge_call_audio(
         .map_err(|e| LibError::new(format!("call audio item {item}: {e}")))?
         .ok_or_else(|| LibError::new(format!("call audio item {item}: its file is not there")))?;
     let size = bytes.len() as u64;
+    // on an all-in-one node the server's own greetings and prompts are at the shared paths: the paired node's are kept
+    // apart, where the SIP engine reads them for its calls (sip/voicemail.rs call_audio_job)
+    let node = parameters.get("pairedNodeId").map(to_plain_string).unwrap_or_default();
+    let kept = crate::edge::media::kept_audio_location(&factory, &node, &location);
     factory
         .resource()
-        .write_from(&location, &mut std::io::Cursor::new(bytes), Some(size))
-        .map_err(|e| LibError::new(format!("call audio {location} was not stored: {}", e.message())))?;
-    tracing::info!("call audio item {item}: {location} ({size} bytes) kept for the SIP engine");
+        .write_from(&kept, &mut std::io::Cursor::new(bytes), Some(size))
+        .map_err(|e| LibError::new(format!("call audio {kept} was not stored: {}", e.message())))?;
+    tracing::info!("call audio item {item}: {location} ({size} bytes) kept at {kept} for the SIP engine");
     Ok(BTreeMap::from([(
         "byteSize".to_string(),
         Value::I64(i64::try_from(size).unwrap_or(i64::MAX)),

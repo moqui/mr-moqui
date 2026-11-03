@@ -15,8 +15,12 @@
 //! Delegated calls (plans/Edge-Node.md §5.2). On an edge node the service facade hands a synchronous call of a
 //! service the conf lists (`<edge><delegate service=".."/>`) to the link (`crate::service::call::sync_with`, which
 //! checks authorization first when the edge node has the service's definition): the parameters and the caller's
-//! identity go as JSON data, and the local node's result or errors come back. On the local node [`run`] runs it as the user `_EDGE_`, with authorization, and only
-//! when its own conf lists the service too.
+//! identity go as JSON data, and the local node's result or errors come back. On the local node [`run`] runs it as the
+//! user `_EDGE_`, with authorization, and only when its own conf lists the service too.
+//!
+//! An all-in-one node (§10, E12) delegates a listed service only for a paired node's item, inside an
+//! [`super::owner::with`] scope naming that node, and sends it down that node's link; for the server's own items the
+//! same service runs here.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -58,35 +62,63 @@ fn crosses(name: &str) -> bool {
     !NOT_SENT.contains(&name) && !is_auth_name(name) && !name.starts_with('_')
 }
 
-/// On an edge node, the conf entry of a call of `name` (canonical) that is to run on the local node; `None` for any
-/// other call, which runs here as usual. Only synchronous calls are delegated: an async call or a scheduled job of a
-/// listed service runs on the node that queued it.
-pub(crate) fn listed(name: &str) -> Option<super::conf::Delegate> {
+/// A call that is to run on a paired local node: its conf entry, and the node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Delegated {
+    pub entry: super::conf::Delegate,
+    /// The paired node it goes to: on an all-in-one node the scope's; on a dedicated edge node the scope's when one is
+    /// set (a call for an item of the node whose link named it, E12), else `None`, which goes to the only node linked.
+    pub node: Option<Arc<str>>,
+}
+
+/// The call of `name` (canonical) to run on a paired local node, when it is one; `None` for any other call, which
+/// runs here as usual.
+/// - On a dedicated edge node: every call of a service its conf lists; to the paired node of an
+///   [`super::owner::with`] scope when one is set, so that with several nodes linked a call for one node's item (its
+///   SIP call, its room) goes down that node's link.
+/// - On an all-in-one node: a call of a listed service inside an [`super::owner::with`] scope of a paired node; the
+///   server's own items run here.
+///
+/// Only synchronous calls are delegated: an async call or a scheduled job of a listed service runs on the node that
+/// queued it.
+pub(crate) fn listed(name: &str) -> Option<Delegated> {
     if !super::conf::delegating() {
         return None;
     }
     let factory = ExecutionContext::with_current(|ctx| Arc::clone(ctx.factory()))?;
     let settings = super::settings(&factory);
-    if !settings.edge_node {
+    let node = if settings.edge_node() {
+        match super::owner::scoped() {
+            Some(super::owner::Owner::Paired(node)) => Some(node),
+            Some(super::owner::Owner::Own) | None => None,
+        }
+    } else if settings.all_in_one() {
+        match super::owner::scoped() {
+            Some(super::owner::Owner::Paired(node)) => Some(node),
+            Some(super::owner::Owner::Own) | None => return None,
+        }
+    } else {
         return None;
-    }
-    settings.delegate(name).cloned()
+    };
+    let entry = settings.delegate(name).cloned()?;
+    Some(Delegated { entry, node })
 }
 
-/// Send a delegated call of `name` and wait for the local node's answer: its result, or its errors added to this
-/// context's messages. The caller's transaction, if any, stays open while it waits (at most the link's answer
+/// Send a delegated call of `name` to the node of `delegated` and wait for its answer: its result, or its errors added
+/// to this context's messages. The caller's transaction, if any, stays open while it waits (at most the link's answer
 /// timeout, 60 s).
 pub(crate) fn send(
     name: &str,
     parameters: &BTreeMap<String, Value>,
-    timeout: Option<std::time::Duration>,
+    delegated: &Delegated,
 ) -> Result<BTreeMap<String, Value>, Error> {
     let call = DelegateCall {
         service: name.to_string(),
         parameters: parameters_json(parameters),
         caller: caller_json(),
         operation_id: crate::entity::uuid_v4().map_err(Error::from)?,
-        timeout,
+        timeout: delegated.entry.timeout,
+        node: delegated.node.as_deref().map(str::to_string),
     };
     let link = super::link().map_err(|_| Error::new(format!("{OFFLINE}: this host has no edge link")))?;
     let answer = link.delegate(&call).map_err(Error::from)?;
@@ -138,14 +170,15 @@ pub fn result_map(json: &serde_json::Value) -> BTreeMap<String, Value> {
 }
 
 /// On a local node, run a delegated call as `_EDGE_` on this thread (a request worker with a fresh context): refused
-/// unless this node's conf lists the service, and run with authorization, so `_EDGE_`'s grants must cover it too.
+/// on a node that takes links (the edge end runs none), unless this node's conf lists the service, and run with
+/// authorization, so `_EDGE_`'s grants must cover it too.
 pub fn run(factory: &ExecutionContextFactory, call: &DelegateCall) -> DelegateAnswer {
     let refused = |message: String| DelegateAnswer {
         result: serde_json::Value::Null,
         errors: vec![message],
     };
     let settings = super::settings(factory);
-    if settings.edge_node {
+    if settings.takes_links() {
         return refused("this node is an edge node; it runs no delegated calls".to_string());
     }
     let service = crate::service::call::canonical(&call.service);

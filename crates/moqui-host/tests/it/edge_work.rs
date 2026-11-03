@@ -421,6 +421,7 @@ fn work_crosses_the_link_once_and_in_order_and_survives_a_cut() {
         caller: serde_json::json!({"username": "john.doe"}),
         operation_id: "edge-work-unlisted".to_string(),
         timeout: None,
+        node: None,
     };
     let answer = moqui_core::edge::link().unwrap().delegate(&unlisted).unwrap();
     assert_eq!(

@@ -15,6 +15,8 @@
 //! The edge link as `moqui_core::edge` sees it ([`EdgeLink`]), installed when the HTTP listeners start: the local
 //! node's dialer (started when `edge_node_url` is set, and by pairing without a restart) and, on an edge node, its
 //! [`EdgeServer`] with its web front, SSH tunnel port and delegated calls; on both, the queue's metrics and retention.
+//! An all-in-one node (`node_role=all-in-one`, §10) starts what an edge node does and never dials; its own web, mail
+//! and XMPP stay a normal node's, and only its paired node's `EdgeHost` names go down the link.
 //! Pairing writes `edge_node_url`, `edge_node_key` and `edge_node_pin` to `runtime/.env` and sets them as properties;
 //! unpairing removes them (plans/Edge-Node.md §5.1, §5.2, §5.3, §5.7).
 
@@ -61,18 +63,20 @@ pub(crate) fn start(
     shutdown: watch::Receiver<bool>,
     down: crate::http::DownServe,
 ) -> Started {
-    let edge_node = moqui_core::edge::is_edge_node();
+    let role = moqui_core::edge::node_role_kind();
+    // the edge end of a link: a dedicated edge node or an all-in-one node (plans/Edge-Node.md §10)
+    let takes_links = role.takes_links();
     // the edge conf is read now, with the role this node started with (plans/Edge-Node.md §5.2)
     let settings = moqui_core::edge::settings(factory);
-    if settings.edge_node != edge_node {
+    if settings.role != role {
         tracing::warn!("node_role changed after this server read its edge conf; it keeps the role it started with");
     }
     // the web protection, which also admits the SSH tunnel port's connections on an edge node
     let guard = Arc::clone(&down.app.guard);
-    if !edge_node {
+    if !takes_links {
         super::down::install(factory, down);
     }
-    let server = match (edge_node, resolver) {
+    let server = match (takes_links, resolver) {
         (true, Some(resolver)) => {
             let key = moqui_lib::env::get_prop_or_env(moqui_core::edge::LINK_KEY);
             match Identity::from_key(&key, "moqui-edge-link") {
@@ -85,7 +89,8 @@ pub(crate) fn start(
                 }
                 Err(err) => {
                     tracing::error!(
-                        "node_role is edge, but {}: {err}; this edge node takes no links",
+                        "node_role is {}, but {}: {err}; this node takes no links",
+                        role.as_str(),
                         moqui_core::edge::LINK_KEY
                     );
                     None
@@ -94,8 +99,9 @@ pub(crate) fn start(
         }
         (true, None) => {
             tracing::error!(
-                "node_role is edge, but the HTTPS listener is off (no certificate in runtime/cert, or \
-                 webapp_https_listen_port=off): this edge node takes no links"
+                "node_role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
+                 webapp_https_listen_port=off): this node takes no links",
+                role.as_str()
             );
             None
         }
@@ -108,7 +114,7 @@ pub(crate) fn start(
         server: server.as_ref().map(|(server, _)| Arc::downgrade(server)),
         dialer: Mutex::new(None),
     });
-    if !edge_node {
+    if !takes_links {
         let weak = Arc::downgrade(&hook);
         moqui_core::telemetry::for_factory(factory).observe_gauge("moqui.edgelink.up", move || {
             let hook = weak.upgrade()?;
@@ -116,20 +122,23 @@ pub(crate) fn start(
             Some(if linked { 1.0 } else { 0.0 })
         });
     }
-    let paired = (!edge_node)
+    let paired = (!takes_links)
         .then(|| LocalConfig::from_properties(&instance_id(factory)))
         .flatten();
-    // the queue's metrics and retention, where the link carries work: an edge node here, a local node when its dialer
-    // starts (Hook::start_dialer)
-    if edge_node {
+    // the queue's metrics and retention, where the link carries work: an edge or all-in-one node here, a local node
+    // when its dialer starts (Hook::start_dialer)
+    if takes_links {
         super::queue::maintain(factory, hook.shutdown.clone());
     }
-    if edge_node
+    if takes_links
         && !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)
             .trim()
             .is_empty()
     {
-        tracing::warn!("edge_node_url is set on an edge node (node_role=edge): it does not dial an edge node itself");
+        tracing::warn!(
+            "edge_node_url is set on an edge node (node_role={}): it does not dial an edge node itself",
+            role.as_str()
+        );
     }
     if let Some(config) = paired {
         if let Err(err) = hook.start_dialer(config) {
@@ -145,6 +154,20 @@ pub(crate) fn start(
             let loading = Arc::clone(&server);
             tokio::spawn(async move { loading.load_hosts().await });
             for port in super::tunnel::ports(server.config()) {
+                // an all-in-one node's own XMPP server keeps its ports; the paired node's domain has its own (§10)
+                if let Some(own) = role
+                    .all_in_one()
+                    .then(|| super::tunnel::own_xmpp_clash(port.bind))
+                    .flatten()
+                {
+                    tracing::error!(
+                        "The edge {} tunnel port {} is the server's own XMPP port ({own}); that tunnel is off: give \
+                         it a port of its own",
+                        port.kind,
+                        port.bind
+                    );
+                    continue;
+                }
                 super::tunnel::listen(&server, port, Arc::clone(&guard));
             }
             Started {
@@ -212,8 +235,10 @@ impl Hook {
     }
 
     fn server(&self) -> Result<Arc<EdgeServer>, Error> {
-        if !moqui_core::edge::is_edge_node() {
-            return Err(Error::new("this is not an edge node (node_role is not edge)"));
+        if !moqui_core::edge::takes_links() {
+            return Err(Error::new(
+                "this is not an edge node (node_role is not edge or all-in-one)",
+            ));
         }
         self.server
             .as_ref()
@@ -250,7 +275,7 @@ impl Hook {
 
     /// The up connection's client of this local node's link; an error on an edge node or a node not paired.
     fn up_client(&self) -> Result<Option<super::LinkClient>, Error> {
-        if moqui_core::edge::is_edge_node() {
+        if moqui_core::edge::takes_links() {
             return Err(Error::new("this is an edge node: it offers, and local nodes ask"));
         }
         match lock(&self.dialer).as_ref() {
@@ -280,7 +305,7 @@ impl EdgeLink for Hook {
     }
 
     fn pair(&self, url: &str, code: &str, expect_fingerprint: Option<&str>) -> Result<PairResult, Error> {
-        if moqui_core::edge::is_edge_node() {
+        if moqui_core::edge::takes_links() {
             return Err(Error::new("an edge node does not pair with another edge node"));
         }
         let factory = self.factory()?;
@@ -474,13 +499,19 @@ impl EdgeLink for Hook {
     fn configure(&self, setup: &EdgeSetup) -> Result<Configured, Error> {
         let client = self.up_client()?;
         let setup = setup.clone();
-        crate::edge::block_on(async move { super::dial::configure_on(client, &setup, CALL_TIMEOUT).await })?
-            .map_err(Error::new)
+        let configured =
+            crate::edge::block_on(async move { super::dial::configure_on(client, &setup, CALL_TIMEOUT).await })?
+                .map_err(Error::new)?;
+        // the SIP realm the answer says goes to the edge node's SipNode row now, not at the next link (E12)
+        if let Some(dialer) = lock(&self.dialer).as_ref() {
+            dialer.note_configured(&configured);
+        }
+        Ok(configured)
     }
 
     fn xmpp_probe(&self, port: u16, direct: bool) -> Result<String, Error> {
         let factory = self.factory()?;
-        if moqui_core::edge::settings(&factory).edge_node {
+        if moqui_core::edge::settings(&factory).takes_links() {
             return Err(Error::new("this is an edge node: its local nodes run the XMPP servers"));
         }
         let url = self.status().url;
@@ -488,7 +519,7 @@ impl EdgeLink for Hook {
     }
 
     fn turn_probe(&self, url: &str, username: &str, credential: &str, peer: &str) -> Result<String, Error> {
-        if moqui_core::edge::settings(&*self.factory()?).edge_node {
+        if moqui_core::edge::settings(&*self.factory()?).takes_links() {
             return Err(Error::new("this is an edge node: its local nodes check its TURN"));
         }
         super::probe::turn_probe(url, username, credential, peer).map_err(Error::new)

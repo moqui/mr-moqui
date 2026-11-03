@@ -110,3 +110,54 @@ fn a_replicated_tolerance_is_a_positive_number() {
     assert_eq!(number_field(&fields, "d"), None);
     assert_eq!(number_field(&fields, "e"), None);
 }
+
+#[test]
+fn an_all_in_one_node_takes_a_bridge_from_one_side_and_refuses_one_on_both() {
+    let fields = serde_json::json!({"typeEnumId": "CbtSms"});
+    let paired = || Some(("local-a".to_string(), fields.clone()));
+    assert_eq!(owner_of(true, None), BridgeOwner::Own);
+    assert_eq!(
+        owner_of(false, paired()),
+        BridgeOwner::Paired("local-a".to_string(), fields.clone())
+    );
+    assert_eq!(owner_of(true, paired()), BridgeOwner::Both("local-a".to_string()));
+    assert_eq!(owner_of(false, None), BridgeOwner::None);
+    let refused = both_refused("B1", "local-a");
+    assert_eq!(refused.status, 409);
+}
+
+#[test]
+fn the_paired_nodes_copy_is_read_for_the_owner() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+    client.set("pairedNodeId", Value::string("local-a"));
+    client.set("keyFingerprint", Value::string("ab"));
+    client.set("statusId", Value::string("EdgeClientActive"));
+    client.create(&facade).unwrap();
+    let batch = crate::edge::replica::Batch {
+        set_name: REPLICA_SET.to_string(),
+        epoch: "e1".to_string(),
+        base_seq: 0,
+        seq: 1,
+        snapshot: true,
+        snapshot_end: true,
+        changes: vec![crate::edge::replica::Change {
+            entity_name: BRIDGE.to_string(),
+            pk_json: r#"{"chatBridgeId":"LOCAL_BRIDGE"}"#.to_string(),
+            fields_json: Some(r#"{"typeEnumId":"CbtSms"}"#.to_string()),
+        }],
+    };
+    crate::edge::replica::apply_batch(&facade, "local-a", &batch).unwrap();
+    assert!(matches!(
+        bridge_owner(&facade, "LOCAL_BRIDGE", false).unwrap(),
+        BridgeOwner::Paired(node, _) if node == "local-a"
+    ));
+    assert_eq!(
+        bridge_owner(&facade, "LOCAL_BRIDGE", true).unwrap(),
+        BridgeOwner::Both("local-a".to_string())
+    );
+    assert_eq!(bridge_owner(&facade, "OWN_BRIDGE", true).unwrap(), BridgeOwner::Own);
+    assert_eq!(bridge_owner(&facade, "NONE", false).unwrap(), BridgeOwner::None);
+}

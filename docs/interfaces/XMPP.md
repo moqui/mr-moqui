@@ -64,6 +64,9 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/Edge-
   and checks `_xmpp-client._tcp` and `_xmpps-client._tcp` against the edge node's name and ports; Test opens a client
   connection through each tunnel port, whose TLS must be this node's own certificate, sending no credentials.
 - While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
+- On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the server's own XMPP server keeps
+  `xmpp_port` and `xmpp_tls_port`, and the tunnel ports, which must differ, serve the local node's domain. A tunnel
+  port the same as one of the server's is off, with an error logged, and not offered to the local node.
 - Federation (C3b) will take 5269 (`xmpp_s2s_port`, off) on the edge node, with stanzas to local users queued while
   the local node is away ([plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3).
 

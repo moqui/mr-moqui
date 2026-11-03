@@ -88,7 +88,7 @@ pub async fn xmpp_probe(
     if port == 0 {
         return Err(format!("The edge node's {} tunnel port is off", kind(direct)));
     }
-    let Some(host) = super::offer::url_host(&edge_url) else {
+    let Some(host) = moqui_core::edge::claims::url_host(&edge_url) else {
         return Err("The edge node's address is not known".to_string());
     };
     let host = host.trim_start_matches('[').trim_end_matches(']').to_string();

@@ -68,11 +68,12 @@ pub struct PhoneDevice {
     pub verifiers: Vec<(Algorithm, String)>,
 }
 
-/// Where the user agent finds a device's verifiers: the host asks the voice services.
+/// Where the user agent finds a device's verifiers: the host asks the voice services. `realm` is the registrar's realm
+/// the request is in: the configured one, or a device domain of [`Ua::set_device_realms`].
 #[async_trait::async_trait]
 pub trait DeviceDirectory: Send + Sync {
-    /// The active device with this username, or `None`.
-    async fn device(&self, username: &str) -> Option<PhoneDevice>;
+    /// The active device of the realm with this username, or `None`.
+    async fn device(&self, realm: &str, username: &str) -> Option<PhoneDevice>;
 
     /// The active device with this username and whether `check`'s response is right for its verifier of the check's
     /// algorithm; `None` when there is no such device. By default against [`DeviceDirectory::device`]'s verifiers; a
@@ -81,10 +82,11 @@ pub trait DeviceDirectory: Send + Sync {
     /// asked (it is away), which is no failed attempt of the phone's: answered 503. Any other failure is `Ok(None)`.
     async fn verify(
         &self,
+        realm: &str,
         username: &str,
         check: &crate::digest::ResponseCheck,
     ) -> Result<Option<(PhoneDevice, bool)>, String> {
-        let Some(device) = self.device(username).await else {
+        let Some(device) = self.device(realm, username).await else {
             return Ok(None);
         };
         let verifier = device
@@ -129,10 +131,20 @@ pub struct DeviceRing {
     pub ring_timeout: Duration,
 }
 
-/// Who signed a request in.
+/// Who signed a request in. A device with the device domain it signed in to, `None` for the configured realm.
 pub(super) enum Caller {
     Trunk(super::TrunkConfig),
-    Device(PhoneDevice),
+    Device(PhoneDevice, Option<String>),
+}
+
+/// The registrar's key of a device's bindings (its address of record): the username in the configured realm, else
+/// `username@realm`, so two device domains' phones with one username are kept apart. [`Ua::ring_device`],
+/// [`Ua::drop_device`] and [`Ua::bindings`] take it.
+pub fn aor_key(username: &str, realm: Option<&str>) -> String {
+    match realm.filter(|realm| !realm.is_empty()) {
+        Some(realm) => format!("{username}@{}", realm.to_ascii_lowercase()),
+        None => username.to_string(),
+    }
 }
 
 /// The registrar's state in the user agent.
@@ -326,7 +338,7 @@ impl Inner {
     /// A REGISTER, with the registrar on: signed in by a device, then applied to its bindings.
     pub(super) async fn register_phone(self: &Arc<Self>, mut tx: Transaction, source: Option<SocketAddr>) {
         let Some(phones) = self.phones.as_ref() else { return };
-        let Some(Caller::Device(device)) = self.authenticate(&mut tx, source, false).await else {
+        let Some(Caller::Device(device, realm)) = self.authenticate(&mut tx, source, false).await else {
             return;
         };
         let Some(source) = source else {
@@ -344,7 +356,7 @@ impl Inner {
             .any(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("outbound")));
         let request = Register {
             device: device.id.clone(),
-            username: device.username.clone(),
+            username: aor_key(&device.username, realm.as_deref()),
             revision: device.revision,
             contacts: registrar::parse_contacts(&header_values(headers, "Contact")),
             expires: header_values(headers, "Expires")
@@ -400,23 +412,68 @@ impl Inner {
         }
     }
 
-    /// A device's verifier check: the answer's username and algorithm against the device's verifiers.
+    /// The device domain a request is in, besides the configured realm: its answer's realm, else the domain it is for
+    /// (a REGISTER's To, an INVITE's From); `None` for the configured realm, or with the registrar off.
+    pub(super) fn realm_of(&self, tx: &Transaction, given: Option<&crate::digest::Authorization>) -> Option<String> {
+        self.phones.as_ref()?;
+        let books = lock(&self.device_realms);
+        if books.is_empty() {
+            return None;
+        }
+        let host = |uri: &Uri| uri.host_with_port.host.to_string();
+        let name = match given {
+            Some(auth) => auth.realm.clone(),
+            None if tx.original.method == rsipstack::sip::Method::Register => {
+                host(&tx.original.to_header().ok()?.typed().ok()?.uri)
+            }
+            None => host(&tx.original.from_header().ok()?.typed().ok()?.uri),
+        };
+        let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
+        books.contains_key(&name).then_some(name)
+    }
+
+    /// The realm of a binding's key ([`aor_key`]): its device domain, else the configured realm.
+    fn realm_of_key(&self, key: &str) -> String {
+        if let Some((_, realm)) = key.rsplit_once('@') {
+            if lock(&self.device_realms).contains_key(realm) {
+                return realm.to_string();
+            }
+        }
+        lock(&self.nonces).realm().to_string()
+    }
+
+    /// A device's verifier check: the answer's username and algorithm against the device's verifiers, in `realm` (a
+    /// device domain) or the configured realm.
     pub(super) async fn check_device(
         &self,
         auth: &crate::digest::Authorization,
         method: &str,
+        realm: Option<&str>,
     ) -> (crate::digest::Verdict, Option<PhoneDevice>) {
         // a forged or foreign nonce fails whoever it names: the directory (a service call) is not asked for it
-        let ours = lock(&self.nonces).answers_ours(auth);
+        let (ours, realm_name) = match realm {
+            Some(realm) => (
+                lock(&self.device_realms)
+                    .get(realm)
+                    .is_some_and(|book| book.answers_ours(auth)),
+                realm.to_string(),
+            ),
+            None => {
+                let book = lock(&self.nonces);
+                (book.answers_ours(auth), book.realm().to_string())
+            }
+        };
         let check = crate::digest::ResponseCheck::of(auth, method);
         let found = match (self.phones.as_ref(), &check) {
-            (Some(phones), Some(check)) if ours => match phones.directory.verify(&auth.username, check).await {
-                Ok(found) => found.filter(|(d, _)| d.username == auth.username),
-                Err(err) => {
-                    tracing::warn!("SIP: {:?}'s answer was not checked: {err}", auth.username);
-                    return (crate::digest::Verdict::Unavailable, None);
+            (Some(phones), Some(check)) if ours => {
+                match phones.directory.verify(&realm_name, &auth.username, check).await {
+                    Ok(found) => found.filter(|(d, _)| d.username == auth.username),
+                    Err(err) => {
+                        tracing::warn!("SIP: {:?}'s answer was not checked: {err}", auth.username);
+                        return (crate::digest::Verdict::Unavailable, None);
+                    }
                 }
-            },
+            }
             _ => None,
         };
         if let (None, Some(check)) = (&found, &check) {
@@ -424,7 +481,13 @@ impl Inner {
             let _ = check.matches(None);
         }
         let matched = found.as_ref().is_some_and(|(_, matched)| *matched);
-        let verdict = lock(&self.nonces).verify_checked(auth, matched, now_secs());
+        let verdict = match realm {
+            Some(realm) => match lock(&self.device_realms).get_mut(realm) {
+                Some(book) => book.verify_checked(auth, matched, now_secs()),
+                None => crate::digest::Verdict::Invalid,
+            },
+            None => lock(&self.nonces).verify_checked(auth, matched, now_secs()),
+        };
         (verdict, found.map(|(device, _)| device))
     }
 
@@ -505,7 +568,7 @@ impl Inner {
             (Transport::Tls, Some(srtp)) => srtp.clone(),
             _ => ring.offer_plain.clone(),
         };
-        let realm = lock(&self.nonces).realm().to_string();
+        let realm = self.realm_of_key(&binding.username);
         let from = uri_user(&ring.from);
         let built = (|| -> Result<InviteOption, String> {
             Ok(InviteOption {

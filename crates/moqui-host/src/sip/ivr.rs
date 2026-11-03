@@ -408,12 +408,17 @@ pub(super) struct QueueCall {
 /// The ticks of a queue call that may fail in a row (the services unavailable for a moment) before the call ends.
 const MAX_TICK_FAILURES: u32 = 3;
 
-/// The audio at a location, 48 kHz mono; none when it is not set or does not read (logged).
-fn location_audio(factory: &Arc<moqui_core::context::ExecutionContextFactory>, location: &str) -> Option<Vec<i16>> {
+/// The audio at a location for the leg `leg` (the engine's key, whose owner says where its audio is, E12), 48 kHz
+/// mono; none when it is not set or does not read (logged).
+fn location_audio(
+    factory: &Arc<moqui_core::context::ExecutionContextFactory>,
+    leg: &str,
+    location: &str,
+) -> Option<Vec<i16>> {
     if location.trim().is_empty() {
         return None;
     }
-    match super::voicemail::location_bytes_job(factory, location)
+    match super::voicemail::location_bytes_job(factory, location, leg)
         .and_then(|bytes| super::audio::decode_audio(&bytes, MAX_AUDIO_SECONDS))
     {
         Ok(pcm) if !pcm.is_empty() => Some(pcm),
@@ -522,8 +527,9 @@ impl Engine {
                 Action::Play { tag, prompt, refused } => {
                     let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
                     tokio::spawn(async move {
+                        let owner_leg = leg.clone();
                         let built = tokio::task::spawn_blocking(move || {
-                            let audio = prompt.as_deref().and_then(|p| location_audio(&factory, p));
+                            let audio = prompt.as_deref().and_then(|p| location_audio(&factory, &owner_leg, p));
                             menu_prompt(audio.as_deref(), refused)
                         })
                         .await;
@@ -564,8 +570,9 @@ impl Engine {
     /// Asks a service where the call goes; its `answer` comes back as [`Command::Routed`].
     fn routed_by(&self, leg: &str, service: &'static str, parameters: Json) {
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+        let owner = super::owners::owner_of(&leg);
         tokio::spawn(async move {
-            let result = call_service(&factory, service, parameters).await;
+            let result = call_service(&factory, owner, service, parameters).await;
             let _ = commands.send(Command::Routed { leg, result });
         });
     }
@@ -638,9 +645,10 @@ impl Engine {
         }
         let intro = text(answer, "positionPromptLocation");
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+        let owner_leg = leg.clone();
         tokio::spawn(async move {
             let built = tokio::task::spawn_blocking(move || {
-                let intro = location_audio(&factory, &intro);
+                let intro = location_audio(&factory, &owner_leg, &intro);
                 let folder = moqui_lib::env::get_prop_or_env("call_queue_prompt_location")
                     .trim()
                     .trim_end_matches('/')
@@ -649,7 +657,7 @@ impl Engine {
                     if folder.is_empty() {
                         return None;
                     }
-                    location_audio(&factory, &format!("{folder}/{d}.wav"))
+                    location_audio(&factory, &owner_leg, &format!("{folder}/{d}.wav"))
                 };
                 position_prompt(position, intro.as_deref(), &mut digit)
             })
@@ -666,8 +674,9 @@ impl Engine {
     /// An option's prompt ("connecting you to sales"), mixed over what plays next.
     fn say(&self, leg: &str, location: String) {
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+        let owner_leg = leg.clone();
         tokio::spawn(async move {
-            let built = tokio::task::spawn_blocking(move || location_audio(&factory, &location)).await;
+            let built = tokio::task::spawn_blocking(move || location_audio(&factory, &owner_leg, &location)).await;
             if let Ok(Some(pcm)) = built {
                 let _ = commands.send(Command::Prompt {
                     leg,
@@ -690,14 +699,15 @@ impl Engine {
             return;
         };
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+        let owner_leg = leg.clone();
         tokio::spawn(async move {
             let built = tokio::task::spawn_blocking(move || match kind {
                 LoopKind::Ringback => ringback(),
                 LoopKind::Music(own) => {
                     let deployment = moqui_lib::env::get_prop_or_env("call_hold_music_location");
                     own.as_deref()
-                        .and_then(|location| location_audio(&factory, location))
-                        .or_else(|| location_audio(&factory, deployment.trim()))
+                        .and_then(|location| location_audio(&factory, &owner_leg, location))
+                        .or_else(|| location_audio(&factory, &owner_leg, deployment.trim()))
                         .unwrap_or_else(hold_tones)
                 }
             })
@@ -724,10 +734,12 @@ impl Engine {
     /// A blind transfer's target has `seconds` to answer; then `expire#CallTransfer` says where the far end goes.
     pub(super) fn transfer_timer(&self, leg: &str, seconds: u64, transfer: String) {
         let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+        let owner = super::owners::owner_of(&leg);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(seconds)).await;
             let result = call_service(
                 &factory,
+                owner,
                 EXPIRE_TRANSFER_SERVICE,
                 serde_json::json!({"callTransferId": transfer}),
             )
@@ -747,8 +759,9 @@ impl Engine {
         }
         let parameters = serde_json::json!({"callLegId": leg, "target": target});
         let (factory, leg) = (Arc::clone(&self.factory), leg.to_string());
+        let owner = super::owners::owner_of(&leg);
         tokio::spawn(async move {
-            let taken = match call_service(&factory, REFER_SERVICE, parameters).await {
+            let taken = match call_service(&factory, owner, REFER_SERVICE, parameters).await {
                 Ok(_) => true,
                 Err(err) => {
                     tracing::info!("SIP leg {leg}: its REFER was refused: {err}");

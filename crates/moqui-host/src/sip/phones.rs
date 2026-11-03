@@ -30,12 +30,18 @@
 //! - **Rotation and revocation**: `dropDevice` ends the device's bindings and hangs up its legs here.
 //! - **On an edge node** (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) no verifier is here: each answer is
 //!   checked on the local node (`check#SipDeviceDigest`), so phones sign in only while it is reachable.
+//! - **On an all-in-one node** (plans/Edge-Node.md §10, E12) by the domain a phone registers to: the server's own realm
+//!   (`sip_domain`) is its own phones', checked here; the paired node's domain (its Configure's `sipDomain`, which
+//!   the user agent challenges in, `Ua::set_device_realms`) is the paired node's, checked there. A paired node's
+//!   device ids are keyed by the node, and its bindings by `username@domain` (`moqui_sip::ua::aor_key`).
 
 use std::net::SocketAddr;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
+use moqui_core::edge::owner::Owner;
+use moqui_lib::sync::lock;
 use moqui_sip::digest::Algorithm;
 use moqui_sip::registrar::{Binding, RegistrarLimits};
 use moqui_sip::sdp::{self, Direction, DEVICE_CODECS};
@@ -46,7 +52,10 @@ use moqui_sip::ua::{
 use serde_json::Value as Json;
 
 use super::leg::{LegCommand, LegMedia};
-use super::{call_service, number, text, Engine, Leg, RING_TIMEOUT};
+use super::{call_service, number, owners, text, Engine, Leg, RING_TIMEOUT};
+
+/// The paired node and its SIP device domain (E12), as the engine last read them, for the registrar's directory.
+pub(super) type Paired = Arc<Mutex<Option<(String, String)>>>;
 
 const AUTH_SERVICE: &str = "org.moqui.impl.SipDeviceServices.get#SipDeviceAuth";
 /// On an edge node, the local node's check of a phone's digest answer (E8).
@@ -83,11 +92,14 @@ pub(super) fn registrar_from(property: &dyn Fn(&str) -> String) -> Option<Regist
     })
 }
 
-/// The user agent's registrar, with the voice services as its directory of devices.
+/// The user agent's registrar, with the voice services as its directory of devices. On a dedicated edge node every
+/// phone is the paired node's; elsewhere those of the realm `realm` are the server's own.
 pub(super) fn registrar_config(
     factory: &Arc<ExecutionContextFactory>,
     limits: RegistrarLimits,
     realm: &str,
+    dedicated: bool,
+    paired: Paired,
 ) -> RegistrarConfig {
     tracing::info!("SIP: the registrar for desk and soft phones is on, realm {realm}");
     RegistrarConfig {
@@ -95,6 +107,8 @@ pub(super) fn registrar_config(
         directory: Arc::new(ServiceDirectory {
             factory: Arc::downgrade(factory),
             realm: realm.to_string(),
+            dedicated,
+            paired,
         }),
     }
 }
@@ -102,15 +116,35 @@ pub(super) fn registrar_config(
 /// A device's verifiers from `get#SipDeviceAuth`, which answers only an active device.
 struct ServiceDirectory {
     factory: Weak<ExecutionContextFactory>,
+    /// The registrar's own realm.
     realm: String,
+    /// A dedicated edge node: every phone is the paired node's.
+    dedicated: bool,
+    paired: Paired,
+}
+
+impl ServiceDirectory {
+    /// Whose phones register to `realm` (E12): the server's own in its realm, but on a dedicated edge node; the paired
+    /// node's in its domain (and on a dedicated edge node in any); `None` for a realm of no one (no node paired).
+    fn owner_of_realm(&self, realm: &str) -> Option<Owner> {
+        if !self.dedicated && realm.eq_ignore_ascii_case(&self.realm) {
+            return Some(Owner::Own);
+        }
+        let paired = lock(&self.paired).clone()?;
+        (self.dedicated || paired.1.eq_ignore_ascii_case(realm)).then(|| Owner::paired(&paired.0))
+    }
 }
 
 #[moqui_sip::async_trait]
 impl DeviceDirectory for ServiceDirectory {
-    async fn device(&self, username: &str) -> Option<PhoneDevice> {
+    async fn device(&self, realm: &str, username: &str) -> Option<PhoneDevice> {
         let factory = self.factory.upgrade()?;
-        let parameters = serde_json::json!({"username": username, "realm": self.realm});
-        let out = match call_service(&factory, AUTH_SERVICE, parameters).await {
+        // the paired node's verifiers never leave it (E8): its phones are checked there, in verify
+        if self.owner_of_realm(realm) != Some(Owner::Own) {
+            return None;
+        }
+        let parameters = serde_json::json!({"username": username, "realm": realm});
+        let out = match call_service(&factory, Owner::Own, AUTH_SERVICE, parameters).await {
             Ok(out) => out,
             Err(err) => {
                 tracing::warn!("SIP: the device {username:?} was not looked up: {err}");
@@ -139,20 +173,38 @@ impl DeviceDirectory for ServiceDirectory {
         })
     }
 
-    /// On an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8) the verifiers stay on the local node:
-    /// the answer is checked there (`check#SipDeviceDigest`, delegated), and this registrar keeps the nonces. While the
-    /// local node is away no phone signs in (503, not a failed attempt). Elsewhere as the default, against
-    /// `get#SipDeviceAuth`'s verifiers.
+    /// A paired node's phone (on an edge node, plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4, E8; on an all-in-one
+    /// node the phones of its domain, E12): the verifiers stay on the local node, the answer is checked there
+    /// (`check#SipDeviceDigest`, delegated), and this registrar keeps the nonces. While the local node is away no
+    /// phone signs in (503, not a failed attempt). The server's own as the default, against `get#SipDeviceAuth`'s
+    /// verifiers.
     async fn verify(
         &self,
+        realm: &str,
         username: &str,
         check: &moqui_sip::digest::ResponseCheck,
     ) -> Result<Option<(PhoneDevice, bool)>, String> {
         let Some(factory) = self.factory.upgrade() else {
             return Err("the server is stopping".to_string());
         };
-        if !super::edge::is_edge(&factory) {
-            let Some(device) = self.device(username).await else {
+        let mut owner = self.owner_of_realm(realm);
+        if owner.is_none() && lock(&self.paired).is_none() {
+            // paired since the engine last read it (it reads again every few seconds): read now, so a phone of a node
+            // that has just paired is not refused until then
+            let now = owners::paired_domain(&factory).await;
+            if now.is_some() {
+                *lock(&self.paired) = now;
+                owner = self.owner_of_realm(realm);
+            }
+        }
+        let owner = match owner {
+            Some(owner) => owner,
+            // a dedicated edge node's phones wait for its local node, as while it is away
+            None if self.dedicated => return Err("no local node is paired".to_string()),
+            None => return Ok(None),
+        };
+        if owner == Owner::Own {
+            let Some(device) = self.device(realm, username).await else {
                 return Ok(None);
             };
             let verifier = device
@@ -164,11 +216,11 @@ impl DeviceDirectory for ServiceDirectory {
             return Ok(Some((device, matched)));
         }
         let (nc, cnonce) = check.qop_auth.clone().unzip();
-        let parameters = serde_json::json!({"username": username, "realm": self.realm,
+        let parameters = serde_json::json!({"username": username, "realm": realm,
             "algorithm": check.algorithm.name(), "nonce": check.nonce, "nc": nc, "cnonce": cnonce,
             "qop": check.qop_auth.as_ref().map(|_| "auth"), "ha2": check.ha2, "response": check.response});
         // only the local node away is "cannot check now" (503, not counted); any other failure is a refusal
-        let out = match call_service(&factory, CHECK_SERVICE, parameters).await {
+        let out = match call_service(&factory, owner, CHECK_SERVICE, parameters).await {
             Ok(out) => out,
             Err(err) if super::edge::is_offline(&err) => return Err(format!("the local node did not check it: {err}")),
             Err(err) => {
@@ -212,6 +264,18 @@ fn transport_code(transport: Transport) -> &'static str {
 }
 
 impl Engine {
+    /// The registrar's key of the bindings of the phone a control names (its `username`, `sipDeviceId`): on an
+    /// all-in-one node a paired node's phone's are in that node's domain (E12, `moqui_sip::ua::aor_key`).
+    fn device_aor(&self, body: &Json) -> String {
+        let username = text(body, "username");
+        let owner = owners::owner_in(body);
+        if self.dedicated || owner == Owner::Own {
+            return username;
+        }
+        let domain = lock(&self.paired).as_ref().map(|(_, domain)| domain.clone());
+        moqui_sip::ua::aor_key(&username, domain.as_deref())
+    }
+
     /// A binding added, refreshed or removed: kept as its `SipRegistration` row.
     pub(super) fn binding_changed(&self, change: BindingChange, binding: &Binding) {
         let change = match change {
@@ -255,7 +319,7 @@ impl Engine {
         };
         let ring = DeviceRing {
             leg: leg.clone(),
-            username: text(body, "username"),
+            username: self.device_aor(body),
             from: text(body, "fromUser"),
             from_name: Some(text(body, "fromName")).filter(|n| !n.is_empty()),
             offer_plain: sdp::offer(&plain),
@@ -319,7 +383,7 @@ impl Engine {
     pub(super) fn drop_device(&mut self, body: &Json) {
         let username = text(body, "username");
         let device = text(body, "sipDeviceId");
-        let ended = self.ua.drop_device(&username);
+        let ended = self.ua.drop_device(&self.device_aor(body));
         let legs: Vec<String> = self
             .legs
             .iter()
@@ -338,7 +402,9 @@ impl Engine {
         let device = call.device.clone().unwrap_or_default();
         let parameters = serde_json::json!({"sipDeviceId": device, "toUser": call.to, "instanceId": self.own,
             "sipCallId": call.call_id, "sourceAddress": call.source.ip().to_string()});
-        let decided = match call_service(&self.factory, RECEIVE_SERVICE, parameters).await {
+        // E12: the phone's owner, by its id (the directory keyed a paired node's)
+        let owner = owners::owner_of(&device);
+        let decided = match call_service(&self.factory, owner, RECEIVE_SERVICE, parameters).await {
             Ok(out) => {
                 let (room, leg) = (text(&out, "callSessionId"), text(&out, "callLegId"));
                 if room.is_empty() || leg.is_empty() {

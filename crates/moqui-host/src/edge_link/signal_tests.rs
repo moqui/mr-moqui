@@ -26,7 +26,7 @@ fn message(body: serde_json::Value) -> TopicMessage {
 
 #[test]
 fn an_edge_node_takes_from_a_local_node_only_its_frames_and_controls() {
-    let take = edge_takes("local-1", || 1);
+    let take = edge_takes("local-1");
     // a frame whose replies would go to another node
     let forged = message(serde_json::json!({"target": "edge-1", "kind": "frame", "origin": "local-2", "socketId": 7}));
     assert!(take(RTC_SIGNAL, &forged).is_err_and(|err| err.contains("another origin")));
@@ -41,10 +41,29 @@ fn an_edge_node_takes_from_a_local_node_only_its_frames_and_controls() {
 }
 
 #[test]
-fn an_edge_node_takes_no_call_messages_while_two_local_nodes_are_linked() {
-    let take = edge_takes("local-1", || 2);
-    let frame = message(serde_json::json!({"target": "edge-1", "kind": "frame", "origin": "local-1"}));
-    assert!(take(RTC_SIGNAL, &frame).is_err_and(|err| err.contains("2 local nodes")));
+fn an_edge_node_refuses_a_message_that_already_names_a_node() {
+    let take = edge_takes("local-1");
+    for kind in ["frame", "control", "sip"] {
+        let forged = message(
+            serde_json::json!({"target": "edge-1", "kind": kind, "origin": "local-1",
+            "linkNode": "local-2"}),
+        );
+        assert!(
+            take(RTC_SIGNAL, &forged).is_err_and(|err| err.contains("already names a node")),
+            "{kind}"
+        );
+    }
+    let not_an_object = message(serde_json::json!(["frame"]));
+    assert!(take(RTC_SIGNAL, &not_an_object).is_err());
+}
+
+#[test]
+fn an_edge_node_stamps_the_sending_node() {
+    let body = serde_json::json!({"target": "edge-1", "kind": "control", "action": "closeRoom", "callSessionId": "1"});
+    let stamped = super::stamped("local-1", &message(body)).unwrap();
+    assert_eq!(moqui_core::edge::signal::link_node(&stamped.body), Some("local-1"));
+    assert_eq!(stamped.body["callSessionId"], "1");
+    assert_eq!(stamped.message_id, "m-1");
 }
 
 #[test]

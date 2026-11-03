@@ -58,7 +58,8 @@ along with this software (see the LICENSE.md file). If not, see
         notBuilt = state === 'notBuilt'
         notStarted = state === 'notStarted'
         const running = !notBuilt && !notStarted
-        isEdge = running && link.nodeRole === 'edge'
+        // an edge or all-in-one node takes links; the wizard is a local node's (plans/Edge-Node.md §10)
+        isEdge = running && ['edge', 'all-in-one'].includes(link.nodeRole)
         paired = running && !isEdge && state !== 'unpaired'
         unpaired = running && !isEdge && state === 'unpaired'
         const states = {connecting: [L('Connecting'), 'info'], linked: [L('Linked'), 'positive'], retrying: [L('Retrying'), 'warning'],

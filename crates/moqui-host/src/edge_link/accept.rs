@@ -939,6 +939,26 @@ impl EdgeServer {
         Ok(first)
     }
 
+    /// The link of `node` while its down connection is up, as [`EdgeServer::only_link`] gives it: what an all-in-one
+    /// node's delegated call of a paired node's item goes down (plans/Edge-Node.md §10). [`OFFLINE`] at once while that
+    /// node's link is down.
+    ///
+    /// [`OFFLINE`]: moqui_core::edge::OFFLINE
+    pub(crate) fn link_of(
+        &self,
+        node: &str,
+    ) -> Result<(String, hyper::client::conn::http2::SendRequest<tonic::body::Body>, u64), Error> {
+        let registry = lock(&self.registry);
+        registry
+            .links
+            .get(node)
+            .and_then(|link| {
+                let down = link.down.as_ref().filter(|down| !down.send.is_closed())?;
+                Some((node.to_string(), down.send.clone(), link.generation))
+            })
+            .ok_or_else(|| Error::new(format!("{}: {node}", moqui_core::edge::OFFLINE)))
+    }
+
     /// A Ping down `node`'s down connection: its round trip.
     pub(crate) async fn ping_local(&self, node: &str) -> Result<Duration, String> {
         let (send, generation) = {
@@ -967,7 +987,10 @@ impl EdgeServer {
     ///
     /// [`OFFLINE`]: moqui_core::edge::OFFLINE
     pub(crate) async fn delegate(&self, call: DelegateCall) -> Result<DelegateAnswer, Error> {
-        let (node, send, generation) = self.only_link()?;
+        let (node, send, generation) = match call.node.as_deref() {
+            Some(node) => self.link_of(node)?,
+            None => self.only_link()?,
+        };
         let mut client = super::local_link_client(send);
         // a conf entry may wait less than the link does (E8: routing a call that rings); the local node is told, and
         // does no work past it
@@ -1303,9 +1326,8 @@ impl Link for LinkService {
             return Err(Status::failed_precondition("Hello first"));
         }
         // the up connection is the generation; each message's own is not checked again. Only what this node may send
-        // is taken, its frames' replies addressed to itself (E7)
-        let server = Arc::clone(&self.server);
-        let take = super::signal::edge_takes(node, move || server.linked_nodes().len());
+        // is taken, its frames' replies addressed to itself (E7), each stamped with the node (E12)
+        let take = super::signal::edge_takes(node);
         let reply = super::signal::receive(request.into_inner(), |_| Ok(()), take).await?;
         Ok(Response::new(reply))
     }

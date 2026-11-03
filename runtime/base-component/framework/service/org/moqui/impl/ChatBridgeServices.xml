@@ -802,7 +802,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Make or change a chat bridge (ChatBridgeAdmin): name, typeEnumId, adapterName (empty: the network's code),
             configJson (JSON; its secrets are kept encrypted; empty keeps the old; its publicKey is also kept as
             webhookPublicKey, its webhookToleranceSeconds as webhookToleranceSeconds), inboundToken (its hash is kept; empty keeps the
-            old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.</description>
+            old), sendsPerMinute, disabled (Y stops its deliveries and input; N lets the worker start it). The worker is woken.
+            On an all-in-one node a new bridge's id skips the ids its paired node's bridges have, and a bridge a paired node
+            holds is refused (EdgeClaims.secas.xml, plans/Edge-Node.md §10).</description>
         <in-parameters>
             <parameter name="chatBridgeId"/>
             <parameter name="name"/>
@@ -826,6 +828,11 @@ along with this software (see the LICENSE.md file). If not, see
             if (!row) {
                 row = ec.entity.makeValue('moqui.chat.ChatBridge')
                 row.setSequencedIdPrimary()
+                // on an all-in-one node a new id is not one of the paired node's bridges (plans/Edge-Node.md §10): its
+                // ids come from another database's sequence
+                const pairedHas = (id) => ec.service.sync().name('org.moqui.impl.EdgeServices.check#ReplicaClaim')
+                        .parameters({claimKind: 'ChatBridge', itemKey: id, refuse: false}).disableAuthz().call()?.pairedNodeId
+                for (let tries = 0; tries < 10 && pairedHas(row.chatBridgeId); tries++) row.setSequencedIdPrimary()
                 row.setFields({createdDate: ec.user.nowTimestamp, statusId: 'CbsNotConnected'}, true, null, null)
             }
             if (name) row.set('name', name)

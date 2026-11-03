@@ -141,9 +141,10 @@ pub enum Outcome {
     Lost(String),
 }
 
-/// The direction this node's own items go: an edge node's to its local node, a local node's to its edge node.
+/// The direction this node's own items go: an edge node's (or an all-in-one node's) to its local node, a local node's
+/// to its edge node.
 pub fn outbound(settings: &EdgeSettings) -> &'static str {
-    if settings.edge_node {
+    if settings.takes_links() {
         TO_LOCAL
     } else {
         TO_EDGE
@@ -152,7 +153,7 @@ pub fn outbound(settings: &EdgeSettings) -> &'static str {
 
 /// The direction of the items this node receives.
 pub fn inbound(settings: &EdgeSettings) -> &'static str {
-    if settings.edge_node {
+    if settings.takes_links() {
         TO_EDGE
     } else {
         TO_LOCAL
@@ -198,7 +199,7 @@ fn transaction<T>(
 }
 
 /// The only active paired node of an edge node, for an item that names none.
-fn only_paired_node(facade: &EntityFacade) -> Result<String, Error> {
+pub(crate) fn only_paired_node(facade: &EntityFacade) -> Result<String, Error> {
     let rows = facade
         .find("moqui.edge.EdgeClient")?
         .eq("statusId", Value::string("EdgeClientActive"))
@@ -257,7 +258,7 @@ pub fn enqueue(
     }
     let direction = outbound(&settings);
     let node = match (
-        settings.edge_node,
+        settings.takes_links(),
         paired_node_id.map(str::trim).filter(|id| !id.is_empty()),
     ) {
         (true, Some(node)) => node.to_string(),

@@ -13,6 +13,7 @@
  */
 
 use super::*;
+use crate::edge::NodeRole;
 
 #[test]
 fn credentials_and_a_named_caller_never_cross_the_link() {
@@ -43,6 +44,7 @@ fn a_local_node_refuses_a_service_its_own_conf_does_not_list() {
         caller: serde_json::json!({"username": "visitor"}),
         operation_id: "op-1".to_string(),
         timeout: None,
+        node: None,
     };
     let answer = run(ctx.factory(), &call);
     assert_eq!(answer.result, serde_json::Value::Null);
@@ -70,6 +72,7 @@ fn nothing_the_edge_node_sends_changes_the_user_a_delegated_call_runs_as() {
         caller: serde_json::json!({"username": "visitor", "userId": null}),
         operation_id: "op-2".to_string(),
         timeout: None,
+        node: None,
     };
     let parameters = received_parameters(&call);
     let names: Vec<&str> = parameters.keys().map(String::as_str).collect();
@@ -88,7 +91,7 @@ fn an_edge_node_sends_a_delegated_call_to_the_link_before_any_link_is_started() 
     let _entered = ctx.enter();
     let parameters = BTreeMap::from([("message".to_string(), Value::string("hi"))]);
     // as boot reads it on an edge node (conf::init), before the host's listeners start
-    assert!(super::super::conf::settings_as(ctx.factory(), true).edge_node);
+    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::Edge).edge_node());
     let err = crate::service::sync("a.B.call#Remote", &parameters).unwrap_err();
     // no link, or a link with no local node: offline either way, never run here (where it is not even defined)
     assert!(err.message().starts_with(OFFLINE), "{}", err.message());
@@ -100,7 +103,7 @@ fn a_delegated_call_past_its_deadline_is_not_run() {
     let ctx = ExecutionContextFactory::test_context_with_conf(
         r#"<moqui-conf><edge><delegate service="a.B.call#Late" timeout-seconds="0.1"/></edge></moqui-conf>"#,
     );
-    let settings = super::super::conf::settings_as(ctx.factory(), false);
+    let settings = super::super::conf::settings_as(ctx.factory(), NodeRole::Normal);
     assert_eq!(
         settings.delegate("a.B.call#Late").and_then(|d| d.timeout),
         Some(std::time::Duration::from_millis(100))
@@ -111,6 +114,7 @@ fn a_delegated_call_past_its_deadline_is_not_run() {
         caller: serde_json::json!({}),
         operation_id: "op-late".to_string(),
         timeout: Some(std::time::Duration::from_millis(100)),
+        node: None,
     };
     let answer = run(ctx.factory(), &call);
     assert_eq!(answer.result, serde_json::Value::Null);
@@ -122,4 +126,70 @@ fn a_delegated_call_past_its_deadline_is_not_run() {
         "{:?}",
         answer.errors
     );
+}
+
+/// E12: an all-in-one node delegates a listed service only for a paired node's item, to that node; the server's own
+/// items run here.
+#[test]
+fn an_all_in_one_node_delegates_only_a_paired_node_s_item_to_that_node() {
+    use super::super::owner::{self, Owner};
+    let ctx = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><edge><delegate service="a.B.call#Owned" allow-anonymous="true" timeout-seconds="2"/></edge></moqui-conf>"#,
+    );
+    let _entered = ctx.enter();
+    let settings = super::super::conf::settings_as(ctx.factory(), NodeRole::AllInOne);
+    assert!(settings.all_in_one() && settings.takes_links() && !settings.edge_node());
+    assert_eq!(
+        listed("a.B.call#Owned"),
+        None,
+        "the server's own item, outside any scope"
+    );
+    assert_eq!(owner::with(Owner::Own, || listed("a.B.call#Owned")), None);
+    let delegated = owner::with(Owner::paired("local-a"), || listed("a.B.call#Owned")).expect("a paired node's item");
+    assert_eq!(delegated.node.as_deref(), Some("local-a"));
+    assert_eq!(delegated.entry.timeout, Some(std::time::Duration::from_secs(2)));
+    assert_eq!(
+        owner::with(Owner::paired("local-a"), || listed("a.B.call#Unlisted")),
+        None
+    );
+    let parameters = BTreeMap::from([("message".to_string(), Value::string("hi"))]);
+    // the paired node's call goes to the link (none here: offline), the server's own runs here (not defined here)
+    let err = owner::with(Owner::paired("local-a"), || {
+        crate::service::sync("a.B.call#Owned", &parameters)
+    })
+    .unwrap_err();
+    assert!(err.message().starts_with(OFFLINE), "{}", err.message());
+    let err = crate::service::sync("a.B.call#Owned", &parameters).unwrap_err();
+    assert!(!err.message().starts_with(OFFLINE), "{}", err.message());
+    // as the edge end of the link it runs no delegated calls itself
+    let call = DelegateCall {
+        service: "a.B.call#Owned".to_string(),
+        operation_id: "op-aio".to_string(),
+        ..DelegateCall::default()
+    };
+    assert_eq!(
+        run(ctx.factory(), &call).errors,
+        ["this node is an edge node; it runs no delegated calls"]
+    );
+}
+
+/// E12: with several local nodes linked a dedicated edge node sends a call for one node's item (inside its owner scope)
+/// to that node; outside a scope it goes to the only node linked, as in E7.
+#[test]
+fn a_dedicated_edge_node_sends_a_scoped_call_to_its_node() {
+    use super::super::owner::{self, Owner};
+    let ctx = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><edge><delegate service="a.B.call#Scoped" allow-anonymous="true"/></edge></moqui-conf>"#,
+    );
+    let _entered = ctx.enter();
+    assert!(super::super::conf::settings_as(ctx.factory(), NodeRole::Edge).edge_node());
+    let unscoped = listed("a.B.call#Scoped").expect("every listed call on an edge node");
+    assert_eq!(unscoped.node, None);
+    assert_eq!(
+        owner::with(Owner::Own, || listed("a.B.call#Scoped")).map(|d| d.node),
+        Some(None)
+    );
+    let scoped = owner::with(Owner::paired("local-b"), || listed("a.B.call#Scoped")).expect("listed");
+    assert_eq!(scoped.node.as_deref(), Some("local-b"));
+    assert_eq!(listed("a.B.call#Unlisted"), None);
 }

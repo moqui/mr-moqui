@@ -30,6 +30,11 @@
 //! replies and controls go over the link (`moqui_core::edge::signal`), its media events and captions' services are
 //! delegated to the local node, and its recordings' segments are queued there (`recorder.rs`).
 //!
+//! An all-in-one node (`node_role=all-in-one`, plans/Edge-Node.md §10, E12) is both: it registers its own row for its
+//! own calls and advertises its media node to its paired node. The driver keys a paired node's rooms by node and call
+//! (`moqui_core::edge::media::room_key`, from the link's stamp on each message), so the two databases' call ids never
+//! meet; the room's work (media events, captions, recordings) goes to the room's owner.
+//!
 //! Cascading media nodes (W7, `rtc_cascade_enabled`): a leg's media may be on another node than the call's (a leg node,
 //! the node of its signaling socket). The leg node's SFU links the room to the call's node (its origin) with a relay
 //! link on the two nodes' media sockets, negotiated by `rtc-signal` messages of kind `relay`; the room's notices and
@@ -407,9 +412,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             return None;
         }
     };
-    // an edge node registers no row: its local node keeps it from the link, which advertises it (E7)
-    let edge_node = moqui_core::edge::settings(factory).edge_node;
-    let register = if edge_node {
+    // an edge node registers no row: its local node keeps it from the link, which advertises it (E7). An all-in-one
+    // node (E12) does both: its own calls' row, and the advert for its paired node's
+    let settings = moqui_core::edge::settings(factory);
+    let advertised = settings.takes_links();
+    if advertised {
         let advert = moqui_core::edge::media::MediaAdvert {
             media_address: public.to_string(),
             turn_urls: turn_urls
@@ -420,6 +427,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             started_ms: moqui_core::user::now_millis(),
         };
         moqui_core::edge::media::set_advert(factory, Some(advert));
+    }
+    let register = if settings.edge_node() {
         None
     } else {
         let factory = Arc::clone(factory);
@@ -437,7 +446,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         register,
         tcp: tcp_thread,
         turn: turn_arc,
-        advertised: edge_node.then(|| Arc::downgrade(factory)),
+        advertised: advertised.then(|| Arc::downgrade(factory)),
     })
 }
 
@@ -476,18 +485,23 @@ fn register(factory: &Arc<ExecutionContextFactory>, own: &str, public: SocketAdd
 }
 
 /// Runs a call service as internal work on a request worker, without waiting for it: the media events the driver
-/// reports (a leg's media connected).
+/// reports (a leg's media connected). A paired node's room (E12) runs it as that node's, so the service goes down its
+/// link (`moqui_core::edge::owner`); the server's own as on a normal node.
 pub(crate) fn note(
     factory: &Arc<ExecutionContextFactory>,
+    room: &str,
     service: &'static str,
     parameters: Vec<(&'static str, Value)>,
 ) {
     let owner = Arc::clone(factory);
+    let room_owner = moqui_core::edge::media::room_owner(room);
     let parameters: std::collections::BTreeMap<String, Value> =
         parameters.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     let submitted = factory.request_pool().try_submit(owner, move || {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-        moqui_core::service::sync(service, &parameters).map(|_| ())
+        moqui_core::edge::owner::with(room_owner, || {
+            moqui_core::service::sync(service, &parameters).map(|_| ())
+        })
     });
     if let Err(err) = submitted {
         tracing::debug!("call media event not noted: {}", err.message());

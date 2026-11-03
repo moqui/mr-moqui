@@ -238,13 +238,14 @@ pub(crate) fn routes(
     }
 }
 
-/// Start the listeners and the subscription when `xmpp_domain` is set. Never on an edge node, whose client ports
-/// tunnel to its local node (checked for this factory, as a test runs both ends in one process).
+/// Start the listeners and the subscription when `xmpp_domain` is set. Never on a dedicated edge node, whose client
+/// ports tunnel to its local node (checked for this factory, as a test runs both ends in one process). An all-in-one
+/// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/Edge-Node.md §10).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     if property("xmpp_domain").is_empty() {
         return None;
     }
-    if moqui_core::edge::settings(factory).edge_node {
+    if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
             "XMPP: xmpp_domain is set on an edge node (node_role=edge), which starts no XMPP server: \
              edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node"

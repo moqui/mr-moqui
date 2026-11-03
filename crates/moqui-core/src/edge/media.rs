@@ -25,6 +25,10 @@
 //!   logged, stored or shown.
 //! - Its SIP engine (E8) tells its addresses the same way ([`set_sip_advert`]), and the local node keeps its `SipNode`
 //!   row from the Hello; the trunks it loaded, with their state, are for its offer ([`set_sip_trunks`], E10 phones).
+//! - The media driver keys its rooms by [`room_key`] (E12): the call id alone for a call of this node's own, the
+//!   paired node and the call for a call whose signaling came over a link, as call ids from two databases may be
+//!   the same. [`split_room`] gives back the node and the call id, for what goes out (a reply's `callSessionId`, the
+//!   services a room's work calls, the node its recording is queued to).
 
 use std::sync::Mutex;
 
@@ -170,3 +174,65 @@ pub fn turn_secret(factory: &ExecutionContextFactory, instance_id: &str) -> Opti
         .filter(|peer| !instance_id.is_empty() && peer.instance_id == instance_id)
         .map(|peer| peer.secret.clone())
 }
+
+/// Between a paired node's id and its call's id in a room key: a control character neither holds.
+const ROOM_SEPARATOR: char = '\u{1f}';
+
+/// The media driver's room for the call `call`: the call id alone for this node's own call (`node` `None`), else the
+/// paired node `node` and the call (plans/Edge-Node.md §10, E12). A call id from `node`'s link is keyed as it is, also
+/// one that holds the separator (which none of its own does): [`split_room`] splits at the first one, so the key stays
+/// `node`'s and never names another node's call or the server's own.
+pub fn room_key(node: Option<&str>, call: &str) -> String {
+    match node.filter(|node| !node.is_empty()) {
+        Some(node) => format!("{node}{ROOM_SEPARATOR}{call}"),
+        None => call.to_string(),
+    }
+}
+
+/// The paired node of a room key (`None` for this node's own call) and its call id: the reverse of [`room_key`].
+pub fn split_room(room: &str) -> (Option<&str>, &str) {
+    match room.split_once(ROOM_SEPARATOR) {
+        Some((node, call)) if !node.is_empty() => (Some(node), call),
+        Some((_, call)) => (None, call),
+        None => (None, room),
+    }
+}
+
+/// The owner of the room `room`: its paired node, else the server's own.
+pub fn room_owner(room: &str) -> super::owner::Owner {
+    match split_room(room).0 {
+        Some(node) => super::owner::Owner::paired(node),
+        None => super::owner::Owner::Own,
+    }
+}
+
+/// Where a node that takes links keeps a paired node's call audio at `location` (a greeting or prompt of that node,
+/// fetched by its SIP engine or queued as `callAudio`): the location itself on a dedicated edge node, which has none of
+/// its own; on an all-in-one node (E12) the same path under `dbresource://moqui/edge-node/<node>/`, apart from the
+/// server's own audio at that path.
+pub fn kept_audio_location(factory: &ExecutionContextFactory, node: &str, location: &str) -> String {
+    if super::settings(factory).edge_node() {
+        return location.to_string();
+    }
+    paired_audio_location(node, location)
+}
+
+/// [`kept_audio_location`] on an all-in-one node.
+pub fn paired_audio_location(node: &str, location: &str) -> String {
+    let node: String = node
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = location.split_once("://").map_or(location, |(_, path)| path);
+    format!("dbresource://moqui/edge-node/{node}/{path}")
+}
+
+#[cfg(test)]
+#[path = "media_tests.rs"]
+mod tests;

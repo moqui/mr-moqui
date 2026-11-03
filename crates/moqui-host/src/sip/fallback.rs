@@ -99,21 +99,32 @@ pub(crate) fn deposit_answer(fallback: &Fallback, caller: &str) -> Json {
 }
 
 impl Engine {
-    /// A call routing could not reach the local node for: rung and answered from the fallback of the number `to`, or
-    /// refused 480 when it has none.
-    pub(super) async fn answer_from_fallback(&mut self, call: IncomingCall, to: String, from: String, srtp: bool) {
+    /// A call routing could not reach the local node `owner` for: rung and answered from the fallback of the number
+    /// `to`, or refused 480 when it has none. Its ids are keyed by that node (E12).
+    pub(super) async fn answer_from_fallback(
+        &mut self,
+        call: IncomingCall,
+        owner: &moqui_core::edge::owner::Owner,
+        to: String,
+        from: String,
+        srtp: bool,
+    ) {
         let Some(fallback) = edge::fallback_of(&self.factory, &to).await else {
             tracing::info!("SIP call to {to}: no fallback while the local node is away, refused 480");
             let _ = call.reply.send(Decision::Reject(480));
             return;
         };
-        if fallback.trunk.as_deref().is_some_and(|trunk| trunk != call.trunk_id) {
-            tracing::info!("SIP call to {to}: not a number of trunk {}, refused 404", call.trunk_id);
-            let _ = call.reply.send(Decision::Reject(404));
-            return;
+        // the number's trunk is checked only against a trunk of its own node's: one of the server's says nothing of it
+        let came_on = super::owners::trunk_of(owner, &call.trunk_id);
+        if let (Some(trunk), Some(came_on)) = (fallback.trunk.as_deref(), came_on) {
+            if trunk != came_on {
+                tracing::info!("SIP call to {to}: not a number of trunk {}, refused 404", call.trunk_id);
+                let _ = call.reply.send(Decision::Reject(404));
+                return;
+            }
         }
         let id = match moqui_core::entity::uuid_v4() {
-            Ok(id) => format!("{}{id}", edge::FALLBACK_PREFIX),
+            Ok(id) => super::owners::key(owner, &format!("{}{id}", edge::FALLBACK_PREFIX)),
             Err(err) => {
                 tracing::error!("SIP call to {to}: no id for its fallback, refused 480: {err}");
                 let _ = call.reply.send(Decision::Reject(480));

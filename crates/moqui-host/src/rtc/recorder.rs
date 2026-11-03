@@ -29,7 +29,8 @@
 //! queued to the local node as an item of kind [`QUEUE_KIND`] with the file as its content (the spool file goes once
 //! it is queued), and its end (`note#RecorderEnd`) under the same conversation key, the recording's id, so it never
 //! overtakes a segment; the local node's `receive#EdgeRecording` stores them. Its segments are at most
-//! [`EDGE_SEGMENT_MB`], well under the queue's content cap.
+//! [`EDGE_SEGMENT_MB`], well under the queue's content cap. On an all-in-one node (E12) the same goes for a paired
+//! node's call, to that node ([`Keeper`]), and the server's own calls' recordings are stored here.
 //!
 //! A failure ends the recording, never the call: a queue that overflowed (more than [`MAX_DROPPED`] frames dropped),
 //! a file that could not be written, a store that failed or fell behind. The segments already closed are stored, the
@@ -131,6 +132,27 @@ fn recorders() -> &'static Mutex<HashMap<String, Sender<Control>>> {
     RECORDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Where a recording's segments and end go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Keeper {
+    /// Stored here, by the call recording services: a normal node's, and an all-in-one node's own calls.
+    Here,
+    /// Queued for a local node: the paired node a call's control came from (E12), or `None` on a dedicated edge node,
+    /// whose queue picks its only paired node.
+    Queued(Option<Arc<str>>),
+}
+
+impl Keeper {
+    /// The keeper of a recording whose control came from `node` over a link (`None`: from this node or its cluster).
+    pub(crate) fn of(factory: &ExecutionContextFactory, node: Option<&str>) -> Self {
+        match node {
+            Some(node) => Keeper::Queued(Some(Arc::from(node))),
+            None if moqui_core::edge::settings(factory).edge_node() => Keeper::Queued(None),
+            None => Keeper::Here,
+        }
+    }
+}
+
 /// Whether a recording notice is kept for the legs that join later: until the recording is over (stopped or failed).
 fn notice_kept(notice: &Json) -> bool {
     !matches!(notice.get("state").and_then(Json::as_str), Some("stopped" | "failed"))
@@ -139,11 +161,16 @@ fn notice_kept(notice: &Json) -> bool {
 /// A `recording` control message for this node: its notice to the room's legs, then its op for the recorder.
 pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
     let text = |k: &str| body.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
-    let room = text("callSessionId");
-    let id = text("callRecordingId");
-    if room.is_empty() || id.is_empty() {
+    let (call, id) = (text("callSessionId"), text("callRecordingId"));
+    if call.is_empty() || id.is_empty() {
         return;
     }
+    // a paired node's call (its control came over its link, E12): its room and recorder are keyed by node, as its
+    // ids are another database's, and what it records is queued to it
+    let node = moqui_core::edge::signal::link_node(body);
+    let room = moqui_core::edge::media::room_key(node, &call);
+    let key = moqui_core::edge::media::room_key(node, &id);
+    let keeper = Keeper::of(factory, node);
     if let Some(notice) = body.get("notice").filter(|n| n.is_object()) {
         // the legs must hear of a pause or a resume: waits briefly for room in the media queue, and is logged if not
         if let Err(code) = command_waiting(
@@ -168,24 +195,25 @@ pub(crate) fn control(factory: &Arc<ExecutionContextFactory>, body: &Json) {
         "start" => {
             let paused = body.get("paused").and_then(Json::as_bool).unwrap_or(false);
             let mut limits = Limits::from_properties(&moqui_lib::env::get_prop_or_env, text("kind") == "mixed");
-            if moqui_core::edge::settings(factory).edge_node {
+            if keeper != Keeper::Here {
                 limits = limits.for_edge();
             }
             // what is left of the owner's drive quota, when it has one: the recording stops there as at its size limit
             if let Some(left) = body.get("maxBytes").and_then(Json::as_u64) {
                 limits.record.max_total_bytes = limits.record.max_total_bytes.min(left.max(1));
             }
-            start(factory, &room, &id, limits, period, paused);
+            start(factory, &room, &id, &key, keeper, limits, period, paused);
         }
-        "pause" => tell(&id, Control::Pause),
-        "resume" => tell(&id, Control::Resume { period }),
-        "stop" => tell(&id, Control::Stop),
+        "pause" => tell(&key, Control::Pause),
+        "resume" => tell(&key, Control::Resume { period }),
+        "stop" => tell(&key, Control::Stop),
         _ => {}
     }
 }
 
-fn tell(id: &str, control: Control) {
-    let sender = lock(recorders()).get(id).cloned();
+fn tell(key: &str, control: Control) {
+    let id = moqui_core::edge::media::split_room(key).1;
+    let sender = lock(recorders()).get(key).cloned();
     match sender {
         Some(tx) => {
             if tx.send(control).is_err() {
@@ -196,35 +224,45 @@ fn tell(id: &str, control: Control) {
     }
 }
 
-/// Starts the recorder thread of a recording (once).
-fn start(factory: &Arc<ExecutionContextFactory>, room: &str, id: &str, limits: Limits, period: u32, paused: bool) {
+/// Starts the recorder thread of a recording (once), by its `key` (its id, keyed by node for a paired node's).
+#[allow(clippy::too_many_arguments)]
+fn start(
+    factory: &Arc<ExecutionContextFactory>,
+    room: &str,
+    id: &str,
+    key: &str,
+    keeper: Keeper,
+    limits: Limits,
+    period: u32,
+    paused: bool,
+) {
     let (tx, rx) = channel();
     {
         let mut map = lock(recorders());
-        if map.contains_key(id) {
+        if map.contains_key(key) {
             return;
         }
-        map.insert(id.to_string(), tx);
+        map.insert(key.to_string(), tx);
     }
     let factory = Arc::clone(factory);
-    let (room, id) = (room.to_string(), id.to_string());
+    let (room, id, key) = (room.to_string(), id.to_string(), key.to_string());
     let spawned = std::thread::Builder::new()
         .name("moqui-call-recorder".to_string())
         .spawn({
-            let id = id.clone();
+            let (id, key) = (id.clone(), key.clone());
             move || {
                 let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(&factory, &room, &id, limits, period, paused, &rx)
+                    run(&factory, &room, &id, &key, &keeper, limits, period, paused, &rx)
                 }));
                 if ran.is_err() {
                     tracing::error!("call recording {id}: the recorder panicked");
-                    end_service(&factory, &id, "failed", "the recorder stopped unexpectedly");
+                    end_service(&factory, &id, &keeper, "failed", "the recorder stopped unexpectedly");
                 }
-                lock(recorders()).remove(&id);
+                lock(recorders()).remove(&key);
             }
         });
     if let Err(err) = spawned {
-        lock(recorders()).remove(&id);
+        lock(recorders()).remove(&key);
         tracing::error!("call recording {id}: the recorder thread did not start: {err}");
     }
 }
@@ -402,13 +440,15 @@ fn run(
     factory: &Arc<ExecutionContextFactory>,
     room: &str,
     id: &str,
+    key: &str,
+    keeper: &Keeper,
     limits: Limits,
     period: u32,
     paused: bool,
     controls: &Receiver<Control>,
 ) {
-    let store = ServiceStore::start(factory, id);
-    let dir = factory.runtime_dir().join(SPOOL).join(sanitize(id));
+    let store = ServiceStore::start(factory, id, keeper);
+    let dir = factory.runtime_dir().join(SPOOL).join(sanitize(key));
     let consumer = match media::attach(room, Kinds::All, limits.queue_frames) {
         Ok(consumer) => consumer,
         Err(code) => {
@@ -423,7 +463,7 @@ fn run(
     let mut session = match Session::new(dir, store, limits, period, paused) {
         Ok(session) => session,
         Err(text) => {
-            end_service(factory, id, "failed", &text);
+            end_service(factory, id, keeper, "failed", &text);
             return;
         }
     };
@@ -509,10 +549,10 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-fn end_service(factory: &Arc<ExecutionContextFactory>, id: &str, outcome: &str, text: &str) {
-    if moqui_core::edge::settings(factory).edge_node {
+fn end_service(factory: &Arc<ExecutionContextFactory>, id: &str, keeper: &Keeper, outcome: &str, text: &str) {
+    if let Keeper::Queued(node) = keeper {
         let payload = serde_json::json!({"op": "end", "callRecordingId": id, "outcome": outcome, "errorText": text});
-        if let Err(err) = queue_to_local(factory, id, &format!("{id}/end"), &payload, None) {
+        if let Err(err) = queue_to_local(factory, id, node.as_deref(), &format!("{id}/end"), &payload, None) {
             tracing::error!("call recording {id}: its end ({outcome}) was not queued for the local node: {err}");
         }
         return;
@@ -564,19 +604,21 @@ struct Job {
 struct ServiceStore {
     factory: Arc<ExecutionContextFactory>,
     id: String,
+    keeper: Keeper,
     jobs: Option<SyncSender<Job>>,
     failure: Arc<Mutex<Option<String>>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl ServiceStore {
-    fn start(factory: &Arc<ExecutionContextFactory>, id: &str) -> Self {
+    fn start(factory: &Arc<ExecutionContextFactory>, id: &str, keeper: &Keeper) -> Self {
         let (tx, rx) = sync_channel::<Job>(STORE_QUEUE);
         let failure = Arc::new(Mutex::new(None));
         let thread = {
             let factory = Arc::clone(factory);
             let failure = Arc::clone(&failure);
             let id = id.to_string();
+            let keeper = keeper.clone();
             std::thread::Builder::new()
                 .name("moqui-call-recording-store".to_string())
                 .spawn(move || {
@@ -585,7 +627,7 @@ impl ServiceStore {
                             let _ = std::fs::remove_file(&job.path);
                             continue;
                         }
-                        if let Err(err) = store_one(&factory, &id, &job) {
+                        if let Err(err) = store_one(&factory, &id, &keeper, &job) {
                             tracing::error!("call recording {id}: segment {} not stored: {err}", job.segment.file);
                             let _ = std::fs::remove_file(&job.path);
                             lock(&failure).get_or_insert(format!("a segment was not stored: {err}"));
@@ -600,6 +642,7 @@ impl ServiceStore {
         ServiceStore {
             factory: Arc::clone(factory),
             id: id.to_string(),
+            keeper: keeper.clone(),
             jobs: Some(tx),
             failure,
             thread,
@@ -607,7 +650,7 @@ impl ServiceStore {
     }
 }
 
-fn store_one(factory: &Arc<ExecutionContextFactory>, id: &str, job: &Job) -> Result<(), String> {
+fn store_one(factory: &Arc<ExecutionContextFactory>, id: &str, keeper: &Keeper, job: &Job) -> Result<(), String> {
     let date = |ms: u64| {
         let at = job.from + Duration::from_millis(ms);
         let millis = at
@@ -643,8 +686,8 @@ fn store_one(factory: &Arc<ExecutionContextFactory>, id: &str, job: &Job) -> Res
     if let Some(source) = s.track.source {
         parameters.insert("source".to_string(), Value::string(source.as_str()));
     }
-    if moqui_core::edge::settings(factory).edge_node {
-        return queue_segment(factory, id, job, parameters);
+    if let Keeper::Queued(node) = keeper {
+        return queue_segment(factory, id, node.as_deref(), job, parameters);
     }
     call_service(factory, STORE_SERVICE, parameters)
 }
@@ -654,6 +697,7 @@ fn store_one(factory: &Arc<ExecutionContextFactory>, id: &str, job: &Job) -> Res
 fn queue_segment(
     factory: &Arc<ExecutionContextFactory>,
     id: &str,
+    node: Option<&str>,
     job: &Job,
     mut parameters: std::collections::BTreeMap<String, Value>,
 ) -> Result<(), String> {
@@ -668,7 +712,7 @@ fn queue_segment(
     let key = format!("{id}/{}", job.segment.file);
     // the spool file goes once its content is queued; when queueing failed, the store fails the recording, which
     // removes it with the spool
-    queue_to_local(factory, id, &key, &payload, Some(content))?;
+    queue_to_local(factory, id, node, &key, &payload, Some(content))?;
     if let Err(err) = std::fs::remove_file(&job.path) {
         tracing::warn!(
             "call recording {id}: the spooled segment {} was not removed: {err}",
@@ -678,11 +722,12 @@ fn queue_segment(
     Ok(())
 }
 
-/// On an edge node: an item of [`QUEUE_KIND`] for the local node (the only one paired), in the recording's
-/// conversation, so its segments and its end arrive in order.
+/// An item of [`QUEUE_KIND`] for the local node `node` (on a dedicated edge node `None`, the only one paired), in the
+/// recording's conversation, so its segments and its end arrive in order.
 fn queue_to_local(
     factory: &Arc<ExecutionContextFactory>,
     id: &str,
+    node: Option<&str>,
     key: &str,
     payload: &Json,
     content: Option<Vec<u8>>,
@@ -696,13 +741,14 @@ fn queue_to_local(
         content_location: None,
     };
     let owner = Arc::clone(factory);
+    let node = node.map(str::to_string);
     factory
         .service_pools()
         .call(move || {
             let facade = owner
                 .entity()
                 .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
-            moqui_core::edge::queue::enqueue(&owner, &facade, None, &item)
+            moqui_core::edge::queue::enqueue(&owner, &facade, node.as_deref(), &item)
                 .map(drop)
                 .map_err(|err| moqui_core::context::Error::new(err.message().to_string()))
         })
@@ -750,7 +796,7 @@ impl Store for ServiceStore {
     }
 
     fn end(&mut self, outcome: &str, text: &str) {
-        end_service(&self.factory, &self.id, outcome, text);
+        end_service(&self.factory, &self.id, &self.keeper, outcome, text);
     }
 }
 

@@ -70,7 +70,7 @@ use crate::registrar::{Binding, Registrar};
 
 #[path = "ua_phones.rs"]
 mod phones;
-pub use phones::{BindingChange, DeviceDirectory, DeviceRing, PhoneDevice, RegistrarConfig};
+pub use phones::{aor_key, BindingChange, DeviceDirectory, DeviceRing, PhoneDevice, RegistrarConfig};
 use phones::{Caller, Phones};
 
 /// How long a challenge's nonce lasts.
@@ -386,6 +386,9 @@ struct Inner {
     early: Mutex<HashMap<String, Instant>>,
     guard: Arc<Mutex<SourceGuard>>,
     nonces: Mutex<NonceBook>,
+    /// The registrar's other realms (lower case), each with its own nonces: device domains besides the configured
+    /// realm ([`Ua::set_device_realms`]).
+    device_realms: Mutex<HashMap<String, NonceBook>>,
     bound: Bound,
     public_host: Option<String>,
     stop: CancellationToken,
@@ -692,6 +695,7 @@ impl Ua {
                 },
                 NONCE_SECONDS,
             )),
+            device_realms: Mutex::new(HashMap::new()),
             bound,
             public_host: config.public_host.filter(|h| !h.trim().is_empty()),
             stop: stop.clone(),
@@ -759,6 +763,26 @@ impl Ua {
     /// Blocks a source until `until` (a block the voice services kept), or clears its block.
     pub fn set_block(&self, source: IpAddr, until: Option<Instant>) {
         lock(&self.inner.guard).set_block(source, until);
+    }
+
+    /// The registrar's realms besides the configured one: a REGISTER or INVITE whose domain (the To or From URI's host)
+    /// is one of them is challenged in that realm, and its answer checked by the directory for that realm
+    /// ([`DeviceDirectory::verify`]). The phones of each realm are kept apart ([`aor_key`]). A realm kept from the list
+    /// before keeps its nonces; one no longer listed fails the answers to its challenges.
+    pub fn set_device_realms(&self, realms: &[String]) {
+        let primary = lock(&self.inner.nonces).realm().to_ascii_lowercase();
+        let mut books = lock(&self.inner.device_realms);
+        let wanted: Vec<String> = realms
+            .iter()
+            .map(|realm| realm.trim().trim_end_matches('.').to_ascii_lowercase())
+            .filter(|realm| !realm.is_empty() && *realm != primary)
+            .collect();
+        books.retain(|realm, _| wanted.contains(realm));
+        for realm in wanted {
+            books
+                .entry(realm.clone())
+                .or_insert_with(|| NonceBook::new(&realm, NONCE_SECONDS));
+        }
     }
 
     pub fn set_guard_policy(&self, policy: GuardPolicy) {
@@ -1547,6 +1571,8 @@ impl Inner {
             .into_iter()
             .find_map(|v| Authorization::parse(&v));
         let method = tx.original.method.to_string();
+        // a device domain of its own (set_device_realms): its nonces and its directory's realm
+        let realm = self.realm_of(tx, given.as_ref());
         let verdict = match given.as_ref() {
             None => None,
             Some(auth) => {
@@ -1572,8 +1598,8 @@ impl Inner {
                         Some((verdict, Some(Caller::Trunk(trunk))))
                     }
                     None if self.phones.is_some() => {
-                        let (verdict, device) = self.check_device(auth, &method).await;
-                        Some((verdict, device.map(Caller::Device)))
+                        let (verdict, device) = self.check_device(auth, &method, realm.as_deref()).await;
+                        Some((verdict, device.map(|device| Caller::Device(device, realm.clone()))))
                     }
                     None => Some((lock(&self.nonces).verify(auth, &method, None, now_secs()), None)),
                 }
@@ -1588,7 +1614,14 @@ impl Inner {
             }
             None | Some((Verdict::Stale, _)) => {
                 let stale = verdict.is_some();
-                let challenges = lock(&self.nonces).challenges(now_secs(), &[Algorithm::Sha256, Algorithm::Md5], stale);
+                let algorithms = [Algorithm::Sha256, Algorithm::Md5];
+                let challenges = match realm.as_deref() {
+                    Some(realm) => lock(&self.device_realms)
+                        .get(realm)
+                        .map(|book| book.challenges(now_secs(), &algorithms, stale))
+                        .unwrap_or_default(),
+                    None => lock(&self.nonces).challenges(now_secs(), &algorithms, stale),
+                };
                 let headers = challenges
                     .into_iter()
                     .map(|c| {
@@ -1639,7 +1672,7 @@ impl Inner {
         // a trunk's call, or a registered phone's over the transport it came by
         let (trunk_id, device, transport) = match caller {
             Caller::Trunk(trunk) => (trunk.id, None, trunk.transport),
-            Caller::Device(device) => (String::new(), Some(device.id), phones::transport_in(&tx)),
+            Caller::Device(device, _) => (String::new(), Some(device.id), phones::transport_in(&tx)),
         };
         let to = user_of(&request.uri);
         let (from, from_name) = match request.from_header().ok().and_then(|h| h.typed().ok()) {

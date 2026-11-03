@@ -374,3 +374,178 @@ fn large_content_is_a_content_blob_that_past_versions_keep() {
         200_000
     );
 }
+
+/// Two first writes in their own transactions can each make the same missing directory: a file under either copy
+/// reads back, and a later write to it changes that file rather than make another.
+#[test]
+fn a_file_under_a_duplicate_directory_reads_and_writes() {
+    let facade = facade();
+    facade.write_db_resource("dbresource://dup/a/one.txt", b"one").unwrap();
+    let dup = facade.find_node(None, "dup").unwrap().expect("dup").id;
+    let second = facade.create_node(Some(&dup), "a", false).unwrap();
+    let file = facade.create_node(Some(&second), "two.txt", true).unwrap();
+    facade
+        .write_bytes(&file, "two.txt", super::NewContent::Inline(b"two"), None)
+        .unwrap();
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://dup/a/two.txt").unwrap(),
+        Some(b"two".to_vec())
+    );
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://dup/a/one.txt").unwrap(),
+        Some(b"one".to_vec())
+    );
+    let info = facade.read_db_resource("dbresource://dup/a/two.txt").unwrap();
+    assert!(info.exists && info.is_file);
+    facade
+        .write_db_resource("dbresource://dup/a/two.txt", b"three")
+        .unwrap();
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://dup/a/two.txt").unwrap(),
+        Some(b"three".to_vec())
+    );
+    assert_eq!(facade.find_nodes(Some(&second), "two.txt").unwrap().len(), 1);
+    let first = facade.find_node(Some(&dup), "a").unwrap().expect("a").id;
+    assert!(
+        facade.find_nodes(Some(&first), "two.txt").unwrap().is_empty(),
+        "no second file"
+    );
+}
+
+#[test]
+fn the_oldest_of_two_sequenced_ids_is_the_shorter_then_the_lower() {
+    use std::cmp::Ordering;
+    assert_eq!(super::oldest_first("99999", "100000"), Ordering::Less);
+    assert_eq!(super::oldest_first("100001", "100000"), Ordering::Greater);
+    assert_eq!(super::oldest_first("100000", "100000"), Ordering::Equal);
+}
+
+/// Two directories `dup/a` (as a race made them before directory creation was serialised), with `one.txt` in the
+/// first and `two.txt` and `one.txt` in the second; and a second root `dup`.
+fn duplicated(facade: &EntityFacade) -> (String, String) {
+    facade.write_db_resource("dbresource://dup/a/one.txt", b"one").unwrap();
+    let dup = facade.find_node(None, "dup").unwrap().expect("dup").id;
+    let first = facade.find_node(Some(&dup), "a").unwrap().expect("a").id;
+    let second = facade.create_node(Some(&dup), "a", false).unwrap();
+    for (name, bytes) in [("two.txt", b"two"), ("one.txt", b"new")] {
+        let file = facade.create_node(Some(&second), name, true).unwrap();
+        facade
+            .write_bytes(&file, name, super::NewContent::Inline(bytes), None)
+            .unwrap();
+    }
+    facade.create_node(None, "dup", false).unwrap();
+    (first, second)
+}
+
+#[test]
+fn a_duplicated_directory_lists_its_copies_children_once() {
+    let facade = facade();
+    duplicated(&facade);
+    let names = |location: &str| -> Vec<(String, bool)> {
+        facade
+            .read_db_resource(location)
+            .unwrap()
+            .children
+            .into_iter()
+            .map(|child| (child.name, child.is_file))
+            .collect()
+    };
+    assert_eq!(
+        names("dbresource://dup/a"),
+        vec![("one.txt".to_string(), true), ("two.txt".to_string(), true)]
+    );
+    assert_eq!(names("dbresource://dup"), vec![("a".to_string(), false)]);
+    assert_eq!(names("dbresource://"), vec![("dup".to_string(), false)]);
+    // the oldest copy's file is the one read
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://dup/a/one.txt").unwrap(),
+        Some(b"one".to_vec())
+    );
+    let entry = facade.db_resource_entry("dbresource://dup/a").unwrap();
+    assert_eq!(entry.children.len(), 2);
+}
+
+#[test]
+fn delete_removes_every_copy_of_a_duplicated_node() {
+    let facade = facade();
+    duplicated(&facade);
+    assert!(facade.delete_db_resource("dbresource://dup/a/one.txt").unwrap());
+    assert!(!facade.read_db_resource("dbresource://dup/a/one.txt").unwrap().exists);
+    assert!(facade.delete_db_resource("dbresource://dup/a").unwrap());
+    assert!(!facade.read_db_resource("dbresource://dup/a").unwrap().exists);
+    assert!(facade.delete_db_resource("dbresource://dup").unwrap());
+    assert!(!facade.read_db_resource("dbresource://dup").unwrap().exists);
+    assert!(facade.find_nodes(None, "dup").unwrap().is_empty());
+}
+
+#[test]
+fn move_takes_every_copy_of_a_duplicated_directory() {
+    let facade = facade();
+    let (first, second) = duplicated(&facade);
+    facade
+        .move_db_resource("dbresource://dup/a", "dbresource://moved/b")
+        .unwrap();
+    assert!(!facade.read_db_resource("dbresource://dup/a").unwrap().exists);
+    let moved = facade.read_db_resource("dbresource://moved/b").unwrap();
+    let names: Vec<String> = moved.children.into_iter().map(|child| child.name).collect();
+    assert_eq!(names, vec!["one.txt".to_string(), "two.txt".to_string()]);
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://moved/b/two.txt").unwrap(),
+        Some(b"two".to_vec())
+    );
+    // the second copy's one.txt, which a read never showed, is gone with the copy
+    assert_eq!(
+        facade.read_db_resource_bytes("dbresource://moved/b/one.txt").unwrap(),
+        Some(b"one".to_vec())
+    );
+    assert_eq!(facade.find_nodes(Some(&first), "two.txt").unwrap().len(), 1);
+    assert!(facade.find_nodes(Some(&second), "one.txt").unwrap().is_empty());
+    let dup = facade.find_nodes(None, "dup").unwrap();
+    assert!(dup
+        .iter()
+        .all(|dup| facade.find_nodes(Some(&dup.id), "a").unwrap().is_empty()));
+}
+
+/// A directory a write makes is committed on its own, so another write's find sees it (and makes no copy) whether
+/// or not the first write's transaction commits.
+#[test]
+fn a_directory_a_write_makes_is_kept_when_the_write_rolls_back() {
+    let facade = facade();
+    let tx = facade.transactions_for(super::DB_RESOURCE).unwrap();
+    tx.begin(None).unwrap();
+    facade.write_db_resource("dbresource://made/x/one.txt", b"one").unwrap();
+    tx.rollback().unwrap();
+    assert!(!facade.read_db_resource("dbresource://made/x/one.txt").unwrap().exists);
+    assert!(facade.read_db_resource("dbresource://made/x").unwrap().exists);
+    facade.write_db_resource("dbresource://made/x/two.txt", b"two").unwrap();
+    assert_eq!(facade.find_nodes(None, "made").unwrap().len(), 1);
+}
+
+#[test]
+fn first_writes_at_once_make_each_directory_once() {
+    let facade = facade();
+    // an outer and a directory's transaction each: within the test pool's 8 connections
+    let writers: Vec<_> = (0..4)
+        .map(|index| {
+            let facade = facade.clone();
+            std::thread::spawn(move || {
+                let tx = facade.transactions_for(super::DB_RESOURCE).unwrap();
+                tx.begin(None).unwrap();
+                facade
+                    .write_db_resource(&format!("dbresource://race/x/{index}.txt"), b"bytes")
+                    .unwrap();
+                tx.commit().unwrap();
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let race = facade.find_nodes(None, "race").unwrap();
+    assert_eq!(race.len(), 1);
+    assert_eq!(facade.find_nodes(Some(&race[0].id), "x").unwrap().len(), 1);
+    assert_eq!(
+        facade.read_db_resource("dbresource://race/x").unwrap().children.len(),
+        4
+    );
+}

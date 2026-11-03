@@ -162,6 +162,52 @@ fn number_field(fields: &serde_json::Value, name: &str) -> Option<i64> {
         .filter(|seconds| *seconds > 0)
 }
 
+/// Who answers a chat bridge's webhooks and serves its files on an all-in-one node (plans/Edge-Node.md §10).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum BridgeOwner {
+    /// The server's own `ChatBridge`, and no paired node's copy: the normal path.
+    Own,
+    /// Only a paired node's copy: its node and fields, the edge path.
+    Paired(String, serde_json::Value),
+    /// Both sides have the id: refused, as a claim conflict, naming the paired node.
+    Both(String),
+    /// Neither.
+    None,
+}
+
+/// [`BridgeOwner`] from what each side has.
+pub(super) fn owner_of(own: bool, paired: Option<(String, serde_json::Value)>) -> BridgeOwner {
+    match (own, paired) {
+        (true, None) => BridgeOwner::Own,
+        (false, Some((node, fields))) => BridgeOwner::Paired(node, fields),
+        (true, Some((node, _))) => BridgeOwner::Both(node),
+        (false, None) => BridgeOwner::None,
+    }
+}
+
+/// On an all-in-one node: who has bridge `bridge_id`, given whether the server has its own row. The replica is read
+/// only then, as a dedicated edge node reads it.
+///
+/// # Errors
+///
+/// Returns the database's error.
+pub(super) fn bridge_owner(facade: &EntityFacade, bridge_id: &str, own: bool) -> Result<BridgeOwner, LibError> {
+    Ok(owner_of(own, replicated_bridge(facade, bridge_id)?))
+}
+
+/// The answer to a webhook of a bridge both the server and paired node `node` have: refused, logged as the claim
+/// conflict it is (the server's own setup and the replication refuse such an id, so it is one made before either).
+pub(super) fn both_refused(bridge_id: &str, node: &str) -> WebhookResponse {
+    tracing::error!(
+        "chat bridge {bridge_id} is both the server's own ChatBridge and one paired node {node} replicated; its \
+         webhooks are refused until one side removes it"
+    );
+    WebhookResponse::text(
+        409,
+        &format!("chat bridge {bridge_id} is held by both the server and a paired node"),
+    )
+}
+
 /// A request to `/channels/{chatBridgeId}/webhook` on an edge node. See the module notes.
 pub(super) fn webhook(
     factory: &ExecutionContextFactory,
@@ -169,15 +215,27 @@ pub(super) fn webhook(
     bridge_id: &str,
     request: &WebhookRequest,
 ) -> WebhookResponse {
-    let (node, fields) = match replicated_bridge(facade, bridge_id) {
-        Ok(Some(found)) => found,
-        Ok(None) => return WebhookResponse::not_signed(),
+    match replicated_bridge(facade, bridge_id) {
+        Ok(Some((node, fields))) => paired_webhook(factory, facade, bridge_id, request, &node, &fields),
+        Ok(None) => WebhookResponse::not_signed(),
         Err(error) => {
             tracing::error!("chat bridge {bridge_id}: the edge node could not read its replicated bridge: {error}");
-            return WebhookResponse::text(503, "try again later");
+            WebhookResponse::text(503, "try again later")
         }
-    };
-    let public_key = field(&fields, "webhookPublicKey");
+    }
+}
+
+/// A webhook of bridge `bridge_id` as paired node `node` replicated it (`fields`): its signature checked here and the
+/// request queued for the node.
+pub(super) fn paired_webhook(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    bridge_id: &str,
+    request: &WebhookRequest,
+    node: &str,
+    fields: &serde_json::Value,
+) -> WebhookResponse {
+    let public_key = field(fields, "webhookPublicKey");
     if public_key.is_empty() {
         tracing::error!(
             "chat bridge {bridge_id} of local node {node} has no webhookPublicKey in its replicated copy, so its \
@@ -189,13 +247,13 @@ pub(super) fn webhook(
     if !public_key.is_empty() {
         config["publicKey"] = serde_json::Value::String(public_key);
     }
-    if let Some(tolerance) = number_field(&fields, "webhookToleranceSeconds") {
+    if let Some(tolerance) = number_field(fields, "webhookToleranceSeconds") {
         config["webhookToleranceSeconds"] = serde_json::Value::from(tolerance);
     }
     let info = BridgeInfo {
         chat_bridge_id: bridge_id.to_string(),
-        type_enum_id: field(&fields, "typeEnumId"),
-        adapter_name: field(&fields, "adapterName"),
+        type_enum_id: field(fields, "typeEnumId"),
+        adapter_name: field(fields, "adapterName"),
         name: String::new(),
         config,
     };
@@ -210,14 +268,14 @@ pub(super) fn webhook(
         Ok(Some(refused)) => return refused,
         Err(_) => return WebhookResponse::not_signed(),
     }
-    if field(&fields, "statusId") == "CbsDisabled" {
+    if field(fields, "statusId") == "CbsDisabled" {
         return WebhookResponse::text(503, "the bridge is disabled");
     }
     let Ok(Some(key)) = std::panic::catch_unwind(AssertUnwindSafe(|| adapter.webhook_event_id(&info, request))) else {
         return WebhookResponse::text(400, "the request names no event");
     };
     let item = webhook_item(bridge_id, &key, request);
-    match queue::enqueue(factory, facade, Some(&node), &item) {
+    match queue::enqueue(factory, facade, Some(node), &item) {
         Ok(queued) => {
             let outcome = if queued.created { "queued" } else { "duplicate" };
             tracing::info!(
@@ -328,7 +386,7 @@ fn apply_edge_webhook(
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
-    if crate::edge::settings(&factory).edge_node {
+    if crate::edge::settings(&factory).takes_links() {
         return Err(LibError::new(
             "apply#EdgeWebhook runs on a local node, not on an edge node",
         ));
@@ -426,7 +484,7 @@ pub enum MediaUrls {
 /// in, whose conf lists [`KIND_MEDIA`].
 fn through_edge(factory: &ExecutionContextFactory) -> bool {
     let settings = crate::edge::settings(factory);
-    !settings.edge_node
+    !settings.takes_links()
         && settings.kinds.contains_key(KIND_MEDIA)
         && !moqui_lib::env::get_prop_or_env(crate::edge::NODE_URL).trim().is_empty()
         // a build without the edge link (Lite, Dev) has no link to send the files on
@@ -663,7 +721,7 @@ fn store_edge_media(
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
-    if !crate::edge::settings(&factory).edge_node {
+    if !crate::edge::settings(&factory).takes_links() {
         return Err(LibError::new(
             "store#EdgeMedia runs on an edge node, not on a local node",
         ));

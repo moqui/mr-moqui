@@ -258,22 +258,41 @@ pub fn webhook(factory: &ExecutionContextFactory, bridge_id: &str, request: &Web
     let Some(facade) = factory.entity() else {
         return WebhookResponse::text(503, "the server is starting");
     };
+    let settings = crate::edge::settings(factory);
     // an edge node checks the signature with its local node's replicated bridge and queues the request for it
-    if crate::edge::settings(factory).edge_node {
+    if settings.edge_node() {
         return super::edge::webhook(factory, &facade, bridge_id, request);
     }
     let row = facade
         .find(BRIDGE)
         .and_then(|find| find.eq("chatBridgeId", Value::string(bridge_id)).disable_authz().one());
-    // an unknown bridge, one with no adapter here, and a disabled one before its network's signature all answer as an
-    // unsigned request does, so bridge ids cannot be probed
     let row = match row {
-        Ok(Some(row)) => row,
-        Ok(None) => return WebhookResponse::not_signed(),
+        Ok(row) => row,
         Err(error) => {
             tracing::error!("chat bridge {bridge_id}: its webhook could not read the bridge: {error}");
             return WebhookResponse::text(500, "the bridge could not be read");
         }
+    };
+    // an all-in-one node (plans/Edge-Node.md §10): the server's own bridge, else a paired node's copy, never both
+    if settings.all_in_one() {
+        match super::edge::bridge_owner(&facade, bridge_id, row.is_some()) {
+            Ok(super::edge::BridgeOwner::Paired(node, fields)) => {
+                return super::edge::paired_webhook(factory, &facade, bridge_id, request, &node, &fields)
+            }
+            Ok(super::edge::BridgeOwner::Both(node)) => return super::edge::both_refused(bridge_id, &node),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(
+                    "chat bridge {bridge_id}: its webhook could not read the paired nodes' bridges: {error}"
+                );
+                return WebhookResponse::text(503, "try again later");
+            }
+        }
+    }
+    // an unknown bridge, one with no adapter here, and a disabled one before its network's signature all answer as an
+    // unsigned request does, so bridge ids cannot be probed
+    let Some(row) = row else {
+        return WebhookResponse::not_signed();
     };
     let info = bridge_info(&row);
     let Some(adapter) = adapter_of(factory, &facade, &info) else {
@@ -398,10 +417,21 @@ pub fn media_token_valid(bridge_id: &str, token: &str, now: i64) -> Option<Strin
 /// The file a token names, in the current context: only a file of a message with a delivery to that bridge, while the
 /// token works.
 pub fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
+    let settings = crate::edge::settings(factory);
     // an edge node serves the files its local node put there (chatMedia), by their own tokens
-    if crate::edge::settings(factory).edge_node {
+    if settings.edge_node() {
         return super::edge::media(factory, bridge_id, token, now);
     }
+    // an all-in-one node (plans/Edge-Node.md §10): a token of the server's own first, else a paired node's file
+    let own = own_media(factory, bridge_id, token, now);
+    if own.is_none() && settings.all_in_one() {
+        return super::edge::media(factory, bridge_id, token, now);
+    }
+    own
+}
+
+/// [`media`] of the server's own messages.
+fn own_media(factory: &ExecutionContextFactory, bridge_id: &str, token: &str, now: i64) -> Option<MediaFile> {
     let attachment_id = media_token_valid(bridge_id, token, now)?;
     let facade = factory.entity()?;
     let row = facade

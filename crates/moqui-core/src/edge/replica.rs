@@ -645,6 +645,8 @@ pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<B
 }
 
 fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
+    // on an all-in-one node a record that claims an item the server holds is not applied (§10)
+    let own = conflicts::all_in_one_factory();
     transaction(facade, VALUE, TransactionAttribute::ForceNew, || {
         let cursor = facade
             .find(CURSOR)?
@@ -664,10 +666,18 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
             return Ok(BatchAnswer::Resync);
         }
         let now = stamp_value(now_millis());
+        if let Some(factory) = &own {
+            conflicts::recheck_in(factory, facade, Some(node), Some(&batch.set_name));
+        }
         for change in &batch.changes {
             let pk: serde_json::Value = serde_json::from_str(&change.pk_json)
                 .map_err(|err| Error::new(format!("a bad key in the batch: {err}")))?;
             let hash = canonical_sha256(&pk);
+            if let Some(factory) = &own {
+                if conflicts::skipped(factory, facade, node, batch, change, &pk, &hash, &now)? {
+                    continue;
+                }
+            }
             let mut row = facade.make_value(VALUE)?;
             row.set("pairedNodeId", Value::string(node));
             row.set("setName", Value::string(&batch.set_name));
@@ -704,6 +714,9 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
                 ]))
                 .disable_authz()
                 .delete_all()?;
+            if own.is_some() {
+                conflicts::drop_older(facade, node, batch)?;
+            }
         }
         let mut row = facade.make_value(CURSOR)?;
         row.set("pairedNodeId", Value::string(node));
@@ -845,6 +858,9 @@ pub fn cursors(facade: &EntityFacade, paired_node_id: Option<&str>) -> Result<Ve
         Ok(out)
     })
 }
+
+#[path = "replica_conflicts.rs"]
+pub mod conflicts;
 
 #[cfg(test)]
 #[path = "replica_tests.rs"]

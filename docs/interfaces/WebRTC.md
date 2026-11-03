@@ -283,6 +283,10 @@ the edge node is not a member of the local node's cluster:
   queued ([Call-Recording](Call-Recording.md)). With the link down they fail at once as "local node offline", and
   the media goes on.
 - **TURN** runs on the edge node; the local node signs its credentials with the edge node's secret ([TURN](TURN.md)).
+- **An all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) registers its own `CallMediaNode` for its
+  own calls and is also the local node's media node. Rooms of the local node's calls are keyed by node and call, and
+  the link stamps the sending node (`linkNode`) on each message, so the two sides' calls never meet. Recordings and
+  captions go to the room's owner.
 
 - **Only the edge node's own messages.** The local node delivers from the link only the media driver's replies, and
   only to a socket that bound that leg of that call with its media on the edge node; the edge node takes from the

@@ -165,6 +165,11 @@ impl PortRange {
     }
 }
 
+/// A leg's id in its room: its `callLegId`, without the paired node an engine's key of it has (E12).
+fn in_room(leg: &str) -> &str {
+    moqui_core::edge::media::split_room(leg).1
+}
+
 /// A running leg: its commands, and its thread (stopped when dropped).
 pub(crate) struct LegMedia {
     commands: Sender<LegCommand>,
@@ -172,8 +177,10 @@ pub(crate) struct LegMedia {
 }
 
 impl LegMedia {
-    /// Starts a leg in `room` (the `callSessionId`) as `leg` (its `callLegId`), on `socket`. `settled` is known for an
-    /// inbound leg (this side answered); an outbound leg gets it with its answer.
+    /// Starts a leg in `room` (the media driver's room of its call) as `leg` (the engine's key of its `callLegId`), on
+    /// `socket`. A paired node's room and leg are keyed by node (E12, `moqui_core::edge::media::room_key`); in the room
+    /// the leg is its `callLegId` alone, as the browsers know it. `settled` is known for an inbound leg (this side
+    /// answered); an outbound leg gets it with its answer.
     pub(crate) fn start(
         room: &str,
         leg: &str,
@@ -182,8 +189,8 @@ impl LegMedia {
         notes: tokio::sync::mpsc::UnboundedSender<LegNote>,
     ) -> Result<LegMedia, String> {
         socket.set_nonblocking(true).map_err(|e| e.to_string())?;
-        let source =
-            media::add_pcm_source(room, leg).map_err(|code| format!("the leg's audio did not start: {code}"))?;
+        let source = media::add_pcm_source(room, in_room(leg))
+            .map_err(|code| format!("the leg's audio did not start: {code}"))?;
         let consumer = media::attach(room, Kinds::Audio, CONSUMER_QUEUE)
             .map_err(|code| format!("the room's audio did not start: {code}"))?;
         let media = match settled {
@@ -311,7 +318,7 @@ impl Worker {
                     }
                     frame
                 }
-                None => mixer.minus(&self.leg).to_vec(),
+                None => mixer.minus(in_room(&self.leg)).to_vec(),
             };
             out.resize(FRAME, 0);
             self.mix_prompt(&mut out);
@@ -423,7 +430,7 @@ impl Worker {
     /// Joins another room (a merge): a new source and consumer there; the old ones go when dropped. One that cannot
     /// join stays where it was, logged.
     fn move_to(&mut self, room: &str) {
-        let source = match media::add_pcm_source(room, &self.leg) {
+        let source = match media::add_pcm_source(room, in_room(&self.leg)) {
             Ok(source) => source,
             Err(code) => {
                 tracing::warn!("SIP leg {}: not moved to {room}: {code}", self.leg);

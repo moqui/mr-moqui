@@ -38,6 +38,18 @@ use moqui_lib::sync::lock;
 
 use crate::notify::{TopicMessage, RTC_SIGNAL};
 
+/// The field an edge node stamps on each message a local node sent over its link, naming that node (E12): the media
+/// driver keys the call's room by it ([`super::media::room_key`]) and the engines run its work as that node's. A
+/// message that already carries one is refused, so a node cannot name another.
+pub const LINK_NODE: &str = "linkNode";
+
+/// The paired node a message on the bus came from over a link, `None` for this node's own and its cluster's.
+pub fn link_node(body: &serde_json::Value) -> Option<&str> {
+    body.get(LINK_NODE)
+        .and_then(serde_json::Value::as_str)
+        .filter(|node| !node.is_empty())
+}
+
 /// The topics a message over the link may be on: what [`receive`] publishes. Anything else is refused there.
 pub const TOPICS: [&str; 1] = [RTC_SIGNAL];
 

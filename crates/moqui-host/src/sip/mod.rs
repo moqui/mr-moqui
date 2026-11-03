@@ -45,12 +45,17 @@
 //!   local node keeps its row from the link's Hello), its messages and the greetings it plays cross the link's queue,
 //!   and a call whose routing finds the local node away is answered from the number's fallback: its outside number,
 //!   then a message, or 480.
+//! - **On an all-in-one node** (plans/Edge-Node.md §10, E12, `owners.rs`): both. Its own trunks, numbers and phones
+//!   as a normal node's, and its paired node's as an edge node's, each item by its owner: the trunks of both sides,
+//!   an inbound call by the number called, a phone by the domain it registers to, a call's services and its fallback
+//!   by the call's owner. It registers its own `SipNode` and advertises the paired node's domain over the link.
 
 mod audio;
 mod edge;
 mod fallback;
 mod ivr;
 mod leg;
+mod owners;
 mod phones;
 mod prompt;
 mod voicemail;
@@ -64,6 +69,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::edge::owner::Owner;
 use moqui_core::notify::{TopicMessage, RTC_SIGNAL};
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
@@ -90,6 +96,8 @@ const REGISTER_SERVICE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
 const REGISTER_EVERY: Duration = Duration::from_secs(20);
 /// How long a call given up (decided too late) takes no dial.
 const ABANDONED_FOR: Duration = Duration::from_secs(300);
+/// How often (in seconds) a node that takes links reads its paired node's SIP domain again (E12).
+const PAIRED_EVERY: u32 = 5;
 /// How long an outbound call rings before it is canceled.
 const RING_TIMEOUT: Duration = Duration::from_secs(60);
 /// The usual CA bundle, for TLS to trunks when `sip_tls_ca_file` is empty.
@@ -305,6 +313,8 @@ enum Command {
     FallbackTimeout {
         leg: String,
     },
+    /// E12: the paired node and its SIP device domain, read again (none while no node is paired).
+    Paired(Option<(String, String)>),
 }
 
 fn engine() -> &'static Mutex<Option<UnboundedSender<Command>>> {
@@ -319,7 +329,8 @@ pub(crate) struct SipNode {
     stop: Arc<AtomicBool>,
     register: Option<JoinHandle<()>>,
     _signal: Option<moqui_core::notify::Subscription>,
-    /// On an edge node, the factory whose Hello tells its addresses (E8), cleared when the engine stops.
+    /// On a node that takes links (an edge node, E8, or an all-in-one node, E12), the factory whose Hello tells its
+    /// addresses, cleared when the engine stops.
     advertised: Option<std::sync::Weak<ExecutionContextFactory>>,
 }
 
@@ -422,6 +433,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         }
     };
     let (events_tx, events) = unbounded_channel();
+    // E8, E12: a node that takes links has a paired node's trunks, calls and phones; a dedicated edge node has nothing
+    // of its own
+    let edge_settings = moqui_core::edge::settings(factory);
+    let (links, dedicated) = (edge_settings.takes_links(), edge_settings.edge_node());
+    let paired: phones::Paired = Arc::new(Mutex::new(None));
     let config = UaConfig {
         udp: settings.listen,
         tcp: settings.listen,
@@ -434,7 +450,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         user_agent: "Moqui".to_string(),
         registrar: settings
             .registrar
-            .map(|limits| phones::registrar_config(factory, limits, &settings.domain)),
+            .map(|limits| phones::registrar_config(factory, limits, &settings.domain, dedicated, Arc::clone(&paired))),
         trunk_ping: None,
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
@@ -457,7 +473,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             {
                 return;
             }
-            let _ = commands.send(Command::Control(message.body.clone()));
+            // E12: a paired node's control (over its link) names its ids, which the engine keys by that node
+            let mut body = message.body.clone();
+            if let Some(node) = moqui_core::edge::signal::link_node(&message.body) {
+                owners::key_ids(node, &mut body);
+            }
+            let _ = commands.send(Command::Control(body));
         };
         match moqui_core::notify::subscribe(RTC_SIGNAL, Arc::new(deliver)) {
             Ok(subscription) => Some(subscription),
@@ -471,12 +492,53 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         }
     };
     let own = crate::rtc::own_node(factory);
-    let edge_node = edge::is_edge(factory);
+    let stop = Arc::new(AtomicBool::new(false));
+    let sip_address = bound.udp.or(bound.tcp).or(bound.tls);
+    let addresses = [
+        (
+            "sipAddress",
+            bound.udp.or(bound.tcp).map(|a| public_of(a, settings.public)),
+        ),
+        ("tlsAddress", bound.tls.map(|a| public_of(a, settings.public))),
+    ];
+    let addresses: Vec<(&'static str, String)> = addresses
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
+        .collect();
+    // a node that takes links tells its addresses in its Hello, and the local node keeps the row (E8). A dedicated edge
+    // node's registrar is the paired node's, in its own realm; an all-in-one node's own realm is its own, so it
+    // advertises the paired node's domain once its Configure names one (E12, `Engine::paired_changed`)
+    let advert = links.then(|| {
+        let address = |key: &str| {
+            addresses
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        moqui_core::edge::media::SipAdvert {
+            sip_address: address("sipAddress"),
+            tls_address: address("tlsAddress"),
+            domain: if dedicated {
+                settings.domain.clone()
+            } else {
+                String::new()
+            },
+            registrar: dedicated && settings.registrar.is_some(),
+        }
+    });
+    if let Some(advert) = &advert {
+        moqui_core::edge::media::set_sip_advert(factory, Some(advert.clone()));
+    }
     let engine = Engine {
         factory: Arc::clone(factory),
         ua: ua.clone(),
         own: own.clone(),
-        edge: edge_node,
+        links,
+        dedicated,
+        paired,
+        advert,
+        registrar: settings.registrar.is_some(),
         ports,
         public: settings.public,
         legs: HashMap::new(),
@@ -498,37 +560,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         forward_counts: HashMap::new(),
     };
     runtime.spawn(engine.run(events, commands));
-    let stop = Arc::new(AtomicBool::new(false));
-    let sip_address = bound.udp.or(bound.tcp).or(bound.tls);
-    let addresses = [
-        (
-            "sipAddress",
-            bound.udp.or(bound.tcp).map(|a| public_of(a, settings.public)),
-        ),
-        ("tlsAddress", bound.tls.map(|a| public_of(a, settings.public))),
-    ];
-    let addresses: Vec<(&'static str, String)> = addresses
-        .into_iter()
-        .filter_map(|(k, v)| v.map(|v| (k, v.to_string())))
-        .collect();
-    // an edge node registers no SipNode: its Hello tells its addresses and the local node keeps the row (E8)
-    let register = if edge_node {
-        let address = |key: &str| {
-            addresses
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_default()
-        };
-        moqui_core::edge::media::set_sip_advert(
-            factory,
-            Some(moqui_core::edge::media::SipAdvert {
-                sip_address: address("sipAddress"),
-                tls_address: address("tlsAddress"),
-                domain: settings.domain.clone(),
-                registrar: settings.registrar.is_some(),
-            }),
-        );
+    // a dedicated edge node registers no SipNode (E8); an all-in-one node registers its own (E12)
+    let register = if dedicated {
         None
     } else {
         let factory = Arc::clone(factory);
@@ -554,7 +587,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         stop,
         register,
         _signal: signal,
-        advertised: edge_node.then(|| Arc::downgrade(factory)),
+        advertised: links.then(|| Arc::downgrade(factory)),
     })
 }
 
@@ -604,21 +637,28 @@ fn register(
     }
 }
 
-/// Runs a voice service on a request worker, as internal work; its answer as JSON, or its errors.
+/// Runs a voice service on a request worker, as internal work, for `owner`'s item; its answer as JSON, or its errors.
+/// A paired node's (E12, `owners.rs`) runs as that node's, so a delegated service goes down its link, with the ids
+/// bare, and its answer's ids keyed again.
 async fn call_service(
     factory: &Arc<ExecutionContextFactory>,
+    owner: Owner,
     name: &'static str,
-    parameters: Json,
+    mut parameters: Json,
 ) -> Result<Json, String> {
+    let node = owner.node().map(str::to_string);
+    if node.is_some() {
+        owners::bare_ids(&mut parameters);
+    }
     let factory = Arc::clone(factory);
-    tokio::task::spawn_blocking(move || {
+    let answered = tokio::task::spawn_blocking(move || {
         let parameters: BTreeMap<String, Value> = match moqui_lib::json::from_json(&parameters) {
             Value::Map(map) => map.into_iter().collect(),
             _ => BTreeMap::new(),
         };
         let job = move || {
             let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-            let called = moqui_core::service::sync(name, &parameters);
+            let called = moqui_core::edge::owner::with(owner, || moqui_core::service::sync(name, &parameters));
             let errors = ExecutionContext::with_current(|ec| {
                 let errors = ec.message().errors().join("; ");
                 ec.message().clear_errors();
@@ -651,7 +691,13 @@ async fn call_service(
         }
     })
     .await
-    .map_err(|_| "request worker panicked".to_string())?
+    .map_err(|_| "request worker panicked".to_string())?;
+    answered.map(|mut out| {
+        if let Some(node) = &node {
+            owners::key_ids(node, &mut out);
+        }
+        out
+    })
 }
 
 /// The recorded audio of a notice, 48 kHz mono, when its property names a WAV file; one that does not read is logged and
@@ -720,8 +766,17 @@ struct Engine {
     factory: Arc<ExecutionContextFactory>,
     ua: Ua,
     own: String,
-    /// An edge node's engine (E8): its services run on the local node, and the fallback answers while that is away.
-    edge: bool,
+    /// A node that takes links (a dedicated edge node, E8, or an all-in-one node, E12): the paired node's trunks from
+    /// its copy, its calls' services over its link, and its numbers' fallback while it is away (`owners.rs`).
+    links: bool,
+    /// A dedicated edge node: no trunks, numbers or phones of its own; all are the paired node's.
+    dedicated: bool,
+    /// The paired node and its SIP device domain, shared with the registrar's directory (E12).
+    paired: phones::Paired,
+    /// What the link's Hello tells of this engine (E8), on a node that takes links.
+    advert: Option<moqui_core::edge::media::SipAdvert>,
+    /// The registrar is on (`sip_registrar_enabled`).
+    registrar: bool,
     ports: Arc<PortRange>,
     public: Option<IpAddr>,
     legs: HashMap<String, Leg>,
@@ -856,10 +911,14 @@ fn number(body: &Json, key: &str) -> Option<u64> {
 
 impl Engine {
     async fn run(mut self, mut events: UnboundedReceiver<UaEvent>, mut commands: UnboundedReceiver<Command>) {
+        if self.links {
+            let paired = owners::paired_domain(&self.factory).await;
+            self.paired_changed(paired);
+        }
         if !self.reload().await {
             self.retry_reload(1);
         }
-        if self.edge {
+        if self.links {
             self.watch_trunks();
             // E8: messages that did not queue before the process stopped
             edge::requeue_spool(&self.factory);
@@ -878,7 +937,8 @@ impl Engine {
         }
     }
 
-    /// Fire and forget: a note for the services. A call the fallback answered (E8) is none of theirs.
+    /// Fire and forget: a note for the services, as the owner of what it names (E12). A call the fallback answered (E8)
+    /// is none of theirs.
     fn note(&self, name: &'static str, parameters: Json) {
         if parameters
             .get("callSessionId")
@@ -887,9 +947,10 @@ impl Engine {
         {
             return;
         }
+        let owner = owners::owner_in(&parameters);
         let factory = Arc::clone(&self.factory);
         tokio::spawn(async move {
-            if let Err(err) = call_service(&factory, name, parameters).await {
+            if let Err(err) = call_service(&factory, owner, name, parameters).await {
                 tracing::warn!("SIP: {name} failed: {err}");
             }
         });
@@ -913,16 +974,29 @@ impl Engine {
         });
     }
 
-    /// On an edge node (E8): load the trunks again when a batch of their replicated set is applied, which is how a
-    /// trunk or the policy changed on the local node reaches this engine, with the link up or after it comes back.
+    /// On a node that takes links (E8): load the trunks again when a batch of their replicated set is applied, which is
+    /// how a trunk or the policy changed on the local node reaches this engine, with the link up or after it comes
+    /// back. Every few seconds, the paired node and its SIP device domain are read again too (E12).
     fn watch_trunks(&self) {
         let (factory, commands) = (Arc::downgrade(&self.factory), self.commands.clone());
+        let mut paired = lock(&self.paired).clone();
         tokio::spawn(async move {
             // the count is of this process: the start's load read the copies before any batch came
             let mut seen = 0;
+            let mut turn = 0_u32;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let Some(factory) = factory.upgrade() else { return };
+                turn = turn.wrapping_add(1);
+                if turn.is_multiple_of(PAIRED_EVERY) {
+                    let now = owners::paired_domain(&factory).await;
+                    if now != paired {
+                        paired.clone_from(&now);
+                        if commands.send(Command::Paired(now)).is_err() {
+                            return;
+                        }
+                    }
+                }
                 let Some(count) = edge::trunks_applied(&factory).await else {
                     continue;
                 };
@@ -938,20 +1012,41 @@ impl Engine {
         });
     }
 
-    /// Loads the trunks and the policy (on an edge node from the replicated copy, E8); false when they did not load.
+    /// Loads the trunks and the policy: the server's own (`get#EngineConfig`) but on a dedicated edge node, and the
+    /// paired node's from its replicated copy on a node that takes links (E8), keyed by that node (E12,
+    /// `owners::merge_config`); false when they did not load. On an all-in-one node the paired node's copy that does
+    /// not read is logged, and its own trunks load.
     async fn reload(&mut self) -> bool {
-        let loaded = if self.edge {
-            edge::engine_config(&self.factory).await
+        let own = if self.dedicated {
+            None
         } else {
-            call_service(&self.factory, CONFIG_SERVICE, serde_json::json!({})).await
-        };
-        let config = match loaded {
-            Ok(config) => config,
-            Err(err) => {
-                tracing::error!("SIP: the trunks did not load, calls wait for a reload: {err}");
-                return false;
+            match call_service(&self.factory, Owner::Own, CONFIG_SERVICE, serde_json::json!({})).await {
+                Ok(config) => Some(config),
+                Err(err) => {
+                    tracing::error!("SIP: the trunks did not load, calls wait for a reload: {err}");
+                    return false;
+                }
             }
         };
+        let paired = if self.links {
+            match edge::engine_config(&self.factory).await {
+                Ok(paired) => paired,
+                Err(err) if self.dedicated => {
+                    tracing::error!("SIP: the trunks did not load, calls wait for a reload: {err}");
+                    return false;
+                }
+                Err(err) => {
+                    tracing::error!("SIP: the paired node's trunks did not load, its calls wait for a reload: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let config = owners::merge_config(
+            own,
+            paired.as_ref().map(|(node, config)| (node.as_str(), config.clone())),
+        );
         let policy = config.get("policy").cloned().unwrap_or(Json::Null);
         let defaults = DialPolicy::default();
         self.policy = DialPolicy {
@@ -1011,12 +1106,15 @@ impl Engine {
                     continue;
                 };
                 let srtp = text(trunk, "mediaEncryption") != "plain";
-                loaded.push(moqui_core::edge::media::SipTrunkState {
-                    voice_trunk_id: id.clone(),
-                    name: text(trunk, "name"),
-                    state: "loaded".to_string(),
-                    error: String::new(),
-                });
+                // the offer tells the paired node of its own trunks only, by their ids (E12)
+                if owners::owner_of(&id) != Owner::Own {
+                    loaded.push(moqui_core::edge::media::SipTrunkState {
+                        voice_trunk_id: owners::bare(&id).to_string(),
+                        name: text(trunk, "name"),
+                        state: "loaded".to_string(),
+                        error: String::new(),
+                    });
+                }
                 self.trunks.insert(
                     id.clone(),
                     TrunkInfo {
@@ -1048,7 +1146,7 @@ impl Engine {
             }
         }
         tracing::info!("SIP: {} trunks", trunks.len());
-        if self.edge {
+        if self.links {
             moqui_core::edge::media::set_sip_trunks(&self.factory, loaded);
         }
         self.ua.set_trunks(trunks).await;
@@ -1116,8 +1214,9 @@ impl Engine {
                     TrunkState::Failed(err) => ("failed", err),
                     TrunkState::Unregistered => ("unregistered", String::new()),
                 };
-                if self.edge {
-                    moqui_core::edge::media::note_sip_trunk(&self.factory, &trunk, status, &error);
+                // the paired node's trunks only, for its offer (E10, E12)
+                if self.links && owners::owner_of(&trunk) != Owner::Own {
+                    moqui_core::edge::media::note_sip_trunk(&self.factory, owners::bare(&trunk), status, &error);
                 }
                 self.note(
                     NOTE_TRUNK_SERVICE,
@@ -1144,6 +1243,47 @@ impl Engine {
         }
     }
 
+    /// The owner of an inbound call to `to` that came on the trunk `trunk` (the engine's key of it): on an all-in-one
+    /// node the server's when it has the number, else the paired node's when its copies have it, else the trunk's
+    /// owner (E12); elsewhere the trunk's (a dedicated edge node's are all the paired node's).
+    async fn number_owner(&self, to: &str, trunk: &str) -> Owner {
+        let by_trunk = owners::owner_of(trunk);
+        if !self.links || self.dedicated {
+            return by_trunk;
+        }
+        owners::number_holder(&self.factory, to).await.unwrap_or(by_trunk)
+    }
+
+    /// The paired node and its SIP device domain, read again (E12): on an all-in-one node the registrar takes the
+    /// domain's phones (their answers checked by the paired node), and the link's Hello tells it.
+    fn paired_changed(&mut self, paired: Option<(String, String)>) {
+        *lock(&self.paired) = paired.clone();
+        if self.dedicated {
+            return;
+        }
+        let domain = paired.map(|(_, domain)| domain).unwrap_or_default();
+        let realms: Vec<String> = (self.registrar && !domain.is_empty())
+            .then(|| domain.clone())
+            .into_iter()
+            .collect();
+        self.ua.set_device_realms(&realms);
+        if let Some(advert) = &mut self.advert {
+            if advert.domain != domain {
+                tracing::info!(
+                    "SIP: the paired node's phones register to {}",
+                    if domain.is_empty() {
+                        "no domain"
+                    } else {
+                        domain.as_str()
+                    }
+                );
+            }
+            advert.registrar = !realms.is_empty();
+            advert.domain = domain;
+            moqui_core::edge::media::set_sip_advert(&self.factory, Some(advert.clone()));
+        }
+    }
+
     /// A leg's RTP socket and its SDP for this side.
     fn local_media(&self, srtp: bool) -> Result<(std::net::UdpSocket, LocalMedia), String> {
         let socket = self.ports.take().ok_or("no free port in sip_rtp_ports")?;
@@ -1156,22 +1296,29 @@ impl Engine {
         let srtp_required = self.trunks.get(&call.trunk_id).is_none_or(|t| t.srtp);
         let to = dial::normalize(&call.to, &self.policy).unwrap_or_else(|| call.to.clone());
         let from = dial::normalize(&call.from, &self.policy).unwrap_or_else(|| call.from.clone());
-        let parameters = serde_json::json!({"voiceTrunkId": call.trunk_id, "toNumber": to, "fromNumber": from,
-            "fromName": call.from_name, "instanceId": self.own, "sipCallId": call.call_id});
+        // E12: whose call it is, by the number called on an all-in-one node, else by the trunk
+        let owner = self.number_owner(&to, &call.trunk_id).await;
+        let mut parameters = serde_json::json!({"toNumber": to, "fromNumber": from, "fromName": call.from_name,
+            "instanceId": self.own, "sipCallId": call.call_id});
+        // the number's trunk check applies only when the trunk is its owner's: a call routed by number on the other
+        // side's trunk carries none, as that side's trunk id means nothing in the owner's database
+        if let Some(trunk) = owners::trunk_of(&owner, &call.trunk_id) {
+            parameters["voiceTrunkId"] = Json::String(trunk.to_string());
+        }
         // V2: voicemail busy or access sends it to voicemail at once; voicemailSeconds is how long it rings before it does
         let mut voicemail_now = None;
         let mut ring_seconds = None;
         let mut step = None;
         let mut ivr_answer = None;
-        let routed = call_service(&self.factory, RECEIVE_SERVICE, parameters).await;
-        // E8: an edge node whose local node is away (no link, or no answer in time) answers from the number's fallback
+        let routed = call_service(&self.factory, owner.clone(), RECEIVE_SERVICE, parameters).await;
+        // E8: a paired node's number whose node is away (no link, or no answer in time) is answered from its fallback
         if let Err(err) = &routed {
-            if self.edge && edge::is_offline(err) {
+            if owner != Owner::Own && edge::is_offline(err) {
                 tracing::warn!(
                     "SIP call from {} to {to}: the local node is away ({err}); the number's fallback answers",
                     call.source
                 );
-                self.answer_from_fallback(call, to, from, srtp_required).await;
+                self.answer_from_fallback(call, &owner, to, from, srtp_required).await;
                 return;
             }
         }
@@ -1371,6 +1518,7 @@ impl Engine {
                 }
             }
             Command::FallbackTimeout { leg } => self.forward_timed_out(&leg),
+            Command::Paired(paired) => self.paired_changed(paired),
             Command::RingTimeout { leg, generation } => {
                 let Some(step) = self.ring_timers.fire(&leg, generation) else {
                     return;

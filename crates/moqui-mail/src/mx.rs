@@ -167,12 +167,14 @@ fn domain_of(address: &str) -> String {
 
 /// Record the delivery of `raw` (signed already) from `mail_from` to `to`, sent by local node `node` as its `mailOut`
 /// item `item`: the message kept once, and one row per recipient domain, in the caller's transaction; `local` are the
-/// recipients the edge node queued back to the local node itself (its own accounts), one row already sent. The delivery
-/// thread is woken once it commits.
+/// recipients the edge node queued back to the local node itself (its own accounts) or, on an all-in-one node, stored in
+/// the server's own accounts, and `refused` (each `address: why`) those of the server's own accounts that did not take
+/// it: one row of both, finished, reported with the rest. The delivery thread is woken once it commits.
 ///
 /// # Errors
 ///
 /// Returns why when a row or the message could not be written; the item is then not delivered.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn record(
     facade: &EntityFacade,
     node: &str,
@@ -180,6 +182,7 @@ pub(super) fn record(
     mail_from: &str,
     to: &[String],
     local: &[String],
+    refused: &[String],
     raw: &[u8],
 ) -> Result<usize, LibError> {
     let mut by_domain: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -235,13 +238,16 @@ pub(super) fn record(
         row.set("nextAttemptDate", stamp_value(now));
         row.create(facade)?;
     }
-    if !local.is_empty() {
-        // queued back to the local node in this transaction: sent, and reported with the rest
+    if !local.is_empty() || !refused.is_empty() {
+        // queued back to the local node or stored here in this transaction: finished, and reported with the rest
         let mut row = new_row(LOCAL_DOMAIN, local)?;
-        row.set("statusEnumId", Value::string(SENT));
+        let status = if refused.is_empty() { SENT } else { BOUNCED };
+        row.set("statusEnumId", Value::string(status));
         row.set("sentCount", Value::I64(i64::try_from(local.len()).unwrap_or(0)));
+        row.set("bouncedCount", Value::I64(i64::try_from(refused.len()).unwrap_or(0)));
+        row.set("refusedText", Value::string(clip(&refused.join(" | "), MAX_REPORT)));
         row.set("attemptCount", Value::I64(1));
-        row.set("lastReplyText", Value::string("queued back to the local node"));
+        row.set("lastReplyText", Value::string("queued back to the local node or stored here"));
         row.set("reportPending", Value::string("Y"));
         row.set("finishedDate", stamp_value(now));
         row.create(facade)?;
@@ -300,10 +306,12 @@ fn flight() -> &'static Mutex<Flight> {
     FLIGHT.get_or_init(|| Mutex::new(Flight::default()))
 }
 
-/// Start the delivery thread on an edge node whose `edge_mail_mta` is `moqui`; once per factory. It holds the factory
-/// only for a round, so a stopped server ends it.
+/// Start the delivery thread on a node that takes links (a dedicated edge node, or an all-in-one node, plans/Edge-Node.md
+/// §10) whose `edge_mail_mta` is `moqui`; once per factory. It holds the factory only for a round, so a stopped server
+/// ends it. It delivers only the rows [`record`] made for a paired node's `mailOut` items: an all-in-one node's own
+/// mail goes out by its `EmailServer` as on a normal node, never through these rows, so it is not delivered twice.
 pub fn start(factory: &Arc<ExecutionContextFactory>) {
-    if !moqui_core::edge::settings(factory).edge_node || mta() != Mta::Moqui || factory.entity().is_none() {
+    if !moqui_core::edge::settings(factory).takes_links() || mta() != Mta::Moqui || factory.entity().is_none() {
         return;
     }
     if factory.extension(|_| Started::default()).0.swap(true, Ordering::SeqCst) {

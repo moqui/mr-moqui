@@ -1637,7 +1637,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:annotation><xs:documentation>A service an edge node (node_role=edge) runs on its local node
                         instead of itself, for a synchronous call (an async call or a scheduled job runs where it was
                         queued): the call goes down the link at once and fails with "local node offline" while the link
-                        is down. With the service's definition on the edge node, its authorization and authenticate are
+                        is down. An all-in-one node (node_role=all-in-one) delegates only a call for a paired node's
+                        item, to that node; the same service runs there for the server's own items. With the service's definition on the edge node, its authorization and authenticate are
                         checked there first. The local node runs it as the user _EDGE_, with authorization, and only
                         when its own conf lists it too. Credentials (auth parameters) are never
                         passed.</xs:documentation></xs:annotation>

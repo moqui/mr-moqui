@@ -30,9 +30,11 @@ use moqui_lib::error::Error;
 use moqui_lib::sync::InstallSlot;
 
 pub mod calls;
+pub mod claims;
 pub mod conf;
 pub mod delegate;
 pub mod media;
+pub mod owner;
 pub mod queue;
 pub mod replica;
 pub mod setup;
@@ -45,7 +47,8 @@ pub use setup::{Configured, EdgeOffer, EdgeSetup};
 /// The message when no edge link is installed.
 pub const NOT_BUILT: &str = "edge link not built into this host";
 
-/// The property that makes a node an edge node: `edge`, or empty for a normal node (plans/Edge-Node.md §5.6).
+/// The property that sets a node's role ([`NodeRole`]): `edge`, `all-in-one`, or empty for a normal node
+/// (plans/Edge-Node.md §5.6, §10).
 pub const NODE_ROLE: &str = "node_role";
 /// A local node's link properties, in `runtime/.env`, written by pairing and removed by unpairing (§5.1).
 pub const NODE_URL: &str = "edge_node_url";
@@ -68,9 +71,80 @@ pub fn node_role() -> String {
     moqui_lib::env::get_prop_or_env(NODE_ROLE).trim().to_ascii_lowercase()
 }
 
-/// Whether this node is an edge node (`node_role=edge`).
+/// A node's role (`node_role`, plans/Edge-Node.md §5.6, §10).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NodeRole {
+    /// A normal node (`node_role` empty): its own data, and a local node when paired with an edge node.
+    #[default]
+    Normal,
+    /// A dedicated edge node (`node_role=edge`): no business data of its own; every name, address, number and bridge
+    /// not its own is a paired node's, and some paths switch as a whole.
+    Edge,
+    /// An all-in-one node (`node_role=all-in-one`, E12): a full server that also takes the link of one paired local
+    /// node, and routes each item by its owner ([`owner`]).
+    AllInOne,
+}
+
+impl NodeRole {
+    /// The role of a `node_role` value, trimmed and in any case. An unknown value is logged as an error (once per
+    /// process) and means a normal node.
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "normal" => Self::Normal,
+            "edge" => Self::Edge,
+            "all-in-one" => Self::AllInOne,
+            other => {
+                static LOGGED: std::sync::Once = std::sync::Once::new();
+                LOGGED.call_once(|| {
+                    tracing::error!(
+                        "{NODE_ROLE}={other} is not a node role (edge, all-in-one, or empty); this is a normal node"
+                    );
+                });
+                Self::Normal
+            }
+        }
+    }
+
+    /// The `node_role` value of the role: empty for a normal node.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "",
+            Self::Edge => "edge",
+            Self::AllInOne => "all-in-one",
+        }
+    }
+
+    /// A dedicated edge node: no business data of its own.
+    pub fn edge_node(self) -> bool {
+        self == Self::Edge
+    }
+
+    /// An all-in-one node: a full server that also takes a paired node's link.
+    pub fn all_in_one(self) -> bool {
+        self == Self::AllInOne
+    }
+
+    /// The edge end of a link: a dedicated edge node or an all-in-one node. It accepts links, runs the
+    /// [`queue`]'s receiving side and sends the listed services' calls of a paired node's items down the link.
+    pub fn takes_links(self) -> bool {
+        matches!(self, Self::Edge | Self::AllInOne)
+    }
+}
+
+/// This node's role, from `node_role` as it is now. A factory keeps the role it started with in
+/// [`EdgeSettings::role`]; code with a factory reads that.
+pub fn node_role_kind() -> NodeRole {
+    NodeRole::parse(&node_role())
+}
+
+/// Whether this node is a dedicated edge node (`node_role=edge`).
 pub fn is_edge_node() -> bool {
-    node_role() == "edge"
+    node_role_kind().edge_node()
+}
+
+/// Whether this node takes links: a dedicated edge node or an all-in-one node.
+pub fn takes_links() -> bool {
+    node_role_kind().takes_links()
 }
 
 /// The state of a local node's link.
@@ -216,6 +290,9 @@ pub struct DelegateCall {
     pub operation_id: String,
     /// How long the edge node waits for the answer, when its conf entry sets one shorter than the link's (E8).
     pub timeout: Option<std::time::Duration>,
+    /// The paired node to run it on (its `pairedNodeId`); `None` for the only linked one, as a dedicated edge node
+    /// sends. An all-in-one node names the owner of the item ([`owner::Owner::Paired`], E12). Not sent down the link.
+    pub node: Option<String>,
 }
 
 /// The local node's answer to a [`DelegateCall`]: the service's result, with the errors it added (a refusal's
@@ -254,8 +331,9 @@ pub trait EdgeLink: Send + Sync {
     fn add_host(&self, host: &EdgeHostInfo) -> Result<EdgeHostInfo, Error>;
     /// On an edge node: remove a host name. False when there was none.
     fn remove_host(&self, host_name: &str) -> Result<bool, Error>;
-    /// On an edge node: run `call` on the local node (the only one linked) and wait for its answer; [`OFFLINE`] at once
-    /// while the link is down. The caller checks the allowlist, and the local node checks its own again.
+    /// On an edge node: run `call` on its local node ([`DelegateCall::node`], else the only one linked) and wait for its
+    /// answer; [`OFFLINE`] at once while that node's link is down. The caller checks the allowlist, and the local node
+    /// checks its own again.
     fn delegate(&self, call: &DelegateCall) -> Result<DelegateAnswer, Error> {
         let _ = call;
         Err(Error::new(OFFLINE))
@@ -302,3 +380,6 @@ pub fn clear_edge_link() {
 pub fn link() -> Result<Arc<dyn EdgeLink>, Error> {
     LINK.get().ok_or_else(|| Error::new(NOT_BUILT))
 }
+
+#[cfg(test)]
+mod tests;

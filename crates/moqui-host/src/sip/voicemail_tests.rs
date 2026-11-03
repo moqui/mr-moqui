@@ -315,3 +315,23 @@ fn a_wav_greeting_converts_to_ogg_opus() {
     );
     assert!(audio::decode_audio(b"not audio at all", 60).is_err());
 }
+
+#[test]
+fn only_a_nodes_own_audio_is_kept_apart_for_a_paired_call() {
+    for own in [
+        "dbresource://moqui/call/voicemail/greeting/B1/greeting-1.ogg",
+        "dbresource://moqui/call/voicemail/B1/100.ogg",
+        "dbresource://moqui/call/prompt/menu/M1/prompt.ogg",
+    ] {
+        assert!(node_audio(own), "{own}");
+    }
+    // the deployment's hold music, queue digits and voicemail prompts are read where they are
+    for deployment in [
+        "component://example/audio/hold.ogg",
+        "file:/opt/moqui/audio/voicemail/greeting.wav",
+        "dbresource://moqui/audio/hold.ogg",
+        "dbresource://moqui/call/voicemailx/1.wav",
+    ] {
+        assert!(!node_audio(deployment), "{deployment}");
+    }
+}

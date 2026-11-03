@@ -46,20 +46,23 @@ struct Directory {
 
 #[async_trait::async_trait]
 impl DeviceDirectory for Directory {
-    async fn device(&self, username: &str) -> Option<PhoneDevice> {
+    async fn device(&self, realm: &str, username: &str) -> Option<PhoneDevice> {
         self.lookups.fetch_add(1, Ordering::Relaxed);
-        lock(&self.devices).get(username).cloned()
+        lock(&self.devices)
+            .get(&aor_key(username, (realm != REALM).then_some(realm)))
+            .cloned()
     }
 
     async fn verify(
         &self,
+        realm: &str,
         username: &str,
         check: &digest::ResponseCheck,
     ) -> Result<Option<(PhoneDevice, bool)>, String> {
         if self.away.load(Ordering::Relaxed) {
             return Err("the local node is away".to_string());
         }
-        let Some(device) = self.device(username).await else {
+        let Some(device) = self.device(realm, username).await else {
             return Ok(None);
         };
         let verifier = device
@@ -75,12 +78,17 @@ impl DeviceDirectory for Directory {
 impl Directory {
     /// A device with verifiers of `password` for these algorithms.
     fn put(&self, id: &str, username: &str, revision: u32, password: &str, algorithms: &[Algorithm]) {
+        self.put_in(REALM, id, username, revision, password, algorithms);
+    }
+
+    /// A device of the realm `realm` (a device domain besides the registrar's own, E12).
+    fn put_in(&self, realm: &str, id: &str, username: &str, revision: u32, password: &str, algorithms: &[Algorithm]) {
         let verifiers = algorithms
             .iter()
-            .map(|a| (*a, digest::ha1(*a, username, REALM, password)))
+            .map(|a| (*a, digest::ha1(*a, username, realm, password)))
             .collect();
         lock(&self.devices).insert(
-            username.to_string(),
+            aor_key(username, (realm != REALM).then_some(realm)),
             PhoneDevice {
                 id: id.to_string(),
                 username: username.to_string(),
@@ -193,6 +201,8 @@ struct Reg<'a> {
     /// The Via's sent-by: the phone's private address, behind a NAT.
     sent_by: Option<&'a str>,
     extra: &'a str,
+    /// The domain of From and To: the registrar's realm, or a device domain.
+    domain: &'a str,
 }
 
 impl Default for Reg<'_> {
@@ -206,6 +216,7 @@ impl Default for Reg<'_> {
             cseq: 1,
             sent_by: None,
             extra: "",
+            domain: REALM,
         }
     }
 }
@@ -215,9 +226,16 @@ fn register_text(r: &Reg, transport: &str, sent_by: &str, ua: SocketAddr, auth: 
     let auth = auth.map(|a| format!("Authorization: {a}\r\n")).unwrap_or_default();
     format!(
         "REGISTER sip:{ua} SIP/2.0\r\nVia: SIP/2.0/{transport} {sent_by};branch=z9hG4bK-{}-{};rport\r\n\
-         Max-Forwards: 70\r\nFrom: <sip:p100@{REALM}>;tag=ph-{}\r\nTo: <sip:p100@{REALM}>\r\nCall-ID: {}\r\n\
+         Max-Forwards: 70\r\nFrom: <sip:p100@{domain}>;tag=ph-{}\r\nTo: <sip:p100@{domain}>\r\nCall-ID: {}\r\n\
          CSeq: {} REGISTER\r\nContact: {}\r\n{expires}{auth}{}User-Agent: TestPhone/1.0\r\nContent-Length: 0\r\n\r\n",
-        r.call_id, r.cseq, r.call_id, r.call_id, r.cseq, r.contact, r.extra
+        r.call_id,
+        r.cseq,
+        r.call_id,
+        r.call_id,
+        r.cseq,
+        r.contact,
+        r.extra,
+        domain = r.domain
     )
 }
 
@@ -342,6 +360,67 @@ fn response_text(req: &Request, code: u16, tag: &str, body: &str, contact: Socke
 
 fn code(resp: &Response) -> u16 {
     u16::from(resp.status_code.clone())
+}
+
+/// An all-in-one node's registrar (plans/Edge-Node.md §10, E12): a phone of the paired node's domain is challenged in
+/// that realm and checked by the directory for it, and its bindings are kept apart from the same username's in the
+/// registrar's own realm.
+#[tokio::test]
+async fn a_device_domain_is_challenged_in_its_realm_and_kept_apart() {
+    const PAIRED: &str = "sip.paired.example";
+    let mut h = Harness::start(RegistrarLimits::default()).await;
+    h.ua.set_device_realms(&[PAIRED.to_string(), REALM.to_string()]);
+    h.directory
+        .put_in(PAIRED, "P1", "p100", 1, "another password", &[Algorithm::Sha256]);
+    let phone = UdpPhone::new().await;
+    let paired = Reg {
+        domain: PAIRED,
+        password: "another password",
+        call_id: "reg-paired",
+        ..Default::default()
+    };
+    let (ok, _) = phone.register(h.udp, &paired).await;
+    assert_eq!(code(&ok), 200);
+    let added = h.binding(BindingChange::Added).await;
+    assert_eq!(added.device, "P1");
+    assert_eq!(h.ua.bindings(&aor_key("p100", Some(PAIRED))).len(), 1);
+    assert!(
+        h.ua.bindings("p100").is_empty(),
+        "the registrar's own realm has none of p100's yet"
+    );
+    // the own realm's p100, with its own password
+    let own = UdpPhone::new().await;
+    let (ok, _) = own.register(h.udp, &Reg::default()).await;
+    assert_eq!(code(&ok), 200);
+    assert_eq!(h.binding(BindingChange::Added).await.device, "D1");
+    assert_eq!(h.ua.bindings("p100").len(), 1);
+    // the paired domain's password does not open the own realm
+    let wrong = UdpPhone::new().await;
+    let (refused, _) = wrong
+        .register(
+            h.udp,
+            &Reg {
+                password: "another password",
+                call_id: "reg-wrong",
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(code(&refused), 403);
+    // a domain no longer served: its phones are challenged in the registrar's own realm
+    h.ua.set_device_realms(&[]);
+    let gone = UdpPhone::new().await;
+    let (refused, _) = gone
+        .register(
+            h.udp,
+            &Reg {
+                call_id: "reg-gone",
+                ..paired
+            },
+        )
+        .await;
+    assert_eq!(code(&refused), 403);
+    h.ua.shutdown();
 }
 
 #[tokio::test]

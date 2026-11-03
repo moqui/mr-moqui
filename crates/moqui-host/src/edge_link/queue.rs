@@ -533,11 +533,22 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                         Err(err) => tracing::error!("Edge queue retention pass failed: {err}"),
                     }
                     // the chat files an edge node serves for its local nodes (MMS, E6) that ran out
-                    if settings.edge_node {
+                    if settings.takes_links() {
                         let removed =
                             moqui_core::service::chat_bridge::sweep_edge_media(&facade, moqui_core::user::now_millis());
                         if removed > 0 {
                             tracing::info!("Edge chat files that ran out removed: {removed}");
+                        }
+                    }
+                    // an all-in-one node's replica copies held back for a claim of the server's own (E12): one whose
+                    // claim is gone is applied now
+                    if settings.all_in_one() {
+                        match moqui_core::edge::replica::conflicts::recheck_conflicts(factory, &facade, None) {
+                            Ok(applied) if applied > 0 => {
+                                tracing::info!("Edge replica conflicts rechecked: {applied} applied");
+                            }
+                            Ok(_) => {}
+                            Err(err) => tracing::error!("Edge replica conflicts recheck failed: {err}"),
                         }
                     }
                 }

@@ -88,9 +88,9 @@ pub(crate) fn start(
     _shutdown: tokio::sync::watch::Receiver<bool>,
     _down: DownServe,
 ) -> Started {
-    if moqui_core::edge::is_edge_node() {
+    if moqui_core::edge::takes_links() {
         tracing::error!(
-            "node_role is edge, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
+            "node_role is edge or all-in-one, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
     if !moqui_lib::env::get_prop_or_env(moqui_core::edge::NODE_URL)

@@ -424,6 +424,7 @@ impl Driver<'_> {
                 );
                 super::note(
                     self.factory,
+                    &key.room,
                     "org.moqui.impl.CallServices.note#MediaEvent",
                     vec![
                         ("callLegId", Value::string(&*key.leg)),
@@ -489,10 +490,7 @@ impl Driver<'_> {
             Ok(message) => message,
             Err(e) => return tracing::warn!("call {room}: relay message not written: {e}"),
         };
-        self.send_node(
-            node,
-            json!({"target": node, "kind": "relay", "from": self.own, "callSessionId": room, "message": message}),
-        );
+        self.send_node(node, relay_body(&self.own, node, room, message));
     }
 
     /// A room's link ended. For a leg node: lost, its legs reconnect (and link again), and a room with phone legs here
@@ -521,6 +519,7 @@ impl Driver<'_> {
             if pinned {
                 super::note(
                     self.factory,
+                    &key.room,
                     "org.moqui.impl.CallServices.note#MediaEvent",
                     vec![
                         ("callLegId", Value::string(&*key.leg)),
@@ -562,12 +561,7 @@ impl Driver<'_> {
             if from == Some(&*node) || (from.is_some() && role != RelayRole::Origin) {
                 continue;
             }
-            self.send_node(
-                &node,
-                json!({"target": &*node, "kind": "roomFrame", "from": self.own, "callSessionId": room,
-                    "except": except, "frame": frame, "notice": notice.map(|(k, _)| k.as_str()),
-                    "keep": notice.is_some_and(|(_, keep)| keep)}),
-            );
+            self.send_node(&node, room_frame_body(&self.own, &node, room, except, &frame, notice));
         }
         self.to_room(room, except, frame);
     }
@@ -598,11 +592,14 @@ impl Driver<'_> {
         }
     }
 
+    /// To the socket at `route`, naming the call by its id alone: a paired node's room is keyed by node too (E12), and
+    /// its node checks the reply's topic against its own call id (`notws/rtc.rs` `deliver_edge_reply`).
     fn reply(&self, route: &Route, room: &str, frame: Json) {
+        let call = call_of(room);
         let mut frame = frame;
         if let Some(o) = frame.as_object_mut() {
-            o.insert("topic".to_string(), Json::String(format!("rtc:{room}")));
-            o.insert("callSessionId".to_string(), Json::String(room.to_string()));
+            o.insert("topic".to_string(), Json::String(format!("rtc:{call}")));
+            o.insert("callSessionId".to_string(), Json::String(call.to_string()));
         }
         if route.node == self.own {
             crate::notws::push_to_socket(route.socket_id, frame.to_string());
@@ -663,6 +660,32 @@ impl RoomNotices {
     pub(super) fn room_closed(&mut self, room: &str) {
         self.rooms.remove(room);
     }
+}
+
+/// A `relay` message to the media node `node` of the room `room`. Between two media nodes (cluster members) the room
+/// goes whole, as the room key: a paired node's room is keyed by node (E12), and its bare call id would name the
+/// server's own call of that id. Only a browser's socket and the link's reply get the bare id ([`Driver::reply`]).
+pub(super) fn relay_body(own: &str, node: &str, room: &str, message: Json) -> Json {
+    json!({"target": node, "kind": "relay", "from": own, "callSessionId": room, "message": message})
+}
+
+/// A `roomFrame` message to the media node `node` of the room `room`, keyed whole as [`relay_body`].
+pub(super) fn room_frame_body(
+    own: &str,
+    node: &str,
+    room: &str,
+    except: Option<&str>,
+    frame: &Json,
+    notice: Option<(super::NoticeKind, bool)>,
+) -> Json {
+    json!({"target": node, "kind": "roomFrame", "from": own, "callSessionId": room,
+        "except": except, "frame": frame, "notice": notice.map(|(k, _)| k.as_str()),
+        "keep": notice.is_some_and(|(_, keep)| keep)})
+}
+
+/// The call id of a room: a paired node's room is keyed by node and call (E12).
+fn call_of(room: &str) -> &str {
+    moqui_core::edge::media::split_room(room).1
 }
 
 fn with_id(mut frame: Json, id: &Json) -> Json {

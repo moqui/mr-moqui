@@ -369,9 +369,10 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
 fn delegate_checked(
     name: &str,
     def: Option<&ServiceDef>,
-    entry: &crate::edge::conf::Delegate,
+    delegated: &crate::edge::delegate::Delegated,
     parameters: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, Error> {
+    let entry = &delegated.entry;
     let authz_off = crate::context::ExecutionContext::with_current(|ctx| ctx.authz_disabled()).unwrap_or(true);
     let user = crate::user::current_username().ok().flatten();
     match def {
@@ -410,7 +411,7 @@ fn delegate_checked(
         }
         None => {}
     }
-    crate::edge::delegate::send(name, parameters, entry.timeout)
+    crate::edge::delegate::send(name, parameters, delegated)
 }
 
 /// [`sync`] with per-call overrides of authorization and the transaction attribute.
@@ -431,7 +432,7 @@ pub fn sync_with(
     let name = canonical(name);
     let facade = current_facade();
     // On an edge node a service its conf delegates runs on the local node (plans/Edge-Node.md §5.2); the edge node
-    // may not have its definition.
+    // may not have its definition. An all-in-one node delegates it only for a paired node's item (§10).
     let delegated = crate::edge::delegate::listed(&name);
     // An unknown service is an error first, as Java's `call` looks it up before `callSingle`.
     let (def, delegated) = match (resolve(&name, facade.as_ref()), delegated) {

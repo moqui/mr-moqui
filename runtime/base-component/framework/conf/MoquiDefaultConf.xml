@@ -296,7 +296,9 @@
         of names that are no user's, so they stay the same across restarts and nodes (generated when unset).
         xmpp_s2s_port (5269) is for server-to-server (federation, C3b), which is not built: nothing listens on it yet, and
         behind an edge node it will be the edge node's (plans/Edge-Node.md §5.4). On an edge node (node_role=edge) no XMPP
-        server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. -->
+        server starts: its edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node. An all-in-one node
+        (node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge_xmpp_port and
+        edge_xmpp_tls_port, which must differ from them (a tunnel port on the same port is off, logged). -->
     <default-property name="xmpp_domain" value=""/>
     <default-property name="xmpp_rooms_domain" value=""/>
     <default-property name="xmpp_upload_domain" value=""/>
@@ -381,8 +383,10 @@
     <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
     <default-property name="cluster_bind_address" value=""/>
     <default-property name="instance_id" value=""/>
-    <!-- The edge link (plans/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, or edge for an edge node,
-        which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1). A local node needs no
+    <!-- The edge link (plans/Edge-Node.md §5.1, §5.6). node_role is empty on a normal node, edge for an edge node,
+        which then takes links from paired local nodes on its HTTPS listener (ALPN moqui-edge/1), or all-in-one for a
+        full server that also takes the link of a paired local node (§10, runtime/conf/MoquiAllInOneConf.xml): its own
+        names, mail, webhooks and calls stay its own, and the paired node's go over the link. A local node needs no
         role: it dials its edge node when edge_node_url is set. Pairing (System › Edge Node) writes edge_node_url,
         edge_node_key (this node's private key, base64 PKCS#8; a secret) and edge_node_pin (the SHA-256 of the edge node's
         link key, below) to runtime/.env, and unpairing removes them; they are not generated at startup. -->

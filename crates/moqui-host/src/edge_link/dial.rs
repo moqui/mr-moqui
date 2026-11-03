@@ -286,6 +286,7 @@ impl LocalLink for LocalService {
             service: request.service,
             operation_id: request.operation_id,
             timeout: None,
+            node: None,
         };
         // the edge node's own wait (E8), counted from now: the time on the pool's queue is part of it
         let received = std::time::Instant::now();
@@ -385,6 +386,11 @@ struct Shared {
     up: Mutex<Option<LinkClient>>,
     /// The edge node's pinned instance id (empty until a first link pins it, for a node paired before E7).
     pinned: Mutex<String>,
+    /// The registrar's realm and whether it is on, as the last Configure's offer said since this link's Hello: an
+    /// all-in-one node registers the phones of the domain a Configure names (E12), which its Hello may predate.
+    sip_realm: Mutex<Option<(String, bool)>>,
+    /// Wakes the keeper of the edge node's rows (`keep_media_node`) when `sip_realm` changes.
+    sip_changed: tokio::sync::Notify,
 }
 
 impl Shared {
@@ -429,6 +435,8 @@ impl Dialer {
             current: Arc::new(AtomicU64::new(0)),
             up: Mutex::new(None),
             pinned: Mutex::new(config.edge_id.clone()),
+            sip_realm: Mutex::new(None),
+            sip_changed: tokio::sync::Notify::new(),
         });
         let (stop, stop_rx) = watch::channel(false);
         let timeout = config.connect_timeout;
@@ -471,7 +479,29 @@ impl Dialer {
 
     /// Send the edge node this node's part of the setup (the link's Configure).
     pub async fn configure(&self, setup: &EdgeSetup) -> Result<Configured, String> {
-        configure_on(self.up_client(), setup, self.timeout).await
+        let configured = configure_on(self.up_client(), setup, self.timeout).await?;
+        self.note_configured(&configured);
+        Ok(configured)
+    }
+
+    /// After a Configure: the registrar's realm and whether it is on, as its offer says, go to the edge node's
+    /// `SipNode` row now (the realm `create#SipDevice` gives a phone), not at the next link's Hello. An all-in-one
+    /// node's registrar takes the domain the Configure named (E12); a dedicated edge node's offer says what its Hello
+    /// did.
+    pub(crate) fn note_configured(&self, configured: &Configured) {
+        let sip = &configured.offer.sip;
+        if !sip.available {
+            return;
+        }
+        let realm = (sip.domain.clone(), sip.registrar);
+        let changed = lock(&self.shared.sip_realm).replace(realm.clone()) != Some(realm.clone());
+        self.shared.update(|status| {
+            status.peer.sip_domain.clone_from(&realm.0);
+            status.peer.sip_registrar = realm.1;
+        });
+        if changed {
+            self.shared.sip_changed.notify_one();
+        }
     }
 
     /// Stop dialing and close the link.
@@ -704,8 +734,10 @@ async fn link_once(
         None => return Ended::Stopped,
     };
     *lock(&shared.up) = Some(up.client.clone());
+    // this link's Hello tells the registrar's realm until a Configure on it says otherwise
+    *lock(&shared.sip_realm) = None;
     // the outbox and the replicated sets go up while this link lasts
-    let _work = Work::start(&config, &up, replica, telemetry.clone());
+    let _work = Work::start(&config, &up, &shared, replica, telemetry.clone());
     let connected = moqui_core::user::now_millis();
     shared.update(|status| {
         status.state = LinkState::Linked;
@@ -812,13 +844,18 @@ fn run_internal(
 /// the link has been down past the nodes' grace. An edge node with no media, or no SIP engine, has that row removed.
 /// With this node's `edge_calls_enabled` off the media row is draining, read again each time, so the wizard's choice
 /// holds (E10 calls). The phone numbers' fallbacks are written at the start and every [`REFRESH_EVERY`] (E8), while
-/// this node's `edge_sip_enabled` is on (E10 phones).
-async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration) {
+/// this node's `edge_sip_enabled` is on (E10 phones). The SIP row's realm is the Hello's until a Configure's offer
+/// says another ([`Dialer::note_configured`]), which writes the row at once.
+async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo, every: Duration, shared: Arc<Shared>) {
     let media_stopping = edge.media_address.is_empty();
     let sip_stopping = media_stopping || (edge.sip_address.is_empty() && edge.sip_tls_address.is_empty());
     let mut refreshed: Option<std::time::Instant> = None;
     loop {
-        let row = edge.clone();
+        let mut row = edge.clone();
+        if let Some((domain, registrar)) = lock(&shared.sip_realm).clone() {
+            row.sip_domain = domain;
+            row.sip_registrar = registrar;
+        }
         // the fallbacks (and their greetings) only while phones go through the edge node (E10 phones)
         let refresh = refreshed.is_none_or(|at| at.elapsed() >= REFRESH_EVERY) && moqui_core::edge::sip::sip_enabled();
         let kept = crate::worker::on_pool(&factory, move |_| {
@@ -851,7 +888,10 @@ async fn keep_media_node(factory: Weak<ExecutionContextFactory>, edge: EdgeInfo,
         if media_stopping && sip_stopping {
             return;
         }
-        tokio::time::sleep(every).await;
+        tokio::select! {
+            () = tokio::time::sleep(every) => {}
+            () = shared.sip_changed.notified() => {}
+        }
     }
 }
 
@@ -859,6 +899,7 @@ impl Work {
     fn start(
         config: &LocalConfig,
         up: &UpLink,
+        shared: &Arc<Shared>,
         replica: Option<Arc<moqui_core::edge::replica::Replica>>,
         telemetry: Option<Arc<Telemetry>>,
     ) -> Self {
@@ -895,6 +936,7 @@ impl Work {
                 factory.clone(),
                 up.edge.clone(),
                 config.ping_every,
+                Arc::clone(shared),
             )));
         }
         let client = up.client.clone();

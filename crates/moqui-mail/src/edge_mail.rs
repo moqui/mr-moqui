@@ -204,10 +204,10 @@ fn current_factory() -> Result<Arc<ExecutionContextFactory>, LibError> {
         .ok_or_else(|| LibError::new("edge mail needs an execution context"))
 }
 
-/// Whether this node is an edge node, as its edge conf was read (per factory, so the two servers of a test process
-/// keep their own roles).
+/// Whether this node is the edge end of a link (an edge or all-in-one node), as its edge conf was read (per factory,
+/// so the two servers of a test process keep their own roles).
 fn on_edge_node(factory: &ExecutionContextFactory) -> bool {
-    moqui_core::edge::settings(factory).edge_node
+    moqui_core::edge::settings(factory).takes_links()
 }
 
 /// The item's content: the message, where the receiver kept it.
@@ -466,7 +466,7 @@ pub(super) fn enqueue_outbound(
     let factory = current_factory().map_err(Error::from)?;
     // after unpairing nothing queues for whichever edge node comes next: the send fails, retryable, and the message
     // stays in the Outbox (plans/Edge-Node.md §5.7)
-    if !moqui_core::edge::settings(&factory).edge_node && !moqui_core::edge::setup::is_paired(facade) {
+    if !moqui_core::edge::settings(&factory).edge_node() && !moqui_core::edge::setup::is_paired(facade) {
         return Err(Error::new(
             "this node is not paired with an edge node, so mail for its edge: server is not queued",
         ));
@@ -628,17 +628,52 @@ pub(super) fn deliver_edge_outbound_mail(
     if super::mx::mta() == super::mx::Mta::Moqui {
         // the MTA in moqui (E5b): signed here, recorded per recipient domain in this item's transaction, delivered to
         // the MX by the delivery thread; the answers come back as mailStatus from there
-        let hosted = super::auth::hosted_domains(facade, true)?;
-        let signed = super::auth::sign_for(raw, |domain| hosted.contains(domain));
-        // the local node's own accounts are queued back to it, not sent round through this node's port 25
-        let (local, external) = split_local(facade, &factory, &node, &to)?;
-        if !local.is_empty() {
-            queue_back(&factory, facade, &node, &item, &original_from, &local, &signed)?;
+        let all_in_one = moqui_core::edge::settings(&factory).all_in_one();
+        // signed only for this node's own domains: a paired node never sends signed as the server or another node
+        let paired = super::auth::paired_domains(facade, &node)?;
+        if all_in_one {
+            if let Some(why) = refused_sender(&factory, facade, &original_from, &raw, &paired)? {
+                tracing::warn!("Edge outbound mail item {item} of paired node {node} refused: {why}");
+                refuse(&factory, facade, &node, &item, &why)?;
+                return Ok(BTreeMap::new());
+            }
         }
-        let rows = super::mx::record(facade, &node, &item, &sender, &external, &local, &signed)?;
+        // internal mail: from the paired node's own domain (on a dedicated edge node, whatever it signs for)
+        let internal =
+            !all_in_one || super::auth::from_domain(&raw).is_some_and(|domain| paired.contains(&domain));
+        let signed = if internal {
+            super::auth::sign_for(raw, |domain| paired.contains(domain))
+        } else {
+            raw
+        };
+        // the local node's own accounts are queued back to it, not sent round through this node's port 25; on an
+        // all-in-one node the server's own accounts are delivered here
+        let split = split_local(facade, &factory, &node, &to)?;
+        if !split.back.is_empty() {
+            queue_back(&factory, facade, &node, &item, &original_from, &split.back, &signed, internal)?;
+        }
+        let own = if split.own.is_empty() {
+            OwnResults::default()
+        } else {
+            deliver_own(&factory, facade, &item, &original_from, &split.own, &signed, internal)
+        };
+        let local: Vec<String> = split.back.iter().chain(&own.stored).cloned().collect();
+        let rows = super::mx::record(
+            facade,
+            &node,
+            &item,
+            &sender,
+            &split.external,
+            &local,
+            &own.refused,
+            &signed,
+        )?;
         tracing::info!(
-            "Edge outbound mail item {item}: {} queued back to the local node, {rows} domain(s) to deliver to by MX",
-            local.len()
+            "Edge outbound mail item {item}: {} queued back to the local node, {} delivered to this server's own \
+             accounts, {} refused by them, {rows} domain(s) to deliver to by MX",
+            split.back.len(),
+            own.stored.len(),
+            own.refused.len()
         );
         return Ok(BTreeMap::new());
     }
@@ -670,34 +705,273 @@ pub(super) fn deliver_edge_outbound_mail(
     Ok(BTreeMap::new())
 }
 
-/// The recipients of `to` that are local node `node`'s own accounts (its replicated `mailRecipients`), and the rest.
+/// Where the recipients of a paired node's `mailOut` item go.
+#[cfg(feature = "imap")]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Split {
+    /// The paired node's own accounts (its replicated `mailRecipients`): queued back to it.
+    back: Vec<String>,
+    /// On an all-in-one node, the server's own accounts, each with its account: delivered here.
+    own: Vec<(String, String)>,
+    /// The rest: delivered to their MX.
+    external: Vec<String>,
+}
+
+/// Split `to` by where each recipient goes: back to the paired node when `paired` has it, else to the server's own
+/// account `own` finds, else by MX. An address both sides have (ownership is exclusive, plans/Edge-Node.md §10) goes
+/// back to the paired node, as the sender's own side, logged as an error naming it.
+#[cfg(feature = "imap")]
+fn split_recipients(
+    to: &[String],
+    paired: impl Fn(&str) -> bool,
+    mut own: impl FnMut(&str) -> Result<Option<String>, LibError>,
+) -> Result<Split, LibError> {
+    let mut split = Split::default();
+    for address in to {
+        let account = own(address)?;
+        if paired(address) {
+            if let Some(account) = account {
+                tracing::error!(
+                    "Edge outbound mail to {address}: the server's account {account} and the paired node both have \
+                     it; an address belongs to one side, queued back to the paired node"
+                );
+            }
+            split.back.push(address.clone());
+        } else if let Some(account) = account {
+            split.own.push((address.clone(), account));
+        } else {
+            split.external.push(address.clone());
+        }
+    }
+    Ok(split)
+}
+
+/// The recipients of `to` by where they go ([`Split`]): local node `node`'s own accounts, from its replicated
+/// `mailRecipients`; on an all-in-one node the server's own hosted and shared accounts; and the rest.
 #[cfg(feature = "imap")]
 fn split_local(
     facade: &EntityFacade,
     factory: &ExecutionContextFactory,
     node: &str,
     to: &[String],
-) -> Result<(Vec<String>, Vec<String>), LibError> {
+) -> Result<Split, LibError> {
     let values = moqui_core::edge::replica::list_values(facade, Some(node), RECIPIENT_SET, None, 1_000_000)?;
     let maps = super::delivery::recipient_maps(&values);
     let (_, delimiters) = super::delivery::listener_options(factory);
-    let (mut local, mut external) = (Vec::new(), Vec::new());
-    for address in to {
-        let ours = maps
-            .iter()
-            .any(|(of, map)| of == node && map.find(address, &delimiters).is_some());
-        if ours {
-            local.push(address.clone());
-        } else {
-            external.push(address.clone());
+    let all_in_one = moqui_core::edge::settings(factory).all_in_one();
+    split_recipients(
+        to,
+        |address| {
+            maps.iter()
+                .any(|(of, map)| of == node && map.find(address, &delimiters).is_some())
+        },
+        |address| {
+            if all_in_one {
+                super::delivery::find_recipient(facade, address, &delimiters)
+            } else {
+                Ok(None)
+            }
+        },
+    )
+}
+
+/// Why a paired node's `mailOut` item may not go out from an all-in-one node, or none: its envelope sender or `From`
+/// is an address the server holds (`own_claim` names its holder), or of a domain that only the server has (its
+/// accounts' domains not the paired node's, or its bounce domain, which it holds whole). Ownership is exclusive
+/// (plans/Edge-Node.md §10): a paired node never sends as the server's users, so it never gets their signature.
+#[cfg(feature = "imap")]
+fn sender_refusal(
+    senders: &[String],
+    paired: &std::collections::BTreeSet<String>,
+    own_domains: &std::collections::BTreeSet<String>,
+    bounce_domain: &str,
+    mut own_claim: impl FnMut(&str) -> Result<Option<String>, LibError>,
+) -> Result<Option<String>, LibError> {
+    for address in senders {
+        let Some((_, domain)) = address.trim().rsplit_once('@') else {
+            continue;
+        };
+        let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        if let Some(holder) = own_claim(address.trim())? {
+            return Ok(Some(moqui_core::edge::claims::claimed_message(
+                moqui_core::edge::claims::ClaimKind::MailAddress,
+                address.trim(),
+                &holder,
+            )));
+        }
+        let bounce = !bounce_domain.is_empty() && domain.eq_ignore_ascii_case(bounce_domain.trim_end_matches('.'));
+        if bounce || (own_domains.contains(&domain) && !paired.contains(&domain)) {
+            return Ok(Some(format!(
+                "the sender {address} is of mail domain {domain}, which is the server's own, not the paired node's"
+            )));
         }
     }
-    Ok((local, external))
+    Ok(None)
+}
+
+/// [`sender_refusal`] of `from` (the envelope sender) and the `From` field of `raw`, on this server.
+#[cfg(feature = "imap")]
+fn refused_sender(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    from: &str,
+    raw: &[u8],
+    paired: &std::collections::BTreeSet<String>,
+) -> Result<Option<String>, LibError> {
+    let mut senders: Vec<String> = Vec::new();
+    for address in [Some(from.trim().to_string()), super::auth::from_address(raw)]
+        .into_iter()
+        .flatten()
+    {
+        if !address.is_empty() && !senders.iter().any(|seen| seen.eq_ignore_ascii_case(&address)) {
+            senders.push(address);
+        }
+    }
+    let own_domains = super::auth::hosted_domains(facade, moqui_core::edge::NodeRole::Normal)?;
+    sender_refusal(&senders, paired, &own_domains, &bounce_domain(), |address| {
+        moqui_core::edge::claims::own_claim(
+            factory,
+            facade,
+            moqui_core::edge::claims::ClaimKind::MailAddress,
+            address,
+        )
+    })
+}
+
+/// Answer paired node `node`'s `mailOut` item `item` refused for good (`bounced`, `why`), in the item's transaction: one
+/// answer per item, which also marks it done ([`relayed_before`]).
+#[cfg(feature = "imap")]
+fn refuse(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    node: &str,
+    item: &str,
+    why: &str,
+) -> Result<(), LibError> {
+    let back = NewItem {
+        kind: KIND_STATUS.to_string(),
+        conversation_key: format!("mailStatus:{item}"),
+        idempotency_key: status_key(item),
+        payload: Some(
+            serde_json::json!({"queueItemId": item, "status": "bounced", "reply": format!("Refused: {why}")})
+                .to_string(),
+        ),
+        content: None,
+        content_location: None,
+    };
+    queue::enqueue(factory, facade, Some(node).filter(|node| !node.is_empty()), &back)?;
+    Ok(())
+}
+
+/// What the server's own accounts did with a paired node's message: the recipients stored, and those refused, each
+/// `address: why`, for the item's status.
+#[cfg(feature = "imap")]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct OwnResults {
+    stored: Vec<String>,
+    refused: Vec<String>,
+}
+
+/// The [`OwnResults`] of a delivery to `own` (address, account): each account's result in `report`, or the delivery's
+/// refusal (`Err`, not mail) for all. An account gone since, or one whose store failed, refuses its recipients; one
+/// with no result is refused as not tried.
+#[cfg(feature = "imap")]
+fn own_results(
+    item: &str,
+    own: &[(String, String)],
+    report: Result<&[super::delivery::Delivery], &str>,
+) -> OwnResults {
+    use super::delivery::Outcome;
+    let mut results = OwnResults::default();
+    for (address, account) in own {
+        let result = match report {
+            Err(why) => Err(format!("not delivered to the server's account {account}: {why}")),
+            Ok(deliveries) => match deliveries.iter().find(|delivery| delivery.email_account_id == *account) {
+                Some(delivery) => match &delivery.result {
+                    Ok(Outcome::Stored { .. } | Outcome::Duplicate) => Ok(()),
+                    Ok(Outcome::Gone) => Err(format!("the server's account {account} is gone")),
+                    Err(err) => Err(format!("not stored in the server's account {account}: {err}")),
+                },
+                None => Err(format!("the server's account {account} was not tried")),
+            },
+        };
+        match result {
+            Ok(()) => results.stored.push(address.clone()),
+            Err(why) => {
+                tracing::error!("Edge outbound mail item {item} to {address}: {why}");
+                results.refused.push(format!("{address}: {why}"));
+            }
+        }
+    }
+    results
+}
+
+/// Deliver `signed` to the server's own accounts of `own` (address, account) on an all-in-one node: mail from its
+/// paired node to the server's users, as the listener delivers it. Any field claiming the listener's authserv-id (else
+/// this node's host name) is dropped (forged), and when `internal` (from the paired node's own domain) the
+/// `Authentication-Results` of this node's own key is put on top. Each account's store is in a transaction of its
+/// own, so an apply run again finds it stored (`Outcome::Duplicate`). Never fails: an account that does not take it
+/// refuses its recipients, logged, and the rest are delivered (the failure tolerance of AGENTS.md).
+#[cfg(feature = "imap")]
+fn deliver_own(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    item: &str,
+    from: &str,
+    own: &[(String, String)],
+    signed: &[u8],
+    internal: bool,
+) -> OwnResults {
+    use super::delivery::{Envelope, Recipients};
+    let hostname = super::mx::hostname();
+    let (mut options, _) = super::delivery::listener_options(factory);
+    if options.authserv_id.is_empty() {
+        options.authserv_id = hostname.clone();
+    }
+    let fields: Vec<String> = if internal {
+        super::auth::verify_internal(signed, &options.authserv_id)
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let raw = super::auth::rewrite_head(signed, &options.authserv_id, &options.spam_headers, &fields);
+    let envelope = Envelope {
+        mail_from: from.to_string(),
+        helo: hostname.clone(),
+        client_ip: "127.0.0.1".to_string(),
+        protocol: "ESMTP".to_string(),
+        session_id: item.to_string(),
+        hostname,
+        ..Envelope::default()
+    };
+    let mut groups: Vec<Recipients> = Vec::new();
+    for (address, account) in own {
+        match groups.iter_mut().find(|group| group.email_account_id == *account) {
+            Some(group) => group.addresses.push(address.clone()),
+            None => groups.push(Recipients {
+                email_account_id: account.clone(),
+                addresses: vec![address.clone()],
+                ..Recipients::default()
+            }),
+        }
+    }
+    let report = super::delivery::deliver(facade, &raw, &envelope, &groups, &options);
+    own_results(
+        item,
+        own,
+        report
+            .as_ref()
+            .map(|report| report.deliveries.as_slice())
+            .map_err(String::as_str),
+    )
 }
 
 /// Queue `signed` back to local node `node` as mail for its own accounts `local` (internal mail through the edge node),
-/// with the `Authentication-Results` of this node's own key on it, in the item's transaction.
+/// in the item's transaction, with the `Authentication-Results` of this node's own key on it when `internal` (from the
+/// node's own domain).
 #[cfg(feature = "imap")]
+#[allow(clippy::too_many_arguments)]
 fn queue_back(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
@@ -706,11 +980,15 @@ fn queue_back(
     from: &str,
     local: &[String],
     signed: &[u8],
+    internal: bool,
 ) -> Result<(), LibError> {
     use super::delivery::{Envelope, Options, RecipientDsn};
     let hostname = super::mx::hostname();
     let mut raw = Vec::with_capacity(signed.len() + 512);
-    if let Some(field) = super::auth::verify_internal(signed, &hostname) {
+    if let Some(field) = internal
+        .then(|| super::auth::verify_internal(signed, &hostname))
+        .flatten()
+    {
         raw.extend_from_slice(field.as_bytes());
     }
     raw.extend_from_slice(signed);

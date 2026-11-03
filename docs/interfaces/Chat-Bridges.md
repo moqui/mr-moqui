@@ -157,7 +157,9 @@ adapter, status and webhook key, never `configJson`) and queues it, and the loca
 `apply_webhook` with the same input checks and dedupe. Files a message sends by address (MMS) are put on the edge node
 and served there at `/channels/{chatBridgeId}/media/{token}`. The local node's `channels_public_url` names the edge
 node; the Edge Node wizard sets it and lists each bridge's webhook URL ([SMS](SMS.md) has the steps). Networks that
-only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node.
+only connect out (Telegram's `getUpdates`, Slack Socket Mode, the Discord Gateway) need no edge node. On an
+all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node)) the webhook and media routes look for the server's
+own bridge or file first, then the local node's copy; a bridge id both sides have gets 409, naming it.
 
 While the copies the chat actors migration kept are there (`CHAT_ROOM_MEMBER_PRE_C1`, `CHAT_EVENT_MENTION_PRE_C1`,
 `CHAT_POLL_VOTE_PRE_C1`), System, Chat Bridges lists them with their rows and the table's (`get#PreC1Backups`) and has

@@ -683,15 +683,19 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
         );
         return;
     }
+    // a paired node's room (E12) is that node's call: its services go down its link
+    let (paired, call) = moqui_core::edge::media::split_room(room);
+    let owner = moqui_core::edge::media::room_owner(room);
     let transcriber: Arc<dyn Transcriber> = if settings.provider == "local" {
         Arc::new(LocalTranscriber {
             language: settings.language.clone(),
         })
-    } else if moqui_core::edge::settings(factory).edge_node {
+    } else if paired.is_some() || moqui_core::edge::settings(factory).edge_node() {
         // the agent runtime, the quota and the LlmCall are the local node's (plans/Edge-Node.md §5.4)
         Arc::new(DelegatedTranscriber {
             factory: Arc::clone(factory),
-            room: room.to_string(),
+            call: call.to_string(),
+            owner: owner.clone(),
             user_id: options.user_id.clone(),
             language: settings.language.clone(),
             timeout: settings.timeout,
@@ -701,7 +705,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
             factory: Arc::clone(factory),
             user_id: options.user_id.clone(),
             language: settings.language.clone(),
-            purpose: format!("captions:{room}"),
+            purpose: format!("captions:{call}"),
             timeout: settings.timeout,
         })
     };
@@ -710,6 +714,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
     drop(table);
     let factory = Arc::clone(factory);
     let room_id = room.to_string();
+    let call = call.to_string();
     // the thread attaches, so the caller (the rtc-signal handler) never waits on the driver
     let spawned = std::thread::Builder::new()
         .name("moqui-rtc-captions".to_string())
@@ -720,6 +725,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options:
                     let mut outside = NodeOutside {
                         factory: Arc::clone(&factory),
                         room: room_id.clone(),
+                        call,
+                        owner,
                         cap,
                     };
                     run(&consumer, &mut outside, &transcriber, &settings, &stop);
@@ -793,7 +800,12 @@ fn node_permits() -> &'static Permits {
 /// the service pool.
 struct NodeOutside {
     factory: Arc<ExecutionContextFactory>,
+    /// The driver's room, keyed by node for a paired node's call (E12).
     room: String,
+    /// The call's id, for the services.
+    call: String,
+    /// Whose call: a paired node's runs its services as that node's.
+    owner: moqui_core::edge::owner::Owner,
     /// The most caption jobs of all calls at once: half the service pool's workers.
     cap: usize,
 }
@@ -814,9 +826,10 @@ impl Outside for NodeOutside {
 
     fn speaker(&mut self, leg: &str) -> Speaker {
         let leg = leg.to_string();
+        let owner = self.owner.clone();
         let found = self.factory.service_pools().call(move || {
             let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-            speaker_of(&leg)
+            moqui_core::edge::owner::with(owner, || speaker_of(&leg))
         });
         found.unwrap_or_else(|err| {
             tracing::debug!("call captions speaker not found: {}", err.message());
@@ -827,9 +840,10 @@ impl Outside for NodeOutside {
     fn store(&mut self, leg: &str, seq: u64, speaker: &Speaker, text: &str) {
         super::note(
             &self.factory,
+            &self.room,
             STORE_SERVICE,
             vec![
-                ("callSessionId", Value::string(&self.room)),
+                ("callSessionId", Value::string(&self.call)),
                 ("callLegId", Value::string(leg)),
                 ("segment", Value::I64(i64::try_from(seq).unwrap_or(0))),
                 ("speaker", Value::string(speaker.name.clone().unwrap_or_default())),
@@ -916,10 +930,12 @@ impl Transcriber for LlmTranscriber {
     }
 }
 
-/// On an edge node: `transcribe#CaptionAudio`, which runs on the local node (delegated), with the chunk as base64.
+/// On an edge node, and for a paired node's call on an all-in-one node (E12): `transcribe#CaptionAudio`, which runs on
+/// the local node (delegated), with the chunk as base64.
 struct DelegatedTranscriber {
     factory: Arc<ExecutionContextFactory>,
-    room: String,
+    call: String,
+    owner: moqui_core::edge::owner::Owner,
     user_id: Option<String>,
     language: Option<String>,
     timeout: Duration,
@@ -929,7 +945,7 @@ impl Transcriber for DelegatedTranscriber {
     fn transcribe(&self, wav: &[u8]) -> Result<String, SpeechError> {
         use base64::Engine as _;
         let mut parameters = BTreeMap::from([
-            ("callSessionId".to_string(), Value::string(&self.room)),
+            ("callSessionId".to_string(), Value::string(&self.call)),
             (
                 "audioBase64".to_string(),
                 Value::string(base64::engine::general_purpose::STANDARD.encode(wav)),
@@ -947,7 +963,7 @@ impl Transcriber for DelegatedTranscriber {
         }
         let run = || {
             let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-            service(TRANSCRIBE_SERVICE, &parameters)
+            moqui_core::edge::owner::with(self.owner.clone(), || service(TRANSCRIBE_SERVICE, &parameters))
         };
         // a caption job runs on the service pool, in a context of its own
         let out = if ExecutionContext::with_current(|_| ()).is_some() {

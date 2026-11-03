@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use moqui_core::edge::owner::Owner;
 use serde_json::Value as Json;
 
 use super::audio::{self, OpusFile};
@@ -540,30 +541,51 @@ pub(super) struct VmCall {
     target: Json,
 }
 
+/// The audio at `location` for the call `room` (the engine's key of it, E12, whose owner says where its audio is).
 pub(super) fn location_bytes_job(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     location: &str,
+    room: &str,
 ) -> Result<Vec<u8>, String> {
-    call_audio_job(factory, location, None)
+    call_audio_job(factory, location, room, false)
 }
 
-/// [`location_bytes_job`], for the call `call` when it plays a saved message: on an edge node a file it does not have
-/// comes from the local node (E8, `edge.rs` `fetch_audio`), a greeting or prompt kept here for the next time.
+/// The roots of a node's own call audio (its greetings, saved messages and uploaded prompts and music,
+/// `Voicemail.js` ROOT and `Ivr.js` PROMPT_ROOT), which an all-in-one node keeps apart for its paired node (E12).
+const NODE_AUDIO_ROOTS: [&str; 2] = ["dbresource://moqui/call/voicemail/", "dbresource://moqui/call/prompt/"];
+
+/// Whether `location` is a node's own call audio ([`NODE_AUDIO_ROOTS`]) rather than the deployment's (the hold music,
+/// the queue's and voicemail's prompts), which is the same for both sides and read where it is.
+pub(super) fn node_audio(location: &str) -> bool {
+    NODE_AUDIO_ROOTS.iter().any(|root| location.starts_with(root))
+}
+
+/// [`location_bytes_job`], with `message` when the call plays a saved message. A paired node's call (on an edge node,
+/// or an all-in-one node, E12) reads what this node keeps of that node's audio, and a file it does not keep comes from
+/// the local node (E8, `edge.rs` `fetch_audio`), a greeting or prompt kept for the next time. The server's own calls,
+/// and the deployment's audio in any call ([`node_audio`]), read the location as on a normal node.
 pub(super) fn call_audio_job(
     factory: &Arc<moqui_core::context::ExecutionContextFactory>,
     location: &str,
-    call: Option<&str>,
+    room: &str,
+    message: bool,
 ) -> Result<Vec<u8>, String> {
+    let node = super::owners::owner_of(room).node().map(str::to_string);
     let job = {
-        let (factory, location, call) = (Arc::clone(factory), location.to_string(), call.map(str::to_string));
+        let (factory, location, room) = (Arc::clone(factory), location.to_string(), room.to_string());
         move || {
             // the engine's own read of a greeting, a message or a prompt, as internal work
             let _authz = moqui_core::context::ExecutionContext::with_current(
                 moqui_core::context::ExecutionContext::disable_authz,
             );
-            match factory.resource().location_bytes(&location) {
-                Ok(None) if super::edge::is_edge(&factory) => {
-                    super::edge::fetch_audio(&factory, &location, call.as_deref())
+            let Some(node) = node.filter(|_| node_audio(&location)) else {
+                return factory.resource().location_bytes(&location);
+            };
+            let kept = moqui_core::edge::media::kept_audio_location(&factory, &node, &location);
+            match factory.resource().location_bytes(&kept) {
+                Ok(None) => {
+                    let call = message.then_some(room.as_str());
+                    super::edge::fetch_audio(&factory, &node, &location, call)
                         .map(Some)
                         .map_err(moqui_core::context::Error::new)
                 }
@@ -607,8 +629,8 @@ fn audio_for(
             )
         }
     };
-    let message_of = matches!(say, Say::Message(_)).then_some(call);
-    match call_audio_job(factory, &location, message_of).and_then(|bytes| audio::decode_audio(&bytes, max_seconds)) {
+    let message = matches!(say, Say::Message(_));
+    match call_audio_job(factory, &location, call, message).and_then(|bytes| audio::decode_audio(&bytes, max_seconds)) {
         Ok(pcm) => Some(pcm),
         Err(err) => {
             // the default prompt's file is optional; a user's greeting or a message that does not play is logged
@@ -641,8 +663,9 @@ impl Engine {
             leg.to_string(),
             reason.to_string(),
         );
+        let owner = super::owners::owner_of(&leg);
         tokio::spawn(async move {
-            let result = call_service(&factory, BEGIN_SERVICE, parameters).await;
+            let result = call_service(&factory, owner, BEGIN_SERVICE, parameters).await;
             let _ = commands.send(Command::VmBegun { leg, reason, result });
         });
     }
@@ -660,7 +683,8 @@ impl Engine {
             Err(err) => {
                 let code = err.split(':').next().unwrap_or_default();
                 // E8: the local node went away while the call rang: its number's fallback takes a message (once)
-                if self.edge && super::edge::is_offline(&err) && reason != "fallback" {
+                if super::owners::owner_of(&leg) != Owner::Own && super::edge::is_offline(&err) && reason != "fallback"
+                {
                     tracing::warn!("SIP leg {leg}: the local node is away ({err}); the number's fallback answers");
                     self.message_from_fallback(&leg);
                     return;
@@ -767,7 +791,7 @@ impl Engine {
         let path = recorded.plan.path.to_string_lossy().to_string();
         match &recorded.error {
             // E8: an edge node's message goes to the local node on the queue, routed or not, with its audio
-            None if recorded.duration_ms >= MIN_MESSAGE_MS && self.edge => {
+            None if recorded.duration_ms >= MIN_MESSAGE_MS && super::owners::owner_of(leg) != Owner::Own => {
                 let target = &recorded.plan.target;
                 let received_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -787,7 +811,7 @@ impl Engine {
                 }
                 let factory = Arc::clone(&self.factory);
                 tokio::spawn(async move {
-                    if let Err(err) = call_service(&factory, STORE_SERVICE, parameters).await {
+                    if let Err(err) = call_service(&factory, Owner::Own, STORE_SERVICE, parameters).await {
                         tracing::error!("SIP voicemail: the message was not stored: {err}");
                     }
                 });
@@ -867,8 +891,9 @@ impl Engine {
                         };
                     }
                     let (factory, commands, leg) = (Arc::clone(&self.factory), self.commands.clone(), leg.to_string());
+                    let owner = super::owners::owner_of(&leg);
                     tokio::spawn(async move {
-                        let result = call_service(&factory, PIN_SERVICE, parameters).await;
+                        let result = call_service(&factory, owner, PIN_SERVICE, parameters).await;
                         let _ = commands.send(Command::VmPin { leg, result });
                     });
                 }

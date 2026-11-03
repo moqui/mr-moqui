@@ -226,53 +226,124 @@ pub fn dkim_record() -> Result<String, String> {
 }
 
 /// The domains of this node's hosted and shared accounts, the domains it signs for when `mail_dkim_domains` names
-/// none: on an edge node from its copies of the local nodes' accounts.
+/// none, by the node's role:
+/// - a normal node: its own accounts';
+/// - a dedicated edge node: its copies of the local nodes' accounts;
+/// - an all-in-one node (plans/Edge-Node.md §10): both, the server's own and its paired node's. Only the list of
+///   `get#DkimRecord` takes both; a send signs for one side ([`is_hosted_domain`] for the server's own,
+///   [`paired_domains`] for a paired node's).
 ///
 /// # Errors
 ///
 /// Returns why when the accounts could not be read.
 pub fn hosted_domains(
     facade: &moqui_core::entity::EntityFacade,
-    edge_node: bool,
+    role: moqui_core::edge::NodeRole,
 ) -> Result<std::collections::BTreeSet<String>, moqui_lib::error::Error> {
-    use moqui_lib::object::Value;
+    role_domains(
+        role,
+        || own_addresses(facade),
+        || {
+            let values = moqui_core::edge::replica::list_values(
+                facade,
+                None,
+                super::edge_mail::RECIPIENT_SET,
+                Some(super::sync::ACCOUNT),
+                1_000_000,
+            )?;
+            Ok(replicated_addresses(&values))
+        },
+    )
+}
+
+/// The domains of paired node `node`'s hosted and shared accounts, from its copies: what its `mailOut` items are signed
+/// for, on a dedicated edge node and an all-in-one node alike, so a paired node never sends signed as another side.
+///
+/// # Errors
+///
+/// Returns why when the copies could not be read.
+pub fn paired_domains(
+    facade: &moqui_core::entity::EntityFacade,
+    node: &str,
+) -> Result<std::collections::BTreeSet<String>, moqui_lib::error::Error> {
+    let values = moqui_core::edge::replica::list_values(
+        facade,
+        Some(node),
+        super::edge_mail::RECIPIENT_SET,
+        Some(super::sync::ACCOUNT),
+        1_000_000,
+    )?;
+    Ok(domains_of(&replicated_addresses(&values)))
+}
+
+/// The role whose domains this node's own sends are signed for: an all-in-one node's are the server's own, as a normal
+/// node's; its paired node's domains are only for that node's mail ([`paired_domains`]).
+fn sending_role(role: moqui_core::edge::NodeRole) -> moqui_core::edge::NodeRole {
+    if role.all_in_one() {
+        moqui_core::edge::NodeRole::Normal
+    } else {
+        role
+    }
+}
+
+/// The domains of a node of `role`: of the addresses `own` reads unless a dedicated edge node, and of those
+/// `replicated` reads when it takes links.
+fn role_domains(
+    role: moqui_core::edge::NodeRole,
+    own: impl FnOnce() -> Result<Vec<String>, moqui_lib::error::Error>,
+    replicated: impl FnOnce() -> Result<Vec<String>, moqui_lib::error::Error>,
+) -> Result<std::collections::BTreeSet<String>, moqui_lib::error::Error> {
     let mut addresses: Vec<String> = Vec::new();
-    if edge_node {
-        let values = moqui_core::edge::replica::list_values(
-            facade,
-            None,
-            super::edge_mail::RECIPIENT_SET,
-            Some(super::sync::ACCOUNT),
-            1_000_000,
-        )?;
-        for value in values {
-            if matches!(
+    if !role.edge_node() {
+        addresses.extend(own()?);
+    }
+    if role.takes_links() {
+        addresses.extend(replicated()?);
+    }
+    Ok(domains_of(&addresses))
+}
+
+/// The addresses of the server's own hosted and shared accounts.
+fn own_addresses(facade: &moqui_core::entity::EntityFacade) -> Result<Vec<String>, moqui_lib::error::Error> {
+    use moqui_lib::object::Value;
+    let rows = facade
+        .find(super::sync::ACCOUNT)?
+        .condition(moqui_core::entity::Condition::is_in(
+            "accountKindEnumId",
+            vec![Value::string("EakHosted"), Value::string("EakShared")],
+        ))
+        .select_field("emailAddress")
+        .disable_authz()
+        .list()?;
+    Ok(rows
+        .values()
+        .iter()
+        .map(|row| moqui_core::service::util::field_text(row, "emailAddress"))
+        .collect())
+}
+
+/// The addresses of the hosted and shared accounts among a paired node's copies of `EmailAccount`.
+fn replicated_addresses(values: &[moqui_core::edge::replica::ReplicaValue]) -> Vec<String> {
+    values
+        .iter()
+        .filter(|value| {
+            matches!(
                 value.fields["accountKindEnumId"].as_str(),
                 Some("EakHosted" | "EakShared")
-            ) {
-                addresses.push(value.fields["emailAddress"].as_str().unwrap_or_default().to_string());
-            }
-        }
-    } else {
-        let rows = facade
-            .find(super::sync::ACCOUNT)?
-            .condition(moqui_core::entity::Condition::is_in(
-                "accountKindEnumId",
-                vec![Value::string("EakHosted"), Value::string("EakShared")],
-            ))
-            .select_field("emailAddress")
-            .disable_authz()
-            .list()?;
-        for row in rows.values() {
-            addresses.push(moqui_core::service::util::field_text(row, "emailAddress"));
-        }
-    }
-    Ok(addresses
+            )
+        })
+        .map(|value| value.fields["emailAddress"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// The domains of `addresses`, in lower case and without a trailing dot.
+fn domains_of(addresses: &[String]) -> std::collections::BTreeSet<String> {
+    addresses
         .iter()
         .filter_map(|address| address.trim().rsplit_once('@'))
         .map(|(_, domain)| domain.trim_end_matches('.').to_ascii_lowercase())
         .filter(|domain| !domain.is_empty())
-        .collect())
+        .collect()
 }
 
 /// `get#DkimRecord`: the TXT record of the node's key, its selector and the domains it signs for.
@@ -286,7 +357,7 @@ pub(super) fn get_dkim_record(
     let record = dkim_record().map_err(moqui_lib::error::Error::new)?;
     let mut domains = configured_domains();
     if domains.is_empty() {
-        domains = hosted_domains(facade, moqui_core::edge::settings(&factory).edge_node)?
+        domains = hosted_domains(facade, moqui_core::edge::settings(&factory).role)?
             .into_iter()
             .collect();
     }
@@ -303,6 +374,15 @@ pub(super) fn get_dkim_record(
 /// The domain of the first address in a message's `From` field, in lower case.
 #[must_use]
 pub fn from_domain(raw: &[u8]) -> Option<String> {
+    let address = from_address(raw)?;
+    let (_, domain) = address.rsplit_once('@')?;
+    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    (!domain.is_empty()).then_some(domain)
+}
+
+/// The first address in a message's `From` field, trimmed; none without a field or an address with an `@`.
+#[must_use]
+pub fn from_address(raw: &[u8]) -> Option<String> {
     let (head, _) = super::delivery::split_head(raw);
     let from = super::delivery::header_fields(head)
         .into_iter()
@@ -318,9 +398,8 @@ pub fn from_domain(raw: &[u8]) -> Option<String> {
             .unwrap_or_default()
             .to_string(),
     };
-    let (_, domain) = address.trim().rsplit_once('@')?;
-    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    (!domain.is_empty()).then_some(domain)
+    let address = address.trim();
+    address.contains('@').then(|| address.to_string())
 }
 
 /// The domain to sign `raw` for: its From domain, when it is one of `mail_dkim_domains`, or with none named, one that
@@ -341,27 +420,34 @@ pub fn signing_domain(raw: &[u8], hosted: impl Fn(&str) -> bool) -> Option<Strin
 const HOSTED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Whether `domain` is a hosted or shared account's on this node (see [`hosted_domains`]), as the current context's
-/// factory reads it; false with no context or when the accounts cannot be read. The domains are kept a minute, so a
-/// send does not read every account (an account added is signed for within the minute).
+/// factory reads it, for the node's own sends: on an all-in-one node the server's own accounts only, never its paired
+/// node's. False with no context or when the accounts cannot be read. The domains are kept a minute, so a send does
+/// not read every account (an account added is signed for within the minute).
 #[must_use]
 pub fn is_hosted_domain(facade: &moqui_core::entity::EntityFacade, domain: &str) -> bool {
-    type Kept = Option<(bool, std::time::Instant, std::collections::BTreeSet<String>)>;
+    type Kept = Option<(
+        moqui_core::edge::NodeRole,
+        std::time::Instant,
+        std::collections::BTreeSet<String>,
+    )>;
     static KEPT: Mutex<Kept> = Mutex::new(None);
-    let edge_node =
-        moqui_core::context::ExecutionContext::with_current(|ec| moqui_core::edge::settings(ec.factory()).edge_node)
-            .unwrap_or(false);
+    // kept by role: an edge node's, an all-in-one node's and a normal node's domains differ for one database
+    let role = sending_role(
+        moqui_core::context::ExecutionContext::with_current(|ec| moqui_core::edge::settings(ec.factory()).role)
+            .unwrap_or_default(),
+    );
     {
         let kept = lock(&KEPT);
-        if let Some((edge, at, domains)) = kept.as_ref() {
-            if *edge == edge_node && at.elapsed() < HOSTED_TTL {
+        if let Some((kept_role, at, domains)) = kept.as_ref() {
+            if *kept_role == role && at.elapsed() < HOSTED_TTL {
                 return domains.contains(domain);
             }
         }
     }
-    match hosted_domains(facade, edge_node) {
+    match hosted_domains(facade, role) {
         Ok(domains) => {
             let hosted = domains.contains(domain);
-            *lock(&KEPT) = Some((edge_node, std::time::Instant::now(), domains));
+            *lock(&KEPT) = Some((role, std::time::Instant::now(), domains));
             hosted
         }
         Err(err) => {

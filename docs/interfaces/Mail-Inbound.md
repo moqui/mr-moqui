@@ -178,6 +178,10 @@ while the local node is away too.
 The local node's System › Edge Node wizard sets the mail side up: the `edge:` server for `SYSTEM` and the chosen
 accounts, and the DNS records (MX, SPF, the DKIM key and DMARC), each checked live.
 
+On an all-in-one node ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), a full server that is also the edge node)
+the listener answers `RCPT TO` from the server's own accounts first, then the local node's replicated ones, and a
+message with recipients on both sides is delivered once to each. An address both sides hold gets 451, logged.
+
 ## What it does not do
 
 No `AUTH` (the allow-list is the gateway's identity), no client certificates, no relaying: it takes mail only for its own

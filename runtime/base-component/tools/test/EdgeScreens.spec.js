@@ -1,7 +1,7 @@
 // The edge link's System screens (plans/Edge-Node.md §5.2, §5.3, §5.7): Edge Node (its status, and the Pair wizard's five steps)
 // and Edge Clients (with its host names, queues and replicated sets) render in qvt and tui with no error, each with the text of
 // this node's case: no link in this process (a build without it, or one where no HTTP listener started it), a local node not
-// paired yet, or an edge node (node_role=edge). The queue's services, which need no link, are checked in every case.
+// paired yet, or an edge node (node_role=edge or all-in-one). The queue's services, which need no link, are checked in every case.
 // No edge node is reached. moqui test starts no HTTP listener, which installs the link, so a plain run is the first
 // case and the others skip. --serve starts the listener only after the specs, so the local and edge cases are checked
 // over HTTP on a served Maximal build (-D node_role=edge, and -D webapp_https_listen_port for an edge node that takes
@@ -28,10 +28,11 @@ function render(path, mode, parameters) {
 function linkStatus() {
     return ec.service.sync().name("org.moqui.impl.EdgeServices.get#LinkStatus").disableAuthz().call() || {}
 }
-// noLink: no link in this process; local: a local node; edge: an edge node with the link installed
+// noLink: no link in this process; local: a local node; edge: a node that takes links (an edge node, or an all-in-one
+// node, plans/Edge-Node.md §10) with the link installed
 function caseOf(link) {
     if (link.state === "notBuilt" || link.state === "notStarted") return "noLink"
-    return link.nodeRole === "edge" ? "edge" : "local"
+    return ["edge", "all-in-one"].includes(link.nodeRole) ? "edge" : "local"
 }
 
 spec({
@@ -232,6 +233,44 @@ feature("enqueue refuses a kind the edge conf does not list, the status answers,
         paused.out.paused == true
         whilePaused == true
         resumed.out.paused == false
+    }
+})
+
+// The replication conflicts' services answer on every node: none on a node that is not all-in-one, which skips no record.
+feature("the replication conflicts are listed, and Check again applies none where there are none", {
+    when() {
+        const listed = ec.service.sync().name("org.moqui.impl.EdgeServices.get#ReplicaConflicts").disableAuthz().call() || {}
+        const rechecked = ec.service.sync().name("org.moqui.impl.EdgeServices.recheck#ReplicaConflicts").disableAuthz().call() || {}
+        const errors = ec.message.getErrorsString()
+        ec.message.clearErrors()
+        return {
+            role: linkStatus().nodeRole,
+            conflicts: Array.from(listed.conflictList || []).length,
+            applied: Number(rechecked.applied || 0),
+            errors
+        }
+    },
+    then({role, conflicts, applied, errors}) {
+        errors == ""
+        role == "all-in-one" || conflicts == 0
+        role == "all-in-one" || applied == 0
+    }
+})
+
+// On an all-in-one node Edge Clients also shows the replica conflicts; a dedicated edge node does not.
+feature("on an all-in-one node, Edge Clients shows the replica conflicts", {
+    given() {
+        const link = linkStatus()
+        if (caseOf(link) !== "edge" || link.nodeRole !== "all-in-one") skip(NEEDS_EDGE.replace("node_role=edge", "node_role=all-in-one"))
+    },
+    when() {
+        return {qvt: render("EdgeClients", "qvt"), tui: render("EdgeClients", "tui")}
+    },
+    then({qvt, tui}) {
+        qvt.errors == ""
+        !qvt.broken
+        qvt.output.includes("Replica conflicts")
+        tui.output.includes("Replica conflicts")
     }
 })
 

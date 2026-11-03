@@ -16,7 +16,7 @@ and the build packages are in [Build-Test](Build-Test.md).
   - deployments: [One production server](#one-production-server), [Cluster](#cluster),
     [PASS servers with a BOSS server or cluster](#pass-servers-with-a-boss-server-or-cluster),
     [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server),
-    [A local server with an edge node](#a-local-server-with-an-edge-node);
+    [A local server with an edge node](#a-local-server-with-an-edge-node), [An all-in-one node](#an-all-in-one-node);
   - reference: [Components](#components), [Moving from Moqui Java](#moving-from-moqui-java),
     [Directory layout](#directory-layout).
 
@@ -142,6 +142,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Dev instances with a dev group server | A team: shared repositories, tasks and models | Laptops: Dev. Group server: Maximal or Enterprise | Each its own | [Dev group](#dev-instances-with-a-dev-group-server) |
 | Public demo server | The apps for anyone to try with the `john.doe` login | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
 | A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
+| An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
 
 ## Production checklist
 
@@ -270,7 +271,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `voicemail_prompt_location` | empty | A folder (any resource location) with the recorded speech played after the voicemail tones: `greeting.wav`, `enter-box.wav`, `enter-pin.wav`, `pin-refused.wav`, `menu.wav`, `no-messages.wav`, `goodbye.wav`; empty plays tones only ([Voicemail, Prompts](interfaces/Voicemail.md#prompts)) |
 | `voicemail_pin_min_digits` | `6` | The fewest digits a new voicemail PIN has (4 to 12); four fall to the box's limit of failed tries in weeks ([Voicemail](interfaces/Voicemail.md#phone-access)) |
 | `voicemail_transcribe`, `voicemail_transcribe_language` | `false`, empty | `true` sends each voicemail to the speech provider (the model bound to `transcribe`) for its transcript, by the deployment's recording and transcription policy; the language as an ISO 639-1 code |
-| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#a-local-server-with-an-edge-node)) |
+| `node_role` | empty | `edge` makes this an edge node, which takes links from paired local nodes on its HTTPS listener ([Edge node](#a-local-server-with-an-edge-node)); `all-in-one` makes a full server that also takes one local node's link, routing each item by its owner ([All-in-one node](#an-all-in-one-node)). Another value is logged and means a normal node |
 | `edge_link_key` | generated | The key an edge node's links use; generated on every node, used only on an edge node. Local nodes pin it, so a new one means each must pair again |
 | `edge_node_url`, `edge_node_key`, `edge_node_pin` | empty | On a local node, its edge node: the address, this node's private key (a secret) and the pin of the edge node's link key. Pairing writes them to `runtime/.env` and unpairing removes them; they are not generated |
 | `edge_calls_enabled` | empty (on) | On a paired local node, whether new calls have their media on the edge node's media node; `false` keeps its media row as draining, so new calls use this node's own media nodes and calls already on the edge node go on. The wizard's Apply writes it and unpairing removes it ([Edge node](#a-local-server-with-an-edge-node)) |
@@ -872,6 +873,37 @@ node's own names.
   # /etc/rspamd/local.d/milter_headers.conf: Authentication-Results with the edge node's authserv-id
   use = ["authentication-results", "x-spam-status"];
   ```
+
+## An all-in-one node
+
+A full server, with its own users, apps, data, mail domains, chat bridges, calls and XMPP domain, can also be the edge
+node of one local node, such as a desktop node ([plan](../plans/Edge-Node.md#10-all-in-one-node-e12) §10). The local
+node pairs and runs the wizard as with a dedicated edge node (above), and sees no difference.
+
+- **Conf.** Run `conf/MoquiAllInOneConf.xml` (`node_role=all-in-one`) with the server's full runtime, on the Maximal
+  package:
+
+  ```sh
+  ./moq run-production --release -c conf/MoquiAllInOneConf.xml
+  ```
+
+  It needs what an edge node needs: a WebPKI certificate on the HTTPS listener, `edge_public_addresses`, and the edge
+  node's mail, calls and SIP properties in `.env`. It takes the link and never dials an edge node itself.
+- **Each item has one owner.** The server's own host names, mail accounts, chat bridges, numbers, calls and XMPP
+  domain are served here as on a normal node; the local node's `EdgeHost` names, recipients, bridges, numbers and calls
+  go over the link. A mail domain may be split by address.
+- **Claims both sides make.** The server's own items win. The wizard's Configure refuses the local node's bridges,
+  XMPP domain, SIP domain, numbers and a mail domain the server holds whole (its `edge_mail_bounce_domain`). A
+  replicated record that claims a server's item is not applied: System › Edge Clients lists it under Replica conflicts,
+  with Check again. The server's own setup refuses an address, bridge or number the local node holds. An address both
+  sides hold gets 451 at `RCPT TO`, and a bridge both hold gets 409 at its webhook; each is logged.
+- **XMPP.** The server's XMPP server keeps `xmpp_port` and `xmpp_tls_port`. Give the local node's domain tunnel ports
+  of their own, such as `edge_xmpp_port=5242` and `edge_xmpp_tls_port=5243`, named in that domain's SRV records. A
+  tunnel port the same as the server's own is off, with an error logged.
+- **PASS.** The server's mr-pass keeps its local authority (`pass_backend_url` is not `edge:`). PASS sites for the
+  local node are not served here yet.
+- **Limits.** One paired node. Its load shares the server's CPU, bandwidth and media ports. The queue is in the
+  server's database, so the server's backups cover it. Unpairing leaves the server's own services as they were.
 
 ## Cluster
 

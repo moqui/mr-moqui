@@ -521,6 +521,10 @@ pub struct ConfigureRequest {
     /// XMPP clients through the edge node's tunnel ports; unset when not chosen.
     #[prost(message, optional, tag = "6")]
     pub xmpp: ::core::option::Option<XmppSetup>,
+    /// The local node's SIP device domain (its sip_domain), lower case; empty when it has none. An all-in-one node's
+    /// registrar takes that domain's phones for it, apart from the server's own realm (E12).
+    #[prost(string, tag = "7")]
+    pub sip_domain: ::prost::alloc::string::String,
 }
 /// The local node's XMPP server behind the tunnel (E9). Its rooms. and upload. names are the domain's; the upload URL
 /// (https at the domain) and /xmpp-websocket ride on web access, so the domain is one of the node's host names too.

@@ -100,6 +100,13 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             }
         })
         .collect();
+    // the tunnel ports (edge_xmpp_port, edge_xmpp_tls_port), never the server's own XMPP ports: on an all-in-one node a
+    // tunnel port that is one of them is not listened on (hook.rs), so it is not offered (§10)
+    let all_in_one = moqui_core::edge::settings(factory).all_in_one();
+    let tunnel = |bind: Option<std::net::SocketAddr>| {
+        bind.filter(|bind| !all_in_one || super::tunnel::own_xmpp_clash(*bind).is_none())
+    };
+    let (xmpp_tunnel, xmpp_tls_tunnel) = (tunnel(config.xmpp_tunnel), tunnel(config.xmpp_tls_tunnel));
     Offer {
         web: Some(WebOffer {
             public_names: config.public_names.clone(),
@@ -120,9 +127,9 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
             client_id: moqui_core::pass_authority::DEFAULT_EDGE_CLIENT.to_string(),
         }),
         xmpp: Some(ProtoXmpp {
-            available: config.xmpp_tunnel.is_some() || config.xmpp_tls_tunnel.is_some(),
-            port: config.xmpp_tunnel.map_or(0, |address| u32::from(address.port())),
-            tls_port: config.xmpp_tls_tunnel.map_or(0, |address| u32::from(address.port())),
+            available: xmpp_tunnel.is_some() || xmpp_tls_tunnel.is_some(),
+            port: xmpp_tunnel.map_or(0, |address| u32::from(address.port())),
+            tls_port: xmpp_tls_tunnel.map_or(0, |address| u32::from(address.port())),
             other_node: false,
             needs_node: false,
         }),
@@ -276,33 +283,62 @@ const HELD: &str = "another local node has this name";
 /// The text for a name of the edge node's own.
 const OWN: &str = "the edge node answers for this name itself";
 
-/// The host part of an http(s) address, lower case.
-pub(crate) fn url_host(url: &str) -> Option<String> {
-    let rest = url.trim().split_once("://")?.1;
-    let authority = rest.split(['/', '?', '#']).next()?;
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
-    let host = host.rsplit_once(':').map_or(host, |(name, port)| {
-        if port.bytes().all(|byte| byte.is_ascii_digit()) {
-            name
-        } else {
-            host
-        }
-    });
-    Some(host.to_ascii_lowercase()).filter(|host| !host.is_empty())
-}
-
-/// The names no local node's setup may claim, nor their subdomains: the edge node's public names and web host, its
-/// SMTP (MX) host, its bounce domain, the host of its chat address, and its mr-pass sites' hosts. A name the operator
-/// gives a node on Edge Clients is not checked against them.
+/// The names no local node's setup may claim, nor their subdomains: the edge node's public names and the server's
+/// own host names (`moqui_core::edge::claims::own_host_names`: its web host, SMTP (MX) host, bounce domain, the host
+/// of its chat address and its mr-pass sites' hosts; on an all-in-one node its XMPP and SIP domains too). A name the
+/// operator gives a node on Edge Clients is not checked against them.
 fn reserved_names(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Vec<String> {
     let mut names: Vec<String> = config.public_names.clone();
-    for name in ["webapp_http_host", "smtp_hostname", "edge_mail_bounce_domain"] {
-        names.push(property(name));
-    }
-    names.extend(url_host(&property(setup::CHAT_PUBLIC_URL)));
-    names.extend(moqui_core::screen::public_site_hosts(factory));
+    names.extend(moqui_core::edge::claims::own_host_names(factory));
     names.retain(|name| !name.trim().is_empty());
     names
+}
+
+/// The item names of a Configure's setup fields, for a refusal.
+fn item_label(field: &str) -> &'static str {
+    match field {
+        "mailDomains" => "mail domain",
+        "chatBridgeIds" => "chat bridge",
+        "xmppDomain" => "XMPP domain",
+        "sipDomain" => "SIP domain",
+        _ => "item",
+    }
+}
+
+/// On an all-in-one node, take out of local node `node`'s kept setup each item the server holds
+/// (`moqui_core::edge::claims::check_setup_claims`: a chat bridge, its XMPP or SIP domain, a mail domain held
+/// whole), each answered as a result with the setup field as its mode and an error naming the item; the
+/// server's holder is logged, not sent. A mail domain the server also has addresses in is kept and logged.
+fn refuse_own_items(
+    factory: &ExecutionContextFactory,
+    node: &str,
+    setup: &mut serde_json::Value,
+) -> Result<Vec<HostSetting>, Error> {
+    let facade = store::facade(factory)?;
+    let found = moqui_core::edge::claims::check_setup_claims(factory, &facade, setup);
+    for (domain, count) in &found.shared_domains {
+        tracing::info!(
+            "Edge node: local node {node} takes mail for {domain}, where the server also has {count} addresses of its \
+             own; the domain is split between them by address"
+        );
+    }
+    Ok(found
+        .refused
+        .into_iter()
+        .map(|refused| {
+            let label = item_label(refused.field);
+            tracing::warn!(
+                "Edge node: local node {node} asked for {label} {}, which {} holds; refused",
+                refused.key,
+                refused.holder
+            );
+            HostSetting {
+                error: format!("{label} {} is the server's own", refused.key),
+                host_name: refused.key,
+                mode: refused.field.to_string(),
+            }
+        })
+        .collect())
 }
 
 /// Apply local node `node`'s Configure: with `set_hosts` its host names become the request's (a name of another
@@ -319,8 +355,30 @@ pub(crate) fn configure(
     request: ConfigureRequest,
     linked: &[String],
 ) -> Result<ConfigureReply, Error> {
-    let checked = setup::check_setup(&setup_of(request))?;
+    let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     let mut results = Vec::new();
+    // E12: the local node's SIP device domain, which only an all-in-one node's registrar takes its phones in
+    // (sip/owners.rs); a dedicated edge node's registrar has its own realm (E8), so the field is not kept there. A
+    // value that is not a domain is refused on its own, not the whole setup
+    let sip_domain = match request.sip_domain.trim() {
+        "" => String::new(),
+        _ if !all_in_one => String::new(),
+        domain => match setup::check_host_name(domain) {
+            Ok(domain) => domain,
+            Err(why) => {
+                tracing::warn!(
+                    "Edge node: local node {node} sent SIP domain {domain}, which is not one ({why}); dropped"
+                );
+                results.push(HostSetting {
+                    host_name: domain.to_string(),
+                    mode: "sipDomain".to_string(),
+                    error: format!("SIP domain {domain} is not a domain: {why}"),
+                });
+                String::new()
+            }
+        },
+    };
+    let checked = setup::check_setup(&setup_of(request))?;
     if checked.set_hosts {
         let all = hosts::list(factory, None)?;
         let reserved = reserved_names(factory, config);
@@ -388,24 +446,32 @@ pub(crate) fn configure(
             }
         }
     }
-    let kept_setup = serde_json::json!({
+    let mut kept_setup = serde_json::json!({
         "mailDomains": checked.mail_domains,
         "chatBridgeIds": checked.chat_bridge_ids,
         "passSites": checked.pass_sites,
         "xmppDomain": checked.xmpp_domain,
+        "sipDomain": sip_domain,
     });
+    // an all-in-one node keeps its own items: each the server holds is refused by name and left out (§10)
+    if all_in_one {
+        results.extend(refuse_own_items(factory, node, &mut kept_setup)?);
+    }
+    // what is kept, after any refusal
+    let xmpp_domain = kept_setup["xmppDomain"].as_str().unwrap_or_default().to_string();
+    let count = |field: &str| kept_setup[field].as_array().map_or(0, Vec::len);
     match xmpp_node(config, node, linked) {
-        _ if checked.xmpp_domain.is_empty() => {}
+        _ if xmpp_domain.is_empty() => {}
         (true, _) => tracing::warn!(
             "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node names {}, so its clients are not \
              tunneled there",
-            checked.xmpp_domain,
+            xmpp_domain,
             config.xmpp_tunnel_node
         ),
         (_, true) => tracing::warn!(
             "Edge node: local node {node} set up XMPP for {}, but edge_xmpp_node is empty and it is not the only node \
              linked, so XMPP clients are refused: set edge_xmpp_node",
-            checked.xmpp_domain
+            xmpp_domain
         ),
         _ => {}
     }
@@ -417,19 +483,41 @@ pub(crate) fn configure(
         } else {
             "unchanged".to_string()
         },
-        checked.mail_domains.len(),
-        checked.chat_bridge_ids.len(),
+        count("mailDomains"),
+        count("chatBridgeIds"),
         checked.pass_sites.len(),
-        if checked.xmpp_domain.is_empty() {
+        if xmpp_domain.is_empty() {
             "off"
         } else {
-            checked.xmpp_domain.as_str()
+            xmpp_domain.as_str()
         }
     );
+    let mut offer = offer(factory, config, node, linked)?;
+    // the registrar takes the kept domain's phones now (sip/mod.rs, `Engine::paired_changed`), so the answer says it
+    // rather than the advert, which the SIP engine reads again only every few seconds; the local node keeps its
+    // SipNode row's realm from it (dial.rs, `Dialer::note_configured`)
+    if all_in_one {
+        if let Some(sip) = offer.sip.as_mut().filter(|sip| sip.available) {
+            let domain = kept_setup["sipDomain"].as_str().unwrap_or_default().to_string();
+            sip.registrar = !domain.is_empty() && registrar_enabled();
+            sip.domain = domain;
+        }
+    }
     Ok(ConfigureReply {
-        offer: Some(offer(factory, config, node, linked)?),
+        offer: Some(offer),
         hosts: results,
     })
+}
+
+/// Whether this server's SIP registrar is on (`sip_registrar_enabled`, as `sip::phones::registrar_from` reads it).
+fn registrar_enabled() -> bool {
+    matches!(
+        moqui_lib::env::get_prop_or_env("sip_registrar_enabled")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "true" | "y" | "yes" | "1"
+    )
 }
 
 /// Whether a Configure is input this edge node takes, before anything is changed.
@@ -470,6 +558,20 @@ pub(crate) fn request_of(setup: &EdgeSetup) -> ConfigureRequest {
         set_hosts: setup.set_hosts,
         xmpp: (!setup.xmpp_domain.is_empty()).then(|| XmppSetup {
             domain: setup.xmpp_domain.clone(),
+        }),
+        sip_domain: own_sip_domain(),
+    }
+}
+
+/// E12: the domain this node's phones register to through an all-in-one node (`sip_domain`), as a Configure sends it;
+/// empty when unset or not a host name with a domain (logged), as the edge node would refuse it.
+fn own_sip_domain() -> String {
+    let domain = moqui_lib::env::get_prop_or_env("sip_domain");
+    match domain.trim() {
+        "" => String::new(),
+        domain => setup::check_host_name(domain).unwrap_or_else(|why| {
+            tracing::warn!("Edge link: sip_domain {domain} is not a domain ({why}), so a Configure does not send it");
+            String::new()
         }),
     }
 }

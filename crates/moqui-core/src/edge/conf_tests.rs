@@ -32,9 +32,11 @@ fn the_edge_conf_reads_its_lists_and_limits() {
                 <replicate set="groups"><entity name="moqui.security.UserGroup" fields="description, groupTypeEnumId"/></replicate>
             </edge></moqui-conf>"#,
         ),
-        true,
+        NodeRole::Edge,
     );
-    assert!(settings.edge_node);
+    assert!(settings.edge_node());
+    assert!(settings.takes_links());
+    assert!(!settings.all_in_one());
     assert!(settings.delegates("a.B.call#One"));
     assert_eq!(
         settings.delegate("a.B.call#One").map(|entry| entry.allow_anonymous),
@@ -68,11 +70,11 @@ fn the_edge_conf_reads_its_lists_and_limits() {
 
 #[test]
 fn no_edge_conf_is_the_defaults_and_a_bad_number_keeps_its_default() {
-    let settings = EdgeSettings::parse(&conf("<moqui-conf/>"), false);
+    let settings = EdgeSettings::parse(&conf("<moqui-conf/>"), NodeRole::Normal);
     assert_eq!(settings, EdgeSettings::default());
     let settings = EdgeSettings::parse(
         &conf(r#"<moqui-conf><edge queue-retention-days="many" queue-retry-seconds="-1"/></moqui-conf>"#),
-        false,
+        NodeRole::Normal,
     );
     assert_eq!(settings.retention_days, 14);
     assert_eq!(settings.retry_first, Duration::from_secs(5));

@@ -23,7 +23,10 @@ along with this software (see the LICENSE.md file). If not, see
     answers for a paired node, each passthrough or terminate. Each node's queue (§5.2, get#QueueStatus) shows the items
     waiting for it and the failed ones, with the oldest waiting; Replicated sets shows each node's sets as this edge
     node has applied them. Set up is what the node's last Configure, from its Edge Node wizard (§5.7, E10), set besides
-    its host names: its mail domains, chat bridges and PASS sites. -->
+    its host names: its mail domains, chat bridges and PASS sites. An all-in-one node (node_role=all-in-one, §10), a full
+    server that also takes a local node's link, shows this screen too, with Replica conflicts: the records of a node's sets
+    not applied because each claims an item the server holds (get#ReplicaConflicts), and Check again
+    (recheck#ReplicaConflicts) to apply those the server no longer holds. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
 
@@ -57,6 +60,12 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
         <error-response url="."/>
     </transition>
+    <transition name="recheckConflicts">
+        <service-call name="org.moqui.impl.EdgeServices.recheck#ReplicaConflicts" in-map="{pairedNodeId:pairedNodeId}" out-map="recheckOut"/>
+        <actions><if condition="!ec.message.hasError()"><message type="success">Checked again: ${recheckOut?.applied ?? 0} applied</message></if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
     <transition name="pingClient">
         <service-call name="org.moqui.impl.EdgeServices.ping#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="pingOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Round trip to ${pairedNodeId}: ${ec.l10n.format(pingOut.rttMs, '#,##0.0')} ms</message></if></actions>
@@ -71,8 +80,11 @@ along with this software (see the LICENSE.md file). If not, see
         const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
-        notEdge = !notBuilt && !notStarted && link.nodeRole !== 'edge'
+        // a dedicated edge node and an all-in-one node both take links (plans/Edge-Node.md §10)
+        notEdge = !notBuilt && !notStarted && !['edge', 'all-in-one'].includes(link.nodeRole)
         isEdge = !notBuilt && !notStarted && !notEdge
+        allInOne = isEdge && link.nodeRole === 'all-in-one'
+        conflictList = []
         clientList = []
         cursorList = []
         clientsError = ''
@@ -85,12 +97,16 @@ along with this software (see the LICENSE.md file). If not, see
         let out = {}
         let hostsOut = {}
         let queueOut = {}
+        let conflictsOut = {}
         ec.message.pushErrors()
         try {
             out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeClients').call() || {}
             if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeHosts').call() || {}
             if (!ec.message.hasError()) {
                 queueOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#QueueStatus').call() || {}
+            }
+            if (!ec.message.hasError() && allInOne) {
+                conflictsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#ReplicaConflicts').call() || {}
             }
             if (ec.message.hasError()) clientsError = ec.message.getErrorsString()
         } finally {
@@ -147,6 +163,11 @@ along with this software (see the LICENSE.md file). If not, see
                     return text
                 })()}
         })
+        conflictList = Array.from(conflictsOut.conflictList || []).map((conflict) => ({
+            nodeId: conflict.pairedNodeId, setName: conflict.setName,
+            itemText: (conflict.claimLabel || '') + ' ' + (conflict.itemKey || ''),
+            ownerText: conflict.ownerText || '',
+            lastText: conflict.lastDate ? ec.l10n.format(conflict.lastDate, '') : ''}))
         nodeOptions = clientList.filter((client) => !client.revoked).map((client) => ({nodeId: client.pairedNodeId}))
         hostList = Array.from(hostsOut.hostList || []).map((host) => {
             const terminate = host.modeEnumId === 'EdgeHostTerminate'
@@ -167,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
         </widgets></section>
         <section name="NotEdge" condition="notEdge"><widgets>
             <container-box><box-header title="Edge clients"/><box-body>
-                <label type="p" text="This node is not an edge node, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/MoquiEdgeConf.xml). To pair this node with an edge node, use Edge Node."/>
+                <label type="p" text="This node is not an edge node, so no local nodes pair with it. An edge node runs with node_role set to edge (conf/MoquiEdgeConf.xml), and a full server that also takes a local node's link with node_role set to all-in-one (conf/MoquiAllInOneConf.xml). To pair this node with an edge node, use Edge Node."/>
                 <link url="../EdgeNode" text="Edge node" icon="sym_o_cloud_sync"/>
             </box-body></container-box>
         </widgets></section>
@@ -268,6 +289,31 @@ along with this software (see the LICENSE.md file). If not, see
                             style="m-muted q-pa-sm q-mb-none"/>
                 </widgets></section>
             </box-body-nopad></container-box>
+
+            <section name="Conflicts" condition="allInOne"><widgets>
+                <container-box><box-header title="Replica conflicts"/><box-toolbar>
+                    <link url="recheckConflicts" link-type="hidden-form-link" icon="sym_o_refresh" text="Check again" style="m-btn-flat"
+                            condition="conflictList.length"/>
+                </box-toolbar><box-body-nopad>
+                    <label type="p" style="m-muted q-pa-sm q-mb-none"
+                            text="Records a local node replicated that claim an item this server holds itself: a mail address, a chat bridge or a phone number. The server's own item wins, and the record is not applied until the server no longer holds the item; remove it on one side."/>
+                    <form-list name="ConflictList" list="conflictList" skip-form="true" paginate="false">
+                        <field name="itemText"><default-field title="Item"><display style="text-weight-medium"/></default-field></field>
+                        <field name="nodeId"><default-field title="Local node"><display/></default-field></field>
+                        <field name="setName"><default-field title="Set"><display/></default-field></field>
+                        <field name="ownerText"><default-field title="Held by"><display/></default-field></field>
+                        <field name="lastText"><default-field title="Last refused"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="itemText"/><field-ref name="nodeId"/></column>
+                            <column><field-ref name="ownerText"/><field-ref name="lastText"/></column>
+                        </columns>
+                    </form-list>
+                    <section name="NoConflicts" condition="!conflictList.length"><widgets>
+                        <label type="p" text="No conflicts: no local node's record claims an item of this server's own."
+                                style="m-muted q-pa-sm q-mb-none"/>
+                    </widgets></section>
+                </box-body-nopad></container-box>
+            </widgets></section>
 
             <container-box><box-header title="Host names"/><box-toolbar>
                 <container-dialog id="AddHostDialog" button-text="Add a host name" icon="sym_o_add" width="560" title="Add a host name" type="default" condition="nodeOptions.length">

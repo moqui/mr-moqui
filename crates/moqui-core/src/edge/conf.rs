@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use moqui_lib::node::MNode;
 
+use super::NodeRole;
 use crate::context::ExecutionContextFactory;
 
 /// One entity of a replicated set: its full name and the fields copied besides the primary key.
@@ -53,8 +54,9 @@ pub struct Delegate {
 /// The `<edge>` conf of one factory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeSettings {
-    /// This node is an edge node (`node_role=edge`), as the property was when the settings were first read.
-    pub edge_node: bool,
+    /// This node's role (`node_role`), as the property was when the settings were first read. Read it through
+    /// [`EdgeSettings::edge_node`], [`EdgeSettings::all_in_one`] and [`EdgeSettings::takes_links`].
+    pub role: NodeRole,
     /// The services an edge node runs on its local node, and the only ones a local node runs for it, by canonical
     /// name (`create#moqui.X` for `create-moqui.X`, as the service facade names them).
     pub delegates: BTreeMap<String, Delegate>,
@@ -77,7 +79,7 @@ pub const MAX_RETRY: Duration = Duration::from_secs(600);
 impl Default for EdgeSettings {
     fn default() -> Self {
         Self {
-            edge_node: false,
+            role: NodeRole::Normal,
             delegates: BTreeMap::new(),
             kinds: BTreeMap::new(),
             failed: BTreeMap::new(),
@@ -91,10 +93,28 @@ impl Default for EdgeSettings {
 }
 
 impl EdgeSettings {
+    /// A dedicated edge node (`node_role=edge`): no business data of its own, so a path it switches as a whole goes
+    /// the edge way for every item.
+    pub fn edge_node(&self) -> bool {
+        self.role.edge_node()
+    }
+
+    /// An all-in-one node (`node_role=all-in-one`, E12): a full server that decides per item by its owner
+    /// ([`super::owner`]).
+    pub fn all_in_one(&self) -> bool {
+        self.role.all_in_one()
+    }
+
+    /// The edge end of a link, a dedicated edge node or an all-in-one node: it accepts links, and its queue and
+    /// delegated calls go to its paired node.
+    pub fn takes_links(&self) -> bool {
+        self.role.takes_links()
+    }
+
     /// The settings of a merged conf's `<edge>`, for a node of the given role. A bad number keeps its default, logged.
-    pub fn parse(conf: &MNode, edge_node: bool) -> Self {
+    pub fn parse(conf: &MNode, role: NodeRole) -> Self {
         let mut settings = Self {
-            edge_node,
+            role,
             ..Self::default()
         };
         let Some(edge) = conf.first_named("edge") else {
@@ -223,7 +243,7 @@ fn delegate_timeout(service: &str, raw: &str) -> Option<Duration> {
     }
 }
 
-/// Set once some factory of this process is an edge node with delegated services, so a service call on any other node
+/// Set once some factory of this process takes links (an edge or all-in-one node) with delegated services, so a service call on any other node
 /// does not look its factory's settings up.
 static DELEGATING: AtomicBool = AtomicBool::new(false);
 
@@ -235,31 +255,33 @@ pub(crate) fn delegating() -> bool {
 /// The `<edge>` conf of `factory`, read the first time and kept: at boot on an edge node ([`init`]), else when the
 /// host's listeners start, so the role is the one the node started with.
 pub fn settings(factory: &ExecutionContextFactory) -> Arc<EdgeSettings> {
-    settings_as(factory, super::is_edge_node())
+    settings_as(factory, super::node_role_kind())
 }
 
-/// At boot, on an edge node: read the `<edge>` conf now, so a service it delegates goes to the link from the first
-/// call, before the link is installed or with no listener at all (then failing as offline), and never runs here.
+/// At boot, on a node that takes links: read the `<edge>` conf now, so a service it delegates goes to the link from
+/// the first call, before the link is installed or with no listener at all (then failing as offline), and never runs
+/// here.
 pub(crate) fn init(factory: &ExecutionContextFactory) {
-    if super::is_edge_node() {
-        settings_as(factory, true);
+    let role = super::node_role_kind();
+    if role.takes_links() {
+        settings_as(factory, role);
     }
 }
 
 /// [`settings`], read for a node of the given role the first time.
-pub(super) fn settings_as(factory: &ExecutionContextFactory, edge_node: bool) -> Arc<EdgeSettings> {
+pub(super) fn settings_as(factory: &ExecutionContextFactory, role: NodeRole) -> Arc<EdgeSettings> {
     factory.extension(|factory| {
         let settings = match MNode::parse_shared("moqui-conf", factory.conf_text()) {
-            Ok(conf) => EdgeSettings::parse(&conf, edge_node),
+            Ok(conf) => EdgeSettings::parse(&conf, role),
             Err(err) => {
                 tracing::error!("the edge conf could not be read ({err}); nothing is delegated, queued or replicated");
                 EdgeSettings {
-                    edge_node,
+                    role,
                     ..EdgeSettings::default()
                 }
             }
         };
-        if settings.edge_node && !settings.delegates.is_empty() {
+        if settings.takes_links() && !settings.delegates.is_empty() {
             DELEGATING.store(true, Ordering::Release);
         }
         settings

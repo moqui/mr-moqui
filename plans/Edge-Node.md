@@ -1,6 +1,6 @@
 # Edge Node
 
-Status 2026-11-02: E0–E10 built, the wizard with its phones area last; E11 not yet. The manual checks below are
+Status 2026-11-02: E0–E10 and E12 built, the all-in-one node last; E11 not yet. The manual checks below are
 pending. The E4 two-runtime check (RemoteHttp) passed over REST and over gRPC
 direct; the run on the link, which needs a publicly trusted certificate on the edge node, is pending. mr-pass reaches
 its authority over gRPC, direct or on the link, with REST kept; after E3's delegate, queue and replicate and E2's web
@@ -18,7 +18,9 @@ built is in [§5.5](#55-mr-pass-on-the-edge-node-grpc-by-default) ("As built"); 
 (E5b)"), E6's in §5.4 ("As built (E6)"), E7's in §5.4 ("As built (E7)"), E8's in §5.4 ("As built (E8)"), E9's, the XMPP tunnel with the design of C3b's and C6b's split, in §5.4
 ("As built (E9)"), and E10's, the wizard's Discover, Apply and Test, in
 [§5.7](#57-attaching-a-local-node-system-app) ("As built (E10)", its XMPP area in "As built (E10, XMPP)", its calls area in "As built (E10, calls)" and its phones area in "As built (E10, phones)"). A real local node attached through the wizard on a
-served Maximal build, with real DNS, is pending.
+served Maximal build, with real DNS, is pending. What E12 built, the all-in-one node, is in
+[§10](#10-all-in-one-node-e12) ("As built (E12)"); a real local node paired with a served all-in-one server, with its
+own mail, chat, calls, SIP and XMPP beside the node's, is pending.
 
 An edge node is a small MR Moqui instance on a cloud host with a fixed address. It gives a **local node** a public
 presence. The local node is the system of record, behind a firewall on a dynamic IP. The edge node is what the world
@@ -36,7 +38,7 @@ delivered in order, and once, when the link is back.
 Sections: [1 shape](#1-shape) · [2 topologies](#2-topologies) · [3 what is built](#3-what-is-built) ·
 [4 gap analysis](#4-gap-analysis) · [4a entity access](#4a-entity-access-audit) · [5 design](#5-design) ·
 [6 phases](#6-phases) · [7 documents to change](#7-documents-to-change) · [8 decisions](#8-decisions) ·
-[9 references](#9-references)
+[9 references](#9-references) · [10 all-in-one node](#10-all-in-one-node-e12)
 
 ---
 
@@ -1692,7 +1694,7 @@ Its actions are pause, resync and unpair.
 | **E9** | The XMPP tunnel; design input to C3b and C6 | An outside XMPP client chats through the edge node. Built. Tested in `tests/it/edge_xmpp.rs`: clients over the STARTTLS and direct TLS tunnel ports sign in with SCRAM-SHA-256-PLUS and chat on the local node; refused with the link down. C3b's and C6b's split is designed in §5.4. Not tested: a real client through a deployed edge node |
 | **E10** | The wizard's discovery, filled-out form, apply step, DNS checks and tests; the documents in §7 | A new local node is attached in one sitting from the wizard. Built, with the XMPP area on E9's tunnel (its SRV records checked, a client stream probed through each port) and the calls area on E7's media node (calls off a local setting that keeps the edge node's row draining; Test allocates on its TURN with a credential make#IceServers signed) and the phones area on E8's SIP (phones off a local setting that sends the trunks and fallbacks empty and gives the edge node's SIP row no new call; Test finds the trunks loaded and the fallbacks there). Tested in `tests/it/edge_setup.rs` on two servers in one process: pairing by the link's own code (not the EdgeUrl and Connect screens, which need a WebPKI certificate), then Discover, Apply and Test as screens with the services over the test's dialer, the offer, Configure, the local writes and unpairing's restore, and DNS checks against fixed records, with the edge node's media node and SIP engine in the same process; the XMPP probe also in `edge_xmpp.rs`; the TURN check also against the embedded TURN in `rtc/turn_probe_tests.rs`. Not tested: the whole wizard on a served Maximal build with a real certificate and real DNS, real trunks and phones through it |
 | **E11** (late; possibly after the first release) | Filtering in moqui: content and reputation scoring for mail, internal mail, public forms and outside chat; replaces the external Rspamd as the default | To be set when it is designed |
-| **E12** (planned before E11) | The all-in-one node ([§10](#10-all-in-one-node-e12)): routing by owner in delegate, mail in and chat webhooks; rooms keyed by node and call; XMPP tunnel ports beside the server's own XMPP server; exclusive ownership checks; the role | A server with its own users, mail accounts, chat bridge, calls and XMPP domain pairs with a local node that has no listening port. The server's own names, mail, webhooks and calls stay on the server while the node's go over the link, both at once. Mail to recipients on both sides is delivered once to each side. A name, address or bridge both sides claim is refused, with an error naming it. The node's queued items arrive after it returns. Unpairing leaves the server's own services working. Tested on two servers in one process, as `edge_setup.rs` is |
+| **E12** (built before E11) | The all-in-one node ([§10](#10-all-in-one-node-e12)): routing by owner in delegate, mail in and chat webhooks; rooms keyed by node and call; XMPP tunnel ports beside the server's own XMPP server; exclusive ownership checks; the role | A server with its own users, mail accounts, chat bridge, calls and XMPP domain pairs with a local node that has no listening port. The server's own names, mail, webhooks and calls stay on the server while the node's go over the link, both at once. Mail to recipients on both sides is delivered once to each side. A name, address or bridge both sides claim is refused, with an error naming it. The node's queued items arrive after it returns. Unpairing leaves the server's own services working. Tested on two servers in one process, as `edge_setup.rs` is. Built. Tested in `tests/it/edge_allinone.rs`, the server in a child process and the local node, with no listening port, in the test's: mail to an own and a paired recipient stored once on each side (one queue item, naming only the paired recipient), 550 for an unknown address and 451 for one both sides hold, the node's mail out DKIM-signed and delivered to the server's own account locally and the rest by MX, the node's mail taken while its link is down arriving after; Configure refusing the server's chat bridge, XMPP domain and bounce domain by name, late mail and bridge claims kept as replica conflicts and shown on Edge Clients, applied by a recheck once the server's item is gone, the server's own create#EmailAccount refused for the node's address; webhooks by owner, 409 for a bridge on both sides; the same call id from both databases kept apart, each recording on its own side; an own number routed on the server and the node's by the local node, the registrar by domain, the node's fallback with its link down; the server's own XMPP port beside the tunnel; and after revoking, the server's own mail and XMPP still working. Not tested: a real local node through a served all-in-one server, real trunks and phones, the same SIP username in both domains (generated), the 409 on the media path. |
 | **Later** | A PASS read cache on the edge node; several local nodes per edge node; a second edge node; QUIC; a local media node cascading to the edge node; an ACME client; DANE (RFC 7672) for the MTA's outbound TLS | |
 
 E1 to E3 are the base, and the rest build on them. After E3 the order can follow need. E4 and E5a are the likely
@@ -1772,7 +1774,7 @@ When it is built (done in E10 unless marked; all done):
 
 ## 10. All-in-one node (E12)
 
-Added 2026-11-02, after E10. E12 is planned before E11 and is numbered after it so that this section and its phase row
+Added 2026-11-02, after E10, and built the same day ("As built (E12)" below). E12 comes before E11 and is numbered after it so that this section and its phase row
 are appended. [Mobile-Desktop](Mobile-Desktop.md) needs it for configuration 1, a desktop local node.
 
 An **all-in-one node** is a full server, with its own users, apps, business data, mail domains and calls, that is also
@@ -1786,16 +1788,16 @@ instead. Each item belongs either to the server itself or to one paired node, an
 
 | Area | On an edge node today | On an all-in-one node |
 |---|---|---|
-| Role and runtime | `node_role=edge`; the runtime has only the base components and mr-pass | A full runtime with the role for an all-in-one node (open question below). A normal node's paths stay on for the server's own items |
+| Role and runtime | `node_role=edge`; the runtime has only the base components and mr-pass | A full runtime with `node_role=all-in-one` (decided below). A normal node's paths stay on for the server's own items |
 | Web access | `EdgeHost` names go down the link; the edge node's own names are served there | No change. The server's own names are its apps, and a paired node cannot claim them (already refused, §5.7) |
 | Delegate | The service facade sends the conf's listed services over the link | Delegated only for a paired node's item: its number, its registrar check, its calls' media events, its PASS authority. The same service runs on the server for the server's own items |
 | Mail in | The listener's backend is `QueueBackend` | By recipient. The server's own accounts are delivered as on a normal node, and a paired node's replicated recipients are queued to it. A message with recipients on both sides is delivered once to each side |
-| Mail out | The MTA in moqui sends the queued `mailOut` items | No change. The DKIM domains are the server's own and the replicated ones |
+| Mail out | The MTA in moqui sends the queued `mailOut` items | The paired node's items go by MX, signed only for its own domains; its recipients on the server are delivered there |
 | Chat webhooks | `/channels/{id}/webhook` reads the bridge from the replica | The server's own `ChatBridge` first, else a paired node's copy. An id found on both sides is refused, with an error naming it |
 | Calls | Rooms keyed by call alone; no `CallMediaNode` of its own; only one linked node takes call messages (E7) | Rooms keyed by node and call, as several local nodes per edge node also need, so the server's own calls and a paired node's (ids from two databases) cannot meet. The server registers its own `CallMediaNode` as a normal node does |
 | TURN | The edge node's TURN | Shared by both |
 | XMPP | Tunnel ports; no XMPP server on an edge node (E9) | The server's XMPP server keeps its own ports. The paired node's domain gets its own tunnel ports, named in that domain's SRV records. Serving both on one port (SNI for direct TLS, the stream's `to` for STARTTLS) comes later |
-| SIP | Trunks and the registrar on the edge node (E8) | By number and by device domain, once E8 is built |
+| SIP | Trunks and the registrar on the edge node (E8) | By number and by device domain (E8 and E12 built) |
 | PASS | mr-pass in remote mode, its authority over the link | The server's own mr-pass keeps its local authority. PASS for a paired node comes later |
 
 **Ownership is exclusive.** Each host name, mail address, phone number, chat bridge and XMPP domain belongs to one side.
@@ -1816,9 +1818,71 @@ CPU, bandwidth and media ports; the link's metrics (`moqui.edgelink.*`) show the
 the server's own items and services untouched.
 
 **Documents.** Run-Deploy gains the all-in-one case beside "A local server with an edge node", and Attack-Surface gains
-what a paired node's traffic can reach on a full server.
+what a paired node's traffic can reach on a full server. Done in E12, with a line each in Mail-Inbound, Chat-Bridges,
+SMS, WebRTC, SIP and XMPP.
 
-**Open questions.**
-- The role: a third `node_role` value, or a property that lets a normal node take Edge Clients.
-- A clustered all-in-one server: which member holds the edge role, and how that relates to a second edge node (Later).
-- How the server's own screens learn of a claim in a replica that lands after their item was made.
+**Decided 2026-11-02.**
+- **The role** is a third `node_role` value, `all-in-one`, beside `edge` and empty (a normal node).
+- **A late claim.** When a paired node's replica claims an item the server already has, the server's own item wins. The
+  record is not applied, and is kept as a conflict that Edge Clients shows. It is checked again, and applied once the
+  server no longer holds the item.
+- **A clustered all-in-one server** is still open: which member holds the edge role, and how that relates to a second
+  edge node. Later.
+
+**As built (E12).** Where it differs from the design above, or adds to it.
+- **The role.** `NodeRole` in `crates/moqui-core/src/edge/mod.rs` parses `node_role` (`edge`, `all-in-one`, empty; an
+  unknown value is logged and means a normal node). `EdgeSettings` has `edge_node()` (dedicated), `all_in_one()` and
+  `takes_links()` (either). An all-in-one node accepts links and runs the queue sweep and the tunnel ports. It never
+  dials (`edge_link/hook.rs`), and pairing with an edge node and the wizard's steps refuse on it, as on an edge node. The conf is `runtime/conf/MoquiAllInOneConf.xml`.
+  It does not set `pass_backend_url=edge:`, so the server's mr-pass keeps its local authority, and PASS for a paired
+  node is later. The server's own web is served locally; only `EdgeHost` names go down the link.
+- **The owner scope.** `crates/moqui-core/src/edge/owner.rs`: `Owner { Own, Paired }` and `owner::with`, a
+  thread-local set inside the request pool's job, never around an `.await`. On an all-in-one node a listed service is
+  delegated only inside `owner::with(Paired(node))`, and goes to that node (`DelegateCall.node`,
+  `EdgeServer::link_of`); outside it the service runs on the server.
+- **Claims** (`crates/moqui-core/src/edge/claims.rs`). The server's own items win.
+  - Configure refuses the paired node's chat bridges, XMPP domain, SIP domain and phone numbers that the server holds,
+    and a mail domain the server holds whole: its bounce domain (`edge_mail_bounce_domain`). A mail domain where the
+    server only has accounts is kept, as a domain may be split by address. The refusals come back in
+    `ConfigureReply.hosts`, each with `mode` set to the setup field, rather than in a field of their own.
+  - A replica record that claims a server's item is skipped, logged, and kept as `moqui.edge.EdgeReplicaConflict`
+    (`edge/replica_conflicts.rs`). It is checked again at each batch of its set, by the queue sweep, and on System ›
+    Edge Clients ("Replica conflicts", Check again; `EdgeServices.get#ReplicaConflicts`, `recheck#ReplicaConflicts`).
+  - The server's own create and update of `EmailAccount` and `EmailIdentity`, `ChatBridgeServices.store#Bridge` and
+    `VoiceServices.store#PhoneNumber` refuse an item a replica holds (`EdgeClaims.secas.xml`, `check#ReplicaClaim`).
+- **Mail.** `SplitBackend` in `crates/moqui-host/src/smtp_queue.rs`.
+  - At `RCPT TO` the server's own accounts are tried first, then the replica, whose account is tagged
+    `node:<node>:<account>`. An address held by both sides gets 451, logged.
+  - At the data the message is split by side, and delivered once on each side.
+  - `get#DkimRecord` lists both sides' domains, but each side signs only for its own: the server's sends for its
+    accounts' domains, a paired item for that node's (`auth::paired_domains`). A paired item whose envelope sender or
+    `From` is the server's (an own address, or a domain only the server has) is refused, as a bounced `mailStatus`.
+    The MX delivery thread runs on any node that takes links, for the paired node's `mailOut` items only.
+  - `deliver#EdgeOutboundMail` delivers to the server's own recipients locally, with `Authentication-Results`; the
+    paired node's own recipients are queued back to it, and the rest go by MX. A server account that fails or is gone
+    refuses only its recipients; the rest of the item is delivered.
+- **Chat.** The webhook and the media route look for the server's own `ChatBridge` or token first, then the replica. A
+  bridge held by both sides gets 409, naming the id.
+- **Calls.**
+  - Rooms are keyed `node\u{1f}call` for the paired node's calls and by the bare id for the server's own
+    (`edge/media.rs`, `room_key`). The link stamps `linkNode` on each frame, control and `sip` message from a node, and
+    refuses one that already has it. E7's check for exactly one linked node is gone.
+  - The server registers its own `CallMediaNode`, and also advertises its media to the paired node.
+  - Recordings and captions go by the room's owner (the recorder's `Keeper`); the paired node's are queued to it.
+    Recording ids are keyed by node too.
+  - The paired node's greetings and prompts are kept under `dbresource://moqui/edge-node/<node>/`.
+- **SIP**, split by owner.
+  - `crates/moqui-host/src/sip/owners.rs` keys a paired node's `callSessionId`, `callLegId`, `voiceTrunkId` and
+    `sipDeviceId` by node, and gives a service call the bare ids under that node's owner scope.
+  - Trunks are merged from the server's own `get#EngineConfig` and the replica's `voiceTrunks`.
+  - An inbound call goes by the number dialled: the server's own `PhoneNumber`, else the replica's `voiceFallbacks`
+    copy, else the owner of the trunk it came on. So a paired number with no fallback row (an IVR, a queue) is routed by
+    its trunk's owner. The offline fallback applies only to the paired node's numbers.
+  - The registrar works by realm: the server's `sip_domain` is verified locally, and the paired node's domain is
+    delegated. moqui-sip has `Ua::set_device_realms`, with bindings keyed `user@realm`; the paired node sends its domain
+    in `ConfigureRequest.sip_domain` (new, 7).
+  - Both the server's own `SipNode` row and the advert to the paired node run.
+- **XMPP.** The server's own XMPP server keeps its ports, and the tunnel ports serve the paired node's domain. A tunnel
+  port equal to one of the server's own is skipped, with an error logged, and not offered.
+- **Limits and gaps.** One paired node. A voicemail sidecar requeued after a restart goes to the only paired node. A
+  paired number with no fallback row cannot be found by number, only by its trunk.

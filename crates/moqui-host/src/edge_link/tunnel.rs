@@ -201,6 +201,42 @@ pub(crate) fn ports(config: &super::EdgeConfig) -> Vec<TunnelPort> {
     ports
 }
 
+/// On an all-in-one node with its own XMPP server (`xmpp_domain` set), the property of the server's own XMPP listener
+/// that `bind` would take: `xmpp_port` or `xmpp_tls_port` on the same port and an overlapping host. The paired node's
+/// XMPP domain gets tunnel ports of its own (plans/Edge-Node.md §10), so such a tunnel port is skipped, logged.
+pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
+    let property = |name: &str| moqui_lib::env::get_prop_or_env(name).trim().to_string();
+    if property("xmpp_domain").is_empty() {
+        return None;
+    }
+    let shared_host = property("xmpp_host");
+    [("xmpp_port", "xmpp_host"), ("xmpp_tls_port", "xmpp_tls_host")]
+        .into_iter()
+        .find(|(port_name, host_name)| {
+            let Ok(port) = property(port_name).parse::<u16>() else {
+                return false;
+            };
+            let host = Some(property(host_name))
+                .filter(|host| !host.is_empty())
+                .unwrap_or_else(|| shared_host.clone());
+            same_listener(bind, port, &host)
+        })
+        .map(|(port_name, _)| port_name)
+}
+
+/// Whether a listener on `bind` and one on `port` of `host` (an IP, a name, or empty for every address) would take the
+/// same port: the ports are equal, and the hosts are equal or one is every address. A host name is taken to overlap,
+/// as it is not resolved here.
+fn same_listener(bind: SocketAddr, port: u16, host: &str) -> bool {
+    if bind.port() != port || port == 0 {
+        return false;
+    }
+    match host.trim().parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_unspecified() || bind.ip().is_unspecified() || ip == bind.ip(),
+        Err(_) => true,
+    }
+}
+
 /// Listen on `port`'s address and pipe each connection down a linked node's tunnel of its kind, until the listeners
 /// stop. `guard`, the web protection, admits each connection first (its deny and exempt rules, bans and per-client
 /// limit). A bind that fails is logged, and the rest of the edge node goes on.

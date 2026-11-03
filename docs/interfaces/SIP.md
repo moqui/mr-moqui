@@ -616,6 +616,11 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
   per number to the user's limits at once and a day (a ring group's: the policy's), then
   take a message ([Voicemail](Voicemail.md#while-the-local-node-is-away)); a number with neither, and an IVR, queue or
   access number, gets 480, so the trunk's own failover can act. Call handling rules and schedules are not followed then.
+- **On an all-in-one node** ([Run-Deploy](../Run-Deploy.md#an-all-in-one-node), plans/Edge-Node.md §10): one engine
+  for both sides. Trunks come from the server's own config and the local node's copy. An inbound call goes by the
+  number dialled: the server's own `PhoneNumber`, else the local node's fallback copy, else the trunk's owner. Phones
+  go by realm: the server's `sip_domain` is checked on the server, the local node's domain is delegated to it. The
+  local node's ids are keyed by node, and the fallback applies only to its numbers.
 
 ## Status
 

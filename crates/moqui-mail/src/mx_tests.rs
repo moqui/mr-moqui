@@ -250,6 +250,7 @@ fn two_domains(conf: &str) -> (moqui_core::context::ExecutionContext, EntityFaca
         "bounce+item1@bounce.test",
         &to,
         &[],
+        &[],
         b"Subject: x\r\n\r\nx\r\n",
     )
     .unwrap();
@@ -378,4 +379,33 @@ fn a_partial_delivery_reports_the_refused_and_a_message_none_got_bounces() {
     let last = all.last().unwrap();
     assert_eq!(last.0, "bounced");
     assert!(last.1.contains("ok@a.test") && last.1.contains("x@b.test"), "{last:?}");
+}
+
+#[test]
+fn the_servers_own_accounts_refused_are_reported_with_the_rest() {
+    let (ctx, facade) = crate::sync_tests::setup_with(STATUS_KIND);
+    let _entered = ctx.enter();
+    record(
+        &facade,
+        "node1",
+        "item2",
+        "bounce+item2@bounce.test",
+        &[],
+        &["ann@desk.test".to_string(), "sales@server.test".to_string()],
+        &["help@server.test: the server's account 101 is gone".to_string()],
+        b"Subject: x\r\n\r\nx\r\n",
+    )
+    .unwrap();
+    let local = row(&facade, LOCAL_DOMAIN);
+    assert_eq!(field_text(&local, "statusEnumId"), BOUNCED);
+    assert_eq!((number(&local, "sentCount"), number(&local, "bouncedCount")), (2, 1));
+    assert_eq!(field_text(&local, "reportPending"), "Y");
+    report(ctx.factory(), &facade, &field_text(&local, "mailDeliveryId")).unwrap();
+    assert_eq!(
+        statuses(&facade),
+        [(
+            "partial".to_string(),
+            "help@server.test: the server's account 101 is gone".to_string()
+        )]
+    );
 }

@@ -859,7 +859,7 @@ pub fn receive_echo(
     if token.is_empty() || token.len() > 64 {
         return Err(Error::new("an edgeEcho payload has no token"));
     }
-    if !super::settings(factory).edge_node {
+    if !super::settings(factory).takes_links() {
         if payload["back"].as_bool() != Some(true) {
             return Err(Error::new(
                 "a local node takes only the edge node's answers to its round trips",

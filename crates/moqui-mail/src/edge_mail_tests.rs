@@ -350,3 +350,122 @@ fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure()
     assert_eq!(parse_dsn(delayed.as_bytes()).unwrap().action, "delayed");
     assert_eq!(parse_dsn(b"Subject: Out of office\r\n\r\nAway\r\n"), None);
 }
+
+#[cfg(feature = "imap")]
+#[test]
+fn an_all_in_one_nodes_mail_out_goes_back_to_the_paired_node_to_the_servers_own_accounts_or_by_mx() {
+    let to: Vec<String> = [
+        "ann@desk.example",
+        "sales@server.example",
+        "both@server.example",
+        "bob@far.example",
+    ]
+    .iter()
+    .map(|address| address.to_string())
+    .collect();
+    let paired = |address: &str| matches!(address, "ann@desk.example" | "both@server.example");
+    let own = |address: &str| {
+        Ok(match address {
+            "sales@server.example" => Some("100010".to_string()),
+            "both@server.example" => Some("100011".to_string()),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        split_recipients(&to, paired, own).unwrap(),
+        Split {
+            back: vec!["ann@desk.example".to_string(), "both@server.example".to_string()],
+            own: vec![("sales@server.example".to_string(), "100010".to_string())],
+            external: vec!["bob@far.example".to_string()],
+        },
+        "an address both sides have goes back to the paired node, logged"
+    );
+    // a dedicated edge node has no accounts of its own
+    let split = split_recipients(&to, paired, |_| Ok(None)).unwrap();
+    assert!(split.own.is_empty());
+    assert_eq!(split.external, ["sales@server.example", "bob@far.example"]);
+    // the server's accounts not read: the item is applied again later
+    assert!(split_recipients(&to, paired, |_| Err(LibError::new("database down"))).is_err());
+}
+
+#[cfg(feature = "imap")]
+#[test]
+fn a_paired_node_may_not_send_as_the_servers_addresses_or_domains() {
+    let set = |domains: &[&str]| -> std::collections::BTreeSet<String> {
+        domains.iter().map(ToString::to_string).collect()
+    };
+    let paired = set(&["desk.example", "split.example"]);
+    let own_domains = set(&["server.example", "split.example"]);
+    let claim = |address: &str| {
+        Ok(match address.to_ascii_lowercase().as_str() {
+            "sales@split.example" => Some("the server's EmailAccount 100010".to_string()),
+            _ => None,
+        })
+    };
+    let refusal = |senders: &[&str]| {
+        let senders: Vec<String> = senders.iter().map(ToString::to_string).collect();
+        sender_refusal(&senders, &paired, &own_domains, "bounce.server.example", claim).unwrap()
+    };
+    assert_eq!(refusal(&["ann@desk.example"]), None, "its own domain");
+    assert_eq!(refusal(&["ann@split.example"]), None, "a domain split by address");
+    assert_eq!(refusal(&["me@gmail.example"]), None, "a domain of neither side");
+    let text = refusal(&["ann@desk.example", "Sales@split.example"]).expect("the server's address");
+    assert!(text.contains("Sales@split.example") && text.contains("100010"), "{text}");
+    let text = refusal(&["ceo@Server.Example"]).expect("the server's domain");
+    assert!(text.contains("server.example"), "{text}");
+    assert!(refusal(&["x@bounce.server.example"]).is_some(), "the bounce domain");
+    // the claim not read: the item is applied again later
+    let senders = vec!["ann@desk.example".to_string()];
+    assert!(sender_refusal(&senders, &paired, &own_domains, "", |_| Err(LibError::new("down"))).is_err());
+}
+
+#[cfg(feature = "imap")]
+#[test]
+fn a_server_account_that_does_not_take_a_paired_nodes_message_refuses_only_its_recipients() {
+    use crate::delivery::{Delivery, Outcome};
+    let own: Vec<(String, String)> = [
+        ("sales@server.example", "100"),
+        ("info@server.example", "100"),
+        ("help@server.example", "101"),
+        ("old@server.example", "102"),
+        ("ops@server.example", "103"),
+        ("new@server.example", "104"),
+    ]
+    .iter()
+    .map(|(address, account)| (address.to_string(), account.to_string()))
+    .collect();
+    let deliveries = vec![
+        Delivery {
+            email_account_id: "100".to_string(),
+            result: Ok(Outcome::Stored {
+                email_message_id: "M1".to_string(),
+                junk: false,
+            }),
+        },
+        Delivery {
+            email_account_id: "101".to_string(),
+            result: Err("the store failed".to_string()),
+        },
+        Delivery {
+            email_account_id: "102".to_string(),
+            result: Ok(Outcome::Gone),
+        },
+        Delivery {
+            email_account_id: "103".to_string(),
+            result: Ok(Outcome::Duplicate),
+        },
+    ];
+    let results = own_results("ITEM1", &own, Ok(&deliveries));
+    assert_eq!(
+        results.stored,
+        ["sales@server.example", "info@server.example", "ops@server.example"]
+    );
+    assert_eq!(results.refused.len(), 3);
+    assert!(results.refused[0].starts_with("help@server.example: ") && results.refused[0].contains("store failed"));
+    assert!(results.refused[1].starts_with("old@server.example: ") && results.refused[1].contains("gone"));
+    assert!(results.refused[2].starts_with("new@server.example: ") && results.refused[2].contains("not tried"));
+    // not mail at all: every recipient refused, none an error of the item
+    let results = own_results("ITEM1", &own, Err("the message has no header fields"));
+    assert!(results.stored.is_empty());
+    assert_eq!(results.refused.len(), own.len());
+}

@@ -49,3 +49,21 @@ async fn a_passthrough_tunnel_starts_with_the_clients_address_then_its_hello() {
     drop((client, local));
     relayed.await.unwrap();
 }
+
+/// E12: an all-in-one node's XMPP tunnel port may not take its own XMPP server's port.
+#[test]
+fn a_tunnel_port_takes_the_same_listener_only_on_the_same_port_and_an_overlapping_host() {
+    let any: SocketAddr = "0.0.0.0:5222".parse().unwrap();
+    let one: SocketAddr = "192.0.2.5:5222".parse().unwrap();
+    assert!(same_listener(any, 5222, ""));
+    assert!(same_listener(any, 5222, "192.0.2.7"));
+    assert!(same_listener(one, 5222, "0.0.0.0"));
+    assert!(same_listener(one, 5222, "192.0.2.5"));
+    assert!(
+        same_listener(one, 5222, "xmpp.example.com"),
+        "a name is not resolved here"
+    );
+    assert!(!same_listener(one, 5222, "192.0.2.7"));
+    assert!(!same_listener(any, 5223, ""));
+    assert!(!same_listener("0.0.0.0:0".parse().unwrap(), 0, ""));
+}

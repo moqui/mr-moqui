@@ -180,7 +180,9 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false">
         <description>On an edge node, the queue kind callAudio: a greeting or prompt of its local node (the item's
             content), kept at its own location (payload location, under dbresource://moqui/call/voicemail/greeting/ or
-            dbresource://moqui/call/prompt/), which the SIP engine's fallback plays while the local node is away. Any
+            dbresource://moqui/call/prompt/; on an all-in-one node the same path under
+            dbresource://moqui/edge-node/(pairedNodeId)/, apart from the server's own), which the SIP engine's fallback
+            plays while the local node is away. Any
             other location is refused, and so is a local node.</description>
         <implements service="org.moqui.impl.EmailServices.apply#EdgeQueueItem"/>
     </service>

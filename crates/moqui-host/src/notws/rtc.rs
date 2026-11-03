@@ -487,7 +487,8 @@ pub(crate) fn deliver_edge_reply(edge: &str, message: &TopicMessage) -> Result<(
 }
 
 /// A message on `rtc-signal` for this node: a frame for the media here, a reply for a socket here, or a control
-/// message of the call services.
+/// message of the call services. The room of a call whose message came over an edge link is keyed by that node
+/// (`moqui_core::edge::media::room_key`); this node's own and its cluster's keep the call id.
 fn deliver_signal(message: &TopicMessage) {
     let Some(factory) = lock(factory_ref()).upgrade() else {
         return;
@@ -497,6 +498,9 @@ fn deliver_signal(message: &TopicMessage) {
     }
     let body = &message.body;
     let text = |k: &str| body.get(k).and_then(Json::as_str).unwrap_or_default().to_string();
+    // a paired node's call (its message came over its link, E12) has a room of its own: the call ids are another
+    // database's
+    let room = moqui_core::edge::media::room_key(moqui_core::edge::signal::link_node(body), &text("callSessionId"));
     match body.get("kind").and_then(Json::as_str) {
         Some("reply") => {
             if let (Some(socket), Some(frame)) = (body.get("socketId").and_then(Json::as_u64), body.get("frame")) {
@@ -510,7 +514,7 @@ fn deliver_signal(message: &TopicMessage) {
             };
             let command = Command::Frame {
                 route,
-                room: text("callSessionId"),
+                room: room.clone(),
                 leg: text("callLegId"),
                 generation: body.get("generation").and_then(Json::as_u64).unwrap_or(0),
                 origin: text("originNode"),
@@ -531,7 +535,7 @@ fn deliver_signal(message: &TopicMessage) {
                 return;
             };
             let command = Command::Relay {
-                room: text("callSessionId"),
+                room: room.clone(),
                 from: text("from"),
                 message: Box::new(message),
             };
@@ -546,7 +550,7 @@ fn deliver_signal(message: &TopicMessage) {
                 .and_then(crate::rtc::NoticeKind::parse)
                 .map(|kind| (kind, body.get("keep").and_then(Json::as_bool).unwrap_or(false)));
             let command = Command::RoomFrame {
-                room: text("callSessionId"),
+                room: room.clone(),
                 from: text("from"),
                 except: body.get("except").and_then(Json::as_str).map(str::to_string),
                 frame: body.get("frame").cloned().unwrap_or(Json::Null),
@@ -559,14 +563,12 @@ fn deliver_signal(message: &TopicMessage) {
         Some("control") => {
             let command = match body.get("action").and_then(Json::as_str) {
                 Some("closeLeg") => Command::CloseLeg {
-                    room: text("callSessionId"),
+                    room: room.clone(),
                     leg: text("callLegId"),
                 },
-                Some("closeRoom") => Command::CloseRoom {
-                    room: text("callSessionId"),
-                },
+                Some("closeRoom") => Command::CloseRoom { room: room.clone() },
                 Some("link") => Command::Link {
-                    room: text("callSessionId"),
+                    room: room.clone(),
                     origin: text("originNodeId"),
                 },
                 // captions run beside the driver, not in it (rtc/captions.rs)
@@ -576,11 +578,11 @@ fn deliver_signal(message: &TopicMessage) {
                         provider_label: text("provider"),
                         local: body.get("local").and_then(Json::as_bool).unwrap_or(false),
                     };
-                    crate::rtc::captions::start(&factory, &text("callSessionId"), options);
+                    crate::rtc::captions::start(&factory, &room, options);
                     return;
                 }
                 Some("stopCaptions") => {
-                    crate::rtc::captions::stop(&text("callSessionId"));
+                    crate::rtc::captions::stop(&room);
                     return;
                 }
                 Some("recording") => {

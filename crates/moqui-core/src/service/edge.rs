@@ -99,7 +99,10 @@ fn generation(value: u64) -> Value {
 /// `get#LinkStatus`: the local node's link.
 fn get_link_status(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let mut out = BTreeMap::new();
-    out.insert("nodeRole".to_string(), Value::string(crate::edge::node_role()));
+    out.insert(
+        "nodeRole".to_string(),
+        Value::string(crate::edge::node_role_kind().as_str()),
+    );
     let Ok(link) = crate::edge::link() else {
         let (state, error) = unlinked(crate::build_info::has_feature("edge"));
         out.insert("state".to_string(), Value::string(state));
@@ -385,7 +388,7 @@ fn pause_queue_delivery(parameters: &BTreeMap<String, Value>, facade: &EntityFac
 /// (of one node when given), so each node's next batch asks for its set whole.
 fn resync_replication(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let factory = current_factory()?;
-    if crate::edge::settings(&factory).edge_node {
+    if crate::edge::settings(&factory).takes_links() {
         let node = text(parameters, "pairedNodeId");
         let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::disable_authz);
         let mut find = facade.find(crate::edge::replica::CURSOR)?.disable_authz();
@@ -758,7 +761,7 @@ fn xmpp_lines(domain: &str, hosted: bool, answer: &crate::edge::Configured) -> V
 fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     use crate::edge::setup::{self, LocalChoices, MailChoice, PassChoice, SetupLine};
     let factory = current_factory()?;
-    if crate::edge::settings(&factory).edge_node {
+    if crate::edge::settings(&factory).takes_links() {
         return Err(LibError::new(
             "an edge node is set up in its own .env and conf, not by apply#EdgeSetup",
         ));

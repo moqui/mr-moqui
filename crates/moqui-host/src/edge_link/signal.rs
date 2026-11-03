@@ -128,20 +128,15 @@ fn kind(message: &TopicMessage) -> &str {
         .unwrap_or_default()
 }
 
-/// On an edge node, what the local node `node` may send: its sockets' frames (`frame`, whose replies go back to
-/// `node` only, so `origin` must be `node`), the call services' media controls (`control`) and the SIP engine's
-/// (`sip`, E8). The rest (a reply, a relay or room frame of a media node) a local node has no business sending. Only
-/// while `linked` (the nodes linked now) is one: the media driver keys its rooms by call alone, so two local nodes'
-/// calls could meet in one room (plans/Edge-Node.md decision 1).
-pub(crate) fn edge_takes(node: &str, linked: impl Fn() -> usize + Send + Sync + 'static) -> Take {
+/// On an edge node (dedicated or all-in-one), what the local node `node` may send: its sockets' frames (`frame`, whose
+/// replies go back to `node` only, so `origin` must be `node`), the call services' media controls (`control`) and the
+/// SIP engine's (`sip`, E8). The rest (a reply, a relay or room frame of a media node) a local node has no business
+/// sending. Each message taken is stamped with `node` ([`moqui_core::edge::signal::LINK_NODE`]), so the media driver
+/// keys its call's room by node and call (E12) and two databases' call ids never meet in one room; one that already
+/// names a node is refused.
+pub(crate) fn edge_takes(node: &str) -> Take {
     let node = node.to_string();
     std::sync::Arc::new(move |topic: &str, message: &TopicMessage| {
-        let count = linked();
-        if count != 1 {
-            return Err(format!(
-                "{count} local nodes are linked; calls go through an edge node of one local node only"
-            ));
-        }
         match kind(message) {
             "frame" => {
                 let origin = message.body.get("origin").and_then(serde_json::Value::as_str);
@@ -152,7 +147,31 @@ pub(crate) fn edge_takes(node: &str, linked: impl Fn() -> usize + Send + Sync + 
             "control" | "sip" => {}
             other => return Err(format!("local node {node} sent a message of kind {other:?}")),
         }
-        moqui_core::edge::signal::receive(topic, message).map_err(|err| err.message().to_string())
+        let message = stamped(&node, message)?;
+        moqui_core::edge::signal::receive(topic, &message).map_err(|err| err.message().to_string())
+    })
+}
+
+/// `message` with the sending node `node` stamped on its body; Err when the body already has the field.
+fn stamped(node: &str, message: &TopicMessage) -> Result<TopicMessage, String> {
+    let serde_json::Value::Object(body) = &message.body else {
+        return Err(format!("local node {node} sent a message that is not an object"));
+    };
+    if body.contains_key(moqui_core::edge::signal::LINK_NODE) {
+        return Err(format!(
+            "local node {node} sent a message that already names a node ({})",
+            moqui_core::edge::signal::LINK_NODE
+        ));
+    }
+    let mut body = body.clone();
+    body.insert(
+        moqui_core::edge::signal::LINK_NODE.to_string(),
+        serde_json::Value::String(node.to_string()),
+    );
+    Ok(TopicMessage {
+        origin_id: message.origin_id.clone(),
+        message_id: message.message_id.clone(),
+        body: serde_json::Value::Object(body),
     })
 }
 

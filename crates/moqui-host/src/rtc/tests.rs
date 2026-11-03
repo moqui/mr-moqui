@@ -89,3 +89,35 @@ fn a_room_keeps_one_notice_of_each_kind_for_its_joiners() {
     notices.room_closed("call-1");
     assert!(notices.of("call-1").is_empty());
 }
+
+#[test]
+fn a_cascaded_room_goes_between_media_nodes_by_its_whole_key() {
+    use super::driver::{relay_body, room_frame_body};
+    use super::NoticeKind;
+    use serde_json::json;
+
+    // a paired node's room (E12): the bare id would be the server's own call 100 on the other media node
+    let room = moqui_core::edge::media::room_key(Some("local-1"), "100");
+    let relay = relay_body("media-a", "media-b", &room, json!({"offer": 1}));
+    assert_eq!(relay["callSessionId"], room.as_str());
+    assert_eq!(relay["kind"], "relay");
+    assert_eq!(relay["target"], "media-b");
+    assert_eq!(relay["from"], "media-a");
+    let frame = room_frame_body(
+        "media-a",
+        "media-b",
+        &room,
+        Some("L1"),
+        &json!({"rtc": "mute"}),
+        Some((NoticeKind::Captions, true)),
+    );
+    assert_eq!(frame["callSessionId"], room.as_str());
+    assert_eq!(frame["kind"], "roomFrame");
+    assert_eq!(frame["except"], "L1");
+    assert_eq!(frame["keep"], true);
+    // the server's own room is its call id, as before E12
+    assert_eq!(
+        relay_body("media-a", "media-b", "100", json!({}))["callSessionId"],
+        "100"
+    );
+}

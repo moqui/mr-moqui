@@ -25,6 +25,10 @@
 //! - **Audio.** A greeting or prompt the engine does not have is fetched from the local node and kept (their names are
 //!   stamped, never written again), and a saved message played by phone is fetched for the call that opened its box
 //!   ([`fetch_audio`]); the boxes' greetings also come ahead on the queue (`callAudio`), for the fallback.
+//!
+//! On an all-in-one node (plans/Edge-Node.md §10, E12) all of this is for the paired node's items only (`owners.rs`),
+//! and what it keeps of the paired node's audio is under a location of that node's
+//! (`moqui_core::edge::media::kept_audio_location`), apart from the server's own greetings at the same paths.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -52,19 +56,14 @@ const VOICEMAIL_ROOT: &str = "dbresource://moqui/call/voicemail/";
 /// The most trunks read from the copy.
 const MAX_TRUNKS: usize = 1000;
 
-/// Whether this factory's engine is an edge node's.
-pub(crate) fn is_edge(factory: &ExecutionContextFactory) -> bool {
-    moqui_core::edge::settings(factory).edge_node
-}
-
 /// Whether a service error says the local node is away: no link, or no answer in time.
 pub(crate) fn is_offline(error: &str) -> bool {
     error.contains(moqui_core::edge::OFFLINE)
 }
 
-/// Whether a leg or room is one the fallback made, which the local node does not know.
+/// Whether a leg or room (the engine's key of it, E12) is one the fallback made, which the local node does not know.
 pub(crate) fn is_fallback(id: &str) -> bool {
-    id.starts_with(FALLBACK_PREFIX)
+    super::owners::bare(id).starts_with(FALLBACK_PREFIX)
 }
 
 /// The only active paired local node, whose copies this node answers from; none while none is paired.
@@ -95,17 +94,18 @@ async fn on_pool<T: Send + 'static>(
     .map_err(|err| err.message().to_string())
 }
 
-/// `get#EngineConfig`'s answer on an edge node, from the copy of `voiceTrunks`: no trunks while no node is paired.
-pub(crate) async fn engine_config(factory: &Arc<ExecutionContextFactory>) -> Result<Json, String> {
+/// `get#EngineConfig`'s answer for the paired node, from its copy of `voiceTrunks`, with the node: none while no node
+/// is paired.
+pub(crate) async fn engine_config(factory: &Arc<ExecutionContextFactory>) -> Result<Option<(String, Json)>, String> {
     on_pool(factory, |factory| {
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_core::context::Error::new("no entity facade"))?;
         let Some(node) = paired_node(&facade)? else {
-            return Ok(config_of(&[]));
+            return Ok(None);
         };
         let values = replica::list_values(&facade, Some(&node), TRUNKS_SET, None, MAX_TRUNKS)?;
-        Ok(config_of(&values))
+        Ok(Some((node, config_of(&values))))
     })
     .await
 }
@@ -322,7 +322,9 @@ const QUEUE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(300)
 /// is the same item. What it is queued with is kept beside it first (`<file>.json`), so a message that does not queue
 /// now, or whose process stops before, is not lost: it is tried again with a backoff from 2 s to 5 minutes while the
 /// engine runs, and [`requeue_spool`] queues it at the next start. The spool file and its sidecar go once it is queued.
-pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path: &Path, payload: Json) {
+pub(crate) async fn queue_voicemail(factory: &Arc<ExecutionContextFactory>, path: &Path, mut payload: Json) {
+    // the local node's own ids (E12: the engine keys them by node)
+    super::owners::bare_ids(&mut payload);
     if let Err(err) = std::fs::write(sidecar(path), payload.to_string()) {
         tracing::error!(
             "SIP voicemail: {}'s details were not kept beside it: {err}",
@@ -443,11 +445,24 @@ fn decoded(out: &BTreeMap<String, Value>, location: &str) -> Result<Vec<u8>, Str
         .map_err(|err| format!("{location}: the local node's answer is not base64: {err}"))
 }
 
-/// On a request worker of an edge node, the audio at `location` that this node does not have: a greeting or prompt from
-/// the local node, kept here at the same location for the next time; a saved message for the call `call` that opened
-/// its box (never kept). An error says why not, or that the local node is away.
+/// On a request worker, for a call of the paired node `node`, the audio at `location` that this node does not keep
+/// (`moqui_core::edge::media::kept_audio_location`): a greeting or prompt from the local node, kept for the next time; a saved message for the call
+/// `call` that opened its box (never kept). An error says why not, or that the local node is away. Run as the paired
+/// node's (E12), so the services go down its link.
 pub(crate) fn fetch_audio(
     factory: &ExecutionContextFactory,
+    node: &str,
+    location: &str,
+    call: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    moqui_core::edge::owner::with(moqui_core::edge::owner::Owner::paired(node), || {
+        fetch_paired_audio(factory, node, location, call)
+    })
+}
+
+fn fetch_paired_audio(
+    factory: &ExecutionContextFactory,
+    node: &str,
     location: &str,
     call: Option<&str>,
 ) -> Result<Vec<u8>, String> {
@@ -455,9 +470,10 @@ pub(crate) fn fetch_audio(
         let parameters = BTreeMap::from([("location".to_string(), Value::string(location))]);
         let bytes = decoded(&delegated(CALL_AUDIO_SERVICE, &parameters)?, location)?;
         let size = bytes.len() as u64;
+        let kept = moqui_core::edge::media::kept_audio_location(factory, node, location);
         if let Err(err) = factory
             .resource()
-            .write_from(location, &mut std::io::Cursor::new(bytes.clone()), Some(size))
+            .write_from(&kept, &mut std::io::Cursor::new(bytes.clone()), Some(size))
         {
             tracing::warn!("SIP: {location} from the local node was not kept: {}", err.message());
         }
@@ -466,7 +482,7 @@ pub(crate) fn fetch_audio(
     match call {
         Some(call) if location.starts_with(VOICEMAIL_ROOT) && !is_fallback(call) => {
             let parameters = BTreeMap::from([
-                ("callSessionId".to_string(), Value::string(call)),
+                ("callSessionId".to_string(), Value::string(super::owners::bare(call))),
                 ("audioLocation".to_string(), Value::string(location)),
             ]);
             decoded(&delegated(MESSAGE_AUDIO_SERVICE, &parameters)?, location)

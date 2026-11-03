@@ -278,6 +278,58 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <!-- ========== Ownership on an all-in-one node (plans/Edge-Node.md §10, E12): each mail address, chat bridge and
+        phone number belongs to the server or to its paired node. Replication skips a record that claims the server's
+        own item (moqui.edge.EdgeReplicaConflict), and the server's own services refuse an item the paired node holds
+        (EdgeClaims.secas.xml). On any other node these services do nothing. ========== -->
+
+    <service verb="check" noun="ReplicaClaim" type="rust" location="moqui_core::service::edge_claims::check_replica_claim"
+            allow-remote="false" transaction="ignore">
+        <description>On an all-in-one node: whether a paired node's replica holds an item of the server's own, and then
+            an error naming the item and the node (none with refuse false). The item is a record (itemType EmailAccount
+            or EmailIdentity, read here: the address of a hosted or shared account; ChatBridge or PhoneNumber, by
+            itemId), or claimKind (MailAddress, ChatBridge, PhoneNumber, XmppDomain, SipDomain, HostName) and itemKey.
+            The server's create and update services run it after they write (EdgeClaims.secas.xml), so their
+            transaction rolls back. Nothing on another node.</description>
+        <in-parameters>
+            <parameter name="itemType"/>
+            <parameter name="itemId"/>
+            <parameter name="claimKind"/>
+            <parameter name="itemKey" allow-html="any"/>
+            <parameter name="refuse" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="pairedNodeId"/>
+            <parameter name="claimedMessage"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="ReplicaConflicts" type="rust" location="moqui_core::service::edge_claims::get_replica_conflicts"
+            allow-remote="false" transaction="ignore">
+        <description>On an all-in-one node: the records of the paired nodes' replicated sets not applied because each
+            claims an item the server holds (moqui.edge.EdgeReplicaConflict), of one node with pairedNodeId: the set,
+            the entity, the item (claimKind, claimLabel, itemKey), the server's holder (ownerText), and when it was
+            first and last refused.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters>
+            <parameter name="conflictList" type="List"><parameter name="conflict" type="Map">
+                <parameter name="pairedNodeId"/><parameter name="setName"/><parameter name="entityName"/>
+                <parameter name="pkHash"/><parameter name="claimKind"/><parameter name="claimLabel"/>
+                <parameter name="itemKey"/><parameter name="ownerText"/>
+                <parameter name="firstDate" type="Timestamp"/><parameter name="lastDate" type="Timestamp"/>
+            </parameter></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="recheck" noun="ReplicaConflicts" type="rust" location="moqui_core::service::edge_claims::recheck_replica_conflicts"
+            allow-remote="false" transaction="ignore">
+        <description>On an all-in-one node: check the replication conflicts (of one node with pairedNodeId) again, and
+            apply each record whose item the server no longer holds. Each batch of a set also does this for the set.
+            applied is how many; 0 on another node.</description>
+        <in-parameters><parameter name="pairedNodeId"/></in-parameters>
+        <out-parameters><parameter name="applied" type="Long"/></out-parameters>
+    </service>
+
     <!-- ========== Attaching a local node (plans/Edge-Node.md §5.7, E10): the wizard's Discover, Apply and Test steps
         after pairing. The edge node's offer and Configure cross the link (Link.GetOffer, Link.Configure); the rest is
         crates/moqui-core/src/edge/setup.rs, and the DNS check moqui-mail's resolver. ========== -->

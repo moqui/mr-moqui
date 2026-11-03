@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<!-- An all-in-one node (plans/Edge-Node.md §10, E12): the production conf for a full server, with its own users, apps,
+    data, mail domains, chat bridges, calls and XMPP domain, that is also the edge node of one local node (a desktop or
+    office node with no listening port of its own). No second cloud instance is needed. The local node pairs with it
+    (System › Edge Clients) and dials its HTTPS listener (by ALPN), and sees no difference from a dedicated edge node:
+    the link, the wizard, delegated calls, the queue and replication are the same.
+    Each item belongs to one side. The server's own host names, mail accounts, webhooks, calls, numbers and XMPP domain
+    stay its own and are served here as on a normal node; the paired node's (its EdgeHost names, its replicated
+    recipients and bridges, its calls and numbers) go over the link. A name, address, number or bridge both sides claim
+    is refused, with an error naming it, so the paired node cannot take one of the server's.
+    Unlike MoquiEdgeConf.xml the runtime is a full one (the server's own components), and mr-pass keeps its local
+    authority: pass_backend_url is not edge: here, so the server's own PASS sites stay its own.
+    Build, archive and run with the release flag of ./moq: the Maximal package, which has the edge link. Per-host
+    settings (names, addresses, ports) go in .env. The HTTPS listener needs a WebPKI certificate in runtime/cert, which
+    the local node checks when it pairs; the links use edge_link_key, generated into .env at the first start (a changed
+    key means pairing again). Set edge_public_addresses in .env to this node's public IPv4 and IPv6 addresses, which
+    the local node's wizard checks its A and AAAA records against. docs/Run-Deploy.md has the commands. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <default-property name="instance_purpose" value="production"/>
+    <default-property name="node_role" value="all-in-one"/>
+    <default-property name="webapp_web_protection" value="true"/>
+
+    <!-- XMPP (plans/Edge-Node.md §5.4, §10): the server's own XMPP server runs here, for its xmpp_domain, on xmpp_port
+        and xmpp_tls_port as on a normal node. The paired node's domain gets tunnel ports of its own, named in that
+        domain's SRV records, whose TLS the local node ends with its own certificates. The tunnel ports must differ from
+        the server's own (one on the same port is off, logged). Set in .env to take them, for example:
+                                     <default-property name="edge_xmpp_port" value="5242"/>
+                                     <default-property name="edge_xmpp_tls_port" value="5243"/> -->
+
+    <!-- Mail (plans/Edge-Node.md §5.4, §10): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet
+        itself (internet mode; smtp_listen_port 25 and smtp_listen_host 0.0.0.0, or :: for IPv6 too, in .env), with
+        STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked (authserv-id smtp_hostname). Mail to the server's
+        own accounts is delivered here; mail to the paired node's replicated recipients is queued for it, and a message
+        with recipients on both sides is delivered once to each. The paired node's mail out (an EmailServer with smtpHost
+        edge: there) is DKIM-signed here and delivered to each domain's MX, from bounce+(item)@ the domain
+        edge_mail_bounce_domain names. A mail domain may be split between the sides by address, since its MX is this
+        host. DNS to publish: docs/Run-Deploy.md, Edge node mail. -->
+    <default-property name="edge_mail_mta" value="moqui"/>
+    <default-property name="smtp_internet" value="true"/>
+    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30"/>
+
+    <!-- Chat bridges and SMS (plans/Edge-Node.md §5.4, §10): a network's webhook URL is this node's,
+        /channels/{chatBridgeId}/webhook, for the server's own bridges and the paired node's alike. The server's own
+        ChatBridge is looked for first, then the paired node's replicated copy, whose requests are queued for it; an id
+        both sides have is refused. On the local node, set channels_public_url to this node's address. -->
+    <default-property name="channels_webhooks_enabled" value="true"/>
+
+    <!-- Calls (plans/Edge-Node.md §5.4, §10): this node registers its own CallMediaNode, as a normal node does, and is
+        also the media node of the paired node's calls; rooms are keyed by node and call, so a call of each side never
+        meets the other's. TURN is shared by both. Set rtc_public_address in .env to this node's public address: the
+        media socket binds every address, and does not start without it. The paired node's recordings are queued to it,
+        in segments of at most call_recording_segment_mb. Open UDP 10000 (media), UDP and TCP 3478 (TURN) and the relay
+        range turn_relay_ports (49152-65535). -->
+    <default-property name="rtc_media_port" value="10000"/>
+    <default-property name="rtc_media_host" value="0.0.0.0"/>
+    <default-property name="turn_port" value="3478"/>
+    <default-property name="call_recording_segment_mb" value="16"/>
+
+    <!-- SIP (plans/Edge-Node.md §5.4 "Voice (SIP)", §10): one SIP engine for both sides, routed by the dialled number
+        and by the device domain: the server's own PhoneNumbers and sip_domain here, the paired node's numbers and
+        domain delegated to it. Set in .env to take them (each listener is off until its port is set):
+                                     <default-property name="sip_port" value="5060"/>
+                                     <default-property name="sip_tls_port" value="5061"/>
+                                     <default-property name="sip_host" value="0.0.0.0"/>
+                                     <default-property name="sip_public_address" value="(this node's address)"/>
+        Open sip_port (UDP, TCP), sip_tls_port (TCP) and sip_rtp_ports (UDP, 20000-20999). -->
+
+    <!-- Backups: the server's own data and the link's queue (the paired node's items until delivered) are both here:
+        unpause the backup_EmbeddedDatabase_daily job (System › Service Jobs) and set its mirror (docs/Run-Deploy.md,
+        backups). A restore can deliver a queued item again; its receipt applies it once. -->
+
+    <entity-facade crypt-pass="${entity_ds_crypt_pass}" query-stats="true"/>
+
+    <!-- How work crosses the link (plans/Edge-Node.md §5.2): as on an edge node. The delegated services, queue kinds and
+        replicated sets are in MoquiDefaultConf.xml, read by both ends; here a listed service is delegated only for the
+        paired node's items, and runs on this server for its own. -->
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
+</moqui-conf>

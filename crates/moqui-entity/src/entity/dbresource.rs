@@ -87,6 +87,45 @@ struct Node {
     is_file: bool,
 }
 
+/// A node under a directory, with its name.
+struct ChildNode {
+    name: String,
+    node: Node,
+}
+
+fn node_of(row: &EntityValue) -> Option<Node> {
+    let id = row.get("resourceId").and_then(Value::as_str)?.to_string();
+    let is_file = row
+        .get("isFile")
+        .and_then(Value::as_str)
+        .is_some_and(|flag| flag.eq_ignore_ascii_case("Y"));
+    Some(Node { id, is_file })
+}
+
+/// A directory this facade made lately ([`EntityFacade::make_directory`]).
+struct MadeDirectory {
+    parent: Option<String>,
+    name: String,
+    id: String,
+    at: std::time::Instant,
+}
+
+/// The directories a facade made in the last [`MADE_FOR`], which a writer whose transaction reads from before their
+/// commit finds here; and the lock under which a directory is made. A slot of the facade, so of its database.
+#[derive(Default)]
+struct MadeDirectories(std::sync::Arc<std::sync::Mutex<Vec<MadeDirectory>>>);
+
+/// How long a directory made stays in [`MadeDirectories`]: longer than writers that started together wait on each
+/// other.
+const MADE_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The order of two `resourceId`s, the older first. `DbResource` keeps no creation date (its `lastUpdatedStamp`
+/// moves with a move), and its ids are sequenced, so a shorter id is the older one and ids of one length go in text
+/// order: "99999" before "100000", where text order alone puts it after.
+fn oldest_first(a: &str, b: &str) -> std::cmp::Ordering {
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+}
+
 /// A `dbresource` file opened to read a window at a time: what it is, and its content.
 pub type OpenedDbFile = (DbResourceStat, std::sync::Arc<dyn crate::resource::source::ByteSource>);
 
@@ -103,39 +142,25 @@ impl EntityFacade {
                 children: self.list_children(None)?,
             });
         }
-        let mut parent: Option<String> = None;
-        for (index, segment) in parts.iter().enumerate() {
-            let Some(node) = self.find_node(parent.as_deref(), segment)? else {
-                return Ok(DbResourceInfo {
-                    exists: false,
-                    is_file: false,
-                    bytes: Vec::new(),
-                    children: Vec::new(),
-                });
-            };
-            if index + 1 == parts.len() {
-                if node.is_file {
-                    return Ok(DbResourceInfo {
-                        exists: true,
-                        is_file: true,
-                        bytes: self.read_bytes(&node.id)?,
-                        children: Vec::new(),
-                    });
-                }
-                return Ok(DbResourceInfo {
-                    exists: true,
-                    is_file: false,
-                    bytes: Vec::new(),
-                    children: self.list_children(Some(&node.id))?,
-                });
-            }
-            parent = Some(node.id);
-        }
-        Ok(DbResourceInfo {
-            exists: false,
-            is_file: false,
-            bytes: Vec::new(),
-            children: Vec::new(),
+        Ok(match self.node_at(&parts)? {
+            None => DbResourceInfo {
+                exists: false,
+                is_file: false,
+                bytes: Vec::new(),
+                children: Vec::new(),
+            },
+            Some(node) if node.is_file => DbResourceInfo {
+                exists: true,
+                is_file: true,
+                bytes: self.read_bytes(&node.id)?,
+                children: Vec::new(),
+            },
+            Some(_) => DbResourceInfo {
+                exists: true,
+                is_file: false,
+                bytes: Vec::new(),
+                children: self.list_directory(&parts)?,
+            },
         })
     }
 
@@ -165,11 +190,11 @@ impl EntityFacade {
                 bytes: Vec::new(),
                 children: Vec::new(),
             },
-            Some(node) => DbResourceInfo {
+            Some(_) => DbResourceInfo {
                 exists: true,
                 is_file: false,
                 bytes: Vec::new(),
-                children: self.list_children(Some(&node.id))?,
+                children: self.list_directory(&parts)?,
             },
         })
     }
@@ -251,15 +276,20 @@ impl EntityFacade {
         let Some(filename) = parts.pop() else {
             return Err(Error::new(format!("cannot write the dbresource root: {location}")));
         };
-        let parent = self.directory_id(&parts)?;
-        let id = match self.find_node(parent.as_deref(), &filename)? {
+        // the file where it is, also under a duplicate of one of its directories (see `node_at`)
+        let mut path = parts.clone();
+        path.push(filename.clone());
+        let id = match self.node_at(&path)? {
             Some(node) if !node.is_file => {
                 return Err(Error::new(format!(
                     "Cannot write a file at {location}, it is a directory"
                 )))
             }
             Some(node) => node.id,
-            None => self.create_node(parent.as_deref(), &filename, true)?,
+            None => {
+                let parent = self.directory_id(&parts)?;
+                self.create_node(parent.as_deref(), &filename, true)?
+            }
         };
         self.write_bytes(
             &id,
@@ -321,9 +351,19 @@ impl EntityFacade {
         if parts.is_empty() {
             return Err(Error::new(format!("cannot delete the dbresource root: {location}")));
         }
-        let Some(node) = self.node_at(&parts)? else {
+        // every copy a race made (see `node_at`), or the next oldest would show at the location again
+        let nodes = self.nodes_at(&parts)?;
+        if nodes.is_empty() {
             return Ok(false);
-        };
+        }
+        for node in &nodes {
+            self.delete_node(node)?;
+        }
+        Ok(true)
+    }
+
+    /// Delete one `DbResource` row, with its file and history rows when it is a file.
+    fn delete_node(&self, node: &Node) -> Result<(), Error> {
         if node.is_file {
             let histories = self
                 .find(DB_HISTORY)?
@@ -339,7 +379,18 @@ impl EntityFacade {
         let mut value = EntityValue::make(self, DB_RESOURCE)?;
         value.set("resourceId", Value::string(&node.id));
         value.delete(self)?;
-        Ok(true)
+        self.forget_made(&node.id);
+        Ok(())
+    }
+
+    /// The directories this facade's process made lately ([`MadeDirectories`]).
+    fn made_directories(&self) -> std::sync::Arc<std::sync::Mutex<Vec<MadeDirectory>>> {
+        self.with_slot_read(MadeDirectories::default, |made| std::sync::Arc::clone(&made.0))
+    }
+
+    /// Drop directory `id`, deleted or moved, from [`MadeDirectories`], so no writer takes it for its old path.
+    fn forget_made(&self, id: &str) {
+        moqui_lib::sync::lock(&self.made_directories()).retain(|dir| dir.id != id);
     }
 
     /// Give a `dbresource://` node a new parent and name, creating the new parent directories, as
@@ -347,8 +398,12 @@ impl EntityFacade {
     pub fn move_db_resource(&self, location: &str, new_location: &str) -> Result<(), Error> {
         self.ensure_db_tables()?;
         let parts = db_parts(location)?;
-        let node = if parts.is_empty() { None } else { self.node_at(&parts)? };
-        let Some(node) = node else {
+        let nodes = if parts.is_empty() {
+            Vec::new()
+        } else {
+            self.nodes_at(&parts)?
+        };
+        let Some(node) = nodes.first() else {
             tracing::warn!("Could not find dbresource at [{location}]");
             return Ok(());
         };
@@ -359,46 +414,203 @@ impl EntityFacade {
             )));
         };
         let parent = self.directory_id(&new_parts)?;
+        // the copies a race made (see `node_at`) go with it: a directory's children into the one moved, a file's
+        // copy (which a read never showed, as the oldest is read) deleted, so nothing is left at the old location
+        for copy in &nodes[1..] {
+            if copy.is_file {
+                tracing::warn!(
+                    "dbresource {location}: its copy DbResource {}, never read, is deleted",
+                    copy.id
+                );
+                self.delete_node(copy)?;
+            } else if node.is_file {
+                tracing::warn!(
+                    "dbresource {location}: its directory copy DbResource {} is left",
+                    copy.id
+                );
+            } else if self.merge_into(&node.id, copy)? {
+                self.delete_node(copy)?;
+            }
+        }
         let mut value = EntityValue::make(self, DB_RESOURCE)?;
         value.set("resourceId", Value::string(&node.id));
         value.set("parentResourceId", parent.map_or(Value::Null, Value::string));
         value.set("filename", Value::string(new_name));
         value.set("isFile", Value::string(if node.is_file { "Y" } else { "N" }));
         value.update(self)?;
+        self.forget_made(&node.id);
         Ok(())
     }
 
-    /// The node at a path, walking from the root.
-    fn node_at(&self, parts: &[String]) -> Result<Option<Node>, Error> {
-        let mut parent: Option<String> = None;
-        let mut found = None;
-        for segment in parts {
-            let Some(node) = self.find_node(parent.as_deref(), segment)? else {
-                return Ok(None);
-            };
-            parent = Some(node.id.clone());
-            found = Some(node);
+    /// Move the children of directory `copy` into directory `into`, where `into` has no child of the same name. One it
+    /// has is merged into it when both are directories, deleted when both are files (a read never showed it), and
+    /// left in `copy` (logged) when they differ. True when `copy` has no children left, so the caller deletes it.
+    fn merge_into(&self, into: &str, copy: &Node) -> Result<bool, Error> {
+        let mut left = false;
+        for child in self.child_nodes(Some(&copy.id))? {
+            match self.find_node(Some(into), &child.name)? {
+                None => {
+                    let mut value = EntityValue::make(self, DB_RESOURCE)?;
+                    value.set("resourceId", Value::string(&child.node.id));
+                    value.set("parentResourceId", Value::string(into));
+                    value.update(self)?;
+                }
+                Some(held) if !held.is_file && !child.node.is_file => {
+                    if self.merge_into(&held.id, &child.node)? {
+                        self.delete_node(&child.node)?;
+                    } else {
+                        left = true;
+                    }
+                }
+                // a file the copy has of a name the directory has too was never read (the oldest copy's is)
+                Some(held) if held.is_file && child.node.is_file => {
+                    tracing::warn!(
+                        "dbresource: {} (DbResource {}), never read as directory {into} has DbResource {} of that \
+                         name, is deleted",
+                        child.name,
+                        child.node.id,
+                        held.id
+                    );
+                    self.delete_node(&child.node)?;
+                }
+                Some(held) => {
+                    tracing::warn!(
+                        "dbresource: {} (DbResource {}) is not merged into directory {into}, which has DbResource {} \
+                         of that name of the other kind",
+                        child.name,
+                        child.node.id,
+                        held.id
+                    );
+                    left = true;
+                }
+            }
         }
-        Ok(found)
+        Ok(!left)
     }
 
-    /// The ID of the directory at a path, creating each missing one. `None` is the root.
+    /// The node at a path, walking from the root: the oldest of the copies [`Self::nodes_at`] finds.
+    fn node_at(&self, parts: &[String]) -> Result<Option<Node>, Error> {
+        Ok(self.nodes_at(parts)?.into_iter().next())
+    }
+
+    /// Every node at a path, the one to use first. A directory made before [`Self::make_directory`] serialised it
+    /// could be made twice by two first writes at once (the root has no unique key on its names, as
+    /// `parentResourceId` is null there), each writing its file under its own copy; so a path is looked for under
+    /// every directory of that name, the oldest first, and a file under the oldest copy is the one read.
+    fn nodes_at(&self, parts: &[String]) -> Result<Vec<Node>, Error> {
+        let mut parents: Vec<Option<String>> = vec![None];
+        for (index, segment) in parts.iter().enumerate() {
+            let mut found = Vec::new();
+            for parent in &parents {
+                found.extend(self.find_nodes(parent.as_deref(), segment)?);
+            }
+            if index + 1 == parts.len() {
+                return Ok(found);
+            }
+            parents = found
+                .into_iter()
+                .filter(|node| !node.is_file)
+                .map(|node| Some(node.id))
+                .collect();
+            if parents.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// The children of the directory at a path, merged over its copies (see [`Self::nodes_at`]): a name in more than
+    /// one is listed once, as the copy a read would use. In filename order.
+    fn list_directory(&self, parts: &[String]) -> Result<Vec<DbResourceChild>, Error> {
+        let mut children: Vec<DbResourceChild> = Vec::new();
+        for copy in self.nodes_at(parts)?.iter().filter(|node| !node.is_file) {
+            for child in self.child_nodes(Some(&copy.id))? {
+                if !children.iter().any(|held| held.name == child.name) {
+                    children.push(DbResourceChild {
+                        name: child.name,
+                        is_file: child.node.is_file,
+                    });
+                }
+            }
+        }
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(children)
+    }
+
+    /// The ID of the directory at a path, creating each missing one ([`Self::make_directory`]). `None` is the root.
     fn directory_id(&self, parts: &[String]) -> Result<Option<String>, Error> {
         let mut parent: Option<String> = None;
         for segment in parts {
-            if let Some(node) = self.find_node(parent.as_deref(), segment)? {
-                if node.is_file {
-                    return Err(Error::new(format!(
-                        "Tried to find a directory in a path but found file instead at {segment} under DbResource {}",
-                        parent.as_deref().unwrap_or("root")
-                    )));
-                }
-                parent = Some(node.id);
-            } else {
-                parent = Some(self.create_node(parent.as_deref(), segment, false)?);
+            let node = match self.find_node(parent.as_deref(), segment)? {
+                Some(node) => node,
+                None => self.make_directory(parent.as_deref(), segment)?,
+            };
+            if node.is_file {
+                return Err(Error::new(format!(
+                    "Tried to find a directory in a path but found file instead at {segment} under DbResource {}",
+                    parent.as_deref().unwrap_or("root")
+                )));
             }
+            parent = Some(node.id);
         }
         Ok(parent)
+    }
+
+    /// Make directory `name` under `parent`, which a find did not see, so two first writes at once do not each make
+    /// their own copy. It is made in a transaction of its own, which commits before the caller goes on, so it is
+    /// there for the next writer whether or not the caller's transaction commits; a directory left by a caller that
+    /// rolls back is empty, as one `make_db_directory` makes is.
+    ///
+    /// In this process one thread at a time makes a directory, and the ones it made lately ([`MadeDirectories`]) are where the
+    /// next looks first: its transaction may read from before the commit (a snapshot, as MySQL's and the test
+    /// database's are), so a find alone would not see it. The lock is taken only once the transaction has its
+    /// connection (the first find), so a thread waiting on it never holds back a connection the holder needs, and
+    /// held until the commit. Another process can make it at the same time: under a parent the unique index
+    /// (`DB_RES_PAR_FN`) refuses the second, and at the root, which it does not cover (the parent is null), both are
+    /// made; so the node is read again after and the oldest taken.
+    fn make_directory(&self, parent: Option<&str>, name: &str) -> Result<Node, Error> {
+        let lately_made = self.made_directories();
+        let mut held: Option<std::sync::MutexGuard<'_, Vec<MadeDirectory>>> = None;
+        let made =
+            self.transactions_for(DB_RESOURCE)?
+                .run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                    if let Some(node) = self.find_node(parent, name)? {
+                        return Ok((node.id, false));
+                    }
+                    let mut made = moqui_lib::sync::lock(&lately_made);
+                    made.retain(|dir| dir.at.elapsed() < MADE_FOR);
+                    let lately = made
+                        .iter()
+                        .find(|dir| dir.parent.as_deref() == parent && dir.name == name)
+                        .map(|dir| dir.id.clone());
+                    held = Some(made);
+                    match lately {
+                        Some(id) => Ok((id, false)),
+                        None => Ok((self.create_node(parent, name, false)?, true)),
+                    }
+                });
+        if let (Some(made), Ok((id, true))) = (held.as_mut(), &made) {
+            made.push(MadeDirectory {
+                parent: parent.map(str::to_string),
+                name: name.to_string(),
+                id: id.clone(),
+                at: std::time::Instant::now(),
+            });
+        }
+        drop(held);
+        if let Err(error) = &made {
+            // most likely another process made it first; it is read below
+            tracing::warn!(
+                "dbresource: directory {name} under DbResource {} was not made: {error}",
+                parent.unwrap_or("root")
+            );
+        }
+        match (self.find_node(parent, name)?, made) {
+            (Some(node), _) => Ok(node),
+            // made, or made lately by another thread, but not seen by this transaction (a snapshot from before it)
+            (None, Ok((id, _))) => Ok(Node { id, is_file: false }),
+            (None, Err(error)) => Err(error),
+        }
     }
 
     /// Skip the table check, for the in-memory test database, which has every table and no `information_schema`.
@@ -417,46 +629,55 @@ impl EntityFacade {
         Ok(())
     }
 
+    /// The node named `filename` under `parent`: the oldest, when a race made several (see `node_at`).
     fn find_node(&self, parent: Option<&str>, filename: &str) -> Result<Option<Node>, Error> {
+        Ok(self.find_nodes(parent, filename)?.into_iter().next())
+    }
+
+    /// Every node named `filename` under `parent`, the oldest first ([`oldest_first`]).
+    fn find_nodes(&self, parent: Option<&str>, filename: &str) -> Result<Vec<Node>, Error> {
         let mut find = self.find(DB_RESOURCE)?.eq("filename", Value::string(filename));
         find = match parent {
             Some(parent) => find.eq("parentResourceId", Value::string(parent)),
             None => find.condition(Condition::is_null("parentResourceId")),
         };
-        let rows = find.list()?;
-        let Some(row) = rows.get(0) else {
-            return Ok(None);
-        };
-        let id = match row.get("resourceId").and_then(Value::as_str) {
-            Some(id) => id.to_string(),
-            None => return Ok(None),
-        };
-        let is_file = row
-            .get("isFile")
-            .and_then(Value::as_str)
-            .is_some_and(|flag| flag.eq_ignore_ascii_case("Y"));
-        Ok(Some(Node { id, is_file }))
+        let mut nodes: Vec<Node> = find.list()?.iter().filter_map(node_of).collect();
+        nodes.sort_by(|a, b| oldest_first(&a.id, &b.id));
+        Ok(nodes)
     }
 
-    fn list_children(&self, parent: Option<&str>) -> Result<Vec<DbResourceChild>, Error> {
+    /// The nodes under `parent` (`None`: the root) with their names, by name and then the oldest first.
+    fn child_nodes(&self, parent: Option<&str>) -> Result<Vec<ChildNode>, Error> {
         let find = self.find(DB_RESOURCE)?;
         let find = match parent {
             Some(parent) => find.eq("parentResourceId", Value::string(parent)),
             None => find.condition(Condition::is_null("parentResourceId")),
         };
-        let rows = find.order_by("filename", false).list()?;
-        let mut children = Vec::new();
-        for row in rows.iter() {
-            let Some(name) = row.get("filename").and_then(Value::as_str) else {
+        let rows = find.list()?;
+        let mut children: Vec<ChildNode> = rows
+            .iter()
+            .filter_map(|row| {
+                let name = row.get("filename").and_then(Value::as_str)?.to_string();
+                Some(ChildNode {
+                    name,
+                    node: node_of(row)?,
+                })
+            })
+            .collect();
+        children.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| oldest_first(&a.node.id, &b.node.id)));
+        Ok(children)
+    }
+
+    /// The children under `parent` (`None`: the root), in filename order; a name made twice by a race is listed once.
+    fn list_children(&self, parent: Option<&str>) -> Result<Vec<DbResourceChild>, Error> {
+        let mut children: Vec<DbResourceChild> = Vec::new();
+        for child in self.child_nodes(parent)? {
+            if children.last().is_some_and(|held| held.name == child.name) {
                 continue;
-            };
-            let is_file = row
-                .get("isFile")
-                .and_then(Value::as_str)
-                .is_some_and(|flag| flag.eq_ignore_ascii_case("Y"));
+            }
             children.push(DbResourceChild {
-                name: name.to_string(),
-                is_file,
+                name: child.name,
+                is_file: child.node.is_file,
             });
         }
         Ok(children)

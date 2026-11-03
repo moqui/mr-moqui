@@ -257,6 +257,30 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.edge.EdgeClient"/>
     </entity>
 
+    <entity entity-name="EdgeReplicaConflict" package="moqui.edge" use="transactional" cache="never">
+        <description>On an all-in-one node (node_role=all-in-one, plans/Edge-Node.md §10), a record of a paired node's
+            replicated set that was not applied because it claims an item the server holds itself: a mail address, a
+            chat bridge id or a phone number (claimKind: MailAddress, ChatBridge, PhoneNumber; itemKey the item). The
+            server's own item wins; ownerText names its holder. Keyed as the EdgeReplicaValue it would have been, with
+            the record kept (pkJson and fieldsJson, encrypted at rest, as the value's) so it is applied once the server
+            no longer holds the item (recheck#ReplicaConflicts, and each later batch of the set). A later batch that
+            deletes the record, or a full send that no longer has it, removes the row. firstDate is when it was first
+            refused, lastDate when last.</description>
+        <field name="pairedNodeId" type="id" is-pk="true"/>
+        <field name="setName" type="id" is-pk="true"/>
+        <field name="entityName" type="text-medium" is-pk="true"/>
+        <field name="pkHash" type="id-long" is-pk="true"/>
+        <field name="claimKind" type="id"/>
+        <field name="itemKey" type="text-medium" encrypt="true"/>
+        <field name="ownerText" type="text-medium"/>
+        <field name="pkJson" type="text-long" encrypt="true"/>
+        <field name="fieldsJson" type="text-very-long" encrypt="true"/>
+        <field name="replicaEpoch" type="text-short"/>
+        <field name="firstDate" type="date-time"/>
+        <field name="lastDate" type="date-time"/>
+        <relationship type="one" related="moqui.edge.EdgeClient"/>
+    </entity>
+
     <entity entity-name="EdgeMedia" package="moqui.edge" use="transactional" cache="never">
         <description>On an edge node, a file of a message its local node sends by address (an MMS picture), put here
             with the send (the queue kind chatMedia), so the network fetches it from the edge node at
