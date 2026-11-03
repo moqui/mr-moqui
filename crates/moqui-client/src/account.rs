@@ -19,8 +19,10 @@
 use std::path::{Path, PathBuf};
 
 use moqui_lib::error::Error;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::conf::DeviceMode;
 
 /// One server and one user signed in on it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,14 @@ pub struct Account {
     /// The server's name, from its client config.
     #[serde(default)]
     pub server_name: String,
+    /// `Personal` or `Shared`, chosen when the account is added and never lowered ([`Accounts::put`],
+    /// [`Accounts::set_device_mode`]); none for an account from before MD4, which the host treats as `choose`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "device_mode_of"
+    )]
+    pub device_mode: Option<DeviceMode>,
 }
 
 /// What `accounts.json` holds.
@@ -105,12 +115,31 @@ impl Accounts {
         known
     }
 
-    /// Add the account, or replace the one with its id.
-    pub fn put(&mut self, account: Account) {
+    /// Add the account with its device mode, or replace the one with its id. A replaced account keeps a mode that
+    /// keeps more ([`kept_mode`]): a personal account signed in again as shared stays personal.
+    pub fn put(&mut self, mut account: Account) {
+        account.device_mode = account.device_mode.filter(|mode| *mode != DeviceMode::Choose);
         match self.stored.accounts.iter_mut().find(|kept| kept.id == account.id) {
-            Some(kept) => *kept = account,
+            Some(kept) => {
+                account.device_mode = kept_mode(kept.device_mode, account.device_mode);
+                *kept = account;
+            }
             None => self.stored.accounts.push(account),
         }
+    }
+
+    /// Set the device mode of `id`, only raising it: an account with none takes either, a shared one may become
+    /// personal, a personal one stays personal (a shared account is removed on sign-out, so it is never lowered back).
+    /// `Choose` changes nothing. False when there is no such account or the mode was not changed.
+    pub fn set_device_mode(&mut self, id: &str, mode: DeviceMode) -> bool {
+        let Some(kept) = self.stored.accounts.iter_mut().find(|kept| kept.id == id) else {
+            return false;
+        };
+        let wanted = Some(mode).filter(|mode| *mode != DeviceMode::Choose);
+        let next = kept_mode(kept.device_mode, wanted);
+        let changed = next != kept.device_mode;
+        kept.device_mode = next;
+        changed
     }
 
     /// Remove the account; when it was current, no account is.
@@ -120,6 +149,32 @@ impl Accounts {
             self.stored.current = None;
         }
     }
+}
+
+/// The mode an account keeps when `wanted` comes for it: never lowered from personal, as personal keeps more data;
+/// none (not chosen) takes what comes.
+pub fn kept_mode(current: Option<DeviceMode>, wanted: Option<DeviceMode>) -> Option<DeviceMode> {
+    match (current, wanted) {
+        (Some(DeviceMode::Personal), _) | (_, Some(DeviceMode::Personal)) => Some(DeviceMode::Personal),
+        (Some(DeviceMode::Shared), _) | (_, Some(DeviceMode::Shared)) => Some(DeviceMode::Shared),
+        _ => None,
+    }
+}
+
+/// `deviceMode` of `accounts.json`: `personal` or `shared`; anything else (`choose`, a mode of a newer client, a value
+/// that is not text) is none, logged, rather than the whole file failing to parse, which would lose the accounts on the
+/// next save.
+fn device_mode_of<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<DeviceMode>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str().map(DeviceMode::parse) {
+        Some(Some(DeviceMode::Choose)) => None,
+        Some(Some(mode)) => Some(mode),
+        _ if value.is_null() => None,
+        _ => {
+            tracing::warn!("accounts.json deviceMode {value} is not known, taken as not chosen");
+            None
+        }
+    })
 }
 
 /// `https://host[:port][/path]` from what the user typed, refusing plain http to anything but this machine: the

@@ -4689,6 +4689,7 @@ dependencies = [
  "getrandom 0.4.3",
  "moqui-lib",
  "reqwest",
+ "rusqlite",
  "rustls",
  "rustls-platform-verifier",
  "serde",

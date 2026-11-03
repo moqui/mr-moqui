@@ -22,6 +22,7 @@ fn account(id: &str) -> Account {
         user_id: "EX_JOHN_DOE".to_string(),
         display: "John Doe".to_string(),
         server_name: "Example".to_string(),
+        device_mode: None,
     }
 }
 
@@ -83,5 +84,63 @@ fn a_file_that_does_not_parse_starts_empty() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("accounts.json"), "{not json").unwrap();
     assert!(Accounts::load(&dir).list().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_device_mode_is_kept_and_never_lowered() {
+    let dir = std::env::temp_dir().join(format!("moqui-client-accounts-mode-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut accounts = Accounts::load(&dir);
+    let mut shared = account("a");
+    shared.device_mode = Some(DeviceMode::Shared);
+    accounts.put(shared);
+    accounts.put(account("b"));
+    assert_eq!(accounts.get("a").unwrap().device_mode, Some(DeviceMode::Shared));
+    assert_eq!(accounts.get("b").unwrap().device_mode, None);
+
+    // a sign-in again with no mode keeps the one chosen; shared may become personal, never back
+    accounts.put(account("a"));
+    assert_eq!(accounts.get("a").unwrap().device_mode, Some(DeviceMode::Shared));
+    assert!(accounts.set_device_mode("a", DeviceMode::Personal));
+    assert!(!accounts.set_device_mode("a", DeviceMode::Shared));
+    let mut lowered = account("a");
+    lowered.device_mode = Some(DeviceMode::Shared);
+    accounts.put(lowered);
+    assert_eq!(accounts.get("a").unwrap().device_mode, Some(DeviceMode::Personal));
+    assert!(!accounts.set_device_mode("b", DeviceMode::Choose));
+    assert!(accounts.set_device_mode("b", DeviceMode::Shared));
+    assert!(!accounts.set_device_mode("missing", DeviceMode::Personal));
+    accounts.save().unwrap();
+
+    let text = std::fs::read_to_string(dir.join("accounts.json")).unwrap();
+    assert!(text.contains("\"deviceMode\": \"personal\""), "{text}");
+    let again = Accounts::load(&dir);
+    assert_eq!(again.get("a").unwrap().device_mode, Some(DeviceMode::Personal));
+    assert_eq!(again.get("b").unwrap().device_mode, Some(DeviceMode::Shared));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_accounts_file_of_before_md4_or_of_a_newer_client_still_loads() {
+    let dir = std::env::temp_dir().join(format!("moqui-client-accounts-old-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("accounts.json"),
+        r#"{"accounts": [
+            {"id": "old", "server": "https://erp.example.com", "username": "john.doe"},
+            {"id": "new", "server": "https://erp.example.com", "username": "jane.doe", "deviceMode": "kiosk"},
+            {"id": "choose", "server": "https://erp.example.com", "username": "joe", "deviceMode": "choose"},
+            {"id": "number", "server": "https://erp.example.com", "username": "jim", "deviceMode": 3},
+            {"id": "object", "server": "https://erp.example.com", "username": "jo", "deviceMode": {"a": 1}},
+            {"id": "null", "server": "https://erp.example.com", "username": "al", "deviceMode": null}
+        ], "current": "old"}"#,
+    )
+    .unwrap();
+    let accounts = Accounts::load(&dir);
+    assert_eq!(accounts.list().len(), 6);
+    assert!(accounts.list().iter().all(|kept| kept.device_mode.is_none()));
+    assert_eq!(accounts.current().map(|kept| kept.id.as_str()), Some("old"));
     let _ = std::fs::remove_dir_all(&dir);
 }

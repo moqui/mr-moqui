@@ -16,12 +16,16 @@
 //! (plans/Mobile-Desktop.md §4 configuration 3, MD3). Each installed client is a device with its own login key, which
 //! the host keeps and adds to every request as the `login_key` header; the page never holds it.
 //!
-//! - [`account`]: the servers and users signed in on this device, and the current one.
+//! - [`account`]: the servers and users signed in on this device, the current one, and each one's device mode.
 //! - [`keys`]: where the device keys are kept, behind a trait the host fills with the OS key store.
 //! - [`login`]: password sign-in with `createLoginKey`, the second factor, and sign-out that revokes the key.
 //! - [`proxy`]: a request of the page forwarded to the server with the key, its answer made safe for the page.
 //! - [`socket`]: `/notws` and `/callws` held by the host and bridged to the page.
 //! - [`cache`]: the last answers the shell opens on when the server cannot be reached.
+//! - [`store`]: an account's data on the device for offline reading and writing: cached answers, chat, mail, the
+//!   outbox, drafts and files, in SQLite under a size cap.
+//! - [`conf`]: the client's settings from the `<client-conf>` element of the Moqui XML conf (the device mode, the
+//!   mirror and prefetch limits, the store's size cap).
 //! - [`sso`]: sign-in through the server's identity providers in the system browser, handed back to the app (RFC 8252).
 //!
 //! Blocking I/O on threads, as `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`), whose patterns this
@@ -33,6 +37,7 @@
 
 pub mod account;
 pub mod cache;
+pub mod conf;
 mod files;
 mod http;
 pub mod keys;
@@ -40,5 +45,6 @@ pub mod login;
 pub mod proxy;
 pub mod socket;
 pub mod sso;
+pub mod store;
 
 pub use moqui_lib::error::Error;

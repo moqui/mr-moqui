@@ -142,6 +142,7 @@ fn signed_in(app: &AppHandle, base: &str, username: &str, key: &str, config: &Va
         user_id: config["userId"].as_str().unwrap_or_default().to_string(),
         display: config["userFullName"].as_str().unwrap_or_default().to_string(),
         server_name: config["server"]["name"].as_str().unwrap_or_default().to_string(),
+        device_mode: None,
     };
     client.keys.set(&account.id, key).map_err(|err| err.to_string())?;
     if let Ok(bytes) = serde_json::to_vec(config) {

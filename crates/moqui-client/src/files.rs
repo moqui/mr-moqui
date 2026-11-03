@@ -23,14 +23,7 @@ use std::path::Path;
 /// made, mode 0700.
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(dir)?;
+        create_private_dir(dir)?;
     }
     let name = path
         .file_name()
@@ -58,4 +51,26 @@ pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&temporary);
     }
     renamed
+}
+
+/// Make `dir` and its missing parents, mode 0700 on Unix. An existing directory keeps its mode.
+pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
+
+/// A name that stays in its directory as a file name: letters, digits, `.`, `-` and `_`, not empty and not starting
+/// with `.` (so not `..` or a hidden file). Account ids and the store's file names are such names.
+pub(crate) fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
