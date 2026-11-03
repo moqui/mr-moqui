@@ -114,7 +114,7 @@ mod cluster {
             let dir = std::fs::canonicalize(dir).map_err(|err| Error::new("resolve embedded dir").with_source(err))?;
             let data_dir = dir.join("data");
             #[cfg(unix)]
-            check_socket_len(&data_dir)?;
+            check_socket_len(&socket_dir_for(&data_dir, &std::env::temp_dir()))?;
             if let Some(lock) = postmaster_lock(&data_dir)? {
                 if process_live(lock.pid) {
                     return adopt(&dir, &data_dir, options, lock);
@@ -299,8 +299,8 @@ mod cluster {
     }
 
     #[cfg(unix)]
-    fn check_socket_len(data_dir: &Path) -> Result<(), Error> {
-        let socket_file = data_dir.join(format!(".s.PGSQL.{PORT}"));
+    fn check_socket_len(socket_dir: &Path) -> Result<(), Error> {
+        let socket_file = socket_dir.join(format!(".s.PGSQL.{PORT}"));
         if socket_file.as_os_str().len() >= 108 {
             return Err(Error::new(format!(
                 "postgres socket path is {} bytes; unix sockets need fewer than 108",
@@ -363,6 +363,22 @@ mod cluster {
         adopt_port: Option<u16>,
     ) -> Result<(EmbeddedCluster, PostgresDriver), Error> {
         let settings = settings(dir, data_dir, options, adopt_port);
+        // A socket directory under temp (socket_dir_for) is this user's alone; the data directory already is.
+        #[cfg(unix)]
+        if let Some(socket_dir) = settings
+            .socket_dir
+            .as_ref()
+            .filter(|socket_dir| socket_dir.as_path() != data_dir)
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(socket_dir)
+                .map_err(|err| {
+                    Error::new(format!("create embedded postgres socket dir {}", socket_dir.display())).with_source(err)
+                })?;
+        }
         install(&settings.installation_dir)?;
         let mut server = PostgreSQL::new(settings);
         provide_libxml2(server.settings())?;
@@ -532,7 +548,7 @@ mod cluster {
             .insert("max_connections".to_string(), max_connections.to_string());
         #[cfg(unix)]
         {
-            settings.socket_dir = Some(data_dir.to_path_buf());
+            settings.socket_dir = Some(socket_dir_for(data_dir, &std::env::temp_dir()));
             settings.port = adopt_port.unwrap_or(PORT);
             // Empty listen_addresses disables TCP.
             settings
@@ -607,6 +623,36 @@ mod cluster {
     /// True when `data_dir/postmaster.pid` names a live process.
     pub(crate) fn postmaster_live(data_dir: &Path) -> bool {
         matches!(postmaster_lock(data_dir), Ok(Some(lock)) if process_live(lock.pid))
+    }
+
+    /// The directory of the postmaster's Unix socket: the data directory, unless its path has a character the shell
+    /// would split or interpret. postgresql_embedded passes the socket directory to `pg_ctl` inside its `-o` options
+    /// string without quoting, and `pg_ctl` runs that string through the shell, so a data directory under "Application
+    /// Support" (the desktop app on macOS) or any path with a space would not start. Such a cluster has its socket in
+    /// `moqui-pg-<hash of the data directory>` under `temp`, the same directory on each start so a live postmaster is
+    /// found again. Postgres touches its socket files hourly, which keeps temp cleaners off them.
+    #[cfg(unix)]
+    pub(crate) fn socket_dir_for(data_dir: &Path, temp: &Path) -> PathBuf {
+        let shell_safe = |path: &Path| {
+            path.to_str().is_some_and(|text| {
+                text.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"/._-+@%:,".contains(&b))
+            })
+        };
+        if shell_safe(data_dir) {
+            return data_dir.to_path_buf();
+        }
+        // FNV-1a: stable across builds and toolchains, unlike std's hasher, since a later build must find the socket a
+        // running postmaster has.
+        let hash = data_dir
+            .as_os_str()
+            .as_encoded_bytes()
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+            });
+        let base = if shell_safe(temp) { temp } else { Path::new("/tmp") };
+        base.join(format!("moqui-pg-{hash:016x}"))
     }
 
     /// `pg_ctl` of this build's theseus version under `install_dir`.

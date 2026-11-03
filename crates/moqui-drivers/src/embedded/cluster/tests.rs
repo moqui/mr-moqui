@@ -1042,3 +1042,50 @@ fn postmaster_pid(data_dir: &Path) -> u32 {
     let text = std::fs::read_to_string(data_dir.join("postmaster.pid")).unwrap();
     text.lines().next().unwrap().trim().parse().unwrap()
 }
+
+#[test]
+fn a_shell_safe_data_dir_keeps_its_socket() {
+    let data_dir = Path::new("/srv/moqui/runtime/db/embedded/data");
+    assert_eq!(socket_dir_for(data_dir, Path::new("/tmp")), data_dir);
+}
+
+#[test]
+fn a_data_dir_with_a_space_has_its_socket_in_temp_under_a_stable_name() {
+    let data_dir = Path::new("/Users/x/Library/Application Support/org.moqui.desktop/runtime/db/embedded/data");
+    let temp = Path::new("/var/folders/ab/cd/T");
+    let socket = socket_dir_for(data_dir, temp);
+    assert!(socket.starts_with(temp), "{}", socket.display());
+    let name = socket.file_name().unwrap().to_str().unwrap();
+    assert!(
+        name.starts_with("moqui-pg-") && name.len() == "moqui-pg-".len() + 16,
+        "{name}"
+    );
+    assert_eq!(
+        socket_dir_for(data_dir, temp),
+        socket,
+        "the same data dir finds the same socket"
+    );
+    let other = Path::new("/Users/x/Library/Application Support/other/data");
+    assert_ne!(socket_dir_for(other, temp), socket);
+    // A temp dir that is not shell safe either falls back to /tmp.
+    assert!(socket_dir_for(data_dir, Path::new("/odd temp")).starts_with("/tmp"));
+}
+
+#[test]
+fn a_cluster_under_a_path_with_a_space_starts_with_its_socket_in_temp() {
+    let root = temp_cluster_dir();
+    let _guard = DirGuard(root.clone());
+    let dir = root.join("Application Support").join("embedded");
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let socket_dir = socket_dir_for(cluster.data_dir(), &std::env::temp_dir());
+    let _socket_guard = DirGuard(socket_dir.clone());
+    assert_ne!(socket_dir, cluster.data_dir());
+    assert!(
+        socket_dir.join(".s.PGSQL.5432").exists(),
+        "socket missing in {}",
+        socket_dir.display()
+    );
+    let mut conn = driver.connect_postgres().unwrap();
+    let rows = conn.query_once("SELECT 1", &[]).unwrap();
+    assert_eq!(rows[0].columns[0].1, Value::I32(1));
+}
