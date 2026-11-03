@@ -183,6 +183,14 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Mail (org.moqui.impl.EmailClientServices.filter#ContactAddresses): which senders are a user's contacts, for an
                 automatic reply to contacts only; the email_contact_service property wins over it -->
             <moqui.basic.Enumeration description="Email Contact Service (service name, called with userId and emailAddressList, answers contactAddressList)" enumId="STRT_EMAIL_CONTACT_SERVICE" enumTypeId="ScreenThemeResourceType"/>
+            <!-- Appearance of the /qapps shell (docs/ui/Qvt-Client.md, Appearance; crates/moqui-core/src/screen/sri/appearance.rs):
+                the scheme a user who has chosen none gets, what a user may change, and services that adjust both by station,
+                tenant or host. The policy is a JSON object: appearance false locks everything; a group (mode, density, scheme,
+                accent, colors, fonts, sizes, motion) false locks its preferences; mode light, dark or auto forces the mode;
+                lockedKeys names more preferences. No policy allows everything; one that is not JSON locks everything. -->
+            <moqui.basic.Enumeration description="Default Color Scheme (a ScreenColorScheme of the theme)" enumId="STRT_DEFAULT_COLOR_SCHEME" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="Appearance Policy (JSON: appearance, mode, a flag per group, lockedKeys)" enumId="STRT_APPEARANCE_POLICY" enumTypeId="ScreenThemeResourceType"/>
+            <moqui.basic.Enumeration description="Appearance Service (service name, called with userId, screenThemeId and appearance, answers appearance)" enumId="STRT_APPEARANCE_SERVICE" enumTypeId="ScreenThemeResourceType"/>
             <!-- m-avatar with a user id and no image: a URL whose text contains ${userId} (replaced in the browser, not
                 expanded on the server). Empty means initials. The image answer 404 also leaves the initials. -->
             <moqui.basic.Enumeration description="Avatar URL template (${userId} replaced in the browser)" enumId="STRT_AVATAR_URL" enumTypeId="ScreenThemeResourceType"/>
@@ -197,8 +205,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The color schemes a user may choose for a theme (the THEME_COLOR_SCHEME preference): the standard colors for light and dark,
         sent as one style sheet by the colorSchemeCss transition of apps.xml (docs/ui/Qvt-Client.md, Appearance). The
         names are the tokens of WebrootVue.qvt.css: the brand colors primary, secondary, accent, positive, negative, info and warning
-        (Quasar's --q-*), and page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text, border and
-        divider (--m-*). A scheme with no colors is the theme's own. -->
+        (Quasar's --q-*), the surfaces page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text,
+        border and divider, and the shapes header-bg-image, header-border, header-shadow, page-bg-image, btn-radius, btn-border,
+        btn-primary-bg, card-radius, card-border, card-shadow, drawer-current-bg and drawer-current-fg (--m-*); a shape value may be any CSS
+        value without ; { } &lt; &gt; \ " ' or !, such as a gradient or a shadow. A scheme with no colors is the theme's own. -->
     <entity entity-name="ScreenColorScheme" package="moqui.screen" use="configuration" cache="true">
         <field name="colorSchemeId" type="id" is-pk="true"/>
         <field name="screenThemeId" type="id"/>
@@ -207,7 +217,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="extraCss" type="text-very-long">
             <description>CSS written after the scheme's colors, for what is not a color (a gradient header, heavier borders);
                 written by an administrator, never from what a user enters</description></field>
+        <field name="defaultFontBodyId" type="id"><description>The ScreenFontOption of the body text when the user has chosen none</description></field>
+        <field name="defaultFontHeadingId" type="id"><description>The ScreenFontOption of the headings when the user has chosen none</description></field>
+        <field name="defaultFontMonoId" type="id"><description>The ScreenFontOption of code when the user has chosen none</description></field>
         <relationship type="one" related="moqui.screen.ScreenTheme" short-alias="screenTheme"/>
+        <relationship type="one" title="DefaultBody" related="moqui.screen.ScreenFontOption" short-alias="defaultFontBody">
+            <key-map field-name="defaultFontBodyId" related="fontOptionId"/></relationship>
+        <relationship type="one" title="DefaultHeading" related="moqui.screen.ScreenFontOption" short-alias="defaultFontHeading">
+            <key-map field-name="defaultFontHeadingId" related="fontOptionId"/></relationship>
+        <relationship type="one" title="DefaultMono" related="moqui.screen.ScreenFontOption" short-alias="defaultFontMono">
+            <key-map field-name="defaultFontMonoId" related="fontOptionId"/></relationship>
         <relationship type="many" related="moqui.screen.ScreenColorSchemeColor" short-alias="colors">
             <key-map field-name="colorSchemeId"/></relationship>
     </entity>

@@ -548,13 +548,19 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         assert.equal(htmlProp("--m-fs-small-scale"), "1.1");
         moqui.applyPreference("THEME_LINE_HEIGHT", "relaxed");
         assert.equal(htmlProp("--m-line-height"), "1.75");
-        // the accent color only when it is a CSS color, over the scheme and the brand
+        // the accent colors only when they are CSS colors, over the scheme and the brand: the light one for dark mode too until
+        // the dark one is set
+        const accent = () => (document.getElementById("m-accent") || {}).textContent || "";
         moqui.applyPreference("THEME_PRIMARY_COLOR", "#336699");
-        assert.equal(bodyProp("--q-primary"), "#336699");
-        assert.equal(document.body.style.getPropertyPriority("--q-primary"), "important");
-        assert.match(bodyProp("--m-accent-dark-link"), /^color-mix\(in srgb, #336699 60%, white\)$/);
+        assert.match(accent(), /html body:not\(\.body--dark\) \{ --q-primary:#336699 !important; \}/);
+        assert.match(accent(), /html body\.body--dark \{ --q-primary:#336699 !important; --m-accent-dark-link:color-mix\(in srgb, #336699 60%, white\); \}/);
+        assert.equal(bodyProp("--q-primary"), "", "not on the body, where it would be both modes");
+        moqui.applyPreference("THEME_PRIMARY_COLOR_DARK", "#99ccff");
+        assert.match(accent(), /:not\(\.body--dark\) \{ --q-primary:#336699 !important; \}/);
+        assert.match(accent(), /body\.body--dark \{ --q-primary:#99ccff !important; --m-accent-dark-link:color-mix\(in srgb, #99ccff 60%, white\); \}/);
+        moqui.applyPreference("THEME_PRIMARY_COLOR_DARK", "");
         moqui.applyPreference("THEME_PRIMARY_COLOR", "red; background:url(x)");
-        assert.equal(bodyProp("--q-primary"), "");
+        assert.equal(document.getElementById("m-accent"), null);
         assert.ok(moqui.isCssColor("oklch(0.6 0.15 250)") && moqui.isCssColor("rgb(10, 20, 30)") && !moqui.isCssColor("var(--x)"));
         moqui.applyPreference("THEME_MOTION", "reduce");
         moqui.applyPreference("THEME_LINKS_UNDERLINE", "true");
@@ -577,8 +583,68 @@ test("the appearance applies at once: the scheme and font sheets, the tokens, a 
         document.head.appendChild = realAppend;
         document.getElementById = realGet;
         ["--m-fs-large-scale", "--m-fs-small-scale", "--m-font-body", "--m-line-height"].forEach((name) => document.documentElement.style.removeProperty(name));
-        ["--q-primary", "--m-accent-dark-link"].forEach((name) => document.body.style.removeProperty(name));
+        ["m-accent", "m-scheme-colors"].forEach((id) => { const style = realGet(id); if (style) style.remove(); });
         ["m-radius-square", "m-radius-round", "m-links-underline", "m-motion-reduce", "m-motion-full"].forEach((name) => document.body.classList.remove(name));
+    }
+});
+
+test("the theme's appearance: its default scheme and the scheme's fonts, the user's color overrides, and the keys its policy locks", () => {
+    const savedConfig = qvt.config;
+    const links = {};
+    const realCreate = document.createElement.bind(document);
+    const realAppend = document.head.appendChild.bind(document.head);
+    const realGet = document.getElementById.bind(document);
+    const link = () => ({ id: "", attrs: {}, getAttribute(name) { return this.attrs[name]; }, setAttribute(name, value) { this.attrs[name] = value; },
+        remove() { delete links[this.id]; } });
+    document.createElement = (tag) => tag === "link" ? link() : realCreate(tag);
+    document.head.appendChild = (element) => {
+        if (element && element.attrs) { links[element.id] = element; return element; }
+        return realAppend(element);
+    };
+    document.getElementById = (id) => links[id] || realGet(id);
+    const htmlProp = (name) => document.documentElement.style.getPropertyValue(name);
+    qvt.config = { preferences: {}, appearance: {
+        colorSchemes: [{ id: "PLAIN", custom: false }, { id: "LAB", custom: true, version: "v2", fonts: { body: "INTER" } }],
+        fonts: [{ id: "INTER", kind: "sans", family: "Inter, sans-serif", stylesheet: "https://fonts.example/inter.css" },
+            { id: "SERIF", kind: "serif", family: "Georgia, serif" }],
+        defaultSchemeId: "LAB", values: {}, policy: { accent: false, lockedKeys: ["THEME_PRIMARY_COLOR", "THEME_PRIMARY_COLOR_DARK"] } } };
+    try {
+        // no scheme of the user's: the theme's default, with its font
+        moqui.applyAppearanceAll();
+        assert.equal(moqui.appearanceScheme().id, "LAB");
+        assert.equal(links["m-color-scheme"].attrs.href, "/apps/colorSchemeCss?colorSchemeId=LAB&v=v2");
+        assert.equal(htmlProp("--m-font-body"), "Inter, sans-serif");
+        assert.equal(links["m-font-body"].attrs.href, "https://fonts.example/inter.css");
+        // the user's font wins over the scheme's; leaving it gives the scheme's back
+        moqui.applyPreference("THEME_FONT_BODY", "SERIF");
+        assert.equal(htmlProp("--m-font-body"), "Georgia, serif");
+        assert.equal(links["m-font-body"], undefined);
+        moqui.applyPreference("THEME_FONT_BODY", "");
+        assert.equal(htmlProp("--m-font-body"), "Inter, sans-serif");
+        // another scheme takes its fonts away with it
+        moqui.applyPreference("THEME_COLOR_SCHEME", "PLAIN");
+        assert.equal(links["m-color-scheme"], undefined);
+        assert.equal(htmlProp("--m-font-body"), "");
+        // the user's own tokens over the scheme, by the rules of a scheme's sheet
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", JSON.stringify({ primary: { light: "#c00" }, "header-bg": { light: "linear-gradient(#fff, #eee)" },
+            text: { light: "red; }" }, "panel-bg": { dark: "#101010" }, link: { dark: "#9cf" }, page: "#fff" }));
+        const overrides = realGet("m-scheme-colors").textContent;
+        assert.equal(overrides, "html body:not(.body--dark) { --m-header-bg:linear-gradient(#fff, #eee); --q-primary:#c00 !important; }\n" +
+            "html body.body--dark { --m-link:var(--m-accent-dark-link, #9cf); --m-panel-bg:#101010; --q-dark:#101010 !important; }\n");
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", "not json");
+        assert.equal(realGet("m-scheme-colors"), null);
+        // what the policy locks
+        assert.ok(!moqui.appearanceAllowed("THEME_PRIMARY_COLOR") && !moqui.appearanceAllowed("THEME_PRIMARY_COLOR_DARK"));
+        assert.ok(moqui.appearanceAllowed("THEME_COLOR_SCHEME") && moqui.appearanceAllowed("QUASAR_DARK"));
+        assert.match(qvt.components["m-qapps-root"].template, /v-if="appearanceMenuAllowed\(\)" id="m-account-appearance"/);
+        assert.match(qvt.components["m-appearance-dialog"].template, /v-if="allowed\('QUASAR_DARK'\)"/);
+    } finally {
+        qvt.config = savedConfig;
+        document.createElement = realCreate;
+        document.head.appendChild = realAppend;
+        document.getElementById = realGet;
+        document.documentElement.style.removeProperty("--m-font-body");
+        ["m-accent", "m-scheme-colors"].forEach((id) => { const style = realGet(id); if (style) style.remove(); });
     }
 });
 

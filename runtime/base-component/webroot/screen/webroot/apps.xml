@@ -21,7 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                ec.user.setPreference(preferenceKey, preferenceValue)
+                // refused when the theme's appearance policy locks the key (STRT_APPEARANCE_POLICY)
+                try { ec.user.setPreference(preferenceKey, preferenceValue) } catch (e) { ec.web.sendJsonError(403, String(e.message || e)) }
             }
             ]]></script></actions>
         <default-response type="none"/>
@@ -30,7 +31,8 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                ec.user.setPreference(preferenceKey, preferenceValue)
+                // refused when the theme's appearance policy locks the key (STRT_APPEARANCE_POLICY)
+                try { ec.user.setPreference(preferenceKey, preferenceValue) } catch (e) { ec.web.sendJsonError(403, String(e.message || e)) }
             }
             ]]></script></actions>
         <default-response type="screen-last"/>
@@ -52,36 +54,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="colorSchemeCss" read-only="true" require-session-token="false">
         <parameter name="colorSchemeId"/>
         <actions><script><![CDATA[
-            const brand = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning']
-            const scheme = colorSchemeId ? ec.entity.find('moqui.screen.ScreenColorScheme').condition('colorSchemeId', colorSchemeId)
-                    .disableAuthz().useCache(true).one() : null
-            let css = ''
-            if (scheme) {
-                const colors = ec.entity.find('moqui.screen.ScreenColorSchemeColor').condition('colorSchemeId', colorSchemeId)
-                        .orderBy('colorName').disableAuthz().useCache(true).list()
-                const modes = { SCM_LIGHT: [], SCM_DARK: [] }
-                for (let i = 0; i < colors.length; i++) {
-                    const color = colors.get(i)
-                    const name = String(color.colorName || ''), value = String(color.colorValue || '').trim()
-                    const decls = modes[color.colorModeEnumId]
-                    if (!decls) continue
-                    if (!/^[a-z][a-z0-9-]{0,40}$/.test(name) || !value || /[;{}<>\\"'!]/.test(value)) {
-                        ec.logger.error('Color scheme ' + colorSchemeId + ' color ' + name + ' is not a CSS name and value, left out')
-                        continue
-                    }
-                    const dark = color.colorModeEnumId === 'SCM_DARK'
-                    if (brand.includes(name)) decls.push('--q-' + name + ':' + value + ' !important')
-                    else if (dark && name === 'link') decls.push('--m-link:var(--m-accent-dark-link, ' + value + ')')
-                    else decls.push('--m-' + name + ':' + value)
-                    if (dark && name === 'panel-bg') decls.push('--q-dark:' + value + ' !important')
-                    if (dark && name === 'page-bg') decls.push('--q-dark-page:' + value + ' !important')
-                }
-                css = '/* color scheme ' + colorSchemeId + ' */\n'
-                if (modes.SCM_LIGHT.length) css += 'body:not(.body--dark) { ' + modes.SCM_LIGHT.join('; ') + '; }\n'
-                if (modes.SCM_DARK.length) css += 'body.body--dark { ' + modes.SCM_DARK.join('; ') + '; }\n'
-                if (scheme.extraCss) css += scheme.extraCss + '\n'
-            }
-            ec.web.sendTextResponse(css, 'text/css')
+            // the scheme's tokens and extraCss (org.moqui.impl.ShellServices.get#ColorSchemeCss); empty for an unknown scheme
+            const out = colorSchemeId ? ec.service.sync().name('org.moqui.impl.ShellServices.get#ColorSchemeCss')
+                    .parameter('colorSchemeId', colorSchemeId).disableAuthz().call() : null
+            ec.web.sendTextResponse((out && out.css) || '', 'text/css')
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
